@@ -8,6 +8,7 @@ import {
   type ActivateDraftResponse, type AdDraft, type EditApplyResponse, type EditDiffResponse, type EditDiffResult, type AdsetDraft, type CatalogResponse, type CreateResponse, type Destination,
   type DraftIssue, type DraftKind, type DraftLastError, type DraftMetaIds, type DraftSpec, type DraftStatus,
   type DraftValidation, type HousingResult, type MediaRef, type MetaMediaRow, type Objective, type PromotedObject,
+  type SprachVariante,
 } from '../../../../lib/metaSpec'
 import { lintDraft, type LintIssue, type LintMediaInfo } from '../../../../lib/metaLint'
 import { ladeUsdProEur } from '../useWerbeDaten'
@@ -196,6 +197,8 @@ export function paarPartner(d: DraftSpec, key: string): AdDraft | undefined {
 const PAAR_FELDER: ReadonlyArray<keyof AdDraft> = [
   'format', 'identity', 'primary_texts', 'headlines', 'descriptions', 'cta_type', 'media',
   'creative_features', 'multi_advertiser', 'source',
+  // Runde 2: vorhandener Beitrag, Karussell-Schalter, Sprachen, Partnerschaft, Tracking
+  'beitrag', 'karussell', 'sprachen', 'partnerschaft', 'tracking',
 ]
 
 const kopie = <T>(x: T): T => JSON.parse(JSON.stringify(x)) as T
@@ -212,15 +215,34 @@ export function setzeAnzeige(d: DraftSpec, key: string, patch: Partial<AdDraft>,
   for (const f of PAAR_FELDER) {
     if (f in patch) (p as Record<string, unknown>)[f] = kopie((patch as Record<string, unknown>)[f])
   }
+  // Sprachen: Texte für beide, die Landingpage je Sprache bleibt die des Partners (wie bei destination)
+  if (p.sprachen && Array.isArray(p.sprachen.varianten)) {
+    const eigene = partner.sprachen?.varianten ?? []
+    p.sprachen = {
+      ...p.sprachen,
+      varianten: p.sprachen.varianten.map(v => {
+        const neu: SprachVariante = { ...v }
+        delete neu.url
+        const url = eigene.find(x => x.sprache === v.sprache)?.url
+        if (url) neu.url = url
+        return neu
+      }),
+    }
+  }
   if (typeof patch.name === 'string') {
     const suffix = /_(lang|kurz)$/.exec(partner.key)?.[1] ?? ''
     p.name = `${patch.name.replace(/_(lang|kurz)$/, '')}_${suffix}`
   }
-  // Ziel: Sofortformular gilt für beide; Website behält je Partner die eigene Landingpage
-  if (patch.destination?.kind === 'lead_form') {
+  // Ziel: alles ohne eigene Landingpage gilt für beide (Formular, WhatsApp, Anruf, Messenger);
+  // Website behält je Partner die eigene Landingpage
+  const lp = /_kurz$/.test(partner.key) ? PLAN_B_LP_KURZ : PLAN_B_LP_LANG
+  if (patch.destination && patch.destination.kind !== 'website' && patch.destination.kind !== 'website_lead_form') {
     p.destination = { ...patch.destination }
   } else if (patch.destination?.kind === 'website' && partner.destination.kind !== 'website') {
-    p.destination = { kind: 'website', url: /_kurz$/.test(partner.key) ? PLAN_B_LP_KURZ : PLAN_B_LP_LANG }
+    p.destination = { kind: 'website', url: partner.destination.kind === 'website_lead_form' ? partner.destination.url : lp }
+  } else if (patch.destination?.kind === 'website_lead_form') {
+    const url = partner.destination.kind === 'website' || partner.destination.kind === 'website_lead_form' ? partner.destination.url : lp
+    p.destination = { ...patch.destination, url }
   }
   if (Object.keys(p).length) next = { ...next, ads: next.ads.map(a => (a.key === partner.key ? { ...a, ...p } : a)) }
   return next
@@ -248,6 +270,8 @@ export function setzeAnzeigengruppe(d: DraftSpec, key: string, patch: Partial<Ad
 const CREATIVE_FELDER: ReadonlyArray<keyof AdDraft> = [
   'format', 'identity', 'primary_texts', 'headlines', 'descriptions', 'cta_type', 'destination', 'media',
   'creative_features', 'multi_advertiser',
+  // Runde 2 (Werbemittel): Beitrag, Karussell-Schalter, Sprachen, Partnerschaft; Tracking gehört zur Anzeige
+  'beitrag', 'karussell', 'sprachen', 'partnerschaft',
 ]
 
 /** Hat sich das Werbemittel einer Anzeige gegenüber dem Stand beim Öffnen geändert? null = unbekannt */
@@ -263,9 +287,13 @@ export function creativeGeaendert(original: DraftSpec | null, d: DraftSpec, key:
 export function medienIds(d: DraftSpec): string[] {
   const out: string[] = []
   const add = (r?: MediaRef) => { if (r?.media_id && out.indexOf(r.media_id) < 0) out.push(r.media_id) }
+  const addMitBild = (r?: MediaRef) => {
+    add(r)
+    if (r?.thumbnail_media_id && out.indexOf(r.thumbnail_media_id) < 0) out.push(r.thumbnail_media_id)
+  }
   for (const ad of d.ads) {
-    add(ad.media?.feed_4x5); add(ad.media?.story_9x16); add(ad.media?.square_1x1)
-    for (const c of ad.media?.cards ?? []) add(c.media)
+    addMitBild(ad.media?.feed_4x5); addMitBild(ad.media?.story_9x16); addMitBild(ad.media?.square_1x1); addMitBild(ad.media?.landscape_191x1)
+    for (const c of ad.media?.cards ?? []) addMitBild(c.media)
   }
   return out
 }

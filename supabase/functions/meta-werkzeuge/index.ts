@@ -12,8 +12,14 @@
 //       Regel in Deutsch, Housing-Eignung (höchstens 25 je Aufruf, Abbruch über 75 % Auslastung)
 //   { mode: 'leadforms_list', page_id? }                Sofortformulare der Seite (Seiten-Token)
 //   { mode: 'leadform_get', id, page_id? }              ein Formular als LeadFormSpecErweitert
-//   { mode: 'custom_conversions_list', mit_archivierten? }
-//   { mode: 'pixel_diagnose', pixel_id? }               letzter Empfang, Ereignisse 24 h, EMQ, Ampel
+//   { mode: 'custom_conversions_list', mit_archivierten? }   + Ereignis, Standardwert, HP-Vorschläge
+//   { mode: 'pixel_diagnose', pixel_id?, crm?, test_kandidaten? }   (./diagnose.ts)
+//       Datensatz-Gesundheit: letzter Empfang, je Ereignis Anzahl 24 h / 7 Tage, zuletzt empfangen,
+//       EMQ, Datenfrische, Ampel; Meta nicht lesbar -> meta_fehler statt Abbruch.
+//       crm (Standard true): CRM-Ereignisse aus capi_log + capi_outbox (7/30 Tage, offen, Fehler,
+//       Gründe), Conversion-Leads-Stufen, Sofortformular-Leads 30 Tage, Echtzeit an/aus.
+//       test_kandidaten: true: Ausgang-Ereignisse interner Kontakte für den Test-Knopf
+//       (Test selbst: werbe-signal { aktion: 'test', event_id, test_event_code }, nur Admin).
 //
 // ── Schreib-Modi (zusätzlich: admin/verwalter oder Recht „werbung“,
 //    ad_settings.builder_enabled = true, Secret META_WRITES_DISABLED != 1;
@@ -53,7 +59,8 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { requireAdsAccess } from '../_shared/adsAuth.ts'
 import { makeCtx, schreibRecht, toErrorResponse, WerkzeugError, writeGate, type Ctx } from './common.ts'
-import { modeCustomConversionCreate, modeCustomConversionsList, modePixelDiagnose } from './conversions.ts'
+import { modeCustomConversionCreate, modeCustomConversionsList } from './conversions.ts'
+import { modePixelDiagnose } from './diagnose.ts'
 import { modeLeadformCreate, modeLeadformDuplicate, modeLeadformGet, modeLeadformsList } from './formulare.ts'
 import { modeAudienceCreateCustomerList } from './kundenliste.ts'
 import {

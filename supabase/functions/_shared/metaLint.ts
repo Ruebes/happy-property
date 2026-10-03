@@ -94,7 +94,10 @@ export interface LintContext {
   media?: Record<string, LintMediaInfo>
   allowedHosts?: readonly string[]
 }
-export interface LintMediaRef { media_id?: string }
+/** thumbnail_media_id = eigenes Vorschaubild eines Videos (Bild aus meta_media) */
+export interface LintMediaRef { media_id?: string; thumbnail_media_id?: string }
+/** Weitere Sprache einer Anzeige (strukturell zu metaSpec SprachVariante). */
+export interface LintSprachVariante { sprache?: string; primary_text?: string; headline?: string; description?: string; url?: string }
 /** Strukturell kompatibel zu metaSpec AdDraft (und zu Vorrat-Einträgen). */
 export interface LintAdInput {
   key?: string
@@ -102,13 +105,16 @@ export interface LintAdInput {
   primary_texts?: string[]
   headlines?: string[]
   descriptions?: string[]
-  destination?: { kind: string; url?: string; display_link?: string }
+  /** begruessung/nachricht: WhatsApp-Begrüßung und vorausgefüllte Nachricht */
+  destination?: { kind: string; url?: string; display_link?: string; begruessung?: string; nachricht?: string }
   media?: {
     feed_4x5?: LintMediaRef
     story_9x16?: LintMediaRef
     square_1x1?: LintMediaRef
+    landscape_191x1?: LintMediaRef
     cards?: Array<{ headline?: string; description?: string; url?: string; media?: LintMediaRef }>
   }
+  sprachen?: { varianten?: LintSprachVariante[] }
 }
 /** Strukturell kompatibel zu metaSpec DraftSpec. */
 export interface LintDraftInput {
@@ -292,12 +298,41 @@ export function lintAd(ad: LintAdInput, ctx: LintContext): LintIssue[] {
     if (d.length > DESCRIPTION_MAX) add('blocker', 'beschreibung_lang', 'ad.media.cards', d.slice(0, 40), { index: i + 1, len: d.length, max: DESCRIPTION_MAX })
   })
 
-  // Ziel-URLs + angezeigter Link
+  // Weitere Sprachen: dieselben Regeln wie Deutsch, nur die Umlaut-Regel gilt nicht für Fremdsprachen
+  const varianten = Array.isArray(ad.sprachen?.varianten) ? (ad.sprachen?.varianten ?? []) : []
+  varianten.forEach((v, i) => {
+    const fremd = (v?.sprache ?? '') !== 'de'
+    const p = (v?.primary_text ?? '').trim(), h = (v?.headline ?? '').trim(), d = (v?.description ?? '').trim()
+    for (const t of [p, h, d]) {
+      for (const iss of lintText(t, 'ad.sprachen', ctx, node)) {
+        if (fremd && iss.rule === 'umlaut') continue
+        out.push({ ...iss, params: { ...(iss.params ?? {}), index: i + 1 } })
+      }
+    }
+    if (h.length > HEADLINE_MAX) add('blocker', 'ueberschrift_lang', 'ad.sprachen', h.slice(0, 50), { index: i + 1, len: h.length, max: HEADLINE_MAX })
+    if (d.length > DESCRIPTION_MAX) add('blocker', 'beschreibung_lang', 'ad.sprachen', d.slice(0, 40), { index: i + 1, len: d.length, max: DESCRIPTION_MAX })
+    if ([p, h, d].some(isAfaFive) && !AFA_SATZ.test(p)) add('blocker', 'afa_pflichtsatz', 'ad.sprachen', undefined, { index: i + 1 })
+  })
+
+  // WhatsApp: Begrüßung und vorausgefüllte Nachricht sieht die Person im Chat
+  if (ad.destination?.kind === 'whatsapp') {
+    const wa: Array<[string, string]> = [
+      ['ad.destination.whatsapp_begruessung', (ad.destination.begruessung ?? '').trim()],
+      ['ad.destination.whatsapp_nachricht', (ad.destination.nachricht ?? '').trim()],
+    ]
+    for (const [field, t] of wa) {
+      for (const iss of lintText(t, field, ctx, node)) out.push(iss)
+      if (isAfaFive(t) && !AFA_SATZ.test(t)) add('blocker', 'afa_pflichtsatz', field)
+    }
+  }
+
+  // Ziel-URLs + angezeigter Link (Website und Website + Sofortformular)
   const hosts = ctx.allowedHosts ?? LINT_ALLOWED_HOSTS
   const urls: Array<[string, string]> = []
-  if (ad.destination?.kind === 'website') {
+  if (ad.destination?.kind === 'website' || ad.destination?.kind === 'website_lead_form') {
     if (ad.destination.url) urls.push(['ad.destination.url', ad.destination.url])
     for (const cd of cards) if (cd?.url) urls.push(['ad.media.cards', cd.url])
+    for (const v of varianten) if ((v?.url ?? '').trim()) urls.push(['ad.sprachen', (v.url ?? '').trim()])
     if (ad.destination.display_link) {
       for (const iss of lintText(ad.destination.display_link, 'ad.destination.display_link', ctx, node)) out.push(iss)
     }
@@ -312,12 +347,19 @@ export function lintAd(ad: LintAdInput, ctx: LintContext): LintIssue[] {
   }
 
   // Medien: Dateinamen ohne Projektnamen, EU-Band + KI-Kennzeichnung bestätigt
-  const refs: Array<[string, LintMediaRef | undefined]> = [
+  // (auch Querformat und eigene Video-Vorschaubilder, die sieht man vor dem Abspielen)
+  const slots: Array<[string, LintMediaRef | undefined]> = [
     ['ad.media.feed_4x5', ad.media?.feed_4x5],
     ['ad.media.story_9x16', ad.media?.story_9x16],
     ['ad.media.square_1x1', ad.media?.square_1x1],
+    ['ad.media.landscape_191x1', ad.media?.landscape_191x1],
     ...cards.map((cd): [string, LintMediaRef | undefined] => ['ad.media.cards', cd?.media]),
   ]
+  const refs: Array<[string, LintMediaRef | undefined]> = []
+  for (const [field, r] of slots) {
+    refs.push([field, r])
+    if (r?.thumbnail_media_id) refs.push([field === 'ad.media.cards' ? field : 'ad.media.thumbnail', { media_id: r.thumbnail_media_id }])
+  }
   const done: string[] = []
   for (const [field, ref] of refs) {
     const id = ref?.media_id

@@ -2,9 +2,9 @@ import { useTranslation } from 'react-i18next'
 import { CustomSelect, type SelectOption } from '../../../CustomSelect'
 import {
   ATTRIBUTION_OPTIONS, BID_NEEDS_AMOUNT, BID_OPTIONS, BILLING_OPTIONS, BRAND_SAFETY_OPTIONS, CUSTOM_EVENT_OPTIONS,
-  DESTINATION_OPTIONS, DEVICE_OPTIONS, GOAL_OPTIONS, HP_PIXEL_ID, PLATFORM_OPTIONS, POSITION_FIELD_BY_PLATFORM,
-  POSITION_OPTIONS, PUBLISHER_CATEGORY_OPTIONS, PUBLISHER_PLATFORMS,
-  attributionFor, billingFor, destinationsFor, draftIsHec, effectiveBidStrategy, goalsFor, promotedAllowed, promotedRuleFor, targetsEu,
+  DEVICE_OPTIONS, GOAL_OPTIONS, HP_DEFAULT_LINK, HP_PAGE_ID, HP_PIXEL_ID, PLATFORM_OPTIONS, POSITION_FIELD_BY_PLATFORM,
+  POSITION_OPTIONS, PUBLISHER_CATEGORY_OPTIONS, PUBLISHER_PLATFORMS, TELEFON_RE,
+  attributionFor, billingFor, ctaFor, draftIsHec, effectiveBidStrategy, goalsFor, normalizeTelefon, promotedAllowed, promotedRuleFor, targetsEu,
   type AdsetDraft, type AttributionPreset, type Billing, type BidStrategy, type BrandSafety, type CustomEvent,
   type Destination, type DevicePlatform, type EnumOption, type ManualPlacements, type OptGoal, type PositionField,
   type PublisherCategory, type PublisherPlatform,
@@ -20,10 +20,14 @@ import ZielgruppeHousing, { OrtTypen, WohnenSperren } from './ZielgruppeHousing'
 import { ohneUnbegrenzt } from './KampagnenFormular'
 import { EmpfohlenBadge } from './bearbeitenHelfer'
 import { hpVon } from './bearbeitenTypen'
-import { gruppeAngelegt, passeAnzeigengruppeAn, setzeAnzeigengruppe, useAssistent } from './useEntwurf'
+import { anzeigeAngelegt, gruppeAngelegt, passeAnzeigengruppeAn, setzeAnzeige, setzeAnzeigengruppe, useAssistent } from './useEntwurf'
+import ConversionOrtWahl from './ConversionOrtWahl'
+import { CTA_STANDARD, zielArtenFuer, zielUmstellen } from './r23Typen'
 
 // ── Anzeigengruppe (Reihenfolge wie im Meta-Werbeanzeigenmanager) ────────────
-// Name (+ Status), Conversion (Conversion-Ort -> Performance-Ziel -> Datensatz
+// Name (+ Status), Conversion (Conversion-Ort als Karten: Website, Sofortformular,
+// Website und Sofortformular, WhatsApp, Anrufe; Instagram Direct und Messenger
+// grau mit Grund -> Performance-Ziel -> Datensatz
 // + Conversion-Event; unter „Alle Einstellungen": Abrechnung, eigene
 // Conversion, Seite, Attribution inkl. Engage-Through und Modell), Budget und
 // Zeitplan (Budget, Start/Ende; Gebot, ROAS, Ausgabenlimits je Gruppe beim
@@ -78,6 +82,41 @@ export default function AnzeigengruppenFormular({ adsetKey }: { adsetKey: string
     const basis = setzeAnzeigengruppe(d, node, patch, e.metaIds)
     return { ...basis, adsets: basis.adsets.map(x => (x.key === node ? passeAnzeigengruppeAn(x, basis.campaign.objective, vorgaben.pixelId ?? '', false, bearbeiten) : x)) }
   })
+  /**
+   * Conversion-Ort wechseln: Performance-Ziel, Abrechnung, promoted_object anpassen (wie Meta),
+   * Seite setzen, wo Meta sie verlangt, „Website und Sofortformular“ auf das Ereignis Lead stellen
+   * und die neuen Anzeigen dieser Gruppe auf die passende Ziel-Art umstellen (Plan-B-Partner nicht).
+   */
+  const setzeOrt = (dest: Destination) => e.update(d0 => {
+    if (gruppeAngelegt(e.metaIds, node)) return d0
+    const vorher = d0.adsets.find(x => x.key === node)?.destination
+    let d = setzeAnzeigengruppe(d0, node, { destination: dest }, e.metaIds)
+    d = { ...d, adsets: d.adsets.map(x => (x.key === node ? passeAnzeigengruppeAn(x, d.campaign.objective, vorgaben.pixelId ?? '', false, bearbeiten) : x)) }
+    const g = d.adsets.find(x => x.key === node)
+    if (g) {
+      const regel = promotedRuleFor(d.campaign.objective, g.destination, g.optimization_goal)
+      const keys = regel ? promotedAllowed(regel) : []
+      const poNeu = { ...(g.promoted_object ?? {}) }
+      if (keys.indexOf('page_id') >= 0 && !poNeu.page_id) poNeu.page_id = vorgaben.pageId || HP_PAGE_ID
+      if (g.destination === 'WEBSITE_AND_LEAD_FORM' && keys.indexOf('custom_event_type') >= 0) poNeu.custom_event_type = 'LEAD'
+      // Zurück von „Website und Sofortformular“: das erzwungene Lead wieder auf HP-Standard (Termin vereinbaren)
+      else if (vorher === 'WEBSITE_AND_LEAD_FORM' && poNeu.custom_event_type === 'LEAD' && keys.indexOf('custom_event_type') >= 0) poNeu.custom_event_type = 'SCHEDULE'
+      d = setzeAnzeigengruppe(d, node, { promoted_object: poNeu }, e.metaIds)
+    }
+    const arten = zielArtenFuer(dest)
+    if (arten.length) {
+      for (const ad of d.ads) {
+        if (ad.adset_key !== node || ad.existing_id || anzeigeAngelegt(e.metaIds, ad.key)) continue
+        if (arten.indexOf(ad.destination?.kind ?? 'website') >= 0) continue
+        const art = arten[0]
+        d = setzeAnzeige(d, ad.key, {
+          destination: zielUmstellen(ad.destination, art, vorgaben.link || HP_DEFAULT_LINK),
+          cta_type: ctaFor(art).indexOf(ad.cta_type) >= 0 ? ad.cta_type : CTA_STANDARD[art],
+        }, false, e.metaIds)
+      }
+    }
+    return d
+  })
   const hatMeldung = (felder: readonly string[]) =>
     e.issues.some(i => i.node === node && felder.some(f => i.field === f || i.field.indexOf(`${f}.`) === 0))
     || e.lint.some(l => l.node === node && felder.some(f => l.field === f))
@@ -100,8 +139,6 @@ export default function AnzeigengruppenFormular({ adsetKey }: { adsetKey: string
 
   const cbo = c.budget_level === 'campaign'
   const kampagneLaufzeit = cbo && (c.lifetime_budget_cents ?? 0) > 0
-  const orte = destinationsFor(c.objective)
-  if (orte.indexOf(a.destination) < 0) orte.push(a.destination)
   const ziele = goalsFor(c.objective, a.destination).slice()
   if (ziele.indexOf(a.optimization_goal) < 0) ziele.push(a.optimization_goal)
   const billings = billingFor(a.optimization_goal).slice()
@@ -258,11 +295,10 @@ export default function AnzeigengruppenFormular({ adsetKey }: { adsetKey: string
           </div>
         )}>
         <div className="grid gap-3 sm:grid-cols-2">
-          <AuswahlFeld<Destination> node={node} feld="adset.destination" label={feldLabel(t, 'adset.destination', 'Conversion-Ort')}
-            hilfe={t('crm.werbung.bearbeiten.hilfe.destination', 'Website: Termin über die Landingpage. Sofortformular: Kontaktdaten direkt in Facebook oder Instagram.')}
-            empfehlung={{ aktiv: a.destination === 'WEBSITE', text: t('crm.werbung.meta.destination.WEBSITE', 'Website') }}
-            value={a.destination} optionen={nurWerte(DESTINATION_OPTIONS, orte)} disabled={gesperrt} sperre={sp('adset.destination')}
-            onChange={v => v && setAngepasst({ destination: v })} />
+          <div className="sm:col-span-2">
+            <ConversionOrtWahl node={node} objective={c.objective} value={a.destination} onChange={setzeOrt}
+              disabled={gesperrt} sperre={sp('adset.destination')} lernHinweis={lern} />
+          </div>
           <AuswahlFeld<OptGoal> node={node} feld="adset.optimization_goal" label={t('crm.werbung.bearbeiten.label.performanceZiel', 'Performance-Ziel')}
             hilfe={t('crm.werbung.bearbeiten.hilfe.goal', 'Worauf Meta die Auslieferung ausrichtet. Für Website-Termine: Anzahl der Conversions maximieren.') + lern}
             empfehlung={{ aktiv: a.optimization_goal === 'OFFSITE_CONVERSIONS' || a.destination !== 'WEBSITE', text: t('crm.werbung.meta.goal.OFFSITE_CONVERSIONS', 'Conversions') }}
@@ -285,10 +321,29 @@ export default function AnzeigengruppenFormular({ adsetKey }: { adsetKey: string
             <AuswahlFeld<CustomEvent> node={node} feld="adset.promoted_object.custom_event_type"
               label={t('crm.werbung.bearbeiten.label.conversionEvent', 'Conversion-Event')}
               hilfe={t('crm.werbung.bearbeiten.hilfe.event', '„Schedule“ heißt: Termin gebucht. Darauf optimiert Meta die Auslieferung.') + lern}
-              empfehlung={{ aktiv: po.custom_event_type === 'SCHEDULE', text: t('crm.werbung.meta.event.SCHEDULE', 'Termin vereinbaren'), uebernehmen: () => setPo({ custom_event_type: 'SCHEDULE' }) }}
+              empfehlung={a.destination === 'WEBSITE_AND_LEAD_FORM'
+                ? { aktiv: po.custom_event_type === 'LEAD', text: t('crm.werbung.meta.event.LEAD', 'Lead'), uebernehmen: () => setPo({ custom_event_type: 'LEAD' }) }
+                : { aktiv: po.custom_event_type === 'SCHEDULE', text: t('crm.werbung.meta.event.SCHEDULE', 'Termin vereinbaren'), uebernehmen: () => setPo({ custom_event_type: 'SCHEDULE' }) }}
               value={po.custom_event_type} optionen={CUSTOM_EVENT_OPTIONS} disabled={gesperrt} sperre={sp('adset.promoted_object.custom_event_type')}
               leer={t('crm.werbung.builder.gruppe.keinEreignis', 'Kein Ereignis')}
               onChange={v => setPo({ custom_event_type: v })} />
+          )}
+          {a.destination === 'WEBSITE_AND_LEAD_FORM' && (
+            <p className="text-[11px] leading-snug text-gray-600 sm:col-span-2">{t('crm.werbung.builder.ort.nurLead', 'Bei „Website und Sofortformular“ erlaubt Meta nur das Ereignis „Lead“.')}</p>
+          )}
+          {poKeys.indexOf('whatsapp_phone_number') >= 0 && (
+            <TextFeld node={node} feld="adset.promoted_object.whatsapp_phone_number" label={feldLabel(t, 'adset.promoted_object.whatsapp_phone_number', 'WhatsApp-Nummer')}
+              hilfe={t('crm.werbung.builder.ort.whatsappHilfe', 'Nummer des WhatsApp-Business-Kontos mit Ländervorwahl. Leer lassen: Meta nimmt die Nummer, die mit der Facebook-Seite verknüpft ist.')}
+              value={po.whatsapp_phone_number ?? ''} disabled={gesperrt} sperre={sp('adset.promoted_object.whatsapp_phone_number')} maxLen={30} placeholder="+357 …"
+              onChange={v => setPo({ whatsapp_phone_number: v.trim() || undefined })}
+              onBlur={() => {
+                // So geht die Nummer an Meta (promoted_object): ohne Leerzeichen, 00 -> +
+                const n = normalizeTelefon(po.whatsapp_phone_number)
+                if (n && n !== po.whatsapp_phone_number) setPo({ whatsapp_phone_number: n })
+              }} />
+          )}
+          {poKeys.indexOf('whatsapp_phone_number') >= 0 && !!po.whatsapp_phone_number && !TELEFON_RE.test(normalizeTelefon(po.whatsapp_phone_number)) && (
+            <p role="alert" className="text-[11px] text-red-700 sm:col-span-2">{t('crm.werbung.builder.zielart.telefonFalsch', 'Die Telefonnummer braucht die Ländervorwahl mit +, z. B. +49 30 1234567.')}</p>
           )}
         </div>
       </Abschnitt>

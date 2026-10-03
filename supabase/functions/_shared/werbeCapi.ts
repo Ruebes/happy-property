@@ -24,6 +24,19 @@
 //   filterFrisch(events, nowSec?) -> { frisch, verworfen }
 //   sendCapiEvents(events, { testEventCode?, pixelId? }) -> { events_received, verworfen, messages, fbtrace_id }
 //
+// Conversion-Leads (Conversions API für CRM, SPEC3 G2; Meta-Ziel „Anzahl qualifizierter
+// Leads maximieren“ braucht das seit April 2026):
+//   CRM_STUFEN                  lead, termin_gebucht, termin_stattgefunden, qualifiziert, kunde
+//                               (event_name = Stufenname; GLEICH zu src/lib/werbeWerkzeuge.ts
+//                               CRM_STUFEN und SQL werbe_capi_crm_stufe in 20261005100000)
+//   CAPI_CRM_LEAD_EVENT_SOURCE  'Happy Property CRM'
+//   crmStufenEventId(leadgenId, stufe) -> 'crm-<leadgen_id>-<stufe>' | null
+//   istCrmStufenEventId(eventId)       -> boolean
+//   crmDatensatzId()            Secret META_CRM_DATASET_ID, sonst Pixel (metaEnv().pixelId)
+//   buildCrmStufenEvent(c, nowSec?) -> Event | null  (action_source system_generated,
+//                               user_data.lead_id = Meta-Lead-ID, custom_data.event_source 'crm',
+//                               custom_data.lead_event_source; null ohne gültige Lead-ID / zu alt)
+//
 // Regeln (Svens Entscheidungen, SPEC §3):
 //   - Nur Meta-Leads (istMetaLead) melden; Filter macht der Aufrufer VOR buildCapiEvent.
 //   - action_source 'website' nur mit Browserkennung (client_user_agent), sonst
@@ -271,4 +284,84 @@ export async function sendCapiEvents(events: CapiEvent[], opts: CapiSendOptions 
     messages: Array.isArray(j?.messages) ? j.messages : [],
     fbtrace_id: typeof j?.fbtrace_id === 'string' ? j.fbtrace_id : null,
   }
+}
+
+// ── Conversion-Leads: CRM-Stufen ────────────────────────────────────────────
+// Payload laut Meta (Conversion Leads Integration, Payload Specification):
+//   event_name frei = Stufe im CRM, ALLE Stufen ab dem Rohlead senden; event_time höchstens
+//   7 Tage alt und NACH der Lead-Zeit; action_source 'system_generated';
+//   custom_data { event_source: 'crm', lead_event_source: <CRM-Name> };
+//   user_data.lead_id = 15-17-stellige leadgen_id (höchste Priorität), dazu gehashte E-Mail/Telefon.
+// NICHT VERIFIZIERT gegen das echte Konto: lead_id geht als Ziffern-String (JS-Zahlen verlieren
+// ab 16 Stellen Genauigkeit; Meta dokumentiert eine Zahl). Erst mit einem Testereignis
+// (werbe-signal aktion 'test', interner Kontakt) prüfen, bevor capi_echtzeit eingeschaltet wird.
+// Dafür reiht die DB Stufen interner Kontakte auch bei Echtzeit aus ein.
+// Die Einstiegsstufe heißt NICHT „Lead“: das ist ein Standard-Ereignis im selben Pixel
+// (Website-Lead); Meta würde Sofortformular-Leads sonst zusätzlich als Pixel-Lead zählen.
+
+export const CAPI_CRM_LEAD_EVENT_SOURCE = 'Happy Property CRM'
+export const CRM_EVENT_PREFIX = 'crm-'
+
+/** Funnel-Reihenfolge. GLEICH zu src/lib/werbeWerkzeuge.ts (CRM_STUFEN) und SQL werbe_capi_crm_stufe. */
+export const CRM_STUFEN: ReadonlyArray<{ key: string; event_name: string }> = [
+  { key: 'lead', event_name: 'Lead aus Sofortformular' },
+  { key: 'termin_gebucht', event_name: 'Termin gebucht' },
+  { key: 'termin_stattgefunden', event_name: 'Termin stattgefunden' },
+  { key: 'qualifiziert', event_name: 'Qualifiziert' },
+  { key: 'kunde', event_name: 'Kunde' },
+]
+
+const LEADGEN_RE = /^[0-9]{15,17}$/
+
+/** Meta-Lead-ID (nur Ziffern, 15-17 Stellen) oder null. */
+export function leadgenIdOderNull(v: unknown): string | null {
+  const d = String(v ?? '').trim().replace(/^l:/i, '').replace(/[^0-9]/g, '')
+  return LEADGEN_RE.test(d) ? d : null
+}
+
+/** event_id einer CRM-Stufe: crm-<leadgen_id>-<stufe> (eine je Lead und Stufe). */
+export function crmStufenEventId(leadgenId: unknown, stufe: string): string | null {
+  const lg = leadgenIdOderNull(leadgenId)
+  if (!lg || !CRM_STUFEN.some(s => s.key === stufe)) return null
+  return `${CRM_EVENT_PREFIX}${lg}-${stufe}`
+}
+
+export function istCrmStufenEventId(eventId: unknown): boolean {
+  return /^crm-[0-9]{15,17}-[a-z_]+$/.test(String(eventId ?? ''))
+}
+
+/** Datensatz für die CRM-Stufen: Secret META_CRM_DATASET_ID (falls Meta einen eigenen CRM-Datensatz verlangt), sonst das Pixel. */
+export function crmDatensatzId(): string {
+  const eigen = String(Deno.env.get('META_CRM_DATASET_ID') ?? '').replace(/[^0-9]/g, '')
+  return eigen || metaEnv().pixelId
+}
+
+/**
+ * Baut ein Conversion-Leads-Ereignis (CRM-Stufe). Nutzt buildCapiEvent für Hashing und
+ * Altersgrenze, erzwingt dann die Pflichtfelder: system_generated, user_data.lead_id,
+ * custom_data nur event_source + lead_event_source (kein Wert, keine Kategorie).
+ * null: keine gültige Meta-Lead-ID, unbekannte Stufe oder älter als 7 Tage.
+ */
+export async function buildCrmStufenEvent(c: CapiCandidate, jetztSek: number = nowSec()): Promise<CapiEvent | null> {
+  const leadgen = leadgenIdOderNull(c.meta_leadgen_id)
+  if (!leadgen) return null
+  if (!CRM_STUFEN.some(s => s.event_name === c.event_name)) return null
+  const ev = await buildCapiEvent({
+    ...c,
+    meta_leadgen_id: leadgen,
+    from_website: false,
+    user_agent: null,
+    value: undefined,
+    currency: undefined,
+    content_category: null,
+  }, jetztSek)
+  if (!ev) return null
+  const user_data = (ev.user_data ?? {}) as Record<string, unknown>
+  user_data.lead_id = leadgen
+  delete user_data.client_user_agent
+  ev.user_data = user_data
+  ev.action_source = 'system_generated'
+  delete ev.event_source_url
+  ev.custom_data = { event_source: 'crm', lead_event_source: CAPI_CRM_LEAD_EVENT_SOURCE }
+  return ev
 }

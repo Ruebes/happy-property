@@ -29,8 +29,11 @@ const ZielgruppenTab = lazyWithReload(() => import('../../../components/crm/werb
 const FormulareTab = lazyWithReload(() => import('../../../components/crm/werbung/FormulareTab'))
 const QualitaetTab = lazyWithReload(() => import('../../../components/crm/werbung/QualitaetTab'))
 const AutopilotTab = lazyWithReload(() => import('../../../components/crm/werbung/AutopilotTab'))
+const TestsTab = lazyWithReload(() => import('../../../components/crm/werbung/TestsTab'))
+const MessungTab = lazyWithReload(() => import('../../../components/crm/werbung/MessungTab'))
+const KommentareTab = lazyWithReload(() => import('../../../components/crm/werbung/KommentareTab'))
 
-const REITER = ['stats', 'kampagnen', 'werbemittel', 'zielgruppen', 'formulare', 'qualitaet', 'autopilot'] as const
+const REITER = ['stats', 'kampagnen', 'werbemittel', 'zielgruppen', 'formulare', 'qualitaet', 'autopilot', 'tests', 'messung', 'kommentare'] as const
 type ReiterId = typeof REITER[number]
 
 const REITER_KOMPONENTE: Record<ReiterId, LazyExoticComponent<ComponentType<object>>> = {
@@ -41,6 +44,9 @@ const REITER_KOMPONENTE: Record<ReiterId, LazyExoticComponent<ComponentType<obje
   formulare: FormulareTab,
   qualitaet: QualitaetTab,
   autopilot: AutopilotTab,
+  tests: TestsTab,
+  messung: MessungTab,
+  kommentare: KommentareTab,
 }
 
 // Reiter, die die Seitendaten zeigen: während fetchAll läuft, steht wie bisher
@@ -175,6 +181,9 @@ function Werbemanager() {
     { id: 'formulare', label: t('crm.werbung.tabs.formulare', 'Sofortformulare') },
     { id: 'qualitaet', label: t('crm.werbung.tabs.qualitaet', 'Qualität') },
     { id: 'autopilot', label: t('crm.werbung.tabs.autopilot', 'Autopilot') },
+    { id: 'tests', label: t('crm.werbung.tabs.tests', 'Tests & Regeln') },
+    { id: 'messung', label: t('crm.werbung.tabs.messung', 'Messung & Konto') },
+    { id: 'kommentare', label: t('crm.werbung.tabs.kommentare', 'Kommentare') },
   ]
 
   return (

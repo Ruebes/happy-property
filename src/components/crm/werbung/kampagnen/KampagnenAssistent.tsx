@@ -7,7 +7,7 @@ import { useToast } from '../../../ui/Toast'
 import { useConfirm } from '../../../ui/ConfirmDialog'
 import { useAuth } from '../../../../lib/auth'
 import {
-  HP_PIXEL_ID, TEMPLATES, hasErrors,
+  HP_DEFAULT_LINK, HP_PIXEL_ID, TEMPLATES, hasErrors,
   type AdDraft, type AdsetDraft, type BuilderSettings, type CatalogResponse, type DraftSpec,
   type EditApplyResponse, type EditDiffResponse, type Level,
 } from '../../../../lib/metaSpec'
@@ -26,6 +26,7 @@ import AenderungenDialog from './AenderungenDialog'
 import DuplizierenDialog from './DuplizierenDialog'
 import { fehlerCode, fehlerText, ladeKatalog, vorgabenAus } from './builderApi'
 import { sperrGrund, type EditZiel } from './bearbeitenTypen'
+import { CTA_STANDARD, zielArtenFuer, zielUmstellen } from './r23Typen'
 import {
   AssistentKontext, anzeigeAngelegt, belegteKeys, gruppeAngelegt, leererEntwurf, neueAnzeige, neueAnzeigengruppe,
   neueKennung, neuerKey, paarPartner, passeAnzeigengruppeAn, useEntwurf, useLeitplanke,
@@ -199,7 +200,11 @@ export default function KampagnenAssistent({ start, einstellungen, onClose, onNe
     e.update(d => {
       const as = d.adsets.find(a => a.key === adsetKey)
       let ad: AdDraft = neueAnzeige(key, adsetKey, entwurfVorgaben, t('crm.werbung.builder.baum.anzeigeName', 'Anzeige {{n}}', { n: d.ads.length + 1 }))
-      if (as?.destination === 'ON_AD') ad = { ...ad, destination: { kind: 'lead_form', form_id: '' }, cta_type: 'SIGN_UP' }
+      // Ziel und Button passend zum Conversion-Ort der Gruppe (Sofortformular, WhatsApp, Anruf, Website + Formular ...)
+      const art = zielArtenFuer(as?.destination)[0]
+      if (art && art !== ad.destination.kind) {
+        ad = { ...ad, destination: zielUmstellen(ad.destination, art, entwurfVorgaben.link || HP_DEFAULT_LINK), cta_type: CTA_STANDARD[art] }
+      }
       return { ...d, ads: [...d.ads, ad] }
     })
     setSel(key)

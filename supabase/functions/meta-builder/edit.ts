@@ -24,9 +24,10 @@ import {
   budgetHeadroom, getLastUsage, graphAll, GRAPH_VERSION, MetaApiError,
 } from '../_shared/metaGraph.ts'
 import {
-  applyHousing, ATTRIBUTION_SPECS, BID_NEEDS_AMOUNT, buildAdPayload, buildCreativePayload, buildTargeting,
+  adConversionDomain, applyHousing, ATTRIBUTION_SPECS, BID_NEEDS_AMOUNT, buildAdPayload, buildCreativePayload, buildTargeting,
+  buildTrackingSpecs,
   cleanName, EDIT_TARGETING_KEYS, editDiff, editFieldValue, editLocks, editSame, effectiveBidStrategy, isHec,
-  LIMITS, META_UNBEGRENZT, neueBudgetZeitraeume, promotedAllowed, promotedRuleFor, SPECIAL_AD_CATEGORIES,
+  LIMITS, META_UNBEGRENZT, neueBudgetZeitraeume, normalizeTelefon, promotedAllowed, promotedRuleFor, SPECIAL_AD_CATEGORIES,
   targetingRest, unixSekunden, validateDraft, validateEditFields,
   type AdDraft, type AdsetDraft, type BudgetScheduleSpec, type BuilderLintIssue, type CampaignDraft,
   type CreativeTausch, type DraftIssue, type DraftSpec, type EditableStatus, type EditApplyRequest,
@@ -36,7 +37,7 @@ import {
 } from '../_shared/metaSpec.ts'
 import { lintDraft, type LintMediaInfo } from '../_shared/metaLint.ts'
 import {
-  adMediaRefs, arr, BuilderError, clone, digits, errText, fillAdMedia, forbiddenNames, fromMetaError, isUuid,
+  adMediaRefs, arr, BuilderError, clone, digits, eigeneVorschaubilder, errText, fillAdMedia, forbiddenNames, fromMetaError, isUuid,
   leaseActive, LEASE_MS, loadDraft, loadMediaRows, metaId, metaPost, nowIso, num, obj, specOf, str, uniq,
   type Ctx, type DraftRow, type MediaIds, type Raw,
 } from './common.ts'
@@ -485,7 +486,10 @@ export function targetingZusammenfuehren(liveT: Raw, s: AdsetDraft, sc: Campaign
 }
 
 /** Felder des Werbemittels einer Anzeige (ein Tausch geht immer als Ganzes). */
-const WERBEMITTEL_KEYS = ['format', 'identity', 'primary_texts', 'headlines', 'descriptions', 'cta_type', 'destination', 'media', 'creative_features', 'multi_advertiser'] as const
+const WERBEMITTEL_KEYS = [
+  'format', 'identity', 'primary_texts', 'headlines', 'descriptions', 'cta_type', 'destination', 'media', 'creative_features',
+  'multi_advertiser', 'beitrag', 'karussell', 'sprachen', 'partnerschaft',
+] as const
 
 /**
  * Schreibt den gewünschten Wert einer Änderung (aus wunsch) in ziel (frischer Stand von Meta),
@@ -502,6 +506,8 @@ export function wunschUebernehmen(ziel: DraftSpec, wunsch: DraftSpec, c: EditCha
   if (!z || !w || c.field === 'campaign.pacing_type') return false
   const setze = (o: Raw, k: string, v: unknown) => { if (v === undefined) delete o[k]; else o[k] = clone(v) }
   if (c.creative) { for (const k of WERBEMITTEL_KEYS) setze(z, k, w[k]); return true }
+  // Tracking: übernommene Meta-Specs und die Formular-Angaben (weitere Pixel, Lead-Qualität) gehören zusammen
+  if (c.field === 'ad.tracking_specs') { setze(z, 'tracking_specs', w.tracking_specs); setze(z, 'tracking', w.tracking); return true }
   const pfad = c.field.slice(c.level.length + 1)
   if (c.field === 'adset.targeting' || pfad.indexOf('targeting.') === 0) {
     const zt = obj(z.targeting), wt = obj(w.targeting)
@@ -611,13 +617,6 @@ export function naechsterAnzeigenName(name: string): string {
   const v = /-v(\d+)$/.exec(basis)
   const neu = v ? `${basis.slice(0, basis.length - v[0].length)}-v${Number(v[1]) + 1}` : `${basis}-v2`
   return cleanName(`${neu}${suffix}`)
-}
-
-const domainOf = (url: string): string | undefined => {
-  const m = /^https?:\/\/([^/?#:]+)/i.exec((url ?? '').trim())
-  if (!m) return undefined
-  const parts = m[1].toLowerCase().replace(/^www\./, '').split('.')
-  return parts.length > 2 ? parts.slice(parts.length - 2).join('.') : parts.join('.')
 }
 
 async function planEdit(ctx: Ctx, draft: DraftRow): Promise<EditPlan> {
@@ -782,7 +781,10 @@ async function planEdit(ctx: Ctx, draft: DraftRow): Promise<EditPlan> {
           const rule = promotedRuleFor(sc.objective, s.destination, s.optimization_goal)
           if (rule && !(rule.anyOf.length === 1 && rule.anyOf[0].length === 0)) {
             const po: Raw = { ...obj(live0?.promoted_object) }
-            for (const k of promotedAllowed(rule)) { const v = (s.promoted_object as Raw)[k]; if (v !== undefined && v !== null && v !== '') po[k] = v }
+            for (const k of promotedAllowed(rule)) {
+              const v = (s.promoted_object as Raw)[k]
+              if (v !== undefined && v !== null && v !== '') po[k] = k === 'whatsapp_phone_number' ? normalizeTelefon(String(v)) : v
+            }
             body.promoted_object = po
           }
           used.push(c)
@@ -945,6 +947,7 @@ async function planEdit(ctx: Ctx, draft: DraftRow): Promise<EditPlan> {
     const statusCh = list.find(c => c.field === 'ad.status')
     const nameCh = list.find(c => c.field === 'ad.name')
     const trackCh = list.find(c => c.field === 'ad.tracking_specs')
+    const domainCh = list.find(c => c.field === 'ad.tracking.conversion_domain')
     // Immer die Anzeigengruppe bei Meta (Verschieben geht nicht; editDiff sperrt verschobene Anzeigen)
     const adsetId = str(live0?.adset_id) || str(baseline.adsets.find(a => a.key === b?.adset_key)?.existing_id)
     const set = spec.adsets.find(a => !!adsetId && a.existing_id === adsetId)
@@ -959,18 +962,20 @@ async function planEdit(ctx: Ctx, draft: DraftRow): Promise<EditPlan> {
         // Name, Tracking und Status gehen an die neue Anzeige; die alte endet pausiert
         if (nameCh) changes.push(nameCh)
         if (trackCh) changes.push(trackCh)
+        if (domainCh) changes.push(domainCh)
         if (statusCh) changes.push(statusCh)
       } else {
         if (nameCh) changes.push(nameCh)
         if (trackCh) changes.push(trackCh)
+        if (domainCh) changes.push(domainCh)
       }
       const name = tausch === 'neue_anzeige'
         ? (nameCh ? cleanName(str(nameCh.after)) : naechsterAnzeigenName(b?.name || s.name))
         : cleanName(s.name)
       op('creative', 'ad', s.existing_id, s.key, {}, changes, beforeOf(live0, ['name', 'status', 'creative', 'tracking_specs']), {
         ad: s, adsetId, placements: set?.placements, tausch, endStatus, altStatus, name,
-        ...(s.tracking_specs ? { tracking: s.tracking_specs } : {}),
-        ...(s.destination?.kind === 'website' && domainOf(s.destination.url) ? { conversionDomain: domainOf(s.destination.url) } : {}),
+        ...(buildTrackingSpecs(s).length ? { tracking: buildTrackingSpecs(s) } : {}),
+        ...(adConversionDomain(s) ? { conversionDomain: adConversionDomain(s) as string } : {}),
       })
       if (tausch === 'ersetzen' && statusCh) statusOps('ad', s.existing_id, s.key, [statusCh], live0)
       continue
@@ -978,7 +983,12 @@ async function planEdit(ctx: Ctx, draft: DraftRow): Promise<EditPlan> {
     const body: Raw = {}
     const used: EditChange[] = []
     if (nameCh) { body.name = cleanName(str(nameCh.after)); used.push(nameCh) }
-    if (trackCh) { body.tracking_specs = s.tracking_specs ?? []; used.push(trackCh) }
+    if (trackCh) { body.tracking_specs = buildTrackingSpecs(s); used.push(trackCh) }
+    if (domainCh) {
+      const dom = adConversionDomain(s)
+      if (dom) { body.conversion_domain = dom; used.push(domainCh) }
+      else { domainCh.blocked = 'Ohne Website-URL und ohne eigene Angabe gibt es keine Conversion-Domain.'; domainCh.learning_reset = false }
+    }
     if (Object.keys(body).length) op('patch', 'ad', s.existing_id, s.key, body, used, beforeOf(live0, Object.keys(body)))
     statusOps('ad', s.existing_id, s.key, list, live0)
   }
@@ -1228,11 +1238,13 @@ async function werbemittelTauschen(
   const ids = adMediaRefs(c.ad).map(r => r.media_id).filter(isUuid)
   const rows = await loadMediaRows(ctx.sb, ids)
   const extra: Record<string, MediaIds> = {}
+  const eigeneThumbs = eigeneVorschaubilder([c.ad])
   for (const mid of ids) {
     const row = rows[mid]
-    const fertig = row && ((row.kind === 'image' && !!row.meta_image_hash) || (row.kind === 'video' && !!row.meta_video_id && row.meta_status === 'ready' && !!row.thumbnail_hash))
+    const fertig = row && ((row.kind === 'image' && !!row.meta_image_hash) ||
+      (row.kind === 'video' && !!row.meta_video_id && row.meta_status === 'ready' && (!!row.thumbnail_hash || eigeneThumbs.has(mid))))
     if (fertig) continue
-    const r = await ensureMediaReady(ctx, mid, draft.id)
+    const r = await ensureMediaReady(ctx, mid, draft.id, eigeneThumbs.has(mid))
     rows[mid] = r.row
     if (!r.ready) {
       return { aktiv: false, fehler: r.reason === 'error' ? 'Meta konnte ein Video nicht verarbeiten. Bitte neu exportieren (H.264, MP4) und hochladen.' : 'Ein Video wird bei Meta noch verarbeitet. In ein bis zwei Minuten erneut „Übernehmen“.' }

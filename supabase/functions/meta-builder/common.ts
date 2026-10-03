@@ -384,12 +384,46 @@ export async function forbiddenNames(sb: SupabaseClient): Promise<string[]> {
 
 // ── Medien-Referenzen ────────────────────────────────────────────────────────
 
+/**
+ * Alle Medien einer Anzeige (Plätze, Karten) plus eigene Video-Vorschaubilder
+ * (thumbnail_media_id als eigene Bild-Referenz, damit sie geladen und hochgeladen werden).
+ * Vorhandener Beitrag: keine Medien.
+ */
 export function adMediaRefs(ad: AdDraft): MediaRef[] {
+  if (ad.beitrag) return []
   const m = ad.media ?? {}
   const out: MediaRef[] = []
-  for (const r of [m.feed_4x5, m.story_9x16, m.square_1x1]) if (r && r.media_id) out.push(r)
-  for (const cd of m.cards ?? []) if (cd?.media?.media_id) out.push(cd.media)
+  const add = (r: MediaRef | undefined) => {
+    if (!r || !r.media_id) return
+    out.push(r)
+    if (r.thumbnail_media_id && isUuid(r.thumbnail_media_id)) out.push({ media_id: r.thumbnail_media_id })
+  }
+  for (const r of [m.feed_4x5, m.story_9x16, m.square_1x1, m.landscape_191x1]) add(r)
+  for (const cd of m.cards ?? []) add(cd?.media)
   return out
+}
+
+/** Video-Referenz mit eigenem Vorschaubild (hochgeladenes Bild oder bewusst gewählter Meta-Vorschlag)? */
+export const hatEigenesVorschaubild = (r: MediaRef | undefined): boolean =>
+  !!r && ((!!r.thumbnail_media_id && isUuid(r.thumbnail_media_id)) || (r.thumbnail_quelle === 'meta_liste' && !!r.thumbnail_hash))
+
+/**
+ * Medien-IDs, deren Video in ALLEN Verwendungen dieser Anzeigen ein eigenes Vorschaubild hat:
+ * dafür muss Metas Standard-Vorschaubild nicht abgewartet werden.
+ */
+export function eigeneVorschaubilder(ads: AdDraft[]): Set<string> {
+  const ja = new Set<string>(), nein = new Set<string>()
+  for (const ad of ads) {
+    if (ad.beitrag) continue
+    const m = ad.media ?? {}
+    for (const r of [m.feed_4x5, m.story_9x16, m.square_1x1, m.landscape_191x1, ...(m.cards ?? []).map(cd => cd?.media)]) {
+      if (!r || !r.media_id) continue
+      if (hatEigenesVorschaubild(r)) ja.add(r.media_id)
+      else nein.add(r.media_id)
+    }
+  }
+  nein.forEach(id => ja.delete(id))
+  return ja
 }
 
 export async function loadMediaRows(sb: SupabaseClient, ids: string[]): Promise<Record<string, MetaMediaRow>> {
@@ -404,7 +438,11 @@ export async function loadMediaRows(sb: SupabaseClient, ids: string[]): Promise<
 
 export interface MediaIds { image_hash?: string; video_id?: string; thumbnail_hash?: string }
 
-/** Trägt Hash/Video-ID in eine Medien-Referenz ein (meta_media bzw. meta_ids.media gewinnen). */
+/**
+ * Trägt Hash/Video-ID in eine Medien-Referenz ein (meta_media bzw. meta_ids.media gewinnen).
+ * Video-Vorschaubild: eigenes Bild (thumbnail_media_id) vor bewusst gewähltem Meta-Vorschlag
+ * (thumbnail_quelle 'meta_liste', Hash bleibt) vor Metas Standardbild aus meta_media.
+ */
 export function fillRef(ref: MediaRef, rows: Record<string, MetaMediaRow>, extra: Record<string, MediaIds> = {}): MediaRef {
   const out: MediaRef = { ...ref }
   const row = rows[ref.media_id]
@@ -414,7 +452,10 @@ export function fillRef(ref: MediaRef, rows: Record<string, MetaMediaRow>, extra
   const thumb = row?.thumbnail_hash || ex?.thumbnail_hash
   if (img) out.image_hash = img
   if (vid) out.video_id = vid
-  if (thumb) out.thumbnail_hash = thumb
+  const eigenes = ref.thumbnail_media_id ? (rows[ref.thumbnail_media_id]?.meta_image_hash || extra[ref.thumbnail_media_id]?.image_hash) : undefined
+  if (eigenes) out.thumbnail_hash = eigenes
+  else if (ref.thumbnail_quelle === 'meta_liste' && ref.thumbnail_hash) out.thumbnail_hash = ref.thumbnail_hash
+  else if (thumb) out.thumbnail_hash = thumb
   return out
 }
 
@@ -424,6 +465,7 @@ export function fillAdMedia(ad: AdDraft, rows: Record<string, MetaMediaRow>, ext
   if (m.feed_4x5?.media_id) m.feed_4x5 = fillRef(m.feed_4x5, rows, extra)
   if (m.story_9x16?.media_id) m.story_9x16 = fillRef(m.story_9x16, rows, extra)
   if (m.square_1x1?.media_id) m.square_1x1 = fillRef(m.square_1x1, rows, extra)
+  if (m.landscape_191x1?.media_id) m.landscape_191x1 = fillRef(m.landscape_191x1, rows, extra)
   if (m.cards) m.cards = m.cards.map(cd => (cd?.media?.media_id ? { ...cd, media: fillRef(cd.media, rows, extra) } : cd))
   a.media = m
   return a

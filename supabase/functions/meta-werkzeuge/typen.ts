@@ -1,7 +1,8 @@
 // IDENTISCH zu supabase/functions/meta-werkzeuge/typen.ts (bzw. src/lib/werbeWerkzeuge.ts). Änderungen immer in beiden Dateien.
 //
 // Anfrage- und Antworttypen der Edge Function meta-werkzeuge (Werbemanager:
-// Zielgruppen, Sofortformulare, benutzerdefinierte Conversions, Pixel-Diagnose).
+// Zielgruppen, Sofortformulare, benutzerdefinierte Conversions, Pixel-Diagnose mit
+// Datensatz-Gesundheit und Statistik der CRM-Ereignisse inkl. Conversion-Leads-Stufen).
 // Reine Typen und Konstanten, keine Imports: die Datei wird byte-gleich im
 // Frontend (src/lib) und in der Edge Function benutzt.
 //
@@ -413,19 +414,43 @@ export interface CustomConversionZeile {
   kategorie: string | null
   pixel_id: string | null
   regel_zusammenfassung: string
+  /** Pixel-Ereignis aus der Regel (event eq ...), null = reine URL-Regel oder nicht lesbar */
+  ereignis: string | null
+  /** Standardwert je Conversion in Kontowährung (default_conversion_value), null = keiner */
+  standardwert: number | null
   letzte_aktivitaet: string | null
   archiviert: boolean
   nicht_verfuegbar: boolean
   erstellt: string | null
 }
+/** HP-Vorschlag für eine eigene Conversion (nur angezeigt, wenn es noch keine mit diesem Ereignis gibt) */
+export interface CustomConversionVorschlag {
+  name: string
+  ereignis: string
+  kategorie: CustomEventType
+  /** ein Satz in einfachem Deutsch */
+  erklaerung: string
+}
+export const CUSTOM_CONVERSION_VORSCHLAEGE: readonly CustomConversionVorschlag[] = [
+  { name: 'HP Termin gebucht', ereignis: 'Schedule', kategorie: 'SCHEDULE', erklaerung: 'Zählt jeden gebuchten Beratungstermin (Website und CRM). Gutes Optimierungsziel für Website-Kampagnen.' },
+  { name: 'HP Qualifizierter Lead', ereignis: 'QualifiedLead', kategorie: 'LEAD', erklaerung: 'Zählt Leads, die im CRM einen Daumen hoch bekommen haben. Kommt nur über die Conversions API.' },
+  { name: 'HP Termin stattgefunden', ereignis: 'AppointmentHeld', kategorie: 'OTHER', erklaerung: 'Zählt Termine, die wirklich stattgefunden haben. Kommt nur über die Conversions API.' },
+]
 export interface CustomConversionsListRequest { mit_archivierten?: boolean }
-export interface CustomConversionsListResponse { items: CustomConversionZeile[]; anzahl_aktiv: number; max: number; warnings: string[] }
+export interface CustomConversionsListResponse {
+  items: CustomConversionZeile[]
+  anzahl_aktiv: number
+  max: number
+  /** CUSTOM_CONVERSION_VORSCHLAEGE ohne die, deren Ereignis schon eine aktive Conversion hat */
+  vorschlaege: CustomConversionVorschlag[]
+  warnings: string[]
+}
 
 export interface CustomConversionCreateRequest {
   name: string
   /** Standard: ad_settings.default_pixel_id */
   pixel_id?: string
-  /** Pixel-Ereignis (z. B. Lead, Schedule, QualifiedLead); mindestens ereignis ODER url_regeln */
+  /** Pixel-Ereignis (z. B. Lead, Schedule, QualifiedLead) oder CRM-Stufe; mindestens ereignis ODER url_regeln */
   ereignis?: string
   /** Alias für ereignis (Vertrag SPEC2: event); ereignis hat Vorrang */
   event?: string
@@ -439,15 +464,167 @@ export interface CustomConversionCreateRequest {
 }
 export interface CustomConversionCreateResponse extends WerkzeugSchreibBasis { conversion_id: string | null }
 
-// ── Pixel-Diagnose ──────────────────────────────────────────────────────────
+// ── Conversions API: Ereignisse aus dem CRM ─────────────────────────────────
+// Das CRM meldet Ereignisse über die Conversions API (capi_outbox -> werbe-signal,
+// Tageslauf meta-ads-sync als Nachhol-Netz). Zwei Arten:
+//   standard   Schedule, AppointmentHeld, QualifiedLead, Purchase, Lead (Website)
+//   crm_stufe  Conversion-Leads-Stufen für Sofortformular-Leads (event_id crm-<leadgen_id>-<stufe>,
+//              action_source system_generated, custom_data.event_source 'crm',
+//              custom_data.lead_event_source CRM_LEAD_EVENT_SOURCE, user_data.lead_id = Meta-Lead-ID).
+//              Nur bei ad_settings.capi_echtzeit = true (Migration 20261005100000_werbe_paritaet_r2.sql);
+//              bei Echtzeit aus nur für interne Kontakte eingereiht (Testereignis), gesendet wird nichts.
+//              Die Einstiegsstufe heißt „Lead aus Sofortformular“, nicht „Lead“ (Standard-Ereignis
+//              im selben Pixel, sonst zählt Meta Sofortformular-Leads doppelt).
+// Meta braucht das für das Performance-Ziel „Anzahl qualifizierter Leads maximieren“ (früher
+// Conversion-Leads): seit April 2026 nur noch mit Conversions API für CRM.
 
-export interface PixelDiagnoseRequest { pixel_id?: string }
+export type CapiEreignisArt = 'standard' | 'crm_stufe'
+
+/** Conversion-Leads-Stufen in Funnel-Reihenfolge. GLEICH zu CRM_STUFEN in werbeCapi.ts (Edge, gemeinsame Module) und werbe_capi_crm_stufe (SQL). */
+export const CRM_STUFEN = [
+  { key: 'lead', ereignis: 'Lead aus Sofortformular', label: 'Lead', erklaerung: 'Ein Lead aus dem Sofortformular ist im CRM angekommen. Das ist die Einstiegsstufe, Meta braucht sie immer.' },
+  { key: 'termin_gebucht', ereignis: 'Termin gebucht', label: 'Termin gebucht', erklaerung: 'Der Lead hat einen Beratungstermin gebucht.' },
+  { key: 'termin_stattgefunden', ereignis: 'Termin stattgefunden', label: 'Termin stattgefunden', erklaerung: 'Der Beratungstermin hat wirklich stattgefunden.' },
+  { key: 'qualifiziert', ereignis: 'Qualifiziert', label: 'Qualifiziert', erklaerung: 'Der Lead hat im CRM einen Daumen hoch bekommen.' },
+  { key: 'kunde', ereignis: 'Kunde', label: 'Kunde', erklaerung: 'Anzahlung geleistet oder Provision erhalten.' },
+] as const
+export type CrmStufeKey = typeof CRM_STUFEN[number]['key']
+/** custom_data.lead_event_source der CRM-Stufen */
+export const CRM_LEAD_EVENT_SOURCE = 'Happy Property CRM'
+/** Metas Empfehlung für „Anzahl qualifizierter Leads maximieren“: rund 200 Sofortformular-Leads im Monat */
+export const CRM_LEADS_EMPFEHLUNG_MONAT = 200
+/** So richtet man die Stufen bei Meta ein (Events Manager), in einfachem Deutsch */
+export const CRM_STUFEN_ANLEITUNG: readonly string[] = [
+  'Echtzeit-Versand einschalten (Werbe-Einstellungen, nur Admin). Erst dann meldet das CRM die Stufen an Meta.',
+  'Etwa 7 Tage warten: Meta prüft die eingehenden Stufen im Events Manager.',
+  'Im Events Manager beim Datensatz unter CRM-Integration den Funnel einrichten: Stufen in dieser Reihenfolge, Zielstufe „Qualifiziert“ oder „Termin stattgefunden“.',
+  'Danach in der Anzeigengruppe (Sofortformular) das Performance-Ziel „Anzahl qualifizierter Leads maximieren“ wählen. Meta lernt dann 1 bis 2 Monate.',
+]
+
+/** Deutsche Bezeichnung der Standard-Ereignisse (Pixel und Conversions API) */
+export const CAPI_EREIGNIS_LABEL: Readonly<Record<string, string>> = {
+  Lead: 'Lead', Schedule: 'Termin gebucht', AppointmentHeld: 'Termin stattgefunden', QualifiedLead: 'Qualifizierter Lead (Daumen hoch)',
+  Purchase: 'Abschluss', PageView: 'Seitenaufruf', ViewContent: 'Inhalt angesehen', CompleteRegistration: 'Registrierung abgeschlossen',
+  Contact: 'Kontakt', SubmitApplication: 'Bewerbung eingereicht',
+}
+/** Standard-Ereignisse, die das CRM über die Conversions API meldet (immer in der Statistik, auch mit 0) */
+export const CAPI_STANDARD_EREIGNISSE = ['Lead', 'Schedule', 'AppointmentHeld', 'QualifiedLead', 'Purchase'] as const
+
+/** Warum ein Ausgang-Ereignis nicht gesendet wurde (capi_outbox.grund) */
+export const CAPI_GRUND_LABEL: Readonly<Record<string, string>> = {
+  zu_alt: 'Älter als 7 Tage, Meta nimmt es nicht mehr an',
+  bereits_gesendet: 'Schon gesendet (z. B. vom Tageslauf)',
+  ohne_lead: 'Ohne Lead',
+  lead_fehlt: 'Lead nicht mehr vorhanden',
+  kein_meta_lead: 'Kein Lead aus Meta-Werbung',
+  keine_merkmale: 'Ohne E-Mail, Telefon oder Meta-Lead-ID',
+  ohne_leadgen_id: 'Ohne Meta-Lead-ID (nur Sofortformular-Leads)',
+  echtzeit_aus: 'Echtzeit-Versand war aus',
+  test: 'Als Testereignis gesendet (interner Kontakt)',
+  rueckbau: 'Beim Rückbau der Conversion-Leads-Stufen angehalten',
+}
+
+export interface CapiEreignisStatistik {
+  /** event_name bei Meta (Standard-Ereignis oder CRM-Stufe) */
+  ereignis: string
+  label: string
+  art: CapiEreignisArt
+  /** an Meta gesendet (capi_log, inkl. Tageslauf) */
+  gesendet_7d: number
+  gesendet_30d: number
+  zuletzt_gesendet: string | null
+  /** wartet im Ausgang (capi_outbox status offen, letzte 30 Tage) */
+  offen: number
+  fehler_30d: number
+  uebersprungen_30d: number
+  /** als Testereignis gesendet (interne Kontakte, zählt nicht als gesendet) */
+  test_30d: number
+  /** Gründe fürs Überspringen (30 Tage), häufigste zuerst */
+  gruende: Array<{ grund: string; label: string; anzahl: number }>
+}
+export interface CrmStufeStatus extends CapiEreignisStatistik {
+  key: CrmStufeKey
+  erklaerung: string
+  /** 1 = Einstiegsstufe */
+  reihenfolge: number
+}
+/** Ausgang-Ereignis eines internen Kontakts (Sven, Verwaltung, Mitarbeitende), das als Test gesendet werden darf */
+export interface CapiTestKandidat {
+  event_id: string
+  ereignis: string
+  label: string
+  art: CapiEreignisArt
+  erstellt: string
+  status: string
+}
+export interface PixelDiagnoseCrm {
+  /** false: capi_outbox fehlt (Migration 20261003112000 nicht eingespielt), Zahlen leer */
+  verfuegbar: boolean
+  /** ad_settings.capi_echtzeit; Pflicht für die Conversion-Leads-Stufen. null = nicht lesbar */
+  echtzeit: boolean | null
+  /** ad_settings.capi_test_event_code gesetzt (Wert wird nie ausgeliefert) */
+  test_code_gesetzt: boolean | null
+  /** Datensatz (Pixel-ID), an den die CRM-Stufen gehen */
+  crm_datensatz_id: string
+  lead_event_source: string
+  /** Standard-Ereignisse (immer alle aus CAPI_STANDARD_EREIGNISSE) + weitere, die im Log vorkommen */
+  ereignisse: CapiEreignisStatistik[]
+  /** alle CRM_STUFEN in Funnel-Reihenfolge */
+  stufen: CrmStufeStatus[]
+  /** Sofortformular-Leads mit Meta-Lead-ID in den letzten 30 Tagen; null = nicht lesbar */
+  leadgen_leads_30d: number | null
+  leadgen_empfehlung_monat: number
+  /** nur mit test_kandidaten: true angefragt, sonst leer; höchstens 10 */
+  test_kandidaten: CapiTestKandidat[]
+  /** true: mehr als 5.000 Zeilen in 30 Tagen, Zahlen unvollständig */
+  abgeschnitten: boolean
+  hinweise: string[]
+}
+
+// ── Pixel-Diagnose (Datensatz-Gesundheit) ───────────────────────────────────
+
+export interface PixelDiagnoseRequest {
+  pixel_id?: string
+  /** Standard true: Statistik der CRM-Ereignisse (capi_log, capi_outbox) mitliefern; liest nur die eigene DB */
+  crm?: boolean
+  /**
+   * Standard false: bis zu 10 Ausgang-Ereignisse interner Kontakte (letzte 7 Tage, noch nicht gesendet)
+   * für den Knopf „Testereignis senden“. Der Test selbst läuft über werbe-signal
+   * { aktion: 'test', event_id, test_event_code } (nur Admin, nur interne Kontakte).
+   */
+  test_kandidaten?: boolean
+}
 export interface PixelEmq {
   ereignis: string
   /** Event Match Quality 0 bis 10 */
   score: number | null
   merkmale: Array<{ merkmal: string; abdeckung_pct: number | null }>
   diagnosen: Array<{ name: string; beschreibung: string | null; loesung: string | null; anteil_pct: number | null }>
+}
+export type DiagnoseAmpel = 'gruen' | 'gelb' | 'rot' | 'grau'
+/** Ein Ereignis des Datensatzes: Empfang (Pixel-Statistik) + Qualität (Dataset Quality API) */
+export interface PixelEreignisStatus {
+  ereignis: string
+  /** deutsche Bezeichnung, sonst der Meta-Name */
+  label: string
+  /** empfangen in 24 Stunden / 7 Tagen (Browser und Server zusammen); null = Statistik nicht lesbar */
+  anzahl_24h: number | null
+  anzahl_7d: number | null
+  /** Beginn der letzten Stunde mit Empfang (Meta zählt stundenweise, Blick 7 Tage zurück) */
+  zuletzt_empfangen: string | null
+  /** Event Match Quality 0 bis 10 */
+  emq: number | null
+  /** Datenfrische laut Meta (z. B. REAL_TIME, HOURLY, DAILY), null = keine Angabe */
+  datenfrische: string | null
+  /** Ereignis-Abdeckung der Conversions API gegenüber dem Pixel in Prozent */
+  abdeckung_pct: number | null
+  /** zusätzlich gemeldete Conversions durch die Conversions API in Prozent (ACR) */
+  zusaetzliche_conversions_pct: number | null
+  /** möglicher Zuwachs in Prozent bei besseren Merkmalen */
+  potenzial_pct: number | null
+  ampel: DiagnoseAmpel
+  /** ein Satz, was zu tun ist (oder warum grau) */
+  hinweis: string | null
 }
 export interface PixelDiagnoseResponse {
   id: string
@@ -462,8 +639,16 @@ export interface PixelDiagnoseResponse {
   ereignisse_24h: Array<{ ereignis: string; anzahl: number }>
   /** Datensatzqualität (Dataset Quality API), leer wenn Meta nichts liefert */
   emq: PixelEmq[]
+  /** je Ereignis: Empfang 24 h / 7 Tage, zuletzt empfangen, EMQ, Datenfrische, Ampel */
+  ereignisse: PixelEreignisStatus[]
+  /** Meta-Teil nicht lesbar (Token, Rechte, Auslastung): kurzer Text, sonst null. CRM-Zahlen kommen trotzdem. */
+  meta_fehler: string | null
   ampel: 'gruen' | 'gelb' | 'rot'
   hinweise: string[]
+  /** CRM-Ereignisse (capi_log, capi_outbox); null bei crm: false */
+  crm: PixelDiagnoseCrm | null
+  /** Zeitpunkt der Diagnose (ISO) */
+  stand: string
   warnings: string[]
 }
 

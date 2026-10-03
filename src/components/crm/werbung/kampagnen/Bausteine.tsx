@@ -128,9 +128,11 @@ export function FeldRahmen({ node, feld, auch, label, hilfe, sperre, empfehlung,
   )
 }
 
-export function TextFeld({ value, onChange, maxLen, zaehler, mehrzeilig, placeholder, ...b }: Basis & {
+export function TextFeld({ value, onChange, onBlur, maxLen, zaehler, mehrzeilig, placeholder, ...b }: Basis & {
   value: string
   onChange: (v: string) => void
+  /** beim Verlassen des Felds (z. B. Telefonnummer vereinheitlichen) */
+  onBlur?: () => void
   maxLen?: number
   /** Zähler „n / zaehler" (HP-Grenze, z. B. Überschrift 40) */
   zaehler?: number
@@ -143,10 +145,10 @@ export function TextFeld({ value, onChange, maxLen, zaehler, mehrzeilig, placeho
     <FeldRahmen {...b}>
       {mehrzeilig ? (
         <textarea value={value} disabled={aus} maxLength={maxLen} placeholder={placeholder} rows={4} aria-label={b.label}
-          onChange={e => onChange(e.target.value)} className={`${INPUT_CLS} resize-y`} />
+          onChange={e => onChange(e.target.value)} onBlur={onBlur} className={`${INPUT_CLS} resize-y`} />
       ) : (
         <input value={value} disabled={aus} maxLength={maxLen} placeholder={placeholder} aria-label={b.label}
-          onChange={e => onChange(e.target.value)} className={INPUT_CLS} />
+          onChange={e => onChange(e.target.value)} onBlur={onBlur} className={INPUT_CLS} />
       )}
       {zaehler !== undefined && (
         <span className={`mt-0.5 block text-right text-[10px] tabular-nums ${zu ? 'font-semibold text-red-600' : 'text-gray-400'}`}>

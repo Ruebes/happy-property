@@ -15,18 +15,19 @@ import {
 } from '../_shared/metaGraph.ts'
 import {
   adByKey, adsetByKey, applyHousing, buildAdPayload, buildAdsetPayload, buildCampaignPayload, buildCreativePayload,
-  cleanName, effectiveAdvantageAudience, HEC_CATEGORIES, hasErrors, isHec, isRealEstateDraft, LIMITS, PREVIEW_FORMATS,
-  SPECIAL_AD_CATEGORIES, targetsEu, validateDraft, type DuplicateZiel, type SpecialCat,
+  adKindsFor, cleanName, effectiveAdvantageAudience, HEC_CATEGORIES, hasErrors, hatSprachen, isHec, isRealEstateDraft, LIMITS, PREVIEW_FORMATS,
+  PREVIEW_ALLE_FORMATS, previewFormatsFor, promotedRuleFor, SPRACH_LABEL_PREFIX, SPECIAL_AD_CATEGORIES, targetsEu,
+  validateDraft, type AdDestinationKind, type DuplicateZiel, type PreviewAlleRequest, type PreviewAlleResponse, type SpecialCat,
   type ActivateDraftRequest, type ActivateDraftResponse, type AdDraft, type AdsetDraft, type BuilderErrorBody,
   type CampaignDraft, type CreateRequest, type CreateResponse, type CreativeBuild, type DiscardRequest,
   type DiscardResponse, type DraftIssue, type DraftLastError, type DraftMetaIds, type DraftSpec, type DraftStatus,
   type DuplicateRequest, type DuplicateResponse, type GuardrailInfo, type Level, type MetaLevelResult,
-  type MetaMediaRow, type PreviewFormat, type PreviewRequest, type PreviewResponse, type ValidateRequest,
+  type MediaRef, type MetaMediaRow, type Placements, type PreviewFormat, type PreviewRequest, type PreviewResponse, type ValidateRequest,
   type ValidateResponse,
 } from '../_shared/metaSpec.ts'
 import { DASH_CHARS, lintDraft, type LintContext, type LintIssue, type LintMediaInfo } from '../_shared/metaLint.ts'
 import {
-  adMediaRefs, APP_DEV_MODE_HINT, arr, BuilderError, digits, errText, fillAdMedia, forbiddenNames, fromMetaError,
+  adMediaRefs, APP_DEV_MODE_HINT, arr, BuilderError, digits, eigeneVorschaubilder, errText, fillAdMedia, forbiddenNames, fromMetaError,
   guardrailInfo, hashSpec, isUuid, issuesFromError, leaseActive, LEASE_MS, loadDraft, loadMediaRows, metaHint,
   metaId, metaPost, nowIso, num, obj, sha256Hex, specOf, stableStringify, str, uniq, VALIDATION_MAX_AGE_MS,
   type Ctx, type DraftRow, type MediaIds, type Raw, type StoredValidation,
@@ -94,6 +95,15 @@ async function fillDefaults(ctx: Ctx, spec: DraftSpec): Promise<void> {
         try { ig = (await pageInstagram(page))?.id ?? null } catch { ig = null }
       }
       if (ig) ad.identity.instagram_user_id = ig
+    }
+  }
+  // Seite im promoted_object (WhatsApp, Anrufe, Messenger, Sofortformular): Standard-Seite, wenn leer
+  for (const a of spec.adsets) {
+    if (a.existing_id) continue
+    const rule = promotedRuleFor(spec.campaign.objective, a.destination, a.optimization_goal)
+    if (rule && rule.anyOf.length === 1 && rule.anyOf[0].indexOf('page_id') >= 0) {
+      if (!a.promoted_object || typeof a.promoted_object !== 'object') a.promoted_object = {}
+      if (!str(a.promoted_object.page_id).trim()) a.promoted_object.page_id = page
     }
   }
   // Advantage+ Zielgruppe immer ausdrücklich (fehlt = 1, so wie buildTargeting sendet)
@@ -222,7 +232,16 @@ async function findProxyCampaign(ctx: Ctx, c: CampaignDraft): Promise<string | n
   return ok[0]?.id ?? null
 }
 
-async function findProxyAdset(ctx: Ctx, campaignId: string, wantLeadForm: boolean): Promise<string | null> {
+/** Conversion-Orte bei Meta, deren Anzeigengruppen Anzeigen dieser Ziel-Art annehmen ('' = alt, ohne Angabe). */
+function proxyDestinations(kind: AdDestinationKind): string[] {
+  const out: string[] = kind === 'website' ? [''] : []
+  for (const d of ['WEBSITE', 'UNDEFINED', 'WEBSITE_AND_PHONE_CALL', 'ON_AD', 'WEBSITE_AND_LEAD_FORM', 'WHATSAPP', 'PHONE_CALL', 'MESSENGER'] as const) {
+    if (adKindsFor(d).indexOf(kind) >= 0) out.push(d)
+  }
+  return out
+}
+
+async function findProxyAdset(ctx: Ctx, campaignId: string, kind: AdDestinationKind): Promise<string | null> {
   let rows: Array<{ id: string; dest: string; status: string }> = []
   const { data, error } = await ctx.sb.from('meta_adsets').select('adset_id, destination_type, effective_status').eq('campaign_id', campaignId).limit(50)
   if (!error) rows = arr<Raw>(data).map(r => ({ id: str(r.adset_id), dest: str(r.destination_type), status: str(r.effective_status) }))
@@ -232,8 +251,8 @@ async function findProxyAdset(ctx: Ctx, campaignId: string, wantLeadForm: boolea
       rows = list.map(r => ({ id: str(r.id), dest: str(r.destination_type), status: str(r.effective_status) }))
     } catch (e) { console.warn('[meta-builder] Platzhalter-Anzeigengruppe:', errText(e).slice(0, 200)) }
   }
-  const match = (d: string) => (wantLeadForm ? d === 'ON_AD' : (d === 'WEBSITE' || d === 'WEBSITE_AND_PHONE_CALL' || d === '' || d === 'UNDEFINED'))
-  return rows.find(r => r.id && DEAD_STATUS.indexOf(r.status) < 0 && match(r.dest))?.id ?? null
+  const passend = proxyDestinations(kind)
+  return rows.find(r => r.id && DEAD_STATUS.indexOf(r.status) < 0 && passend.indexOf(r.dest) >= 0)?.id ?? null
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -317,11 +336,11 @@ async function validateAtMeta(
       if (!as) { skip('ad', ad.key, 'local_errors'); continue }
       let adsetId: string | null = as.existing_id || ids.adsets?.[as.key] || null
       if (!adsetId) {
-        const lead = ad.destination?.kind === 'lead_form'
-        const ck = `${as.key}:${lead}`
+        const kind: AdDestinationKind = ad.destination?.kind ?? 'website'
+        const ck = `${as.key}:${kind}`
         if (adsetCache[ck] === undefined) {
-          let found: string | null = campaignId ? await findProxyAdset(ctx, campaignId, lead) : null
-          if (!found) { const p = await proxy(); if (p && p !== campaignId) found = await findProxyAdset(ctx, p, lead) }
+          let found: string | null = campaignId ? await findProxyAdset(ctx, campaignId, kind) : null
+          if (!found) { const p = await proxy(); if (p && p !== campaignId) found = await findProxyAdset(ctx, p, kind) }
           adsetCache[ck] = found
         }
         adsetId = adsetCache[ck]
@@ -398,8 +417,35 @@ function ensureIdMaps(ids: DraftMetaIds): Required<Pick<DraftMetaIds, 'adsets' |
 
 const nodeHash = async (v: unknown): Promise<string> => (await sha256Hex(stableStringify(v))).slice(0, 24)
 
-/** Anzeige/Creative: Inhalt des Knotens ohne aufgelöste Medien-Hashes (die ergänzt der Server) + Platzierungen der Gruppe. */
+/**
+ * Anzeige/Creative: Inhalt des Knotens ohne aufgelöste Medien-Hashes (die ergänzt der Server) + Platzierungen
+ * der Gruppe. Bleiben: Zuschnitt und gewähltes Video-Vorschaubild (eigenes Bild bzw. Metas Vorschlag).
+ */
 function adFingerprint(ad: AdDraft, spec: DraftSpec): Promise<string> {
+  const a = JSON.parse(JSON.stringify(ad)) as AdDraft
+  const m = a.media ?? {}
+  const strip = (r: MediaRef | undefined): MediaRef | undefined => {
+    if (!r || !r.media_id) return r
+    const out: MediaRef = { media_id: r.media_id }
+    if (r.crops && Object.keys(r.crops).length) out.crops = r.crops
+    if (r.thumbnail_media_id) out.thumbnail_media_id = r.thumbnail_media_id
+    if (r.thumbnail_quelle) out.thumbnail_quelle = r.thumbnail_quelle
+    if (r.thumbnail_quelle === 'meta_liste' && r.thumbnail_hash) out.thumbnail_hash = r.thumbnail_hash
+    return out
+  }
+  if (m.feed_4x5) m.feed_4x5 = strip(m.feed_4x5)
+  if (m.story_9x16) m.story_9x16 = strip(m.story_9x16)
+  if (m.square_1x1) m.square_1x1 = strip(m.square_1x1)
+  if (m.landscape_191x1) m.landscape_191x1 = strip(m.landscape_191x1)
+  if (m.cards) m.cards = m.cards.map(cd => (cd?.media ? { ...cd, media: strip(cd.media) as MediaRef } : cd))
+  return nodeHash({ ad: a, placements: adsetByKey(spec, ad.adset_key)?.placements ?? null })
+}
+
+/** Präfix der Fingerabdrücke ab Runde 2 (mit Zuschnitt und Vorschaubild). */
+const FP_V2 = 'v2:'
+
+/** Fingerabdruck vor Runde 2 (nur media_id): Entwürfe, die vor dem Update angelegt wurden, laufen weiter. */
+function adFingerprintAlt(ad: AdDraft, spec: DraftSpec): Promise<string> {
   const a = JSON.parse(JSON.stringify(ad)) as AdDraft
   const m = a.media ?? {}
   const strip = (r: { media_id: string } | undefined) => (r && r.media_id ? { media_id: r.media_id } : r)
@@ -437,8 +483,18 @@ async function assertCreatedUnchanged(st: RunState): Promise<void> {
     const hc = h[`creative:${ad.key}`], ha = h[`ad:${ad.key}`]
     if (!(ids.creatives?.[ad.key] && hc) && !(ids.ads?.[ad.key] && ha)) continue
     const fp = await adFingerprint(ad, spec)
-    if (ids.creatives?.[ad.key] && hc && hc !== fp) changed.push(`creative:${ad.key}`)
-    if (ids.ads?.[ad.key] && ha && ha !== fp) changed.push(`ad:${ad.key}`)
+    let alt: string | null = null
+    // Neue Fingerabdrücke tragen das Präfix FP_V2 und werden nur mit dem neuen
+    // Verfahren verglichen. Ohne Präfix stammen sie von vor Runde 2 (nur media_id)
+    // und werden nur mit dem alten Verfahren verglichen. So kann eine nachträglich
+    // geänderte Zuschnitt-/Vorschaubild-Wahl nie über den alten Abdruck durchrutschen.
+    const gleich = async (h0: string): Promise<boolean> => {
+      if (h0.startsWith(FP_V2)) return h0 === FP_V2 + fp
+      if (alt === null) alt = await adFingerprintAlt(ad, spec)
+      return h0 === alt
+    }
+    if (ids.creatives?.[ad.key] && hc && !(await gleich(hc))) changed.push(`creative:${ad.key}`)
+    if (ids.ads?.[ad.key] && ha && !(await gleich(ha))) changed.push(`ad:${ad.key}`)
   }
   if (!missing.length && !changed.length) return
   const parts = [
@@ -715,10 +771,13 @@ async function runSteps(st: RunState): Promise<CreateResponse> {
 
     // 3. Medien der Anzeigen, die noch ein Creative brauchen
     const needCreative = spec.ads.filter(ad => !ad.existing_id && !ids.ads[ad.key] && !ids.creatives[ad.key])
+    const eigeneThumbs = eigeneVorschaubilder(needCreative)
     for (const mid of uniq(needCreative.flatMap(adMediaRefs).map(r => r.media_id).filter(isUuid))) {
       const row = st.mediaRows[mid]
-      // Video erst mit Vorschaubild fertig (sonst ensureMediaReady: Thumbnail nachholen bzw. warten)
-      const readyRow = row && ((row.kind === 'image' && !!row.meta_image_hash) || (row.kind === 'video' && !!row.meta_video_id && row.meta_status === 'ready' && !!row.thumbnail_hash))
+      // Video erst mit Vorschaubild fertig (sonst ensureMediaReady: Thumbnail nachholen bzw. warten);
+      // mit eigenem Vorschaubild in jeder Verwendung reicht das fertige Video
+      const readyRow = row && ((row.kind === 'image' && !!row.meta_image_hash) ||
+        (row.kind === 'video' && !!row.meta_video_id && row.meta_status === 'ready' && (!!row.thumbnail_hash || eigeneThumbs.has(mid))))
       if (readyRow && row) {
         ids.media[mid] = {
           ...(row.meta_image_hash ? { image_hash: row.meta_image_hash } : {}),
@@ -729,7 +788,7 @@ async function runSteps(st: RunState): Promise<CreateResponse> {
       }
       if (timeUp()) return await pause(st)
       setStep('media', mid)
-      const r = await ensureMediaReady(ctx, mid, draftId)
+      const r = await ensureMediaReady(ctx, mid, draftId, eigeneThumbs.has(mid))
       st.mediaRows[mid] = r.row
       ids.media[mid] = {
         ...(r.row.meta_image_hash ? { image_hash: r.row.meta_image_hash } : {}),
@@ -768,7 +827,7 @@ async function runSteps(st: RunState): Promise<CreateResponse> {
         const cid = str((await post<Raw>(`act_${acct}/adcreatives`, build.payload, 'creative')).id)
         if (!cid) throw new BuilderError(502, 'meta_error', 'Meta hat keine Creative-ID zurückgegeben.')
         ids.creatives[ad.key] = cid
-        ids.hashes[`creative:${ad.key}`] = await adFingerprint(ad, spec)
+        ids.hashes[`creative:${ad.key}`] = FP_V2 + await adFingerprint(ad, spec)
         await persistIds(st)
       }
       if (timeUp()) return await pause(st)
@@ -778,7 +837,7 @@ async function runSteps(st: RunState): Promise<CreateResponse> {
       const id = found ?? str((await post<Raw>(`act_${acct}/ads`, payload, 'ad')).id)
       if (!id) throw new BuilderError(502, 'meta_error', 'Meta hat keine Anzeigen-ID zurückgegeben.')
       ids.ads[ad.key] = id
-      ids.hashes[`ad:${ad.key}`] = await adFingerprint(ad, spec)
+      ids.hashes[`ad:${ad.key}`] = FP_V2 + await adFingerprint(ad, spec)
       await persistIds(st)
     }
 
@@ -1005,38 +1064,33 @@ export async function modeActivateDraft(ctx: Ctx, req: ActivateDraftRequest): Pr
 // preview
 // ═══════════════════════════════════════════════════════════════════════════
 
-export async function modePreview(ctx: Ctx, req: PreviewRequest): Promise<PreviewResponse> {
-  const draft = await loadDraft(ctx, req.draft_id)
-  const key = str(req.ad_key)
-  const all = PREVIEW_FORMATS as readonly string[]
-  let formats = uniq(arr<unknown>(req.formats).map(str).filter(f => all.indexOf(f) >= 0)) as PreviewFormat[]
-  if (!formats.length) formats = ['MOBILE_FEED_STANDARD', 'INSTAGRAM_STORY']
+type VorschauQuelle =
+  | { art: 'live'; adId: string; ad: AdDraft; placements?: Placements }
+  | { art: 'entwurf'; payload: Raw; ad: AdDraft; placements?: Placements }
+
+const vorschauFehler = (e: unknown): string =>
+  (e instanceof MetaApiError ? (e.kind === 'dev_mode' ? 'Meta-App im Entwicklungsmodus' : (e.userMsg || e.message)) : errText(e)).slice(0, 300)
+
+/**
+ * Woraus die Vorschau entsteht: schon bei Meta angelegte Anzeige (/{ad_id}/previews) oder
+ * Creative aus dem Entwurf (generatepreviews; fehlende Medien werden hochgeladen = Schreibzugriff).
+ */
+async function vorschauQuelle(ctx: Ctx, draft: DraftRow, key: string): Promise<VorschauQuelle> {
   const ids: DraftMetaIds = draft.meta_ids ?? {}
   const prep = await prepareSpec(ctx, draft, ids.media ?? {})
   const ad = adByKey(prep.spec, key)
   if (!ad) throw new BuilderError(404, 'not_found', `Anzeige ${key || '(ohne key)'} nicht im Entwurf.`)
-  const acct = ctx.env.account
-  const previews: PreviewResponse['previews'] = []
-  const soft = (e: unknown) => (e instanceof MetaApiError ? (e.kind === 'dev_mode' ? 'Meta-App im Entwicklungsmodus' : (e.userMsg || e.message)) : errText(e)).slice(0, 300)
-
-  // Schon bei Meta: Vorschau der echten Anzeige
+  const as = adsetByKey(prep.spec, ad.adset_key)
   const liveId = ad.existing_id || ids.ads?.[ad.key]
-  if (liveId) {
-    for (const f of formats) {
-      try {
-        const j = await graphGet<Raw>(`${metaId(liveId, 'Anzeigen-ID')}/previews`, { ad_format: f })
-        previews.push({ format: f, body: str(obj(arr<unknown>(j.data)[0]).body) || null })
-      } catch (e) { previews.push({ format: f, body: null, error: soft(e) }) }
-    }
-    return { previews }
-  }
-
+  if (liveId) return { art: 'live', adId: metaId(liveId, 'Anzeigen-ID'), ad, placements: as?.placements }
+  const eigeneThumbs = eigeneVorschaubilder([ad])
   for (const ref of adMediaRefs(ad)) {
     if (!isUuid(ref.media_id)) continue
     const row = prep.mediaRows[ref.media_id]
-    const ready = row && ((row.kind === 'image' && !!row.meta_image_hash) || (row.kind === 'video' && !!row.meta_video_id && row.meta_status === 'ready' && !!row.thumbnail_hash))
+    const ready = row && ((row.kind === 'image' && !!row.meta_image_hash) ||
+      (row.kind === 'video' && !!row.meta_video_id && row.meta_status === 'ready' && (!!row.thumbnail_hash || eigeneThumbs.has(ref.media_id))))
     if (ready) continue
-    const r = await ensureMediaReady(ctx, ref.media_id, draft.id)
+    const r = await ensureMediaReady(ctx, ref.media_id, draft.id, eigeneThumbs.has(ref.media_id))
     prep.mediaRows[ref.media_id] = r.row
     if (!r.ready) {
       throw new BuilderError(409, 'media_not_ready',
@@ -1046,20 +1100,86 @@ export async function modePreview(ctx: Ctx, req: PreviewRequest): Promise<Previe
         'In ein bis zwei Minuten erneut versuchen.')
     }
   }
-  const as = adsetByKey(prep.spec, ad.adset_key)
   let build: CreativeBuild
   try {
     build = buildCreativePayload(fillAdMedia(ad, prep.mediaRows, ids.media ?? {}), { placements: as?.placements })
   } catch {
     throw new BuilderError(409, 'media_not_ready', 'Für die Vorschau fehlt noch ein Bild oder Video.', 'Im Assistenten Medien für 4:5 und 9:16 hochladen.')
   }
-  for (const f of formats) {
-    try {
-      const j = await graphGet<Raw>(`act_${acct}/generatepreviews`, { creative: build.payload, ad_format: f })
-      previews.push({ format: f, body: str(obj(arr<unknown>(j.data)[0]).body) || null })
-    } catch (e) { previews.push({ format: f, body: null, error: soft(e) }) }
-  }
+  return { art: 'entwurf', payload: build.payload, ad, placements: as?.placements }
+}
+
+/** Ein Vorschau-iframe von Meta (GET, 24 h gültig). */
+async function vorschauHolen(ctx: Ctx, q: { adId?: string; payload?: Raw }, format: PreviewFormat, label?: string): Promise<{ body: string | null; error?: string }> {
+  const extra: Raw = label ? { dynamic_asset_label: label } : {}
+  try {
+    const j = q.adId
+      ? await graphGet<Raw>(`${q.adId}/previews`, { ad_format: format, ...extra })
+      : await graphGet<Raw>(`act_${ctx.env.account}/generatepreviews`, { creative: q.payload, ad_format: format, ...extra })
+    return { body: str(obj(arr<unknown>(j.data)[0]).body) || null }
+  } catch (e) { return { body: null, error: vorschauFehler(e) } }
+}
+
+export async function modePreview(ctx: Ctx, req: PreviewRequest): Promise<PreviewResponse> {
+  const draft = await loadDraft(ctx, req.draft_id)
+  const key = str(req.ad_key)
+  const all = PREVIEW_FORMATS as readonly string[]
+  let formats = uniq(arr<unknown>(req.formats).map(str).filter(f => all.indexOf(f) >= 0)) as PreviewFormat[]
+  if (!formats.length) formats = ['MOBILE_FEED_STANDARD', 'INSTAGRAM_STORY']
+  const q = await vorschauQuelle(ctx, draft, key)
+  const previews: PreviewResponse['previews'] = []
+  for (const f of formats) previews.push({ format: f, ...(await vorschauHolen(ctx, q.art === 'live' ? { adId: q.adId } : { payload: q.payload }, f)) })
   return { previews }
+}
+
+/** Ab dieser Konto-Auslastung (%) holt preview_alle keine weiteren Vorschauen (Limited access). */
+const VORSCHAU_MAX_AUSLASTUNG = 75
+
+/**
+ * Vorschau aller Platzierungen: nur Formate, die die Anzeigengruppe ausspielen kann (previewFormatsFor),
+ * höchstens LIMITS.previewAlleMax Aufrufe, Stopp über 75 % Konto-Auslastung. Mehrsprachig: sprache
+ * wählt die Sprachversion (dynamic_asset_label). Ohne Entwurf: laufende Anzeige über ad_id.
+ */
+export async function modePreviewAlle(ctx: Ctx, req: PreviewAlleRequest): Promise<PreviewAlleResponse> {
+  const all = PREVIEW_FORMATS as readonly string[]
+  const wunsch = uniq(arr<unknown>(req.formats).map(str).filter(f => all.indexOf(f) >= 0)) as PreviewFormat[]
+  let quelle: { adId?: string; payload?: Raw }
+  let passend: PreviewFormat[]
+  let ad: AdDraft | null = null
+  if (req.draft_id) {
+    const draft = await loadDraft(ctx, req.draft_id)
+    const q = await vorschauQuelle(ctx, draft, str(req.ad_key))
+    ad = q.ad
+    quelle = q.art === 'live' ? { adId: q.adId } : { payload: q.payload }
+    // alle Formate prüfen (auch Computer-Feed, der nur auf Wunsch kommt)
+    passend = previewFormatsFor(q.ad, q.placements, PREVIEW_FORMATS)
+  } else {
+    const adId = metaId(req.ad_id, 'ad_id')
+    const j = await graphGet<Raw>(adId, { fields: 'id,account_id' })
+    if (digits(j.account_id) !== ctx.env.account) throw new BuilderError(403, 'forbidden', 'Die Anzeige gehört nicht zu unserem Werbekonto.')
+    quelle = { adId }
+    passend = PREVIEW_FORMATS.slice()
+  }
+  const formats = (wunsch.length ? wunsch : PREVIEW_ALLE_FORMATS.slice()).slice(0, LIMITS.previewAlleMax)
+  const labelKey = (f: PreviewFormat) => `crm.werbung.meta.preview.${f}`
+  // Sprach-Label nur, wenn der Feed eine englische Regel hat (manuelle Variante; automatische Übersetzung hat kein Label)
+  const enManuell = !!ad && hatSprachen(ad) && (ad.sprachen?.varianten ?? []).some(v => v?.sprache === 'en')
+  const sprache = req.sprache === 'en' && enManuell ? `${SPRACH_LABEL_PREFIX}en` : undefined
+  const previews: PreviewAlleResponse['previews'] = []
+  const uebersprungen: PreviewAlleResponse['uebersprungen'] = []
+  for (const f of formats) {
+    if (passend.indexOf(f) < 0) {
+      uebersprungen.push({ format: f, label_key: labelKey(f), grund: 'Die Anzeigengruppe spielt hier nicht aus oder das Format passt nicht zur Platzierung.' })
+      continue
+    }
+    const u = getLastUsage()
+    if (u && u.accUtilPct > VORSCHAU_MAX_AUSLASTUNG) {
+      previews.push({ format: f, label_key: labelKey(f), body: null, error: `Meta-Auslastung bei ${Math.round(u.accUtilPct)} %. Diese Vorschau bitte später laden.` })
+      continue
+    }
+    previews.push({ format: f, label_key: labelKey(f), ...(await vorschauHolen(ctx, quelle, f, sprache)) })
+  }
+  return { previews, uebersprungen, gueltig_bis: new Date(Date.now() + 24 * 3600_000).toISOString() }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -12,6 +12,10 @@
 //      advantage_audience explizit, Medien je Platzierung
 //   5c. Bearbeiten: editDiff (Lernphase, Sperren, Budgetart, Werbemittel-Tausch,
 //      Vergleich ohne Anzeigenamen), validateEditFields, Budgetplanung
+//   5d. Werbemittel komplett + Conversion-Orte (Runde 2): vorhandener Beitrag (FB/IG),
+//      Karussell (Video-Karten, Schalter), Formate 1:1/4:5/9:16/1.91:1 + Zuschnitt,
+//      Textvarianten ohne Platzierungs-Medien, alle CTAs (WhatsApp, Anruf, Messenger,
+//      Website + Sofortformular), mehrsprachig, Partnerschaft, Tracking, Vorschau-Formate
 //   6. Lint-Fälle (Gedankenstriche, Rendite-%, Finanzierung, ae/oe/ue, Längen,
 //      Projektnamen, sauberer Text) + adCopy.ts nutzt dieselben Regex
 //
@@ -70,10 +74,10 @@ const A = await bundle('supabase/functions/_shared/adCopy.ts', 'adCopy.mjs')
 
 // ── 2. i18n ──────────────────────────────────────────────────────────────────
 // Fragment-Verzeichnisse des Build-Workflows (Übergang bis die Fragmente in
-// src/locales gemergt sind; Runde 1 = i18n, Runde 2 = i18n2). Überschreibbar mit
+// src/locales gemergt sind; Runde 1 = i18n, Runde 2 = i18n2, Runde 3 = i18n3). Überschreibbar mit
 // META_I18N_DIR (mehrere mit Komma getrennt).
 const BUILD_DIR = '/private/tmp/claude-502/-Users-ArPritsch-Downloads/5da4d416-b511-4540-bf49-56b4aeb8fc5c/scratchpad/ads/build'
-const FRAGMENT_DIRS = (process.env.META_I18N_DIR ?? `${BUILD_DIR}/i18n,${BUILD_DIR}/i18n2`).split(',').map(x => x.trim()).filter(Boolean)
+const FRAGMENT_DIRS = (process.env.META_I18N_DIR ?? `${BUILD_DIR}/i18n,${BUILD_DIR}/i18n2,${BUILD_DIR}/i18n3`).split(',').map(x => x.trim()).filter(Boolean)
 const lookup = (obj, key) => key.split('.').reduce((o, k) => (o && typeof o === 'object' ? o[k] : undefined), obj)
 const sources = { de: [], en: [] }
 for (const lang of ['de', 'en']) {
@@ -128,7 +132,13 @@ for (const obj of S.OBJECTIVES) {
   }
 }
 ok(S.CTA_BY_DESTINATION.lead_form.every(c => ['APPLY_NOW', 'DOWNLOAD', 'GET_QUOTE', 'LEARN_MORE', 'SIGN_UP', 'SUBSCRIBE'].includes(c)), 'Sofortformular-CTAs außerhalb der erlaubten sechs')
-for (const kind of ['website', 'lead_form']) for (const c of S.ctaFor(kind)) ok(labelOf(S.CTA_OPTIONS, c), `CTA ohne Option: ${c}`)
+for (const kind of S.AD_DESTINATION_KINDS) {
+  ok(S.ctaFor(kind).length > 0, `Ziel-Art ohne CTA: ${kind}`)
+  for (const c of S.ctaFor(kind)) ok(labelOf(S.CTA_OPTIONS, c), `CTA ohne Option: ${c}`)
+  ok(labelOf(S.AD_DESTINATION_KIND_OPTIONS, kind), `Ziel-Art ohne Option: ${kind}`)
+}
+for (const d of S.AD_SUPPORTED_DESTINATIONS) ok(S.adKindsFor(d).length > 0, `unterstützter Conversion-Ort ohne Ziel-Art: ${d}`)
+for (const o of S.DESTINATION_OPTIONS) if (o.unsupported) ok(!!o.reasonKey, `gesperrter Conversion-Ort ohne Grund: ${o.value}`)
 for (const f of S.CREATIVE_FEATURES) ok(!!S.CREATIVE_FEATURE_INFO[f], `Creative-Feature ohne Info: ${f}`)
 for (const pl of S.PUBLISHER_PLATFORMS) {
   const field = S.POSITION_FIELD_BY_PLATFORM[pl]
@@ -351,7 +361,8 @@ ok(codesOf(wpcNew).some(i => i.node === wpcNew.adsets[0].key && i.field === 'ads
 const twoDesc = JSON.parse(JSON.stringify(hb.spec)); twoDesc.ads[0].descriptions = ['Eins', 'Zwei']
 ok(codesOf(twoDesc).some(i => i.code === 'descriptions_single' && i.field === 'ad.descriptions' && i.severity === 'error'), 'zwei Beschreibungen nicht als Fehler erkannt')
 const singleTwoDesc = JSON.parse(JSON.stringify(single)); singleTwoDesc.descriptions = ['Eins', 'Zwei']
-eq(S.creativeMode(singleTwoDesc), 'link_data', 'Beschreibungen erzwingen kein asset_feed')
+eq(S.creativeMode(singleTwoDesc), 'asset_feed_text', 'zwei Beschreibungen ohne Platzierungs-Medien = Textvarianten')
+ok(!codesOf({ ...JSON.parse(JSON.stringify(hb.spec)), ads: [singleTwoDesc] }).some(i => i.code === 'descriptions_single'), 'Textvarianten ohne Platzierungs-Medien: bis 5 Beschreibungen erlaubt')
 eq(afs.descriptions, [{ text: '30 Minuten, unverbindlich' }], 'asset_feed: genau eine Beschreibung')
 const noDesc = JSON.parse(JSON.stringify(lang)); noDesc.descriptions = []
 eq(S.buildCreativePayload(noDesc, { placements: hb.spec.adsets[0].placements }).payload.asset_feed_spec.descriptions, [{ text: ' ' }], 'asset_feed ohne Beschreibung: Leerzeichen statt Landingpage-Text')
@@ -512,11 +523,203 @@ const neuEdit = JSON.parse(JSON.stringify(hb.spec))
 neuEdit.adsets[0].adset_schedule = [{ start_minute: 480, end_minute: 1200, days: [1] }]; neuEdit.adsets[0].daily_spend_cap_cents = 4000
 neuEdit.ads[0].tracking_specs = [{ 'action.type': ['offsite_conversion'] }]
 const eo = S.validateDraft(neuEdit, { server: true }).filter(i => i.code === 'edit_only').map(i => i.field).sort()
-eq(eo, ['ad.tracking_specs', 'adset.adset_schedule', 'adset.daily_spend_cap_cents'], 'validateDraft: Bearbeiten-Felder an neuen Objekten (edit_only)')
+eq(eo, ['adset.adset_schedule', 'adset.daily_spend_cap_cents'], 'validateDraft: Bearbeiten-Felder an neuen Objekten (edit_only, Tracking geht seit Runde 2 auch beim Anlegen)')
 ok(!S.validateDraft(neuEdit).some(i => i.code === 'edit_only'), 'validateDraft: edit_only nur serverseitig')
 ok(!S.validateDraft(cboLz, { server: true }).some(i => i.code === 'edit_only'), 'validateDraft: edit_only nicht an bestehenden Objekten')
 ok(S.BUILDER_MODES.includes('edit_load') && S.BUILDER_WRITE_MODES.includes('edit_apply') && S.BUILDER_WRITE_MODES.includes('bulk') && !S.BUILDER_WRITE_MODES.includes('edit_diff'), 'Bearbeiten-Modi registriert')
 ok(!/[‒-―]/.test(JSON.stringify(Object.values(S.EDIT_BLOCK_TEXT))), 'EDIT_BLOCK_TEXT mit Gedankenstrich')
+
+// ── 5d. Werbemittel komplett + Conversion-Orte (Runde 2) ────────────────────
+const r2 = (mut) => { const sp = JSON.parse(JSON.stringify(hb.spec)); sp.ads = [JSON.parse(JSON.stringify(single))]; mut(sp, sp.ads[0], sp.adsets[0]); return sp }
+const r2codes = (sp, opts) => S.validateDraft(sp, opts).filter(i => i.level === 'ad').map(i => `${i.severity}:${i.code}`)
+const r2payload = (sp) => S.buildCreativePayload(sp.ads[0], { placements: sp.adsets.find(a => a.key === sp.ads[0].adset_key).placements })
+const FBPOST = `${S.HP_PAGE_ID}_122100000000000001`
+// Vorhandener Facebook-Beitrag: object_story_id statt object_story_spec, keine Texte/Medien nötig
+let sp2 = r2((sp, ad) => { ad.beitrag = { quelle: 'facebook', id: FBPOST }; ad.primary_texts = []; ad.headlines = []; ad.media = {} })
+// Pixel-Gruppe (Plan B): ohne Website-URL ist die Conversion-Domain Pflicht (Meta-Doku)
+eq(r2codes(sp2).filter(c => c.startsWith('error')), ['error:required'], 'FB-Beitrag in Pixel-Gruppe: Conversion-Domain fehlt nicht erkannt')
+ok(S.validateDraft(sp2).some(i => i.field === 'ad.tracking.conversion_domain' && i.code === 'required'), 'FB-Beitrag: Fehler an der Conversion-Domain')
+eq(r2codes(r2((sp, ad) => { ad.beitrag = { quelle: 'facebook', id: FBPOST }; ad.primary_texts = []; ad.headlines = []; ad.media = {}; ad.tracking = { conversion_domain: 'happy-property.com' } })).filter(c => c.startsWith('error')), [], 'FB-Beitrag: keine Fehler ohne Texte/Medien')
+let cp2 = r2payload(sp2)
+eq(cp2.mode, 'beitrag', 'FB-Beitrag: Modus')
+ok(cp2.payload.object_story_id === FBPOST && cp2.payload.object_story_spec === undefined && cp2.payload.instagram_user_id === IG, 'FB-Beitrag: object_story_id + instagram_user_id, ohne object_story_spec')
+ok(cp2.payload.url_tags === S.URL_TAGS_STANDARD && cp2.payload.contextual_multi_ads.enroll_status === 'OPT_OUT', 'FB-Beitrag: UTM + Mehrere Werbetreibende aus')
+eq(S.buildAdPayload(sp2.ads[0], 'AS', { creative_id: 'C' }).conversion_domain, undefined, 'FB-Beitrag: keine Conversion-Domain aus Formular-URL')
+ok(r2codes(r2((sp, ad) => { ad.beitrag = { quelle: 'facebook', id: '123' } })).includes('error:beitrag_invalid'), 'FB-Beitrag: ungültige ID nicht erkannt')
+const leadPost = r2((sp, ad, as) => { as.destination = 'ON_AD'; as.optimization_goal = 'LEAD_GENERATION'; as.promoted_object = { page_id: S.HP_PAGE_ID }; as.attribution = 'click_1d'; ad.beitrag = { quelle: 'facebook', id: FBPOST }; ad.destination = { kind: 'lead_form', form_id: 'F1' }; ad.cta_type = 'SIGN_UP' })
+ok(r2codes(leadPost).includes('error:beitrag_ziel'), 'FB-Beitrag mit Sofortformular nicht abgelehnt')
+// Vorhandener Instagram-Beitrag: source_instagram_media_id + object_id + CTA mit Link (Meta-Doku)
+sp2 = r2((sp, ad) => { ad.beitrag = { quelle: 'instagram', id: '17900000000000001' }; ad.media = {} })
+cp2 = r2payload(sp2).payload
+ok(cp2.source_instagram_media_id === '17900000000000001' && cp2.object_id === S.HP_PAGE_ID && cp2.instagram_user_id === IG, 'IG-Beitrag: source_instagram_media_id + object_id + instagram_user_id')
+eq(cp2.call_to_action, { type: 'BOOK_NOW', value: { link: S.PLAN_B_LP_LANG } }, 'IG-Beitrag: CTA mit Link')
+eq(r2codes(sp2).filter(c => c.startsWith('error')), [], 'IG-Beitrag: keine Fehler')
+// Karussell: Bild- und Videokarten, Zuschnitt, Endkarte/Reihenfolge, Video-Vorschaubild, Format-Mix
+const karten = [
+  { headline: 'Pool', media: { media_id: 'm1', image_hash: 'h1', aspect: '1:1', crops: { '100x100': [[0, 0], [1080, 1080]] } } },
+  { headline: 'Rundgang', description: 'Video', media: { media_id: 'm2', video_id: 'V2', thumbnail_hash: 'th2', aspect: '1:1' } },
+]
+sp2 = r2((sp, ad) => { ad.format = 'carousel'; ad.media = { cards: karten }; ad.karussell = { endkarte: true, reihenfolge_automatisch: false } })
+cp2 = r2payload(sp2)
+const ldk = cp2.payload.object_story_spec.link_data
+ok(cp2.mode === 'carousel' && ldk.multi_share_end_card === true && ldk.multi_share_optimized === false, 'Karussell: Schalter Endkarte/Reihenfolge')
+ok(ldk.child_attachments[1].video_id === 'V2' && ldk.child_attachments[1].image_hash === 'th2' && ldk.child_attachments[0].image_crops?.['100x100'], 'Karussell: Videokarte mit Vorschaubild, Bildkarte mit Zuschnitt')
+eq(r2codes(sp2).filter(c => c.startsWith('error')), [], 'Karussell mit Videokarte: keine Fehler')
+const ohneEnd = r2((sp, ad) => { ad.format = 'carousel'; ad.media = { cards: karten } })
+ok(r2payload(ohneEnd).payload.object_story_spec.link_data.multi_share_end_card === false && r2payload(ohneEnd).payload.object_story_spec.link_data.multi_share_optimized === true, 'Karussell: HP-Standard Endkarte aus, Reihenfolge automatisch')
+const mix = r2((sp, ad) => { ad.format = 'carousel'; ad.media = { cards: [karten[0], { headline: 'X', media: { media_id: 'm3', video_id: 'V3', aspect: '9:16' } }] } })
+const mixCodes = r2codes(mix, { server: true })
+ok(mixCodes.includes('warn:cards_ratio') && mixCodes.includes('error:card_thumb_missing'), `Karussell: Format-Mix/Vorschaubild nicht erkannt (${mixCodes.join(', ')})`)
+ok(r2codes(r2((sp, ad) => { ad.format = 'carousel'; ad.media = { cards: [{ ...karten[0], media: { ...karten[0].media, crops: { '100x100': [[0, 0], [1080, 900]] } } }, karten[1]] } })).includes('error:crop_invalid'), 'falscher Zuschnitt nicht erkannt')
+// Formate 1:1 / 4:5 / 9:16 / 1.91:1: vier Platzierungsregeln, Quadrat nimmt Marketplace
+sp2 = r2((sp, ad) => { ad.media = { feed_4x5: { media_id: 'f', image_hash: 'hf' }, story_9x16: { media_id: 's', image_hash: 'hs' }, square_1x1: { media_id: 'q', image_hash: 'hq' }, landscape_191x1: { media_id: 'l', image_hash: 'hl' } } })
+cp2 = r2payload(sp2)
+const af4 = cp2.payload.asset_feed_spec
+eq(cp2.mode, 'asset_feed', '4 Formate: Medien je Platzierung')
+eq(af4.images.map(i => [i.hash, i.adlabels[0].name]), [['hs', S.PAC_LABEL_STORY], ['hf', S.PAC_LABEL_FEED], ['hl', S.PAC_LABEL_QUER], ['hq', S.PAC_LABEL_QUADRAT]], '4 Formate: Bilder je Regel')
+ok(af4.asset_customization_rules[1].customization_spec.facebook_positions.join() === 'feed' && af4.asset_customization_rules[3].customization_spec.facebook_positions.join() === 'marketplace', '4 Formate: Marketplace beim Quadrat, nicht im Feed')
+eq(af4.asset_customization_rules[2].customization_spec.facebook_positions, ['right_hand_column', 'search'], '1.91:1 für rechte Spalte und Suche')
+// Ein Foto, zwei Zuschnitte = zwei Plätze (Medien je Platzierung)
+sp2 = r2((sp, ad) => { ad.media = { feed_4x5: { media_id: 'p', image_hash: 'hp', crops: { '400x500': [[0, 0], [800, 1000]] } }, story_9x16: { media_id: 'p', image_hash: 'hp', crops: { '90x160': [[100, 0], [662, 1000]] } } } })
+cp2 = r2payload(sp2)
+ok(cp2.mode === 'asset_feed' && cp2.payload.asset_feed_spec.images.every(i => i.hash === 'hp' && i.image_crops), 'gleiches Foto mit zwei Zuschnitten = Medien je Platzierung')
+eq(S.creativeMode(r2((sp, ad) => { ad.media = { feed_4x5: { media_id: 'p', image_hash: 'hp' }, story_9x16: { media_id: 'p', image_hash: 'hp' } } }).ads[0]), 'link_data', 'gleiches Foto ohne Zuschnitt = ein Medium')
+// Einzelbild mit Zuschnitt
+sp2 = r2((sp, ad) => { ad.media.feed_4x5.crops = { '400x500': [[0, 0], [1440, 1800]] } })
+ok(!!r2payload(sp2).payload.object_story_spec.link_data.image_crops?.['400x500'], 'Einzelbild: image_crops in link_data')
+// Video: gewähltes Vorschaubild geht als image_hash mit
+sp2 = r2((sp, ad) => { ad.format = 'single_video'; ad.media = { feed_4x5: { media_id: 'v', video_id: 'V9', thumbnail_hash: 'gewaehlt', thumbnail_quelle: 'meta_liste' } } })
+eq(r2payload(sp2).payload.object_story_spec.video_data.image_hash, 'gewaehlt', 'Video: Vorschaubild')
+ok(!r2codes(r2((sp, ad) => { ad.format = 'single_video'; ad.media = { feed_4x5: { media_id: 'v', video_id: 'V9', thumbnail_media_id: '11111111-2222-3333-4444-555555555555' } } }), { server: true }).includes('error:video_thumb_missing'), 'Video mit eigenem Vorschaubild (thumbnail_media_id) fälschlich ohne Vorschaubild')
+// Mehrere Texte, ein Medium, eine Beschreibung: bewährtes Platzierungs-Creative (gleiches Bild je Regel)
+sp2 = r2((sp, ad) => { ad.primary_texts = ['Eins.', 'Zwei.', 'Drei.'] })
+cp2 = r2payload(sp2)
+ok(cp2.mode === 'asset_feed' && cp2.payload.asset_feed_spec.optimization_type === 'PLACEMENT' && cp2.payload.asset_feed_spec.images.every(i => i.hash === 'hashfeed') && cp2.payload.asset_feed_spec.bodies.length === 3, 'Textvarianten mit einer Beschreibung: Platzierungs-Creative', cp2.payload.asset_feed_spec)
+eq(S.creativeMode(sp2.ads[0], { mode: 'manual', publisher_platforms: ['facebook'], facebook_positions: ['feed'] }), 'asset_feed_text', 'Textvarianten mit nur einer Platzierungsregel: ohne Regeln')
+sp2 = r2((sp, ad) => { ad.primary_texts = ['Eins.', 'Zwei.']; ad.media = { landscape_191x1: { media_id: 'l', image_hash: 'hl' } } })
+ok(r2payload(sp2).payload.asset_feed_spec.images.every(i => i.hash === 'hl'), 'Textvarianten nur mit Querformat: Medium in jeder Regel')
+// Textvarianten ohne Platzierungs-Medien: asset_feed ohne Regeln, bis 5 Beschreibungen
+sp2 = r2((sp, ad) => { ad.primary_texts = ['Eins.', 'Zwei.', 'Drei.']; ad.descriptions = ['A', 'B'] })
+cp2 = r2payload(sp2)
+const aft = cp2.payload.asset_feed_spec
+ok(cp2.mode === 'asset_feed_text' && aft.asset_customization_rules === undefined && aft.optimization_type === undefined, 'Textvarianten: ohne Platzierungsregeln')
+ok(aft.bodies.length === 3 && aft.descriptions.length === 2 && aft.images.length === 1 && aft.titles.length === 1, 'Textvarianten: Texte + ein Bild')
+eq(r2codes(sp2).filter(c => c.startsWith('error')), [], 'Textvarianten ohne Platzierungs-Medien: keine Fehler')
+// Website + Sofortformular
+sp2 = r2((sp, ad, as) => { as.destination = 'WEBSITE_AND_LEAD_FORM'; as.promoted_object = { pixel_id: S.HP_PIXEL_ID, custom_event_type: 'LEAD' }; ad.destination = { kind: 'website_lead_form', url: S.PLAN_B_LP_LANG, form_id: '902436082512213' }; ad.cta_type = 'SEE_DETAILS' })
+eq(S.validateDraft(sp2).filter(i => i.severity === 'error').map(i => i.code), [], 'Website + Sofortformular: keine Fehler')
+cp2 = r2payload(sp2).payload.object_story_spec.link_data
+eq([cp2.link, cp2.call_to_action], [S.PLAN_B_LP_LANG, { type: 'SEE_DETAILS', value: { lead_gen_form_id: '902436082512213' } }], 'Website + Sofortformular: Link + Formular am Button')
+eq(S.buildAdPayload(sp2.ads[0], 'AS', { creative_id: 'C' }).conversion_domain, 'steuervorteil-zypern-immobilien.com', 'Website + Sofortformular: Conversion-Domain')
+ok(S.validateDraft(r2((sp, ad, as) => { as.destination = 'WEBSITE_AND_LEAD_FORM'; as.promoted_object = { pixel_id: S.HP_PIXEL_ID, custom_event_type: 'SCHEDULE' }; ad.destination = { kind: 'website_lead_form', url: S.PLAN_B_LP_LANG, form_id: 'F' } })).some(i => i.code === 'website_form_event'), 'Website + Sofortformular: Ereignis außer Lead nicht abgelehnt')
+eq(S.buildAdsetPayload(sp2.adsets[0], sp2.campaign, 'C').destination_type, 'WEBSITE_AND_LEAD_FORM', 'Anzeigengruppe Website + Sofortformular')
+// WhatsApp: Ziel WHATSAPP, CONVERSATIONS, Nummer, Begrüßung
+sp2 = r2((sp, ad, as) => {
+  as.destination = 'WHATSAPP'; as.optimization_goal = 'CONVERSATIONS'; as.attribution = 'click_1d'
+  as.promoted_object = { page_id: S.HP_PAGE_ID, whatsapp_phone_number: '+357 99 123456' }
+  ad.destination = { kind: 'whatsapp', begruessung: 'Hallo, schön dass du schreibst.', nachricht: 'Ich möchte mehr über Zypern wissen.' }; ad.cta_type = 'WHATSAPP_MESSAGE'
+})
+eq(S.validateDraft(sp2).filter(i => i.severity === 'error').map(i => `${i.field}:${i.code}`), [], 'WhatsApp: keine Fehler')
+const asW = S.buildAdsetPayload(sp2.adsets[0], sp2.campaign, 'C')
+eq([asW.destination_type, asW.optimization_goal, asW.promoted_object], ['WHATSAPP', 'CONVERSATIONS', { page_id: S.HP_PAGE_ID, whatsapp_phone_number: '+35799123456' }], 'WhatsApp: Anzeigengruppe (Nummer vereinheitlicht)')
+eq(S.buildAdsetPayload({ ...sp2.adsets[0], promoted_object: { page_id: S.HP_PAGE_ID, whatsapp_phone_number: '0049 151 2345 6789' } }, sp2.campaign, 'C').promoted_object.whatsapp_phone_number, '+4915123456789', 'WhatsApp: 00-Nummer als +49 gesendet')
+// WhatsApp-Gruppe ohne Pixel: keine Conversion-Domain nötig; mit weiterem Pixel schon
+ok(!S.validateDraft(sp2).some(i => i.field === 'ad.tracking.conversion_domain'), 'WhatsApp ohne Pixel: Conversion-Domain fälschlich verlangt')
+ok(S.validateDraft(r2((sp, ad, as) => {
+  as.destination = 'WHATSAPP'; as.optimization_goal = 'CONVERSATIONS'; as.attribution = 'click_1d'; as.promoted_object = { page_id: S.HP_PAGE_ID }
+  ad.destination = { kind: 'whatsapp' }; ad.cta_type = 'WHATSAPP_MESSAGE'; ad.tracking = { weitere_pixel: ['987745530157374'] }
+})).some(i => i.field === 'ad.tracking.conversion_domain' && i.code === 'required'), 'WhatsApp mit weiterem Pixel: Conversion-Domain nicht verlangt')
+// Messenger-Lead-Anzeigen (seit v24 gesperrt): Engagement + Messenger bietet kein LEAD_GENERATION mehr
+ok(!S.goalsFor('OUTCOME_ENGAGEMENT', 'MESSENGER').includes('LEAD_GENERATION'), 'Messenger-Lead-Anzeige noch wählbar')
+ok(S.validateDraft(r2((sp, ad, as) => { sp.campaign.objective = 'OUTCOME_ENGAGEMENT'; as.destination = 'MESSENGER'; as.optimization_goal = 'LEAD_GENERATION'; as.promoted_object = { page_id: S.HP_PAGE_ID } }))
+  .some(i => i.field === 'adset.optimization_goal' && i.severity === 'error'), 'Engagement + Messenger + LEAD_GENERATION nicht abgelehnt')
+ok(S.DESTINATION_OPTIONS.some(o => o.value === 'LEAD_FROM_MESSENGER' && o.unsupported && o.reasonKey), 'LEAD_FROM_MESSENGER gesperrt mit Grund')
+cp2 = r2payload(sp2).payload.object_story_spec.link_data
+ok(cp2.link === S.WHATSAPP_LINK && cp2.call_to_action.type === 'WHATSAPP_MESSAGE' && cp2.call_to_action.value.app_destination === 'WHATSAPP', 'WhatsApp: Link + CTA laut Meta-Doku')
+ok(JSON.parse(cp2.page_welcome_message).text_format.message.autofill_message.content === 'Ich möchte mehr über Zypern wissen.', 'WhatsApp: Begrüßung')
+ok(S.validateDraft(r2((sp, ad, as) => { as.destination = 'WHATSAPP'; as.optimization_goal = 'CONVERSATIONS'; as.attribution = 'click_1d'; as.promoted_object = { page_id: S.HP_PAGE_ID, whatsapp_phone_number: '0815' }; ad.destination = { kind: 'whatsapp' }; ad.cta_type = 'WHATSAPP_MESSAGE' })).some(i => i.code === 'whatsapp_invalid'), 'ungültige WhatsApp-Nummer nicht erkannt')
+ok(r2codes(r2((sp, ad, as) => { as.destination = 'WHATSAPP'; as.optimization_goal = 'CONVERSATIONS'; as.attribution = 'click_1d'; as.promoted_object = { page_id: S.HP_PAGE_ID }; ad.destination = { kind: 'whatsapp', begruessung: 'Hallo – Zypern' }; ad.cta_type = 'WHATSAPP_MESSAGE' })).includes('error:dash_char'), 'Gedankenstrich in WhatsApp-Begrüßung nicht erkannt')
+// Anrufe: PHONE_CALL, QUALITY_CALL, CALL_NOW mit tel:
+sp2 = r2((sp, ad, as) => { as.destination = 'PHONE_CALL'; as.optimization_goal = 'QUALITY_CALL'; as.attribution = 'click_1d'; as.promoted_object = { page_id: S.HP_PAGE_ID }; ad.destination = { kind: 'phone_call', telefon: '+49 (30) 123-4567' }; ad.cta_type = 'CALL_NOW' })
+eq(S.validateDraft(sp2).filter(i => i.severity === 'error').map(i => i.code), [], 'Anrufe: keine Fehler')
+eq(r2payload(sp2).payload.object_story_spec.link_data.call_to_action, { type: 'CALL_NOW', value: { link: 'tel:+49301234567' } }, 'Anrufe: CALL_NOW mit tel:')
+ok(r2codes(r2((sp, ad, as) => { as.destination = 'PHONE_CALL'; as.optimization_goal = 'QUALITY_CALL'; as.attribution = 'click_1d'; as.promoted_object = { page_id: S.HP_PAGE_ID }; ad.destination = { kind: 'phone_call', telefon: '030 1234' }; ad.cta_type = 'CALL_NOW' })).includes('error:phone_invalid'), 'ungültige Telefonnummer nicht erkannt')
+ok(r2codes(r2((sp, ad) => { ad.destination = { kind: 'phone_call', telefon: '+49301234567' }; ad.cta_type = 'CALL_NOW' })).includes('error:destination_mismatch'), 'Anruf-Anzeige in Website-Gruppe nicht abgelehnt')
+ok(r2codes(r2((sp, ad) => { ad.cta_type = 'WHATSAPP_MESSAGE' })).includes('error:cta_invalid'), 'WhatsApp-CTA bei Website nicht abgelehnt')
+// Messenger-Lead gesperrt (mit Grund), Messenger-Klick erlaubt
+ok(S.DESTINATION_OPTIONS.find(o => o.value === 'LEAD_FROM_MESSENGER').unsupported && !!S.DESTINATION_OPTIONS.find(o => o.value === 'LEAD_FROM_MESSENGER').reasonKey, 'Messenger-Leads: gesperrt mit Grund')
+eq(['WHATSAPP', 'PHONE_CALL', 'WEBSITE_AND_LEAD_FORM'].map(d => !S.DESTINATION_OPTIONS.find(o => o.value === d).unsupported), [true, true, true], 'neue Conversion-Orte freigeschaltet')
+ok(S.destinationsFor('OUTCOME_LEADS').includes('WEBSITE_AND_LEAD_FORM') && S.destinationsFor('OUTCOME_LEADS').includes('WHATSAPP'), 'Leads: neue Conversion-Orte wählbar')
+// Mehrere Sprachen (LANGUAGE): Deutsch Standard, Englisch als Regel, automatische Übersetzung
+sp2 = r2((sp, ad) => { ad.sprachen = { varianten: [{ sprache: 'en', primary_text: 'Property in Cyprus, EU member.', headline: 'Cyprus property', url: 'https://portal.happy-property.com/en/termin' }] } })
+cp2 = r2payload(sp2)
+const afl = cp2.payload.asset_feed_spec
+ok(cp2.mode === 'asset_feed_language' && afl.optimization_type === 'LANGUAGE', 'Sprachen: optimization_type LANGUAGE')
+eq(afl.asset_customization_rules.map(r => [r.customization_spec.locales, r.is_default, r.body_label.name]), [[S.SPRACH_LOCALES.de, true, 'hp_lang_de'], [S.SPRACH_LOCALES.en, false, 'hp_lang_en']], 'Sprachen: Regeln')
+ok(afl.images.length === 1 && afl.images[0].adlabels === undefined && afl.link_urls[1].website_url === 'https://portal.happy-property.com/en/termin', 'Sprachen: ein Bild für alle, eigene URL je Sprache')
+eq(r2codes(sp2).filter(c => c.startsWith('error')), [], 'Sprachen: keine Fehler')
+const auto = r2((sp, ad) => { ad.sprachen = { varianten: [], automatisch_uebersetzen: ['en'] } })
+eq(r2payload(auto).payload.asset_feed_spec.autotranslate, ['en_XX'], 'Sprachen: automatische Übersetzung')
+ok(r2codes(r2((sp, ad) => { ad.sprachen = { varianten: [{ sprache: 'en', primary_text: 'x', headline: 'y' }], automatisch_uebersetzen: ['en'] } })).includes('error:lang_auto_conflict'), 'Sprachen: Konflikt nicht erkannt')
+ok(r2codes(r2((sp, ad) => { ad.format = 'carousel'; ad.media = { cards: karten }; ad.sprachen = { varianten: [{ sprache: 'en', primary_text: 'x', headline: 'y' }] } })).includes('error:lang_format'), 'Sprachen mit Karussell nicht abgelehnt')
+ok(r2codes(r2((sp, ad) => { ad.primary_texts = ['A.', 'B.']; ad.sprachen = { varianten: [{ sprache: 'en', primary_text: 'x', headline: 'y' }] } })).includes('error:lang_multi_text'), 'Sprachen mit Textvarianten nicht abgelehnt')
+// Partnerschaftswerbung
+sp2 = r2((sp, ad) => { ad.partnerschaft = { partner_page_id: '100000000000001', partner_ig_user_id: '17841400000000001' } })
+cp2 = r2payload(sp2).payload
+eq([cp2.facebook_branded_content, cp2.instagram_branded_content, cp2.object_story_spec.page_id], [{ sponsor_page_id: '100000000000001' }, { sponsor_id: '17841400000000001' }, S.HP_PAGE_ID], 'Partnerschaft: Partner als zweite Identität')
+cp2 = r2payload(r2((sp, ad) => { ad.partnerschaft = { partner_page_id: '100000000000001', partner_ist_absender: true } })).payload
+eq([cp2.object_story_spec.page_id, cp2.object_story_spec.instagram_user_id, cp2.facebook_branded_content, cp2.instagram_branded_content], ['100000000000001', undefined, { sponsor_page_id: S.HP_PAGE_ID }, { sponsor_id: IG }], 'Partnerschaft: Partner als Absender')
+ok(r2codes(r2((sp, ad) => { ad.partnerschaft = {} })).includes('error:partner_missing'), 'Partnerschaft ohne Partner nicht erkannt')
+// Tracking: weitere Pixel, eigene Conversion-Domain
+sp2 = r2((sp, ad) => { ad.tracking = { weitere_pixel: ['987745530157374', S.HP_PIXEL_ID], conversion_domain: 'Happy-Property.com' }; ad.tracking_specs = [{ 'action.type': ['offsite_conversion'], fb_pixel: [S.HP_PIXEL_ID] }] })
+const adT = S.buildAdPayload(sp2.ads[0], 'AS', { creative_id: 'C' })
+eq(adT.tracking_specs, [{ 'action.type': ['offsite_conversion'], fb_pixel: [S.HP_PIXEL_ID] }, { 'action.type': ['offsite_conversion'], fb_pixel: ['987745530157374'] }], 'Tracking: weitere Pixel ohne Doppelte')
+eq(adT.conversion_domain, 'happy-property.com', 'Tracking: eigene Conversion-Domain')
+eq(r2codes(sp2).filter(c => c.startsWith('error')), [], 'Tracking an neuer Anzeige: keine Fehler')
+ok(r2codes(r2((sp, ad) => { ad.tracking = { conversion_domain: 'https://x' } })).includes('error:domain_invalid'), 'ungültige Conversion-Domain nicht erkannt')
+// Vorschau aller Platzierungen
+const pf = S.previewFormatsFor(single, { mode: 'advantage' })
+ok(pf.includes('RIGHT_COLUMN_STANDARD') && pf.includes('MARKETPLACE_MOBILE') && !pf.includes('AUDIENCE_NETWORK_OUTSTREAM_VIDEO'), 'Vorschau: Bild ohne Audience-Network-Video')
+eq(S.previewFormatsFor(single, { mode: 'manual', publisher_platforms: ['instagram'], instagram_positions: ['stream', 'story'] }), ['INSTAGRAM_STANDARD', 'INSTAGRAM_STORY'], 'Vorschau: nur gewählte Platzierungen')
+ok(!S.previewFormatsFor({ ...single, format: 'carousel' }, { mode: 'advantage' }).includes('FACEBOOK_STORY_MOBILE'), 'Vorschau: Karussell ohne Facebook Stories')
+ok(S.PREVIEW_ALLE_FORMATS.length <= S.LIMITS.previewAlleMax && S.PREVIEW_ALLE_FORMATS.every(f => S.PREVIEW_FORMATS.includes(f)), 'Vorschau: Formatliste')
+ok(!pf.includes('DESKTOP_FEED_STANDARD') && S.previewFormatsFor(single, { mode: 'advantage' }, S.PREVIEW_FORMATS).includes('DESKTOP_FEED_STANDARD'), 'Vorschau: Computer-Feed nur auf Wunsch')
+// Wohnen unverändert: neue Werbemittel ändern nichts an applyHousing
+const hAll = S.applyHousing(r2((sp, ad) => { ad.sprachen = { varianten: [{ sprache: 'en', primary_text: 'x', headline: 'y' }] }; ad.partnerschaft = { partner_page_id: '100000000000001' }; ad.tracking = { weitere_pixel: ['987745530157374'] } }))
+eq(hAll.changes.map(c => c.code), [], 'Wohnen: keine Korrektur durch neue Werbemittel-Felder')
+ok(!S.validateDraft(hAll.spec).some(i => i.code.startsWith('housing_')), 'Wohnen: keine Housing-Fehler')
+// Modi
+ok(['posts_list', 'preview_alle', 'ad_vorschau_link', 'video_vorschaubilder', 'video_vorschaubild', 'video_untertitel'].every(m => S.BUILDER_MODES.includes(m)), 'neue Modi registriert')
+ok(['preview_alle', 'video_vorschaubild', 'video_untertitel'].every(m => S.BUILDER_WRITE_MODES.includes(m)) && !['posts_list', 'ad_vorschau_link', 'video_vorschaubilder'].some(m => S.BUILDER_WRITE_MODES.includes(m)), 'Schreib-Modi richtig eingeordnet')
+// Bearbeiten: neue Felder = Werbemittel-Tausch, Tracking ohne Tausch, Zuschnitt erkannt, Wechsel Feed-Typ beim Ersetzen gesperrt
+for (const [f, mut] of [
+  ['ad.sprachen', a => { a.sprachen = { varianten: [{ sprache: 'en', primary_text: 'x', headline: 'y' }] } }],
+  ['ad.partnerschaft', a => { a.partnerschaft = { partner_page_id: '100000000000001' } }],
+  ['ad.media.landscape_191x1', a => { a.media.landscape_191x1 = { media_id: 'l' } }],
+  ['ad.beitrag', a => { a.beitrag = { quelle: 'facebook', id: FBPOST } }],
+  ['ad.media.feed_4x5', a => { a.media.feed_4x5 = { ...a.media.feed_4x5, crops: { '400x500': [[0, 0], [800, 1000]] } } }],
+]) {
+  const x = ch(ed(s2 => mut(s2.ads[0])), f)
+  ok(!!x && x.creative === true && x.learning_reset === true, `editDiff: ${f} = Werbemittel-Tausch`)
+}
+er = ed(s2 => { s2.ads[0].tracking = { weitere_pixel: ['987745530157374'] } })
+ok(ch(er, 'ad.tracking_specs') && !ch(er, 'ad.tracking_specs').creative && !ch(er, 'ad.tracking_specs').learning_reset, 'editDiff: Tracking ohne Werbemittel-Tausch')
+// Mehrere Texte mit einem Medium bleiben ein Platzierungs-Creative (Runde-1-Weg): Ersetzen erlaubt
+er = ed(s2 => { s2.hp = { creative_tausch: 'ersetzen' }; delete s2.ads[0].media.story_9x16; s2.ads[0].primary_texts = ['Eins.', 'Zwei.'] })
+ok(ch(er, 'ad.media.story_9x16') && !ch(er, 'ad.media.story_9x16').blocked, 'editDiff: Ersetzen Medien je Platzierung -> Textvarianten (gleiches Medium) fälschlich gesperrt')
+er = ed(s2 => { s2.hp = { creative_tausch: 'ersetzen' }; delete s2.ads[0].media.story_9x16; s2.ads[0].primary_texts = ['Eins.', 'Zwei.']; s2.ads[0].descriptions = ['A', 'B'] })
+ok(ch(er, 'ad.media.story_9x16')?.blocked === S.EDIT_BLOCK_TEXT.ersetzenModus, 'editDiff: Ersetzen Medien je Platzierung -> Textvarianten ohne Regeln gesperrt')
+// Feed-Typ aus dem Import zählt: gleiches Bild in beiden Labels (PLACEMENT) -> Einzelmedium beim Ersetzen gesperrt
+{
+  const b0 = JSON.parse(JSON.stringify(ebase)); b0.ads[0].media.story_9x16 = { ...b0.ads[0].media.feed_4x5 }; b0.ads[0].source = { ...(b0.ads[0].source ?? {}), creative_mode: 'asset_feed' }
+  er = ed(s2 => { s2.hp = { creative_tausch: 'ersetzen' }; s2.ads[0].headlines = ['Neu'] }, b0)
+  ok(ch(er, 'ad.headlines')?.blocked === S.EDIT_BLOCK_TEXT.ersetzenModus, 'editDiff: importierter Feed-Typ PLACEMENT -> Einzelmedium nicht gesperrt')
+  const b1 = JSON.parse(JSON.stringify(ebase)); b1.ads[0].source = { ...(b1.ads[0].source ?? {}), partner_unbekannt: true }
+  er = ed(s2 => { s2.ads[0].headlines = ['Neu'] }, b1)
+  ok(ch(er, 'ad.headlines')?.blocked === S.EDIT_BLOCK_TEXT.partnerUnbekannt, 'editDiff: unbekannte Partnerschaft nicht gesperrt')
+}
+const r2payloads = JSON.stringify([karten, af4, aft, afl, adT])
+ok(!/[‒-―]/.test(r2payloads) && !/"status":"ACTIVE"/.test(r2payloads), 'Runde-2-Payloads ohne Gedankenstrich/ACTIVE')
 
 // ── 6. Lint ──────────────────────────────────────────────────────────────────
 const ctx = {
@@ -569,6 +772,26 @@ ok(rules(lintOf({ primary_texts: ['x'.repeat(130)] })).includes('warn:primaertex
 const dl = L.lintDraft({ campaign: { name: 'Plan B – Test' }, adsets: [], ads: [] }, ctx)
 ok(rules(dl).includes('blocker:gedankenstrich'), 'Gedankenstrich im Kampagnennamen nicht erkannt')
 ok(L.lintHasBlockers(lintOf({ primary_texts: ['Finanzierung garantiert.'] })) && !L.lintHasBlockers(clean), 'lintHasBlockers')
+// Runde 2: weitere Sprachen, WhatsApp-Texte, Website + Sofortformular, Querformat, eigenes Vorschaubild
+const en = (v) => lintOf({ sprachen: { varianten: [{ sprache: 'en', primary_text: 'Property in Cyprus, EU member.', headline: 'Cyprus', ...v }] } })
+eq(rules(en({})), [], 'Englische Variante ohne Befund')
+ok(rules(en({ headline: 'Live at Genesis Residence' })).includes('blocker:projektname'), 'Projektname in englischer Variante nicht erkannt')
+ok(rules(en({ primary_text: 'Cyprus – EU.' })).includes('blocker:gedankenstrich'), 'Gedankenstrich in englischer Variante nicht erkannt')
+ok(rules(en({ primary_text: 'Up to 8 % return per year.' })).includes('blocker:rendite_prozent'), 'Rendite in englischer Variante nicht erkannt')
+ok(rules(en({ headline: 'A'.repeat(41) })).includes('blocker:ueberschrift_lang'), 'Lange englische Überschrift nicht erkannt')
+ok(L.lintText('Nobody got sued here.', 'x', ctx).some(i => i.rule === 'umlaut') && !rules(en({ primary_text: 'Nobody got sued here.' })).includes('blocker:umlaut'), 'Umlaut-Regel fälschlich für Englisch')
+ok(rules(en({ url: 'https://steuervorteil-zypern-immobilien.com/emerald-paphos/' })).includes('blocker:projektname'), 'Projektname in URL der Sprachversion nicht erkannt')
+const wa = (d) => lintOf({ destination: { kind: 'whatsapp', ...d } })
+ok(rules(wa({ begruessung: 'Als Arzt zahlst du zu viel.' })).includes('blocker:persoenlich'), 'persönliche Eigenschaft in WhatsApp-Begrüßung nicht erkannt')
+ok(rules(wa({ nachricht: 'Ich will ins Emerald.' })).includes('blocker:projektname'), 'Projektname in WhatsApp-Nachricht nicht erkannt')
+ok(rules(wa({ begruessung: 'Schoen, dass du schreibst.' })).includes('blocker:umlaut'), 'Umlaut in WhatsApp-Begrüßung nicht erkannt')
+eq(rules(wa({ begruessung: 'Schön, dass du schreibst.', nachricht: 'Ich möchte mehr über Zypern wissen.' })), [], 'WhatsApp-Texte ohne Befund')
+ok(rules(lintOf({ destination: { kind: 'website_lead_form', url: 'https://steuervorteil-zypern-immobilien.com/emerald-paphos/', form_id: 'F' } })).includes('blocker:projektname'), 'Website + Sofortformular: Projektname in URL nicht erkannt')
+ok(rules(lintOf({ destination: { kind: 'website_lead_form', url: 'https://example.com/x', form_id: 'F' } })).includes('warn:url_host'), 'Website + Sofortformular: fremde Domain nicht erkannt')
+ok(rules(lintOf({ media: { landscape_191x1: { media_id: 'm-kuutio' } } })).includes('blocker:projektname'), 'Projektname im Querformat-Dateinamen nicht erkannt')
+const thumb = lintOf({ media: { feed_4x5: { media_id: 'm-feed', thumbnail_media_id: 'm-open' } } })
+ok(thumb.some(i => i.rule === 'eu_band' && i.field === 'ad.media.thumbnail' && i.params?.media_id === 'm-open'), 'eigenes Vorschaubild ohne EU-Band-Bestätigung nicht gemeldet')
+ok(rules(lintOf({ media: { feed_4x5: { media_id: 'm-feed', thumbnail_media_id: 'm-kuutio' } } })).includes('blocker:projektname'), 'Projektname im Vorschaubild-Dateinamen nicht erkannt')
 // Plan-B-Entwurf (aus Abschnitt 5) muss lint-sauber sein
 const pbLint = L.lintDraft(hb.spec, ctx).filter(i => i.severity !== 'manual' || !['m-feed', 'm-story'].includes(i.params?.media_id))
 eq(rules(pbLint), [], 'Plan-B-Entwurf lint')

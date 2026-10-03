@@ -20,7 +20,7 @@ export async function pageAccessToken(pageId: string): Promise<string | null> {
   return own?.access_token ? String(own.access_token) : null
 }
 
-async function pageFetch<T>(method: 'GET' | 'POST', path: string, pageToken: string, params: Raw, timeoutMs: number): Promise<T> {
+export async function pageFetch<T>(method: 'GET' | 'POST', path: string, pageToken: string, params: Raw, timeoutMs: number): Promise<T> {
   if (method === 'POST' && metaWritesDisabled()) {
     throw new MetaApiError({ status: 0, kind: 'permission', userMsg: 'META_WRITES_DISABLED', message: 'Schreibzugriffe an Meta sind per META_WRITES_DISABLED gesperrt' })
   }

@@ -8,14 +8,21 @@
 // Status-Abfrage bis ready; Vorschaubild = bevorzugtes Meta-Thumbnail, als Bild
 // hochgeladen -> thumbnail_hash. Videos werden NICHT in die Function geladen
 // (zu groß), deshalb ist ihr sha256 ein Fingerabdruck aus Pfad und Größe.
+//
+// Runde 2: video_vorschaubilder (Metas Vorschläge lesen), video_vorschaubild (Vorschlag als Bild
+// in die Bibliothek laden -> thumbnail_hash für MediaRef bzw. als Standard des Videos),
+// video_untertitel (SRT aus dem Bucket an POST /{video_id}/captions; API-Pfad für
+// Werbekonto-Videos ungeprüft, Fehler kommen mit Hinweis zurück).
 
-import { graphGet, MetaApiError, uploadImage } from '../_shared/metaGraph.ts'
+import { GRAPH, graphGet, metaEnv, metaErrorFromBody, MetaApiError, metaWritesDisabled, uploadImage } from '../_shared/metaGraph.ts'
 import {
-  aspectOf, type MediaAspect, type MediaStatusRequest, type MediaStatusResponse, type MediaUploadRequest,
-  type MediaUploadResponse, type MetaMediaRow,
+  aspectOf, UNTERTITEL_SPRACHEN, type MediaAspect, type MediaStatusRequest, type MediaStatusResponse, type MediaUploadRequest,
+  type MediaUploadResponse, type MetaMediaRow, type UntertitelSprache, type VideoThumbnail, type VideoUntertitelRequest,
+  type VideoUntertitelResponse, type VideoVorschaubilderRequest, type VideoVorschaubilderResponse, type VideoVorschaubildRequest,
+  type VideoVorschaubildResponse,
 } from '../_shared/metaSpec.ts'
 import {
-  arr, BUCKET, BuilderError, errText, fromMetaError, isUuid, logWrite, metaPost, obj, publicUrl, sha256Hex,
+  arr, BUCKET, BuilderError, errText, fromMetaError, isUuid, logWrite, metaPost, num, obj, publicUrl, sha256Hex,
   str, uuidParam, writeGate, type Ctx,
 } from './common.ts'
 
@@ -262,32 +269,49 @@ async function pollVideo(ctx: Ctx, row: MetaMediaRow): Promise<MetaMediaRow> {
 
 const THUMB_HOST = /(^|\.)(fbcdn\.net|facebook\.com|fbsbx\.com)$/i
 
-/** Bevorzugtes Meta-Thumbnail als Bild hochladen -> thumbnail_hash (Schreibzugriff). */
-async function ensureVideoThumbnail(ctx: Ctx, row: MetaMediaRow, draftId?: string | null): Promise<MetaMediaRow> {
-  if (row.thumbnail_hash || !row.meta_video_id) return row
-  const j = await graphGet<{ data?: Array<Record<string, unknown>> }>(`${row.meta_video_id}/thumbnails`, { fields: 'uri,is_preferred,width,height' })
-  const list = arr<Record<string, unknown>>(j?.data)
-  const pick = list.find(t => t.is_preferred === true) ?? list[0]
-  const uri = str(pick?.uri)
+/** Nur Metas eigene Bild-Server (SSRF-Schutz: nie fremde Adressen laden). */
+function metaBildUri(uri: string): boolean {
   let host = ''
   try { host = new URL(uri).hostname } catch { host = '' }
-  if (!uri.startsWith('https://') || !THUMB_HOST.test(host)) return row
+  return uri.startsWith('https://') && THUMB_HOST.test(host)
+}
+
+/** Metas Vorschaubild-Vorschläge eines Videos (GET /{video_id}/thumbnails). */
+async function videoThumbnails(videoId: string): Promise<VideoThumbnail[]> {
+  const j = await graphGet<{ data?: Array<Record<string, unknown>> }>(`${videoId}/thumbnails`, { fields: 'uri,is_preferred,width,height' })
+  return arr<Record<string, unknown>>(j?.data)
+    .map(t => ({ uri: str(t.uri), width: num(t.width), height: num(t.height), is_preferred: t.is_preferred === true }))
+    .filter(t => metaBildUri(t.uri))
+}
+
+/** Vorschaubild von Metas Server laden (nur fbcdn/facebook, höchstens 8 MB); null = nicht ladbar. */
+async function ladeMetaBild(uri: string): Promise<{ bytes: Uint8Array; type: string } | null> {
+  if (!metaBildUri(uri)) return null
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), 30_000)
-  let bytes: Uint8Array
-  let type = 'image/jpeg'
   try {
     const res = await fetch(uri, { signal: ctrl.signal })
-    if (!res.ok) return row
-    type = (res.headers.get('content-type') ?? 'image/jpeg').split(';')[0].trim() || 'image/jpeg'
-    bytes = new Uint8Array(await res.arrayBuffer())
+    if (!res.ok) return null
+    const type = (res.headers.get('content-type') ?? 'image/jpeg').split(';')[0].trim() || 'image/jpeg'
+    const bytes = new Uint8Array(await res.arrayBuffer())
+    if (!bytes.length || bytes.length > MAX_THUMB_BYTES || !type.startsWith('image/')) return null
+    return { bytes, type }
   } catch {
-    return row
+    return null
   } finally {
     clearTimeout(timer)
   }
-  if (!bytes.length || bytes.length > MAX_THUMB_BYTES || !type.startsWith('image/')) return row
-  const hash = await uploadLogged(ctx, bytes, type, `hp-thumb-${row.meta_video_id}`, draftId)
+}
+
+/** Bevorzugtes Meta-Thumbnail als Bild hochladen -> thumbnail_hash (Schreibzugriff). */
+async function ensureVideoThumbnail(ctx: Ctx, row: MetaMediaRow, draftId?: string | null): Promise<MetaMediaRow> {
+  if (row.thumbnail_hash || !row.meta_video_id) return row
+  const list = await videoThumbnails(row.meta_video_id)
+  const pick = list.find(t => t.is_preferred) ?? list[0]
+  if (!pick) return row
+  const bild = await ladeMetaBild(pick.uri)
+  if (!bild) return row
+  const hash = await uploadLogged(ctx, bild.bytes, bild.type, `hp-thumb-${row.meta_video_id}`, draftId)
   return await updateMedia(ctx, row.id, { thumbnail_hash: hash })
 }
 
@@ -329,7 +353,11 @@ export async function retryVideoThumbnails(ctx: Ctx, rows: Record<string, MetaMe
  * Verarbeitung -> Status abfragen; fertiges Video ohne Vorschaubild -> Thumbnail.
  * Nur aus Schreib-Modi aufrufen (lädt bei Bedarf zu Meta hoch).
  */
-export async function ensureMediaReady(ctx: Ctx, mediaId: string, draftId?: string | null): Promise<MediaReadiness> {
+/**
+ * Medium bei Meta fertig machen. eigenesVorschaubild = jede Verwendung des Videos hat ein eigenes
+ * Vorschaubild (Upload oder gewählter Meta-Vorschlag): dann nicht auf Metas Standardbild warten.
+ */
+export async function ensureMediaReady(ctx: Ctx, mediaId: string, draftId?: string | null, eigenesVorschaubild = false): Promise<MediaReadiness> {
   if (!isUuid(mediaId)) throw new BuilderError(400, 'invalid_request', `Ungültige Medien-ID ${mediaId}.`)
   let row = await mediaById(ctx, mediaId)
   if (row.kind === 'image') {
@@ -351,7 +379,7 @@ export async function ensureMediaReady(ctx: Ctx, mediaId: string, draftId?: stri
   if (row.meta_status !== 'ready') row = await pollVideo(ctx, row)
   if (row.meta_status === 'error') return { row, ready: false, reason: 'error' }
   if (row.meta_status !== 'ready') return { row, ready: false, reason: 'processing' }
-  if (!row.thumbnail_hash) {
+  if (!row.thumbnail_hash && !eigenesVorschaubild) {
     try { row = await ensureVideoThumbnail(ctx, row, draftId) } catch (err) { console.warn('[meta-builder] Vorschaubild:', mediaErrorText(err)) }
     // Ohne Vorschaubild kein Creative (Meta verlangt es): erst warten, nach THUMB_WAIT_MS Fehler
     if (!row.thumbnail_hash) {
@@ -361,4 +389,123 @@ export async function ensureMediaReady(ctx: Ctx, mediaId: string, draftId?: stri
     }
   }
   return { row, ready: true }
+}
+
+// ── Video: Vorschaubild wählen, Untertitel ───────────────────────────────────
+
+async function videoRow(ctx: Ctx, mediaId: unknown): Promise<MetaMediaRow & { meta_video_id: string }> {
+  const row = await mediaById(ctx, uuidParam(mediaId, 'media_id'))
+  if (row.kind !== 'video') throw new BuilderError(400, 'invalid_request', 'Das Medium ist kein Video.')
+  if (!row.meta_video_id) {
+    throw new BuilderError(409, 'media_not_ready', 'Das Video ist noch nicht bei Meta.', 'Erst hochladen (media_upload), dann erneut versuchen.')
+  }
+  return row as MetaMediaRow & { meta_video_id: string }
+}
+
+/** video_vorschaubilder: Metas Vorschläge (nur Lesen). */
+export async function modeVideoVorschaubilder(ctx: Ctx, req: VideoVorschaubilderRequest): Promise<VideoVorschaubilderResponse> {
+  const row = await mediaById(ctx, uuidParam(req.media_id, 'media_id'))
+  if (row.kind !== 'video') throw new BuilderError(400, 'invalid_request', 'Das Medium ist kein Video.')
+  if (!row.meta_video_id) return { media_id: row.id, video_id: null, vorschaubilder: [] }
+  try {
+    return { media_id: row.id, video_id: row.meta_video_id, vorschaubilder: await videoThumbnails(row.meta_video_id) }
+  } catch (err) {
+    throw err instanceof MetaApiError ? fromMetaError(err, 'Vorschaubilder laden') : err
+  }
+}
+
+/**
+ * video_vorschaubild: einen Vorschlag als Bild in die Bildbibliothek laden. Die uri muss in Metas
+ * aktueller Liste des Videos stehen (keine beliebigen Adressen). Ergebnis: thumbnail_hash für die
+ * MediaRef (thumbnail_quelle 'meta_liste'), mit als_standard auch für das Video in meta_media.
+ */
+export async function modeVideoVorschaubild(ctx: Ctx, req: VideoVorschaubildRequest): Promise<VideoVorschaubildResponse> {
+  const row = await videoRow(ctx, req.media_id)
+  const uri = str(req.uri).trim()
+  let list: VideoThumbnail[]
+  try { list = await videoThumbnails(row.meta_video_id) } catch (err) {
+    throw err instanceof MetaApiError ? fromMetaError(err, 'Vorschaubilder laden') : err
+  }
+  if (!uri || !list.some(t => t.uri === uri)) {
+    throw new BuilderError(400, 'invalid_request', 'Dieses Vorschaubild gehört nicht (mehr) zum Video.', 'Vorschaubilder neu laden und erneut wählen (Meta-Adressen gelten nur kurz).')
+  }
+  const bild = await ladeMetaBild(uri)
+  if (!bild) throw new BuilderError(502, 'meta_error', 'Das Vorschaubild ließ sich bei Meta nicht laden.', 'In einer Minute erneut versuchen.')
+  let hash: string
+  try {
+    hash = await uploadLogged(ctx, bild.bytes, bild.type, `hp-thumb-${row.meta_video_id}-wahl`)
+  } catch (err) {
+    throw err instanceof MetaApiError ? fromMetaError(err, 'Vorschaubild-Upload zu Meta') : err
+  }
+  const alsStandard = req.als_standard === true
+  if (alsStandard) await updateMedia(ctx, row.id, { thumbnail_hash: hash })
+  return { media_id: row.id, thumbnail_hash: hash, uri, als_standard: alsStandard }
+}
+
+const MAX_SRT_BYTES = 1024 * 1024
+const SRT_ZEIT = /\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}/
+
+/**
+ * video_untertitel: SRT-Datei aus dem Bucket ad-creatives an POST /{video_id}/captions
+ * (Graph API Video, Felder captions_file mit Dateiname „name.de_DE.srt“ und default_locale).
+ * API-Pfad für Werbekonto-Videos nicht bestätigt: lehnt Meta ab, kommt ein Hinweis zurück
+ * (Untertitel dann im Werbeanzeigenmanager hochladen oder ins Video brennen).
+ */
+export async function modeVideoUntertitel(ctx: Ctx, req: VideoUntertitelRequest): Promise<VideoUntertitelResponse> {
+  const row = await videoRow(ctx, req.media_id)
+  const sprache = str(req.sprache) as UntertitelSprache
+  if ((UNTERTITEL_SPRACHEN as readonly string[]).indexOf(sprache) < 0) {
+    throw new BuilderError(400, 'invalid_request', `sprache muss ${UNTERTITEL_SPRACHEN.join(', ')} sein.`)
+  }
+  const path = cleanStoragePath(req.storage_path)
+  if (!/\.srt$/i.test(path)) throw new BuilderError(400, 'invalid_request', 'Untertitel bitte als SRT-Datei hochladen (Endung .srt).')
+  const { data, error } = await ctx.sb.storage.from(BUCKET).download(path)
+  if (error || !data) throw new BuilderError(404, 'not_found', `Datei ${path} im Speicher nicht gefunden.`)
+  const bytes = new Uint8Array(await (data as Blob).arrayBuffer())
+  if (!bytes.length || bytes.length > MAX_SRT_BYTES) throw new BuilderError(400, 'invalid_request', 'Die SRT-Datei ist leer oder größer als 1 MB.')
+  const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes)
+  if (!SRT_ZEIT.test(text)) throw new BuilderError(400, 'invalid_request', 'Das ist keine gültige SRT-Datei (Zeitangaben wie 00:00:01,000 --> 00:00:03,500 fehlen).')
+  if (metaWritesDisabled()) {
+    throw new BuilderError(503, 'writes_disabled', 'Schreibzugriffe an Meta sind gesperrt (Secret META_WRITES_DISABLED=1).')
+  }
+  const { token } = metaEnv()
+  if (!token) throw new BuilderError(503, 'meta_error', 'Der Meta-Zugang fehlt (Secret META_ACCESS_TOKEN).')
+  const videoId = row.meta_video_id
+  const ziel = `${videoId}/captions`
+  const form = new FormData()
+  form.append('captions_file', new Blob([bytes], { type: 'application/x-subrip' }), `hp.${sprache}.srt`)
+  if (req.standard === true) form.append('default_locale', sprache)
+  const logReq = { sprache, bytes: bytes.length, standard: req.standard === true, storage_path: path }
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 60_000)
+  try {
+    let res: Response
+    try {
+      // Token nur im Authorization-Header (nie in URL oder Log)
+      res = await fetch(`${GRAPH}/${ziel}`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form, signal: ctrl.signal })
+    } catch (err) {
+      const aborted = err instanceof Error && err.name === 'AbortError'
+      throw new MetaApiError({ status: 0, kind: 'transient', message: aborted ? 'Zeitüberschreitung beim Untertitel-Upload' : 'Netzwerkfehler beim Untertitel-Upload' })
+    }
+    const raw = await res.text()
+    let json: unknown = null
+    try { json = raw ? JSON.parse(raw) : null } catch { json = { raw: raw.slice(0, 200) } }
+    if (!res.ok || obj(json).error || obj(json).success === false) throw metaErrorFromBody(res.status, json, `HTTP ${res.status}`)
+    await logWrite(ctx, { level: 'media', path: ziel, entityId: videoId, request: logReq, after: json })
+    return { media_id: row.id, video_id: videoId, sprache, ok: true }
+  } catch (err) {
+    await logWrite(ctx, { level: 'media', path: ziel, entityId: videoId, request: logReq, err })
+    if (err instanceof MetaApiError) {
+      if (err.kind === 'permission' || err.kind === 'validation' || err.kind === 'unknown') {
+        return {
+          media_id: row.id, video_id: videoId, sprache, ok: false,
+          hinweis: `Meta hat die Untertitel nicht angenommen (${(err.userMsg || err.message).slice(0, 200)}). Untertitel im Werbeanzeigenmanager hochladen oder ins Video brennen.`,
+        }
+      }
+      throw fromMetaError(err, 'Untertitel-Upload')
+    }
+    throw err
+  } finally {
+    clearTimeout(timer)
+  }
 }

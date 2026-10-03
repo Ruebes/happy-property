@@ -36,6 +36,8 @@
     "meta-builder/edit.ts",
     "meta-builder/bulk.ts",
     "meta-werkzeuge/index.ts",
-    "meta-berichte/index.ts"
+    "meta-berichte/index.ts",
+    "meta-konto/index.ts",
+    "meta-steuerung/index.ts"
   ]
 }

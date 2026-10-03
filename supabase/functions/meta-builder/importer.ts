@@ -7,12 +7,14 @@
 
 import { graphAll, graphGet, MetaApiError } from '../_shared/metaGraph.ts'
 import {
-  ATTRIBUTION_SPECS, attributionFor, BID_STRATEGIES, BRAND_SAFETY_LEVELS, CREATIVE_FEATURES, CTA_TYPES,
-  DESTINATION_TYPES, LOCATION_TYPES, META_UNBEGRENZT_AB, OBJECT_STATUSES, OBJECTIVES, PAC_LABEL_STORY,
+  adKindsFor, ATTRIBUTION_SPECS, attributionFor, BID_STRATEGIES, BRAND_SAFETY_LEVELS, CREATIVE_FEATURES, CROP_KEYS, CTA_TYPES,
+  DESTINATION_TYPES, LOCATION_TYPES, META_UNBEGRENZT_AB, MESSENGER_LINK, OBJECT_STATUSES, OBJECTIVES, PAC_LABEL_QUADRAT,
+  PAC_LABEL_QUER, PAC_LABEL_STORY, SPRACH_LABEL_PREFIX, SPRACH_LOCALES, WHATSAPP_LINK,
   POSITION_FIELD_BY_PLATFORM, PROMOTED_KEYS, PUBLISHER_CATEGORIES, PUBLISHER_PLATFORMS, REMOVED_POSITIONS,
   SPECIAL_AD_CATEGORIES, URL_TAGS_STANDARD,
   type AdDraft, type AdsetDraft, type AdsetScheduleBlock, type AttributionPreset, type BidStrategy, type BrandSafety,
-  type CampaignDraft, type CardDraft, type CreativeFeature, type CtaType, type Destination, type DraftSpec,
+  type AdDestination, type AdDestinationKind, type CampaignDraft, type CardDraft, type CreativeFeature, type CtaType, type Destination, type DraftSpec, type ImageCrops,
+  type SprachVariante,
   type EditableStatus, type Enroll, type ImportRequest, type ImportResponse, type Level, type ManualPlacements,
   type MediaRef, type Objective, type ObjectStatus, type OptGoal, type Placements, type PromotedObject,
   type PublisherCategory, type PublisherPlatform, type SpecialCat, type TargetingSpec,
@@ -26,16 +28,20 @@ const ADSET_FIELDS =
   'id,account_id,campaign_id,name,status,effective_status,destination_type,optimization_goal,billing_event,' +
   'promoted_object,attribution_spec,daily_budget,lifetime_budget,bid_strategy,bid_amount,bid_constraints,' +
   'start_time,end_time,targeting,dsa_beneficiary,dsa_payor'
-const AD_FIELDS =
-  'id,account_id,campaign_id,adset_id,name,status,effective_status,' +
-  'creative{id,name,object_story_spec,asset_feed_spec,url_tags,degrees_of_freedom_spec,contextual_multi_ads,' +
-  'instagram_user_id,object_story_id,effective_object_story_id}'
+const AD_BASE_FIELDS = 'id,account_id,campaign_id,adset_id,name,status,effective_status'
+const CREATIVE_FIELDS =
+  'id,name,object_story_spec,asset_feed_spec,url_tags,degrees_of_freedom_spec,contextual_multi_ads,' +
+  'instagram_user_id,object_story_id,effective_object_story_id,source_instagram_media_id,call_to_action'
+const AD_FIELDS = `${AD_BASE_FIELDS},creative{${CREATIVE_FIELDS}}`
 // Bearbeiten: zusätzlich Restbudget (Leitplanke), Budgetplanung, Zeitplan, Gruppen-Limits, Tracking
 const CAMPAIGN_FIELDS_EDIT = `${CAMPAIGN_FIELDS},budget_remaining,pacing_type`
 const ADSET_FIELDS_EDIT =
   `${ADSET_FIELDS},budget_remaining,adset_schedule,pacing_type,daily_min_spend_target,daily_spend_cap,` +
   'lifetime_min_spend_target,lifetime_spend_cap'
 const AD_FIELDS_EDIT = `${AD_FIELDS},tracking_specs`
+// Bearbeiten: Partnerschaft am Creative (sonst ginge der Partner beim Werbemittel-Tausch verloren)
+const AD_FIELDS_EDIT_PARTNER =
+  `${AD_BASE_FIELDS},creative{${CREATIVE_FIELDS},facebook_branded_content,instagram_branded_content,branded_content},tracking_specs`
 
 const isIn = (list: readonly string[], v: unknown): boolean => typeof v === 'string' && list.indexOf(v) >= 0
 const pos = (v: unknown): number | undefined => {
@@ -219,13 +225,94 @@ export function mapAdset(a: Raw, warn: string[], edit = false): AdsetDraft {
 
 // ── Anzeige ──────────────────────────────────────────────────────────────────
 
-const imgRef = (hash: string): MediaRef => ({ media_id: `meta:img:${hash}`, image_hash: hash })
+const imgRef = (hash: string, crops?: unknown): MediaRef => {
+  const r: MediaRef = { media_id: `meta:img:${hash}`, image_hash: hash }
+  const c = cropsAus(crops)
+  if (c) r.crops = c
+  return r
+}
+/** image_crops von Meta -> ImageCrops (nur bekannte Schlüssel). */
+function cropsAus(v: unknown): ImageCrops | undefined {
+  const o = obj(v)
+  const out: ImageCrops = {}
+  for (const k of CROP_KEYS) {
+    const box = o[k]
+    if (Array.isArray(box) && box.length === 2 && Array.isArray(box[0]) && Array.isArray(box[1])) {
+      const a = box[0] as unknown[], b = box[1] as unknown[]
+      const n = [num(a[0]), num(a[1]), num(b[0]), num(b[1])]
+      if (n.every(x => x !== null)) out[k] = [[n[0] as number, n[1] as number], [n[2] as number, n[3] as number]]
+    }
+  }
+  return Object.keys(out).length ? out : undefined
+}
 const vidRef = (videoId: string, thumbHash?: string): MediaRef => ({
   media_id: `meta:vid:${videoId}`, video_id: videoId, ...(thumbHash ? { thumbnail_hash: thumbHash } : {}),
 })
 const texts = (...list: unknown[]): string[] => list.map(str).map(s => s.trim()).filter(Boolean)
 
-export function mapAd(ad: Raw, adsetKey: string, defaults: { page_id: string }, warn: string[], edit = false): AdDraft {
+/**
+ * Ziel der Anzeige aus Button und Link (Conversion-Ort der Anzeigengruppe hat Vorrang):
+ * WhatsApp / Messenger / Anruf / Sofortformular / Website und Sofortformular / Website.
+ * WhatsApp, Messenger und Anruf nur, wenn der Conversion-Ort sie zulässt (oder unbekannt ist):
+ * ein „Jetzt anrufen“-Button in einer Website-Gruppe (Plan B, WEBSITE_AND_PHONE_CALL) bleibt Website.
+ */
+function zielAus(ctaType: string, value: Raw, link: string, display: string, adsetDest: string, unpassend?: (art: string) => void): AdDestination {
+  const formId = str(value.lead_gen_form_id)
+  const app = str(value.app_destination).toUpperCase()
+  const vlink = str(value.link)
+  const kinds = adKindsFor(adsetDest as Destination)
+  const darf = (k: AdDestinationKind): boolean => !adsetDest || kinds.indexOf(k) >= 0
+  const pruefe = (k: AdDestinationKind, treffer: boolean): boolean => {
+    if (!treffer) return false
+    if (darf(k)) return true
+    unpassend?.(k)
+    return false
+  }
+  if (pruefe('whatsapp', adsetDest === 'WHATSAPP' || ctaType === 'WHATSAPP_MESSAGE' || app === 'WHATSAPP' || link === WHATSAPP_LINK)) return { kind: 'whatsapp' }
+  if (pruefe('messenger', adsetDest === 'MESSENGER' || ctaType === 'MESSAGE_PAGE' || app === 'MESSENGER' || link === MESSENGER_LINK)) return { kind: 'messenger' }
+  if (pruefe('phone_call', adsetDest === 'PHONE_CALL' || ctaType === 'CALL_NOW' || /^tel:/i.test(vlink))) return { kind: 'phone_call', telefon: vlink.replace(/^tel:/i, '') }
+  const site = link && !/^https?:\/\/fb\.me\/?$/i.test(link) ? link : ''
+  if (formId) {
+    if (adsetDest !== 'ON_AD' && site && (adsetDest === 'WEBSITE_AND_LEAD_FORM' || !adsetDest)) {
+      return { kind: 'website_lead_form', url: site, form_id: formId, ...(display ? { display_link: display } : {}) }
+    }
+    return { kind: 'lead_form', form_id: formId }
+  }
+  return { kind: 'website', url: link || (/^tel:/i.test(vlink) ? '' : vlink), ...(display ? { display_link: display } : {}) }
+}
+
+/** WhatsApp-Begrüßung (page_welcome_message, Text oder JSON) -> begruessung / nachricht. */
+function willkommenAus(dest: AdDestination, raw: unknown): AdDestination {
+  if (dest.kind !== 'whatsapp' || raw === undefined || raw === null || raw === '') return dest
+  let o: Raw = {}
+  if (typeof raw === 'string') { try { o = obj(JSON.parse(raw)) } catch { o = {} } } else o = obj(raw)
+  const msg = obj(obj(o.text_format).message)
+  const text = str(msg.text).trim(), nachricht = str(obj(msg.autofill_message).content).trim()
+  return { kind: 'whatsapp', ...(text ? { begruessung: text } : {}), ...(nachricht ? { nachricht } : {}) }
+}
+
+/**
+ * Partnerschaftswerbung am Creative -> PartnerschaftSpec (Umkehrung von partnerFelder in metaSpec).
+ * Nur branded_content.partners ohne die beiden Einzelfelder kann der Assistent nicht nachbauen.
+ */
+function partnerAus(cr: Raw, out: AdDraft, hpPage: string): void {
+  const fb = str(obj(cr.facebook_branded_content).sponsor_page_id)
+  const ig = str(obj(cr.instagram_branded_content).sponsor_id)
+  if (!fb && !ig) {
+    if (arr<unknown>(obj(cr.branded_content).partners).length) out.source = { ...(out.source ?? {}), partner_unbekannt: true }
+    return
+  }
+  const page = out.identity.page_id
+  if (fb && hpPage && fb === hpPage && page && page !== hpPage) {
+    // Partner ist Hauptidentität (seine Seite im Creative), Happy Property die zweite Identität
+    out.partnerschaft = { partner_page_id: page, partner_ist_absender: true }
+    out.identity = { page_id: hpPage, instagram_user_id: ig || out.identity.instagram_user_id }
+    return
+  }
+  out.partnerschaft = { ...(fb ? { partner_page_id: fb } : {}), ...(ig ? { partner_ig_user_id: ig } : {}) }
+}
+
+export function mapAd(ad: Raw, adsetKey: string, defaults: { page_id: string }, warn: string[], edit = false, adsetDest = ''): AdDraft {
   const name = str(ad.name)
   const cr = obj(ad.creative)
   const oss = obj(cr.object_story_spec)
@@ -253,12 +340,13 @@ export function mapAd(ad: Raw, adsetKey: string, defaults: { page_id: string }, 
     source: { catalog_ad_id: str(ad.id) },
   }
   let cta = ''
-  let formId = ''
+  const unpassend = (art: string) => {
+    warn.push(`Anzeige "${name}": Button ${cta || '?'} (${art}) passt nicht zum Conversion-Ort der Anzeigengruppe (${adsetDest}); als Website-Ziel übernommen.`)
+  }
 
   if (Object.keys(ld).length) {
     const c = obj(ld.call_to_action)
     cta = str(c.type)
-    formId = str(obj(c.value).lead_gen_form_id)
     out.primary_texts = texts(ld.message)
     out.headlines = texts(ld.name)
     out.descriptions = texts(ld.description)
@@ -269,55 +357,103 @@ export function mapAd(ad: Raw, adsetKey: string, defaults: { page_id: string }, 
         headline: str(ch.name),
         ...(str(ch.description) ? { description: str(ch.description) } : {}),
         ...(str(ch.link) && str(ch.link) !== str(ld.link) ? { url: str(ch.link) } : {}),
-        media: str(ch.video_id) ? vidRef(str(ch.video_id), str(ch.image_hash) || undefined) : imgRef(str(ch.image_hash)),
+        media: str(ch.video_id) ? vidRef(str(ch.video_id), str(ch.image_hash) || undefined) : imgRef(str(ch.image_hash), ch.image_crops),
       }))
+      // Metas Standard ohne Angabe: beides an
+      out.karussell = { endkarte: ld.multi_share_end_card !== false, reihenfolge_automatisch: ld.multi_share_optimized !== false }
     } else if (str(ld.image_hash)) {
-      out.media.feed_4x5 = imgRef(str(ld.image_hash))
+      out.media.feed_4x5 = imgRef(str(ld.image_hash), ld.image_crops)
     }
-    if (!formId) out.destination = { kind: 'website', url: str(ld.link), ...(str(ld.caption) ? { display_link: str(ld.caption) } : {}) }
+    out.destination = willkommenAus(zielAus(cta, obj(c.value), str(ld.link), str(ld.caption), adsetDest, unpassend), ld.page_welcome_message ?? oss.page_welcome_message)
   } else if (Object.keys(vd).length) {
     const c = obj(vd.call_to_action)
     cta = str(c.type)
-    formId = str(obj(c.value).lead_gen_form_id)
     out.format = 'single_video'
     out.primary_texts = texts(vd.message)
     out.headlines = texts(vd.title)
     out.descriptions = texts(vd.link_description)
     if (str(vd.video_id)) out.media.feed_4x5 = vidRef(str(vd.video_id), str(vd.image_hash) || undefined)
-    if (!formId) out.destination = { kind: 'website', url: str(obj(c.value).link) }
+    const v = obj(c.value)
+    out.destination = willkommenAus(zielAus(cta, v, str(v.link), '', adsetDest, unpassend), vd.page_welcome_message ?? oss.page_welcome_message)
   } else if (Object.keys(afs).length) {
-    out.primary_texts = arr<Raw>(afs.bodies).map(b => str(b.text)).filter(Boolean).slice(0, 5)
-    out.headlines = arr<Raw>(afs.titles).map(b => str(b.text)).filter(Boolean).slice(0, 5)
-    out.descriptions = arr<Raw>(afs.descriptions).map(b => str(b.text)).filter(Boolean).slice(0, 5)
     cta = str(arr<unknown>(afs.call_to_action_types)[0])
-    formId = str(obj(obj(arr<unknown>(afs.call_to_actions)[0]).value).lead_gen_form_id)
-    const link = obj(arr<unknown>(afs.link_urls)[0])
-    if (!formId) out.destination = { kind: 'website', url: str(link.website_url), ...(str(link.display_url) ? { display_link: str(link.display_url) } : {}) }
-    const isStory = (item: Raw): boolean => arr<Raw>(item.adlabels).some(l => {
-      const n = str(l.name).toLowerCase()
-      return n === PAC_LABEL_STORY || n.includes('story') || n.includes('9x16') || n.includes('reel')
-    })
+    const value = obj(obj(arr<unknown>(afs.call_to_actions)[0]).value)
+    const istSprachen = str(afs.optimization_type) === 'LANGUAGE'
+    const labelOf = (item: Raw): string[] => arr<Raw>(item.adlabels).map(l => str(l.name).toLowerCase())
+    const deLabel = `${SPRACH_LABEL_PREFIX}de`, enLabel = `${SPRACH_LABEL_PREFIX}en`
+    // Mehrsprachig: Standardregel = Deutsch (Texte der Anzeige), weitere Regeln = Varianten
+    const nachLabel = (list: unknown, label: string): Raw[] => arr<Raw>(list).filter(x => labelOf(x).indexOf(label) >= 0)
+    const textListe = (list: unknown, label: string | null): string[] => (label ? nachLabel(list, label) : arr<Raw>(list)).map(b => str(b.text)).filter(t => !!t.trim()).slice(0, 5)
+    if (istSprachen) {
+      const rules = arr<Raw>(afs.asset_customization_rules)
+      const def = rules.find(r => r.is_default === true) ?? rules[0]
+      const dl = def ? str(obj(def.body_label).name).toLowerCase() || deLabel : deLabel
+      out.primary_texts = textListe(afs.bodies, dl)
+      out.headlines = textListe(afs.titles, dl)
+      out.descriptions = textListe(afs.descriptions, dl).filter(t => t.trim())
+      const varianten: SprachVariante[] = []
+      for (const r of rules) {
+        if (r === def) continue
+        const lb = str(obj(r.body_label).name).toLowerCase()
+        const locs = arr<unknown>(obj(r.customization_spec).locales).map(x => num(x))
+        const istEn = lb === enLabel || locs.some(x => x !== null && SPRACH_LOCALES.en.indexOf(x) >= 0)
+        if (!istEn) { warn.push(`Anzeige "${name}": Sprachversion ${lb || '?'} wird nicht unterstützt (nur Deutsch und Englisch).`); continue }
+        const body = textListe(afs.bodies, lb)[0] ?? ''
+        const title = textListe(afs.titles, lb)[0] ?? ''
+        const desc = textListe(afs.descriptions, lb)[0] ?? ''
+        const urlL = str(obj(nachLabel(afs.link_urls, str(obj(r.link_url_label).name).toLowerCase())[0]).website_url)
+        varianten.push({ sprache: 'en', primary_text: body, headline: title, ...(desc.trim() ? { description: desc } : {}), ...(urlL ? { url: urlL } : {}) })
+      }
+      const auto = arr<unknown>(afs.autotranslate).map(str).some(x => x.toLowerCase().indexOf('en') === 0)
+      if (varianten.length || auto) out.sprachen = { varianten, ...(auto && !varianten.length ? { automatisch_uebersetzen: ['en'] } : {}) }
+    } else {
+      out.primary_texts = textListe(afs.bodies, null)
+      out.headlines = textListe(afs.titles, null)
+      out.descriptions = textListe(afs.descriptions, null)
+    }
+    const linkItem = istSprachen ? (nachLabel(afs.link_urls, deLabel)[0] ?? obj(arr<unknown>(afs.link_urls)[0])) : obj(arr<unknown>(afs.link_urls)[0])
+    out.destination = zielAus(cta, value, str(linkItem.website_url), str(linkItem.display_url), adsetDest, unpassend)
+    const isStory = (item: Raw): boolean => labelOf(item).some(n => n === PAC_LABEL_STORY || n.includes('story') || n.includes('9x16') || n.includes('reel'))
+    const isQuer = (item: Raw): boolean => labelOf(item).some(n => n === PAC_LABEL_QUER || n.includes('191') || n.includes('16x9'))
+    const isQuadrat = (item: Raw): boolean => labelOf(item).some(n => n === PAC_LABEL_QUADRAT || n.includes('1x1'))
+    const isFeed = (item: Raw): boolean => !isStory(item) && !isQuer(item) && !isQuadrat(item)
     const videos = arr<Raw>(afs.videos)
     const images = arr<Raw>(afs.images)
     if (videos.length) {
       out.format = 'single_video'
+      const vr = (v: Raw | undefined): MediaRef | undefined => (v && str(v.video_id) ? vidRef(str(v.video_id), str(v.thumbnail_hash) || undefined) : undefined)
       const story = videos.find(isStory)
-      const feed = videos.find(v => !isStory(v)) ?? (story ? undefined : videos[0])
-      if (feed && str(feed.video_id)) out.media.feed_4x5 = vidRef(str(feed.video_id), str(feed.thumbnail_hash) || undefined)
-      if (story && str(story.video_id)) out.media.story_9x16 = vidRef(str(story.video_id), str(story.thumbnail_hash) || undefined)
+      const feed = videos.find(isFeed) ?? (story ? undefined : videos[0])
+      const f = vr(feed), st = vr(story), q = vr(videos.find(isQuer)), qu = vr(videos.find(isQuadrat))
+      if (f) out.media.feed_4x5 = f
+      if (st) out.media.story_9x16 = st
+      if (q) out.media.landscape_191x1 = q
+      if (qu) out.media.square_1x1 = qu
     } else if (images.length) {
+      const ir = (i: Raw | undefined): MediaRef | undefined => (i && str(i.hash) ? imgRef(str(i.hash), i.image_crops) : undefined)
       const story = images.find(isStory)
-      const feed = images.find(i => !isStory(i)) ?? (story ? undefined : images[0])
-      if (feed && str(feed.hash)) out.media.feed_4x5 = imgRef(str(feed.hash))
-      if (story && str(story.hash)) out.media.story_9x16 = imgRef(str(story.hash))
+      const feed = images.find(isFeed) ?? (story ? undefined : images[0])
+      const f = ir(feed), st = ir(story), q = ir(images.find(isQuer)), qu = ir(images.find(isQuadrat))
+      if (f) out.media.feed_4x5 = f
+      if (st) out.media.story_9x16 = st
+      if (q) out.media.landscape_191x1 = q
+      if (qu) out.media.square_1x1 = qu
     }
-    if (arr<unknown>(afs.bodies).length > 5 || arr<unknown>(afs.titles).length > 5) warn.push(`Anzeige "${name}": mehr als 5 Textvarianten, nur die ersten 5 übernommen.`)
+    if (arr<unknown>(afs.bodies).length > 5 && !istSprachen) warn.push(`Anzeige "${name}": mehr als 5 Textvarianten, nur die ersten 5 übernommen.`)
+  } else if (str(cr.object_story_id) || str(cr.source_instagram_media_id)) {
+    // Vorhandener Beitrag: Texte und Medien bleiben beim Beitrag
+    const ig = str(cr.source_instagram_media_id)
+    out.beitrag = ig ? { quelle: 'instagram', id: ig } : { quelle: 'facebook', id: str(cr.object_story_id) }
+    const c = obj(cr.call_to_action)
+    cta = str(c.type)
+    if (cta) out.destination = zielAus(cta, obj(c.value), str(obj(c.value).link), '', adsetDest, unpassend)
+    warn.push(`Anzeige "${name}": nutzt einen vorhandenen Beitrag. Texte und Medien kommen aus dem Beitrag.`)
+    if (edit) out.source = { ...(out.source ?? {}), aus_beitrag: true }
   } else {
     warn.push(`Anzeige "${name}": Creative aus einem bestehenden Beitrag, Texte und Medien sind nicht übernehmbar.`)
     if (edit) out.source = { ...(out.source ?? {}), aus_beitrag: true }
   }
 
-  if (formId) out.destination = { kind: 'lead_form', form_id: formId }
   if (isIn(CTA_TYPES, cta)) out.cta_type = cta as CtaType
   else if (cta) warn.push(`Anzeige "${name}": Call-to-Action ${cta} wird nicht unterstützt, gesetzt auf LEARN_MORE.`)
 
@@ -333,9 +469,16 @@ export function mapAd(ad: Raw, adsetKey: string, defaults: { page_id: string }, 
   if (out.multi_advertiser === 'OPT_IN') warn.push(`Anzeige "${name}": „Mehrere Werbetreibende“ ist an (Meta-Standard). HP-Standard ist aus.`)
   const tags = str(cr.url_tags)
   if (tags !== URL_TAGS_STANDARD) warn.push(`Anzeige "${name}": URL-Parameter weichen vom Standard ab${tags ? '' : ' (keine gesetzt)'}.`)
+  partnerAus(cr, out, defaults.page_id)
+  if (out.source?.partner_unbekannt) warn.push(`Anzeige "${name}": Partnerschaftswerbung, die der Assistent nicht nachbauen kann. Werbemittel bitte im Werbeanzeigenmanager ändern.`)
   if (edit) {
     Object.assign(out, statusFelder(ad.status))
     if (str(cr.id)) out.source = { ...(out.source ?? {}), creative_id: str(cr.id) }
+    // Feed-Typ wie bei Meta: beim Ersetzen darf er nicht wechseln (editDiff)
+    if (Object.keys(afs).length) {
+      const ot = str(afs.optimization_type).toUpperCase()
+      out.source = { ...(out.source ?? {}), creative_mode: ot === 'PLACEMENT' ? 'asset_feed' : ot === 'LANGUAGE' ? 'asset_feed_language' : 'asset_feed_text' }
+    }
     const ts = arr<Raw>(ad.tracking_specs)
     if (ts.length) out.tracking_specs = clone(ts)
   }
@@ -360,7 +503,7 @@ export function levelParam(v: unknown): Level {
  */
 export async function fetchImportRaw(ctx: Ctx, level: Level, id: string, warn: string[], edit = false): Promise<ImportRaw> {
   let f = edit
-    ? { c: CAMPAIGN_FIELDS_EDIT, a: ADSET_FIELDS_EDIT, ad: AD_FIELDS_EDIT }
+    ? { c: CAMPAIGN_FIELDS_EDIT, a: ADSET_FIELDS_EDIT, ad: AD_FIELDS_EDIT_PARTNER }
     : { c: CAMPAIGN_FIELDS, a: ADSET_FIELDS, ad: AD_FIELDS }
   const run = async (): Promise<ImportRaw> => {
     if (level === 'campaign') {
@@ -383,8 +526,18 @@ export async function fetchImportRaw(ctx: Ctx, level: Level, id: string, warn: s
   try {
     return await run()
   } catch (err) {
-    if (!edit || !(err instanceof MetaApiError) || err.kind !== 'validation') throw err
-    warn.push('Meta kennt nicht alle Zusatzfelder (Zeitplan, Gruppen-Limits, Tracking); diese sind nicht geladen.')
+    // Partnerschafts-Felder können auch an einer fehlenden Berechtigung scheitern
+    if (!edit || !(err instanceof MetaApiError) || (err.kind !== 'validation' && err.kind !== 'permission')) throw err
+  }
+  // Erst nur ohne Partnerschafts-Felder, dann ganz ohne Zusatzfelder
+  try {
+    f = { c: CAMPAIGN_FIELDS_EDIT, a: ADSET_FIELDS_EDIT, ad: AD_FIELDS_EDIT }
+    const raw = await run()
+    warn.push('Partnerschaftswerbung konnte nicht gelesen werden. Vor dem Tausch eines Werbemittels den Partner im Werbeanzeigenmanager prüfen.')
+    return raw
+  } catch (err) {
+    if (!(err instanceof MetaApiError) || err.kind !== 'validation') throw err
+    warn.push('Meta kennt nicht alle Zusatzfelder (Zeitplan, Gruppen-Limits, Tracking, Partnerschaft); diese sind nicht geladen.')
     f = { c: CAMPAIGN_FIELDS, a: ADSET_FIELDS, ad: AD_FIELDS }
     return await run()
   }
@@ -394,15 +547,17 @@ export async function fetchImportRaw(ctx: Ctx, level: Level, id: string, warn: s
 export function mapImport(raw: ImportRaw, defaults: { page_id: string }, warn: string[], edit = false): DraftSpec {
   const spec: DraftSpec = { v: 1, campaign: mapCampaign(raw.campaign, warn, edit), adsets: [], ads: [] }
   const keyById: Record<string, string> = {}
+  const destById: Record<string, string> = {}
   for (const a of raw.adsets) {
     const as = mapAdset(a, warn, edit)
     keyById[str(a.id)] = as.key
+    destById[str(a.id)] = str(a.destination_type)
     spec.adsets.push(as)
   }
   for (const ad of raw.ads) {
     const key = keyById[str(ad.adset_id)]
     if (!key) { warn.push(`Anzeige "${str(ad.name)}": Anzeigengruppe ${str(ad.adset_id)} nicht im Import, übersprungen.`); continue }
-    spec.ads.push(mapAd(ad, key, defaults, warn, edit))
+    spec.ads.push(mapAd(ad, key, defaults, warn, edit, destById[str(ad.adset_id)] ?? ''))
   }
   if (raw.ads.length >= 300) warn.push('Sehr viele Anzeigen: Liste eventuell unvollständig.')
   return spec

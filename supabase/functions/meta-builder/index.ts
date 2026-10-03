@@ -30,12 +30,21 @@
 //       Antwort { draft_id, spec, locks, warnings, baseline_at, reused }
 //   { mode: 'edit_diff', draft_id }                           „Das ändert sich bei Meta“: Änderungen je Feld
 //       (Lernphase, gesperrt, Konflikt mit dem Live-Stand), Prüfung, Lint, Leitplanke. Schreibt nichts.
+//   { mode: 'posts_list', quelle: facebook|instagram, limit?, after?, page_id?, instagram_user_id? }
+//       Beiträge der Seite bzw. Medien des Instagram-Kontos für „Vorhandenen Beitrag verwenden“ (Seiten-Token)
+//   { mode: 'ad_vorschau_link', ad_id }                       teilbarer Vorschaulink (preview_shareable_link)
+//   { mode: 'video_vorschaubilder', media_id }                Metas Vorschaubild-Vorschläge eines Videos
 //
 // ── Schreib-Modi (zusätzlich: admin/verwalter oder Recht „werbung“,
 //    ad_settings.builder_enabled = true, Secret META_WRITES_DISABLED != 1) ──
 //   { mode: 'media_upload', storage_path, kind, aspect, ai_generated, eu_band_confirmed, ki_label_confirmed }
 //       Bild aus Bucket ad-creatives -> adimages (sha256-Dublettenschutz); Video -> advideos file_url
 //   { mode: 'preview', draft_id, ad_key, formats[] }          generatepreviews (lädt fehlende Medien hoch)
+//   { mode: 'preview_alle', draft_id + ad_key | ad_id, sprache?, formats? }
+//       Vorschau aller Platzierungen, die die Anzeigengruppe ausspielt (bis 10 Aufrufe, Stopp über 75 % Auslastung)
+//   { mode: 'video_vorschaubild', media_id, uri, als_standard? } Vorschlag als Bild in die Bibliothek -> thumbnail_hash
+//   { mode: 'video_untertitel', media_id, storage_path (.srt), sprache, standard? }
+//       SRT an POST /{video_id}/captions (für Werbekonto-Videos ungeprüft; Ablehnung = ok false + Hinweis)
 //   { mode: 'create' | 'resume', draft_id, force_lint_reason?, housing_override_reason? }
 //       Schritt-Läufer (~50 s je Aufruf; Client ruft resume, solange next != null):
 //       Kampagne -> Anzeigengruppen -> Medien -> Creatives -> Anzeigen -> Rücklesen.
@@ -88,18 +97,23 @@ import {
   type EditDiffRequest, type EditLoadRequest, type EstimateRequest,
   type ImportRequest, type LeadformCreateRequest, type LeadgenLookupRequest, type MediaStatusRequest,
   type MediaUploadRequest, type PixelStatusRequest, type PreviewRequest, type UsageRequest, type ValidateRequest,
+  type AdVorschauLinkRequest, type PostsListRequest, type PreviewAlleRequest, type VideoUntertitelRequest,
+  type VideoVorschaubilderRequest, type VideoVorschaubildRequest,
 } from '../_shared/metaSpec.ts'
 import { BuilderError, makeCtx, toErrorResponse, writeGate, type Ctx } from './common.ts'
 import {
   modeAudienceEligibility, modeCatalog, modeCreativeDetails, modeEstimate, modeLeadgenLookup, modePixelStatus, modeUsage,
 } from './catalog.ts'
+import { modeAdVorschauLink, modePostsList } from './beitraege.ts'
 import { modeBulk } from './bulk.ts'
 import { modeEditApply, modeEditDiff, modeEditLoad } from './edit.ts'
 import { modeImport } from './importer.ts'
-import { modeMediaStatus, modeMediaUpload } from './media.ts'
+import {
+  modeMediaStatus, modeMediaUpload, modeVideoUntertitel, modeVideoVorschaubild, modeVideoVorschaubilder,
+} from './media.ts'
 import { modeLeadformCreate } from './pages.ts'
 import {
-  modeActivateDraft, modeCreate, modeDiscard, modeDuplicate, modePreview, modeResume, modeValidate,
+  modeActivateDraft, modeCreate, modeDiscard, modeDuplicate, modePreview, modePreviewAlle, modeResume, modeValidate,
 } from './steps.ts'
 
 const CORS = {
@@ -138,6 +152,12 @@ async function dispatch(ctx: Ctx, mode: BuilderMode, body: Record<string, unknow
     case 'edit_diff': return await modeEditDiff(ctx, b as EditDiffRequest)
     case 'edit_apply': return await modeEditApply(ctx, b as EditApplyRequest)
     case 'bulk': return await modeBulk(ctx, b as BulkRequest)
+    case 'posts_list': return await modePostsList(ctx, b as PostsListRequest)
+    case 'preview_alle': return await modePreviewAlle(ctx, b as PreviewAlleRequest)
+    case 'ad_vorschau_link': return await modeAdVorschauLink(ctx, b as AdVorschauLinkRequest)
+    case 'video_vorschaubilder': return await modeVideoVorschaubilder(ctx, b as VideoVorschaubilderRequest)
+    case 'video_vorschaubild': return await modeVideoVorschaubild(ctx, b as VideoVorschaubildRequest)
+    case 'video_untertitel': return await modeVideoUntertitel(ctx, b as VideoUntertitelRequest)
   }
   throw new BuilderError(400, 'invalid_request', `Unbekannter Modus "${String(mode)}".`)
 }

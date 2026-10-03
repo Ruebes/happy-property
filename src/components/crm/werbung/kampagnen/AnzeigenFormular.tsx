@@ -7,39 +7,50 @@ import Modal from '../../../ui/Modal'
 import Spinner from '../../../ui/Spinner'
 import { useToast } from '../../../ui/Toast'
 import {
-  AD_FORMAT_OPTIONS, CREATIVE_FEATURES, CREATIVE_FEATURE_INFO, CREATIVE_FEATURE_OPTIONS, CTA_OPTIONS, CTA_TYPES,
-  HP_DEFAULT_LINK, LIMITS, URL_TAGS_STANDARD, aspectOf, ctaFor,
-  type AdDestinationKind, type AdDraft, type AdFormat, type CardDraft, type CtaType, type EnumOption, type MediaRef,
+  CREATIVE_FEATURES, CREATIVE_FEATURE_INFO, CREATIVE_FEATURE_OPTIONS, CTA_TYPES,
+  HP_DEFAULT_LINK, LIMITS, aspectOf, ctaFor, hatSprachen, usesPlacementFeed,
+  type AdDraft, type BeitragRef, type CardDraft, type CtaType, type MediaRef,
 } from '../../../../lib/metaSpec'
-import { DESCRIPTION_MAX, HEADLINE_MAX, PRIMARY_VISIBLE } from '../../../../lib/metaLint'
+import { DESCRIPTION_MAX, HEADLINE_MAX, PRIMARY_VISIBLE, lintText } from '../../../../lib/metaLint'
 import { INPUT_CLS, LockedField } from '../felder'
 import { FeldHinweise } from './PruefPanel'
-import { Abschnitt, AuswahlFeld, FeldRahmen, Schalter, StatusFeld, TextFeld, feldId, feldLabel } from './Bausteine'
-import MedienSlot, { refAus, storagePfadAus } from './MedienSlot'
+import { Abschnitt, FeldRahmen, Schalter, StatusFeld, TextFeld, feldId, feldLabel } from './Bausteine'
+import MedienSlot, { refMitSeiten, storagePfadAus } from './MedienSlot'
 import WerbemittelWahl, { type WerbemittelAuswahl } from './WerbemittelWahl'
+import FormatWahl, { type FormatWahlWert } from './FormatWahl'
+import BeitragWahl from './BeitragWahl'
+import { KarussellKarten, KarussellSchalter, KarussellSeitenFeld } from './KarussellEditor'
+import TextListe from './TextListe'
+import AnzeigeZiel from './AnzeigeZiel'
+import SprachenAbschnitt from './SprachenAbschnitt'
+import PartnerAbschnitt from './PartnerAbschnitt'
+import TrackingAbschnitt from './TrackingAbschnitt'
 import { builderCall, fehlerText } from './builderApi'
 import { anzeigeAngelegt, creativeGeaendert, paarPartner, setzeAnzeige, useAssistent } from './useEntwurf'
 import { EmpfohlenBadge, LernphaseBadge } from './bearbeitenHelfer'
 import { hpVon, mitHp, type CreativeTausch } from './bearbeitenTypen'
 import { useWerbeKontext } from '../useWerbeDaten'
+import { CTA_STANDARD, karussellVon, zielArtenFuer, zielUmstellen, type KarussellSeiten } from './r23Typen'
+
+type Medien = AdDraft['media']
 
 // ── Werbeanzeige (Reihenfolge wie bei Meta) ──────────────────────────────────
-// Identität (Seite + Instagram-Konto), Werbemittel (vorhandenes übernehmen,
-// Format), Medien je Platzierung (4:5 Feed, 9:16 Stories/Reels) bzw.
-// Karussellkarten, bis zu 5 Primärtexte / Überschriften / Beschreibungen mit
-// Zählern (HP-Grenzen 40 / 30, 125 sichtbar), Call-to-Action, Ziel (Website
-// oder Sofortformular), fester UTM-Standard, Advantage+ Creative (alles aus),
-// Werbeanzeigen mit mehreren Werbetreibenden (aus). Plan B: Änderungen
-// gelten für beide Anzeigen des Paares (_lang und _kurz).
+// Name, Identität (Seite + Instagram-Konto), Werbemittel (Format: Einzelbild,
+// Einzelvideo, Karussell, vorhandener Beitrag, Sammlung folgt; vorhandenes
+// Werbemittel übernehmen; KI-Studio), Medien je Seitenverhältnis (4:5, 9:16,
+// unter „Alle Einstellungen" 1:1 und 1,91:1) mit Zuschnitt, Video-
+// Vorschaubild und Untertiteln, Karussell (2 bis 10 Karten, Reihenfolge,
+// 1:1 oder 4:5, Endkarte), Texte (bis 5 Varianten je Feld, Zähler), Ziel und
+// Call-to-Action (Website, Sofortformular, beides, WhatsApp, Anruf), Sprachen,
+// Partnerschaftswerbung, Tracking, Advantage+ Creative (alles aus).
+// Plan B: Änderungen gelten für beide Anzeigen des Paares (_lang und _kurz).
 // Bearbeiten-Modus: laufende Anzeigen sind änderbar (Status, Name, Werbemittel).
 // Ein geändertes Werbemittel geht als neues Creative an Meta: entweder an die
 // bestehende Anzeige („ersetzen") oder als neue Anzeige, die alte wird pausiert
 // („neue_anzeige", HP-Empfehlung); beides startet die Lernphase neu.
+// Typen der neuen Felder: src/lib/metaSpec.ts (Runde 2, be-anzeige); Helfer: ./r23Typen.
 
-const nurWerte = <V extends string>(alle: readonly EnumOption<V>[], werte: readonly V[]): EnumOption<V>[] =>
-  werte.map(v => alle.find(o => o.value === v) ?? { value: v, labelKey: 'crm.werbung.meta.unknown' })
-
-const VORRAT_FORMAT: Record<string, AdFormat> = { bild: 'single_image', video: 'single_video', karussell: 'carousel' }
+const VORRAT_FORMAT: Record<string, AdDraft['format']> = { bild: 'single_image', video: 'single_video', karussell: 'carousel' }
 
 /** Übergabe aus dem KI-Studio (AdStudio mode 'toDraft') */
 interface StudioUebergabe { headline: string; message: string; imageUrl: string | null }
@@ -51,67 +62,27 @@ const bildMasse = (url: string): Promise<{ w: number; h: number }> => new Promis
   img.src = url
 })
 
-function TextListe({ node, feld, label, werte, onChange, zaehler, mehrzeilig, max, disabled, hilfe }: {
-  node: string; feld: string; label: string; werte: string[]; onChange: (w: string[]) => void
-  zaehler?: number; mehrzeilig?: boolean; max: number; disabled: boolean; hilfe?: string
-}) {
-  const { t } = useTranslation()
-  const liste = werte.length ? werte : ['']
-  const setze = (i: number, v: string) => onChange(liste.map((x, j) => (j === i ? v : x)))
-  return (
-    <div id={feldId(feld)} className="scroll-mt-24 space-y-2">
-      <div className="flex items-baseline gap-2">
-        <span className="text-[11px] text-gray-500">{label}</span>
-        <span className="text-[10px] text-gray-400">{t('crm.werbung.builder.anzeige.varianten', '{{n}} von {{max}}', { n: liste.length, max })}</span>
-      </div>
-      {hilfe && <p className="-mt-1 text-[10px] text-gray-400">{hilfe}</p>}
-      {liste.map((w, i) => {
-        const len = w.trim().length
-        const zuLang = zaehler !== undefined && len > zaehler
-        return (
-          <div key={i} className="flex items-start gap-2">
-            <div className="min-w-0 flex-1">
-              {mehrzeilig ? (
-                <textarea value={w} rows={4} disabled={disabled} onChange={ev => setze(i, ev.target.value)}
-                  aria-label={`${label} ${i + 1}`} className={`${INPUT_CLS} resize-y`} />
-              ) : (
-                <input value={w} disabled={disabled} onChange={ev => setze(i, ev.target.value)}
-                  aria-label={`${label} ${i + 1}`} className={INPUT_CLS} />
-              )}
-              {zaehler !== undefined && (
-                <span className={`mt-0.5 block text-right text-[10px] tabular-nums ${zuLang && !mehrzeilig ? 'font-semibold text-red-600' : 'text-gray-400'}`}>
-                  {mehrzeilig
-                    ? t('crm.werbung.builder.anzeige.sichtbar', '{{len}} Zeichen, sichtbar bis {{max}}', { len, max: zaehler })
-                    : `${len} / ${zaehler}`}
-                </span>
-              )}
-            </div>
-            {liste.length > 1 && !disabled && (
-              <button type="button" onClick={() => onChange(liste.filter((_, j) => j !== i))}
-                aria-label={t('crm.werbung.builder.anzeige.varianteEntfernen', 'Variante {{n}} entfernen', { n: i + 1 })}
-                className="mt-1 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700">✕</button>
-            )}
-          </div>
-        )
-      })}
-      {liste.length < max && !disabled && (
-        <button type="button" onClick={() => onChange([...liste, ''])} className="text-xs font-semibold text-hp-navy hover:underline">
-          + {t('crm.werbung.builder.anzeige.variante', 'Variante hinzufügen')}
-        </button>
-      )}
-      <FeldHinweise node={node} felder={feld} />
-    </div>
-  )
+const leereKarte = (): CardDraft => ({ headline: '', media: { media_id: '' } })
+/** erste ausgefüllte Variante (Karussell: je Feld nur ein Text über allen Karten) */
+const ersteVariante = (arr: string[] | undefined): string | undefined => (arr ?? []).find(x => (x ?? '').trim())
+/** Karussell: Primärtext und Überschrift auf eine Variante kürzen, Beschreibung (je Karte) auf höchstens eine */
+const textFuerKarussell = (quelle: Partial<Pick<AdDraft, 'primary_texts' | 'headlines' | 'descriptions'>>): Pick<AdDraft, 'primary_texts' | 'headlines' | 'descriptions'> => {
+  const b = ersteVariante(quelle.descriptions)
+  return { primary_texts: [ersteVariante(quelle.primary_texts) ?? ''], headlines: [ersteVariante(quelle.headlines) ?? ''], descriptions: b ? [b] : [] }
 }
+const SLOTS = ['feed_4x5', 'story_9x16', 'square_1x1', 'landscape_191x1'] as const
 
 export default function AnzeigenFormular({ adKey }: { adKey: string }) {
   const { t } = useTranslation()
   const toast = useToast()
   const { e, katalog, vorgaben, schreibSperre, gepaart, bearbeiten, sperre } = useAssistent()
   const [wahlOffen, setWahlOffen] = useState(false)
+  const [beitragOffen, setBeitragOffen] = useState(false)
   const [uebernimmt, setUebernimmt] = useState(false)
   const [studioOffen, setStudioOffen] = useState(false)
   const [studioBild, setStudioBild] = useState<{ url: string; slot: 'feed_4x5' | 'story_9x16' } | null>(null)
+  /** bewusst gewähltes Karussell-Format je Anzeige (gilt vor dem Format der hochgeladenen Karten) */
+  const [kartenSeitenWahl, setKartenSeitenWahl] = useState<Record<string, KarussellSeiten>>({})
   const { showToast } = useWerbeKontext()
   const { spec, nurLesen } = e
   const ad0 = spec.ads.find(x => x.key === adKey)
@@ -123,9 +94,9 @@ export default function AnzeigenFormular({ adKey }: { adKey: string }) {
   const angelegt = !ad.existing_id && anzeigeAngelegt(e.metaIds, node)
   const gesperrt = nurLesen || angelegt
   const sp = (feld: string): string | undefined => (bearbeiten && bestehend ? sperre(node, feld) : undefined)
-  // Anzeige aus einem bestehenden Beitrag: Texte und Medien bleiben fest
-  const beitrag = sp('ad.primary_texts')
-  const gesperrtWm = gesperrt || !!beitrag
+  // Anzeige aus einem bestehenden Beitrag (Bearbeiten): Texte und Medien bleiben fest
+  const beitragSperre = sp('ad.primary_texts')
+  const gesperrtWm = gesperrt || !!beitragSperre
   const set = (patch: Partial<AdDraft>) => e.update(d => setzeAnzeige(d, node, patch, gepaart, e.metaIds))
   const adset = spec.adsets.find(a => a.key === ad.adset_key)
   const partner = gepaart ? paarPartner(spec, node) : undefined
@@ -141,34 +112,56 @@ export default function AnzeigenFormular({ adKey }: { adKey: string }) {
     )
   }
 
-  const kindSoll: AdDestinationKind = adset?.destination === 'ON_AD' ? 'lead_form' : 'website'
-  const kind: AdDestinationKind = ad.destination?.kind === 'lead_form' ? 'lead_form' : 'website'
-  const ctas = ctaFor(kind)
+  const standardUrl = vorgaben.link || HP_DEFAULT_LINK
+  const beitrag: BeitragRef | undefined = ad.beitrag
+  const verboteneNamen = katalog?.lint_context?.forbidden_names ?? []
+  // Der Beitragstext läuft unverändert als Anzeige: Projekt-/Bauträgernamen, Gedankenstriche usw. als Hinweis zeigen
+  const beitragPruefung = beitrag?.text ? lintText(beitrag.text, 'ad.beitrag', { forbiddenNames: verboteneNamen }, node) : []
+  const istKarussell = !beitrag && ad.format === 'carousel'
   const istVideo = ad.format === 'single_video'
   const medienArt = istVideo ? 'video' : 'image'
+  const mitSprachen = hatSprachen(ad)
+  const textMax = istKarussell || mitSprachen ? 1 : LIMITS.textsPerKind
+  // Medien je Platzierung (asset_feed mit Regeln): Meta erlaubt dann nur eine Beschreibung (validateDraft descriptions_single)
+  const platzMedien = usesPlacementFeed(ad, adset?.placements)
+
   // Medien immer vom aktuellen Stand aus ändern (Uploads dauern, inzwischen kann sich anderes geändert haben)
-  const aendereMedien = (fn: (m: AdDraft['media']) => AdDraft['media']) => e.update(d => {
+  const aendereMedien = (fn: (m: Medien) => Medien) => e.update(d => {
     const cur = d.ads.find(x => x.key === node)
     return cur ? setzeAnzeige(d, node, { media: fn({ ...(cur.media ?? {}) }) }, gepaart, e.metaIds) : d
   })
-  const setMedia = (slot: 'feed_4x5' | 'story_9x16' | 'square_1x1', ref: MediaRef | undefined) => aendereMedien(m => {
+  type SlotKey = typeof SLOTS[number]
+  const setMedia = (slot: SlotKey, ref: MediaRef | undefined) => aendereMedien(m => {
     if (ref) m[slot] = ref
     else delete m[slot]
     return m
   })
-  const cards = ad.media?.cards ?? []
-  const setCards = (next: CardDraft[]) => aendereMedien(m => ({ ...m, cards: next }))
-  const setCardAt = (i: number, patch: Partial<CardDraft>) => aendereMedien(m => ({
-    ...m, cards: (m.cards ?? []).map((x, j) => (j === i ? { ...x, ...patch } : x)),
-  }))
+  const cards: CardDraft[] = ad.media?.cards ?? []
+  const aendereKarten = (fn: (c: CardDraft[]) => CardDraft[]) => aendereMedien(m => ({ ...m, cards: fn(m.cards ?? []) }))
+  // Ohne eigene Wahl (z. B. nach dem Laden) aus den Medien der Karten ableiten
+  const kartenSeiten: KarussellSeiten = kartenSeitenWahl[node]
+    ?? (cards.some(c => c.media?.aspect === '4:5') ? '4:5' : '1:1')
+  const setzeKartenSeiten = (s: KarussellSeiten) => {
+    setKartenSeitenWahl(w => ({ ...w, [node]: s }))
+    if (cards.some(c => c.media?.media_id && c.media.aspect && c.media.aspect !== s)) {
+      toast.info(t('crm.werbung.builder.karussell.neuHochladen', 'Karten im anderen Format bitte neu hochladen oder zuschneiden.'))
+    }
+  }
 
-  const setzeZielArt = (k: AdDestinationKind) => {
-    const erlaubt = ctaFor(k)
-    const cta: CtaType = erlaubt.indexOf(ad.cta_type) >= 0 ? ad.cta_type : (k === 'lead_form' ? 'SIGN_UP' : 'BOOK_NOW')
-    set({
-      destination: k === 'lead_form' ? { kind: 'lead_form', form_id: '' } : { kind: 'website', url: vorgaben.link || HP_DEFAULT_LINK },
-      cta_type: cta,
-    })
+  // Quellen zum Zuschneiden: alle Bilder dieser Anzeige
+  const slotLabel: Record<SlotKey, string> = {
+    feed_4x5: feldLabel(t, 'ad.media.feed_4x5', 'Medien für Feeds (4:5)'),
+    story_9x16: feldLabel(t, 'ad.media.story_9x16', 'Medien für Stories und Reels (9:16)'),
+    square_1x1: feldLabel(t, 'ad.media.square_1x1', 'Quadratisch (1:1)'),
+    landscape_191x1: feldLabel(t, 'ad.media.landscape_191x1', istVideo ? 'Querformat (16:9)' : 'Querformat (1,91:1)'),
+  }
+  const quellenFuer = (slot: SlotKey) => {
+    const out: Array<{ label: string; ref: MediaRef }> = []
+    for (const k of SLOTS) {
+      const ref = ad.media?.[k]
+      if (k !== slot && ref?.media_id) out.push({ label: slotLabel[k], ref })
+    }
+    return out
   }
 
   const seiten: SelectOption[] = (katalog?.pages ?? []).map(p => ({ value: p.id, label: p.name }))
@@ -176,6 +169,39 @@ export default function AnzeigenFormular({ adKey }: { adKey: string }) {
   const formulare: SelectOption[] = (katalog?.lead_forms ?? [])
     .filter(f => !f.page_id || f.page_id === ad.identity?.page_id)
     .map(f => ({ value: f.id, label: f.name, hint: f.status }))
+
+  const ctaPasst = (c: string): boolean => ctaFor(ad.destination?.kind ?? 'website').some(x => x === c)
+
+  // ── Format / vorhandener Beitrag ────────────────────────────────────────
+  const formatWert: FormatWahlWert = beitrag ? 'beitrag' : ad.format
+  const setzeFormat = (f: FormatWahlWert) => {
+    if (f === 'beitrag') { setBeitragOffen(true); return }
+    if (f === 'collection') return
+    const p: Partial<AdDraft> = { format: f, beitrag: undefined }
+    if (f === 'carousel') {
+      if (!cards.length) p.media = { ...(ad.media ?? {}), cards: [leereKarte(), leereKarte()] }
+      // Karussell: ein Primärtext und eine Überschrift über allen Karten (sonst Fehler ohne sichtbares Feld)
+      Object.assign(p, textFuerKarussell(ad))
+    }
+    set(p)
+  }
+  const beitragGewaehlt = (b: BeitragRef, typ: string | null) => {
+    const video = /video|reel/i.test(typ ?? '')
+    // Texte kommen aus dem Beitrag: eigene Texte leeren (sonst prüft die Kontrolle unsichtbare Felder)
+    const p: Partial<AdDraft> = { beitrag: b, format: video ? 'single_video' : 'single_image', primary_texts: [''], headlines: [''], descriptions: [] }
+    // Beiträge: Facebook nur Website, Instagram Website oder WhatsApp
+    const kind = ad.destination?.kind
+    const ok = kind === 'website' || (b.quelle === 'instagram' && kind === 'whatsapp')
+    if (!ok) {
+      p.destination = zielUmstellen(ad.destination, 'website', standardUrl)
+      if (ctaFor('website').indexOf(ad.cta_type) < 0) p.cta_type = CTA_STANDARD.website
+    }
+    set(p)
+    toast.success(t('crm.werbung.builder.beitrag.gewaehlt', 'Beitrag übernommen'))
+    if (zielArtenFuer(adset?.destination).indexOf('website') < 0 && !(b.quelle === 'instagram' && zielArtenFuer(adset?.destination).indexOf('whatsapp') >= 0)) {
+      toast.info(t('crm.werbung.builder.beitrag.ortPasstNicht', 'Beiträge laufen nur mit dem Conversion-Ort Website (Instagram auch WhatsApp). Bitte den Conversion-Ort der Anzeigengruppe anpassen.'))
+    }
+  }
 
   // ── vorhandenes Werbemittel übernehmen ──────────────────────────────────
   const uebernehmen = async (w: WerbemittelAuswahl) => {
@@ -192,11 +218,14 @@ export default function AnzeigenFormular({ adKey }: { adKey: string }) {
             headlines: (src.headlines ?? []).slice(0, LIMITS.textsPerKind),
             descriptions: (src.descriptions ?? []).slice(0, LIMITS.textsPerKind),
             media: src.media ?? {},
+            beitrag: src.beitrag,
+            karussell: src.karussell,
             // Advantage+ Creative nie mitnehmen: bei HP alles aus, bis jemand bewusst einschaltet
             creative_features: {},
             source: { catalog_ad_id: w.adId },
           }
-          if (ctaFor(kind).indexOf(src.cta_type) >= 0) patch.cta_type = src.cta_type
+          if (ctaPasst(src.cta_type)) patch.cta_type = src.cta_type
+          if (src.format === 'carousel' && !src.beitrag) Object.assign(patch, textFuerKarussell(patch))
           set(patch)
           toast.success(t('crm.werbung.builder.anzeige.uebernommen', 'Werbemittel übernommen'))
           const quelleAn = CREATIVE_FEATURE_OPTIONS.filter(o => src.creative_features?.[o.value] === 'OPT_IN').map(o => t(o.labelKey, o.value))
@@ -211,9 +240,10 @@ export default function AnzeigenFormular({ adKey }: { adKey: string }) {
         return
       }
       // Vorrat: Texte direkt, Medien über media_upload (nur mit Freischaltung)
-      const format = (w.format && VORRAT_FORMAT[w.format]) || ad.format
+      const format: AdDraft['format'] = (w.format && VORRAT_FORMAT[w.format]) || (ad.format === 'collection' ? 'single_image' : ad.format)
       const patch: Partial<AdDraft> = {
         format,
+        beitrag: undefined,
         primary_texts: w.texte.primaer.slice(0, LIMITS.textsPerKind),
         headlines: w.texte.ueberschriften.slice(0, LIMITS.textsPerKind),
         descriptions: w.texte.beschreibungen.slice(0, LIMITS.textsPerKind),
@@ -221,9 +251,9 @@ export default function AnzeigenFormular({ adKey }: { adKey: string }) {
         name: partner ? `${w.kennung}_${/_kurz$/.test(node) ? 'kurz' : 'lang'}` : w.kennung,
       }
       const cta = w.cta && (CTA_TYPES as readonly string[]).indexOf(w.cta) >= 0 ? (w.cta as CtaType) : null
-      if (cta && ctaFor(kind).indexOf(cta) >= 0) patch.cta_type = cta
-      if (w.lpUrl && kind === 'website' && !partner) patch.destination = { kind: 'website', url: w.lpUrl }
-      const media: AdDraft['media'] = {}
+      if (cta && ctaPasst(cta)) patch.cta_type = cta
+      if (w.lpUrl && ad.destination?.kind === 'website' && !partner) patch.destination = { kind: 'website', url: w.lpUrl }
+      const media: Medien = {}
       if (schreibSperre) {
         toast.info(t('crm.werbung.builder.anzeige.medienSpaeter', 'Texte übernommen. Die Medien lassen sich erst nach der Freischaltung durch Sven zu Meta laden.'))
       } else {
@@ -238,13 +268,14 @@ export default function AnzeigenFormular({ adKey }: { adKey: string }) {
               eu_band_confirmed: w.euBand, ki_label_confirmed: w.kiLabel,
             })
             e.setzeMedium(res.media)
-            media[slot] = refAus(res.media)
+            media[slot] = refMitSeiten(res.media, aspect)
           } catch (err) {
             toast.error(t('crm.werbung.builder.anzeige.medienFehler', 'Medium {{slot}} nicht übernommen: {{fehler}}', { slot: aspect, fehler: fehlerText(err, t) }))
           }
         }
       }
       if (Object.keys(media).length) patch.media = { ...(ad.media ?? {}), ...media }
+      if (format === 'carousel') Object.assign(patch, textFuerKarussell(patch))
       set(patch)
       toast.success(t('crm.werbung.builder.anzeige.uebernommen', 'Werbemittel übernommen'))
     } finally {
@@ -258,7 +289,8 @@ export default function AnzeigenFormular({ adKey }: { adKey: string }) {
     set({
       headlines: [d.headline, ...(ad.headlines ?? []).slice(1)],
       primary_texts: [d.message, ...(ad.primary_texts ?? []).slice(1)],
-      format: ad.format === 'carousel' ? 'single_image' : ad.format,
+      format: ad.format === 'carousel' || ad.format === 'collection' || beitrag ? 'single_image' : ad.format,
+      beitrag: undefined,
       source: { studio: true },
     })
     toast.success(t('crm.werbung.builder.anzeige.studioUebernommen', 'Texte aus dem KI-Studio übernommen'))
@@ -283,6 +315,14 @@ export default function AnzeigenFormular({ adKey }: { adKey: string }) {
   const tausch: CreativeTausch = hpVon(spec).creative_tausch ?? 'neue_anzeige'
   const geaendert = tauschZeigen ? creativeGeaendert(e.original, spec, node) : null
   const setzeTausch = (v: CreativeTausch) => e.update(d => mitHp(d, { creative_tausch: v }))
+
+  const medienSlot = (slot: SlotKey, aspect: '4:5' | '9:16' | '1:1' | '1.91:1', hilfe?: string) => (
+    <MedienSlot node={node} feld={`ad.media.${slot}`} label={slotLabel[slot]} hilfe={hilfe}
+      aspect={aspect} kind={medienArt} value={ad.media?.[slot]} onChange={x => setMedia(slot, x)} disabled={gesperrtWm}
+      quellen={quellenFuer(slot)}
+      vorlage={(slot === 'feed_4x5' || slot === 'story_9x16') && studioBild?.slot === slot && !istVideo ? studioBild.url : null}
+      vorlageKi onVorlageErledigt={() => setStudioBild(null)} />
+  )
 
   return (
     <div className="space-y-4">
@@ -337,11 +377,12 @@ export default function AnzeigenFormular({ adKey }: { adKey: string }) {
         </div>
       </Abschnitt>
 
-      {beitrag && (
-        <div role="note" className="rounded-lg border border-hp-navy/15 bg-hp-cream px-3 py-2 text-xs text-hp-navy">🔒 {beitrag}</div>
+      {beitragSperre && (
+        <div role="note" className="rounded-lg border border-hp-navy/15 bg-hp-cream px-3 py-2 text-xs text-hp-navy">🔒 {beitragSperre}</div>
       )}
 
-      <Abschnitt titel={t('crm.werbung.builder.anzeige.identitaet', 'Identität')}>
+      <Abschnitt titel={t('crm.werbung.builder.anzeige.identitaet', 'Identität')}
+        hilfe={t('crm.werbung.builder.anzeige.identitaetHilfe', 'Unter diesem Namen erscheint die Anzeige auf Facebook und Instagram.')}>
         <div className="grid gap-3 sm:grid-cols-2">
           <FeldRahmen node={node} feld="ad.identity.page_id" label={feldLabel(t, 'ad.identity.page_id', 'Facebook-Seite')} sperre={sp('ad.identity.page_id')}>
             {seiten.length ? (
@@ -366,6 +407,7 @@ export default function AnzeigenFormular({ adKey }: { adKey: string }) {
       </Abschnitt>
 
       <Abschnitt titel={t('crm.werbung.builder.anzeige.werbemittel', 'Werbemittel')}
+        hilfe={t('crm.werbung.builder.anzeige.werbemittelHilfe', 'Neue Anzeige gestalten oder einen vorhandenen Beitrag bewerben.')}
         aktion={!gesperrtWm && (
           <span className="flex flex-wrap gap-2">
             <button type="button" onClick={() => setStudioOffen(true)} disabled={uebernimmt}
@@ -386,152 +428,116 @@ export default function AnzeigenFormular({ adKey }: { adKey: string }) {
               : t('crm.werbung.builder.anzeige.ausAnzeige', 'Übernommen aus Anzeige {{id}}.', { id: ad.source.catalog_ad_id })}
           </p>
         )}
-        <div className="grid gap-3 sm:grid-cols-2">
-          <AuswahlFeld<AdFormat> node={node} feld="ad.format" label={feldLabel(t, 'ad.format', 'Format')}
-            value={ad.format} optionen={AD_FORMAT_OPTIONS} disabled={gesperrtWm} onChange={v => v && set({ format: v })} />
-        </div>
-      </Abschnitt>
-
-      <Abschnitt titel={t('crm.werbung.builder.anzeige.medien', 'Medien')}
-        hilfe={ad.format === 'carousel'
-          ? t('crm.werbung.builder.anzeige.medienKarussell', '2 bis 10 Karten, quadratisch (1:1).')
-          : t('crm.werbung.builder.anzeige.medienHilfe', '4:5 für Feeds, 9:16 für Stories und Reels. Ohne 9:16 nimmt Meta das 4:5-Medium überall.')}>
-        {ad.format !== 'carousel' ? (
-          <div className="grid gap-3 lg:grid-cols-2">
-            <MedienSlot node={node} feld="ad.media.feed_4x5" label={feldLabel(t, 'ad.media.feed_4x5', 'Medien für Feeds (4:5)')}
-              aspect="4:5" kind={medienArt} value={ad.media?.feed_4x5} onChange={r => setMedia('feed_4x5', r)} disabled={gesperrtWm}
-              vorlage={studioBild?.slot === 'feed_4x5' && !istVideo ? studioBild.url : null} vorlageKi onVorlageErledigt={() => setStudioBild(null)} />
-            <MedienSlot node={node} feld="ad.media.story_9x16" label={feldLabel(t, 'ad.media.story_9x16', 'Medien für Stories und Reels (9:16)')}
-              aspect="9:16" kind={medienArt} value={ad.media?.story_9x16} onChange={r => setMedia('story_9x16', r)} disabled={gesperrtWm}
-              vorlage={studioBild?.slot === 'story_9x16' && !istVideo ? studioBild.url : null} vorlageKi onVorlageErledigt={() => setStudioBild(null)} />
-          </div>
-        ) : (
-          <div id={feldId('ad.media.cards')} className="space-y-3">
-            {cards.map((cd, i) => {
-              const setCard = (patch: Partial<CardDraft>) => setCardAt(i, patch)
-              return (
-                <div key={i} className="space-y-2 rounded-lg border border-gray-200 p-3">
-                  <div className="flex items-center gap-2">
-                    <span className="mr-auto text-xs font-semibold text-gray-700">{t('crm.werbung.builder.anzeige.karte', 'Karte {{n}}', { n: i + 1 })}</span>
-                    {!gesperrtWm && (
-                      <button type="button" onClick={() => setCards(cards.filter((_, j) => j !== i))} className="text-[11px] text-gray-500 hover:text-red-700">
-                        {t('crm.werbung.builder.anzeige.karteEntfernen', 'Karte entfernen')}
-                      </button>
-                    )}
-                  </div>
-                  <MedienSlot node={node} feld="ad.media.cards" index={i} label={t('crm.werbung.builder.anzeige.karteMedium', 'Medium (1:1)')}
-                    aspect="1:1" kind="image" value={cd.media?.media_id ? cd.media : undefined}
-                    onChange={r => setCard({ media: r ?? { media_id: '' } })} disabled={gesperrtWm} />
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <label className="block text-[11px] text-gray-500">{feldLabel(t, 'ad.headlines', 'Überschrift')}
-                      <input value={cd.headline ?? ''} disabled={gesperrtWm} onChange={ev => setCard({ headline: ev.target.value })} className={INPUT_CLS} />
-                      <span className={`block text-right text-[10px] ${(cd.headline ?? '').trim().length > HEADLINE_MAX ? 'font-semibold text-red-600' : 'text-gray-400'}`}>{(cd.headline ?? '').trim().length} / {HEADLINE_MAX}</span>
-                    </label>
-                    <label className="block text-[11px] text-gray-500">{feldLabel(t, 'ad.descriptions', 'Beschreibung')}
-                      <input value={cd.description ?? ''} disabled={gesperrtWm} onChange={ev => setCard({ description: ev.target.value })} className={INPUT_CLS} />
-                      <span className={`block text-right text-[10px] ${(cd.description ?? '').trim().length > DESCRIPTION_MAX ? 'font-semibold text-red-600' : 'text-gray-400'}`}>{(cd.description ?? '').trim().length} / {DESCRIPTION_MAX}</span>
-                    </label>
-                    <label className="block text-[11px] text-gray-500 sm:col-span-2">{t('crm.werbung.builder.anzeige.karteUrl', 'Link der Karte (leer = Website-URL der Anzeige)')}
-                      <input value={cd.url ?? ''} disabled={gesperrtWm} onChange={ev => setCard({ url: ev.target.value.trim() || undefined })} className={INPUT_CLS} />
-                    </label>
-                  </div>
-                </div>
-              )
-            })}
-            {cards.length < LIMITS.carouselMax && !gesperrtWm && (
-              <button type="button" onClick={() => setCards([...cards, { headline: '', media: { media_id: '' } }])}
-                className="text-xs font-semibold text-hp-navy hover:underline">+ {t('crm.werbung.builder.anzeige.karteNeu', 'Karte hinzufügen')}</button>
-            )}
-            <FeldHinweise node={node} felder="ad.media.cards" />
-          </div>
-        )}
-      </Abschnitt>
-
-      <Abschnitt titel={t('crm.werbung.builder.anzeige.texte', 'Texte')}
-        hilfe={t('crm.werbung.builder.anzeige.texteHilfe', 'Bis zu 5 Varianten je Feld, Meta kombiniert sie. Überschrift höchstens 40, Beschreibung höchstens 30 Zeichen (HP-Regel).')}
-        alleOffen={(ad.descriptions ?? []).some(x => x.trim()) || e.issues.some(i => i.node === node && i.field === 'ad.descriptions') || e.lint.some(l => l.node === node && l.field === 'ad.descriptions')}
-        alle={ad.format !== 'carousel' ? (
-          <TextListe node={node} feld="ad.descriptions" label={feldLabel(t, 'ad.descriptions', 'Beschreibung')}
-            werte={ad.descriptions ?? []} onChange={w => set({ descriptions: w.length === 1 && !w[0].trim() ? [] : w })}
-            hilfe={t('crm.werbung.bearbeiten.hilfe.beschreibung', 'Kleine Zeile unter der Überschrift, nur in manchen Platzierungen sichtbar. Optional.')}
-            zaehler={DESCRIPTION_MAX} max={LIMITS.textsPerKind} disabled={gesperrtWm} />
-        ) : undefined}>
-        <TextListe node={node} feld="ad.primary_texts" label={feldLabel(t, 'ad.primary_texts', 'Primärer Text')}
-          werte={ad.primary_texts ?? []} onChange={w => set({ primary_texts: w })} zaehler={PRIMARY_VISIBLE} mehrzeilig
-          max={ad.format === 'carousel' ? 1 : LIMITS.textsPerKind} disabled={gesperrtWm}
-          hilfe={t('crm.werbung.builder.anzeige.primaerHilfe', 'Die ersten 125 Zeichen sind ohne „Mehr anzeigen“ sichtbar: dort einen fertigen Gedanken liefern.')} />
-        <TextListe node={node} feld="ad.headlines" label={feldLabel(t, 'ad.headlines', 'Überschrift')}
-          werte={ad.headlines ?? []} onChange={w => set({ headlines: w })} zaehler={HEADLINE_MAX}
-          max={ad.format === 'carousel' ? 1 : LIMITS.textsPerKind} disabled={gesperrtWm}
-          hilfe={t('crm.werbung.bearbeiten.hilfe.ueberschrift', 'Kurz und konkret, höchstens 40 Zeichen (HP-Regel).')} />
-      </Abschnitt>
-
-      <Abschnitt titel={t('crm.werbung.builder.anzeige.ziel', 'Ziel und Call-to-Action')}
-        hilfe={t('crm.werbung.bearbeiten.hilfe.ziel', 'Wohin der Klick führt und was auf dem Button steht. HP: Landingpage oder /termin mit „Jetzt buchen“.')}
-        alleOffen={e.issues.some(i => i.node === node && i.field === 'ad.destination.display_link')}
-        alle={(
-          <div className="space-y-3">
-            {ad.destination?.kind === 'website' && (
-              <div className="grid gap-3 sm:grid-cols-2">
-                <TextFeld node={node} feld="ad.destination.display_link" label={feldLabel(t, 'ad.destination.display_link', 'Angezeigter Link')}
-                  hilfe={t('crm.werbung.bearbeiten.hilfe.angezeigterLink', 'Kurze Adresse, die statt der vollen URL in der Anzeige steht. Optional.')}
-                  value={ad.destination.display_link ?? ''} disabled={gesperrtWm}
-                  onChange={v => ad.destination.kind === 'website' && set({ destination: { ...ad.destination, display_link: v.trim() || undefined } })} />
-              </div>
-            )}
-            <div id={feldId('ad.url_tags')} data-einstellung={feldLabel(t, 'ad.url_tags', 'URL-Parameter')}>
-              <p className="text-[11px] text-gray-500">🔒 {feldLabel(t, 'ad.url_tags', 'URL-Parameter')}</p>
-              <code className="mt-0.5 block break-all rounded-lg border border-gray-100 bg-gray-50 px-2 py-1 text-[10px] text-gray-600">{URL_TAGS_STANDARD}</code>
-              <p className="mt-0.5 text-[10px] text-gray-500">{t('crm.werbung.meta.help.ad_url_tags', 'Fester UTM-Standard, wird an jeden Link angehängt: Kampagne, Anzeigengruppe und Werbeanzeige als ID. Nicht änderbar.')}</p>
-            </div>
-          </div>
-        )}>
-        <div id={feldId('ad.destination.kind')} className="flex flex-wrap gap-4 text-xs" role="radiogroup" aria-label={feldLabel(t, 'ad.destination.kind', 'Ziel')}>
-          {(['website', 'lead_form'] as const).map(k => (
-            <label key={k} className={`flex items-center gap-1.5 ${k !== kindSoll ? 'opacity-50' : ''}`}>
-              <input type="radio" name={`ziel-${node}`} checked={kind === k} disabled={gesperrtWm || (k !== kindSoll && kind === kindSoll)}
-                onChange={() => setzeZielArt(k)} />
-              {t(`crm.werbung.meta.destination_kind.${k}`, k === 'website' ? 'Website' : 'Sofortformular')}
-            </label>
-          ))}
-        </div>
-        {kind !== kindSoll && (
-          <p className="text-[11px] text-red-700">
-            {t('crm.werbung.builder.anzeige.zielPasstNicht', 'Das Ziel passt nicht zum Conversion-Ort der Anzeigengruppe.')}
-            {!gesperrtWm && (
-              <button type="button" onClick={() => setzeZielArt(kindSoll)} className="ml-1 font-semibold underline">
-                {t('crm.werbung.builder.anzeige.zielAnpassen', 'Anpassen')}
-              </button>
-            )}
-          </p>
-        )}
-        <FeldHinweise node={node} felder="ad.destination.kind" />
-        <div className="grid gap-3 sm:grid-cols-2">
-          {ad.destination?.kind === 'website' ? (
-            <>
-              <TextFeld node={node} feld="ad.destination.url" label={feldLabel(t, 'ad.destination.url', 'Website-URL')}
-                hilfe={t('crm.werbung.bearbeiten.hilfe.url', 'Die Seite, auf der der Termin gebucht wird. UTM-Parameter hängt das System selbst an.')}
-                value={ad.destination.url ?? ''} disabled={gesperrtWm} maxLen={LIMITS.urlMax}
-                onChange={v => set({ destination: { kind: 'website', url: v.trim(), ...(ad.destination.kind === 'website' && ad.destination.display_link ? { display_link: ad.destination.display_link } : {}) } })} />
-            </>
-          ) : (
-            <FeldRahmen node={node} feld="ad.destination.form_id" label={feldLabel(t, 'ad.destination.form_id', 'Sofortformular')}>
-              {formulare.length ? (
-                <div className="mt-0.5"><CustomSelect value={ad.destination.kind === 'lead_form' ? ad.destination.form_id : ''} options={formulare} disabled={gesperrtWm}
-                  onChange={v => set({ destination: { kind: 'lead_form', form_id: v } })} /></div>
-              ) : (
-                <input value={ad.destination.kind === 'lead_form' ? ad.destination.form_id : ''} disabled={gesperrtWm} className={INPUT_CLS}
-                  placeholder={t('crm.werbung.builder.anzeige.formularId', 'Formular-ID')}
-                  onChange={ev => set({ destination: { kind: 'lead_form', form_id: ev.target.value.trim() } })} />
+        <FormatWahl node={node} value={formatWert} onChange={setzeFormat} disabled={gesperrtWm} sperre={sp('ad.format')} />
+        {beitrag && (
+          <div id={feldId('ad.beitrag')} className="flex scroll-mt-24 flex-wrap items-start gap-3 rounded-lg border border-gray-200 p-3">
+            <span className="h-20 w-16 shrink-0 overflow-hidden rounded bg-gray-100">
+              {beitrag.vorschau_url && <img src={beitrag.vorschau_url} alt="" className="h-full w-full object-cover" />}
+            </span>
+            <span className="min-w-0 flex-1 space-y-1">
+              <span className="flex flex-wrap items-center gap-1.5">
+                <Badge tone="info">{beitrag.quelle === 'instagram' ? 'Instagram' : 'Facebook'}</Badge>
+                <span className="text-[10px] text-gray-500">{t('crm.werbung.builder.beitrag.id', 'Beitrag {{id}}', { id: beitrag.id })}</span>
+              </span>
+              <span className="line-clamp-3 block text-[11px] leading-snug text-gray-700">{beitrag.text ?? t('crm.werbung.builder.beitrag.ohneText', 'Ohne Text')}</span>
+              {beitragPruefung.length > 0 && (
+                <span role="note" className="block space-y-0.5 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] leading-snug text-amber-900">
+                  <span className="block font-semibold">{t('crm.werbung.builder.beitrag.pruefTitel', 'Der Beitragstext läuft unverändert als Anzeige. Bitte prüfen:')}</span>
+                  {beitragPruefung.map((l, i) => (
+                    <span key={`${l.rule}-${i}`} className="block">{t(l.messageKey, l.rule, { ...(l.params ?? {}), match: l.match ?? '' })}</span>
+                  ))}
+                </span>
               )}
-            </FeldRahmen>
-          )}
-          <AuswahlFeld<CtaType> node={node} feld="ad.cta_type" label={feldLabel(t, 'ad.cta_type', 'Call-to-Action')}
-            hilfe={t('crm.werbung.bearbeiten.hilfe.cta', 'Der Button unter der Anzeige.')}
-            empfehlung={kind === 'website' ? { aktiv: ad.cta_type === 'BOOK_NOW', text: t('crm.werbung.meta.cta.BOOK_NOW', 'Jetzt buchen'), uebernehmen: () => set({ cta_type: 'BOOK_NOW' }) } : undefined}
-            value={ad.cta_type} optionen={nurWerte(CTA_OPTIONS, ctas)} disabled={gesperrtWm} onChange={v => v && set({ cta_type: v })} />
-        </div>
+              <span className="flex flex-wrap gap-3 text-[11px]">
+                {beitrag.permalink && (
+                  <a href={beitrag.permalink} target="_blank" rel="noopener noreferrer" className="font-semibold text-hp-navy underline">
+                    {t('crm.werbung.builder.vorschau.beitragAnsehen', 'Beitrag ansehen')}
+                  </a>
+                )}
+                {!gesperrtWm && (
+                  <button type="button" onClick={() => setBeitragOffen(true)} className="font-semibold text-hp-navy underline">
+                    {t('crm.werbung.builder.beitrag.anderer', 'Anderen Beitrag wählen')}
+                  </button>
+                )}
+              </span>
+            </span>
+          </div>
+        )}
+        <FeldHinweise node={node} felder="ad.beitrag" />
       </Abschnitt>
+
+      {!beitrag && ad.format !== 'collection' && (
+        istKarussell ? (
+          <Abschnitt id={feldId('ad.karussell')} titel={t('crm.werbung.builder.anzeige.medien', 'Medien')}
+            hilfe={t('crm.werbung.builder.karussell.hilfe', '2 bis 10 Karten, alle im gleichen Format. Instagram zeigt höchstens 5 Karten.')}
+            alleOffen={e.issues.some(i => i.node === node && (i.field === 'ad.karussell.endkarte' || i.field === 'ad.karussell.reihenfolge_automatisch'))}
+            alle={<KarussellSchalter optionen={karussellVon(ad)} disabled={gesperrtWm} onChange={o => set({ karussell: o })} />}>
+            <KarussellSeitenFeld seiten={kartenSeiten} onChange={setzeKartenSeiten} disabled={gesperrtWm} />
+            <KarussellKarten node={node} cards={cards} seiten={kartenSeiten} onCards={aendereKarten} disabled={gesperrtWm} />
+            <FeldHinweise node={node} felder={['ad.media.crops', 'ad.karussell.endkarte', 'ad.karussell.reihenfolge_automatisch']} />
+          </Abschnitt>
+        ) : (
+          <Abschnitt id={feldId('ad.media.crops')} titel={t('crm.werbung.builder.anzeige.medien', 'Medien')}
+            hilfe={t('crm.werbung.builder.anzeige.medienHilfe', '4:5 für Feeds, 9:16 für Stories und Reels. Ohne 9:16 nimmt Meta das 4:5-Medium überall.')}
+            alleOffen={!!ad.media?.square_1x1 || !!ad.media?.landscape_191x1}
+            alle={(
+              <div className="grid gap-3 lg:grid-cols-2">
+                {medienSlot('square_1x1', '1:1', t('crm.werbung.builder.medien.quadratHilfe', 'Für rechte Spalte, Marketplace und Suche. Ohne eigenes Medium nimmt Meta das Feed-Medium.'))}
+                {medienSlot('landscape_191x1', '1.91:1', istVideo
+                  ? t('crm.werbung.builder.medien.querVideoHilfe', 'Für In-Stream und Audience Network. Optional.')
+                  : t('crm.werbung.builder.medien.querHilfe', 'Für Suche, rechte Spalte und Audience Network. Optional.'))}
+              </div>
+            )}>
+            <div className="grid gap-3 lg:grid-cols-2">
+              {medienSlot('feed_4x5', '4:5')}
+              {medienSlot('story_9x16', '9:16')}
+            </div>
+            <p className="text-[10px] leading-snug text-gray-500">{t('crm.werbung.builder.medien.zuschnittHilfe', 'Bild in anderem Format? Hochladen und den Ausschnitt wählen, oder ein anderes Bild dieser Anzeige zuschneiden.')}</p>
+            <FeldHinweise node={node} felder={['ad.media.crops', 'ad.media.thumbnail', 'ad.media.untertitel']} />
+          </Abschnitt>
+        )
+      )}
+
+      {beitrag ? (
+        <Abschnitt titel={t('crm.werbung.builder.anzeige.texte', 'Texte')}>
+          <p className="text-[11px] text-gray-600">{t('crm.werbung.builder.beitrag.texte', 'Texte und Medien kommen aus dem Beitrag. Ändern geht nur am Beitrag selbst.')}</p>
+        </Abschnitt>
+      ) : (
+        <Abschnitt titel={t('crm.werbung.builder.anzeige.texte', 'Texte')}
+          hilfe={istKarussell
+            ? t('crm.werbung.builder.anzeige.texteKarussell', 'Ein Primärtext und eine Überschrift über allen Karten. Jede Karte hat zusätzlich eigene Überschrift und Beschreibung.')
+            : mitSprachen
+              ? t('crm.werbung.builder.anzeige.texteSprachen', 'Mit mehreren Sprachen gilt je Sprache ein Text. Englisch steht unter „Sprachen“.')
+              : platzMedien
+                ? t('crm.werbung.builder.anzeige.texteHilfePlatz', 'Bis zu 5 Primärtexte und Überschriften. Mit eigenen Medien je Platzierung erlaubt Meta nur eine Beschreibung. Überschrift höchstens 40, Beschreibung höchstens 30 Zeichen (HP-Regel).')
+                : t('crm.werbung.builder.anzeige.texteHilfe2', 'Bis zu 5 Varianten je Feld, Meta zeigt jeder Person die passende Kombination. Überschrift höchstens 40, Beschreibung höchstens 30 Zeichen (HP-Regel).')}>
+          <TextListe node={node} feld="ad.primary_texts" label={feldLabel(t, 'ad.primary_texts', 'Primärer Text')}
+            werte={ad.primary_texts ?? []} onChange={w => set({ primary_texts: w })} zaehler={PRIMARY_VISIBLE} mehrzeilig
+            max={textMax} disabled={gesperrtWm}
+            hilfe={t('crm.werbung.builder.anzeige.primaerHilfe', 'Die ersten 125 Zeichen sind ohne „Mehr anzeigen“ sichtbar: dort einen fertigen Gedanken liefern.')} />
+          <TextListe node={node} feld="ad.headlines" label={feldLabel(t, 'ad.headlines', 'Überschrift')}
+            werte={ad.headlines ?? []} onChange={w => set({ headlines: w })} zaehler={HEADLINE_MAX}
+            max={textMax} disabled={gesperrtWm}
+            hilfe={istKarussell
+              ? t('crm.werbung.builder.anzeige.ueberschriftKarussell', 'Überschrift des Karussells als Ganzes, höchstens 40 Zeichen (HP-Regel). Die Karten haben eigene Überschriften.')
+              : t('crm.werbung.bearbeiten.hilfe.ueberschrift', 'Kurz und konkret, höchstens 40 Zeichen (HP-Regel).')} />
+          {!istKarussell && (
+            <TextListe node={node} feld="ad.descriptions" label={feldLabel(t, 'ad.descriptions', 'Beschreibung')}
+              werte={ad.descriptions ?? []} onChange={w => set({ descriptions: w.length === 1 && !w[0].trim() ? [] : w })}
+              hilfe={t('crm.werbung.bearbeiten.hilfe.beschreibung', 'Kleine Zeile unter der Überschrift, nur in manchen Platzierungen sichtbar. Optional.')}
+              zaehler={DESCRIPTION_MAX} max={platzMedien ? 1 : textMax} disabled={gesperrtWm} />
+          )}
+        </Abschnitt>
+      )}
+
+      <AnzeigeZiel ad={ad} node={node} adsetDestination={adset?.destination} adsetWhatsapp={adset?.promoted_object?.whatsapp_phone_number}
+        setze={set} disabled={gesperrtWm} formulare={formulare} standardUrl={standardUrl} />
+
+      <SprachenAbschnitt ad={ad} node={node} setze={set} disabled={gesperrtWm} />
+
+      <PartnerAbschnitt ad={ad} node={node} setze={set} disabled={gesperrtWm} />
+
+      <TrackingAbschnitt ad={ad} node={node} setze={set} disabled={gesperrt} adsetPixel={adset?.promoted_object?.pixel_id} />
 
       <Abschnitt titel={feldLabel(t, 'ad.creative_features', 'Advantage+ Creative')}
         hilfe={t('crm.werbung.meta.help.ad_creative_features', 'Metas automatische Anpassungen (KI-Bildbearbeitung, Textvarianten, Overlays). Bei Happy Property standardmäßig alle aus: Fotos bleiben echt, Texte bleiben unsere.')}
@@ -576,6 +582,8 @@ export default function AnzeigenFormular({ adKey }: { adKey: string }) {
       </Abschnitt>
 
       <WerbemittelWahl open={wahlOffen} onClose={() => setWahlOffen(false)} onPick={w => void uebernehmen(w)} />
+      <BeitragWahl open={beitragOffen} onClose={() => setBeitragOffen(false)} onPick={beitragGewaehlt}
+        pageId={ad.identity?.page_id ?? ''} igUserId={ad.identity?.instagram_user_id ?? ''} verboteneNamen={verboteneNamen} />
       <Modal open={studioOffen} onClose={() => setStudioOffen(false)} size="xl" title={t('crm.werbung.builder.anzeige.studioTitel', 'KI-Studio: Entwurf für diese Anzeige')}>
         <p className="mb-3 text-xs text-gray-600">
           {t('crm.werbung.builder.anzeige.studioText', 'Im Studio entsteht nichts bei Meta. „Übernehmen“ setzt Überschrift, Text und Bild in diese Anzeige; das Bild braucht danach die beiden Bestätigungen.')}

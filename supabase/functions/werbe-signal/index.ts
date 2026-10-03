@@ -2,8 +2,18 @@
 // Leert den CAPI-Ausgang (capi_outbox) und meldet die Ereignisse über die Conversions API
 // an das Meta-Pixel: Termin gebucht (Schedule), Termin stattgefunden (AppointmentHeld),
 // Daumen hoch (QualifiedLead), Abschluss (Purchase mit Provision), Lead.
+// Dazu die Conversion-Leads-Stufen für Sofortformular-Leads (CRM-Stufen, SPEC3 G2):
+// event_id crm-<leadgen_id>-<stufe>, event_name 'Lead aus Sofortformular' | 'Termin gebucht' |
+// 'Termin stattgefunden' | 'Qualifiziert' | 'Kunde', action_source system_generated,
+// user_data.lead_id = Meta-Lead-ID, custom_data { event_source: 'crm', lead_event_source:
+// 'Happy Property CRM' }. Eingereiht von den Triggern aus 20261005100000_werbe_paritaet_r2.sql
+// (bei capi_echtzeit; aus: nur interne Kontakte, als Testweg). Gesendet wird
+// nur, solange ad_settings.capi_echtzeit an ist (sonst grund 'echtzeit_aus'; Ausnahme aktion
+// 'test'), in einem eigenen POST an crmDatensatzId() (Secret META_CRM_DATASET_ID, sonst Pixel).
+// Die Standard-Ereignisse laufen unverändert wie bisher.
 // Die Zeilen legen Trigger in der DB an (Migration 20261003112000_capi_outbox.sql);
-// ist ad_settings.capi_echtzeit an, stößt pg_net diese Function sofort an.
+// ist ad_settings.capi_echtzeit an, stößt pg_net diese Function sofort an, dazu stündlich der
+// pg_cron-Job werbe-signal-nachholen (nur bei Echtzeit an und offenen Zeilen, anlass 'cron').
 // meta-ads-sync bleibt das Nachhol-Netz mit denselben event_ids (Dedupe über capi_log).
 //
 // Body (JSON):
@@ -13,8 +23,9 @@
 //   Sendet GENAU dieses eine Ausgang-Ereignis mit Test-Code (Body, sonst
 //   ad_settings.capi_test_event_code), aber nur, wenn der Lead ein interner Kontakt ist
 //   (werbe_ist_intern_kontakt: Sven, Verwaltung, Mitarbeitende). Sonst 403, nichts gesendet.
-// Antwort outbox: { success, aktion, anlass, runden, geclaimt, gesendet, test_gesendet,
-//            uebersprungen: {grund: n}, wiederholen, fehler, test, warnungen }
+// Antwort outbox: { success, aktion, anlass, runden, geclaimt, gesendet, crm_gesendet, test_gesendet,
+//            uebersprungen: {grund: n}, wiederholen, fehler, test, crm_stufen_aktiv, warnungen }
+//   (gesendet zählt alle echten Sendungen, crm_gesendet davon die CRM-Stufen)
 //
 // Test-Code (ad_settings.capi_test_event_code, setzen nur Admin über werbe_settings_guard):
 //   gilt NUR für Ereignisse interner Kontakte. Echte Kunden gehen immer normal an Meta
@@ -25,13 +36,17 @@
 //   1 Claim per RPC werbe_capi_claimen(p_limit) (5-Minuten-Lease, versuche + 1, nur System)
 //   2 Überspringen (status 'uebersprungen', grund): zu_alt (> 7 Tage, Meta verwirft sonst den
 //     ganzen Sammel-POST), bereits_gesendet (event_id schon in capi_log), ohne_lead,
-//     lead_fehlt, kein_meta_lead (istMetaLead aus _shared/werbeCapi.ts), keine_merkmale
+//     lead_fehlt, kein_meta_lead (istMetaLead aus _shared/werbeCapi.ts), keine_merkmale;
+//     nur CRM-Stufen: echtzeit_aus (capi_echtzeit aus), ohne_leadgen_id
 //   3 Events bauen (kandidatAusLead + buildCapiEvent): Schedule als Website-Ereignis mit
 //     content_category kap_ja/kap_nein (Antwort „Kapitalbasis“ im Funnel) und Wert
 //     = Gewicht gebucht x ev_ref_eur aus ad_ev_weights (aktiv), nur wenn ev_ref_eur gesetzt;
 //     Purchase mit commission_amount (aus der Zeile, sonst aus deals)
-//   4 EIN POST an /{pixel}/events je Gruppe, echte Kunden und Test-Ereignisse getrennt
-//     (sendCapiEvents, graphPost: respektiert META_WRITES_DISABLED)
+//   4 EIN POST an /{pixel}/events je Gruppe, echte Kunden und Test-Ereignisse getrennt,
+//     CRM-Stufen getrennt von den Standard-Ereignissen (ein kaputtes neues Ereignis kippt so
+//     nie die bewährten) (sendCapiEvents, graphPost: respektiert META_WRITES_DISABLED)
+//   Jeder POST an Meta (auch Test und Fehler) steht in meta_write_log (Anzahl, Datensatz,
+//     event_ids, Namen, fbtrace_id; keine Nutzerdaten, kein Test-Code).
 //   5 Erfolg: capi_log (event_id, event_name, lead_id) schreiben, damit meta-ads-sync nie doppelt
 //     sendet; Zeilen 'gesendet' mit antwort. Interne Kontakte bei gesetztem Test-Code: eigener
 //     POST mit test_event_code, KEIN capi_log-Eintrag, Zeile 'uebersprungen' grund 'test'.
@@ -46,6 +61,7 @@
 // ── Secrets (Supabase Dashboard -> Settings -> Edge Functions -> Secrets) ──
 //   META_ACCESS_TOKEN   = System-User-Token „Analytics Sync"
 //   META_PIXEL_ID       = 1083578343946189 (Standard im Code, gleiches Pixel wie meta-ads-sync)
+//   META_CRM_DATASET_ID = optional, eigener Datensatz für die CRM-Stufen (Standard: META_PIXEL_ID)
 //   META_GRAPH_VERSION  = optional, Form vNN.0 (Standard v25.0)
 //   META_WRITES_DISABLED = 1 sperrt den Versand
 //
@@ -55,10 +71,10 @@
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { gateCaller } from '../_shared/callerGate.ts'
-import { MetaApiError, metaWritesDisabled } from '../_shared/metaGraph.ts'
+import { getLastUsage, logMetaWrite, MetaApiError, metaEnv, metaErrorLogFelder, metaWritesDisabled } from '../_shared/metaGraph.ts'
 import {
-  buildCapiEvent, CAPI_LEAD_FIELDS, CAPI_LEAD_FIELDS_ALT, CAPI_MAX_ALTER_SEK, type CapiEvent, type CapiLead,
-  istMetaLead, kandidatAusLead, sendCapiEvents,
+  buildCapiEvent, buildCrmStufenEvent, CAPI_LEAD_FIELDS, CAPI_LEAD_FIELDS_ALT, CAPI_MAX_ALTER_SEK, type CapiEvent, type CapiLead,
+  crmDatensatzId, istCrmStufenEventId, istMetaLead, kandidatAusLead, leadgenIdOderNull, sendCapiEvents,
 } from '../_shared/werbeCapi.ts'
 
 type Sb = SupabaseClient
@@ -96,19 +112,32 @@ interface Kontext {
   evRef: number | null
   gewichte: Record<string, unknown>
   warnungen: string[]
+  /** CRM-Stufen senden: ad_settings.capi_echtzeit an (oder aktion 'test') */
+  crmAktiv: boolean
+  /** Datensatz für die CRM-Stufen */
+  crmDatensatz: string
 }
 
 interface Summe {
   geclaimt: number
   gesendet: number
+  /** davon CRM-Stufen (Conversion-Leads) */
+  crm_gesendet: number
   test_gesendet: number
   uebersprungen: Record<string, number>
   wiederholen: number
   fehler: number
 }
 
-/** test = Lead ist interner Kontakt und ein Test-Code ist aktiv (nur dann mit Test-Code senden). */
-interface Geplant { zeile: OutboxZeile; ev: CapiEvent; test: boolean }
+/**
+ * test = Lead ist interner Kontakt und ein Test-Code ist aktiv (nur dann mit Test-Code senden).
+ * crm  = Conversion-Leads-Stufe (eigener POST an den CRM-Datensatz).
+ */
+interface Geplant { zeile: OutboxZeile; ev: CapiEvent; test: boolean; crm: boolean }
+
+/** CRM-Stufe (Conversion-Leads): event_id crm-<leadgen>-<stufe> oder daten.crm_stufe aus dem Trigger */
+const istCrmZeile = (z: OutboxZeile): boolean =>
+  istCrmStufenEventId(z.event_id) || typeof z.daten?.crm_stufe === 'string'
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } })
@@ -281,11 +310,21 @@ async function planen(ctx: Kontext, zeilen: OutboxZeile[]): Promise<{ skip: Map<
     return false
   })
 
-  // 3 Leads + Meta-Filter
+  // 3 Leads + Meta-Filter (CRM-Stufen zusätzlich: Echtzeit an + Meta-Lead-ID vorhanden)
   const leads = await ladeLeads(ctx, [...new Set(rest.map(z => String(z.lead_id)))])
+  const leadgenVon = new Map<number, string>()
   rest = rest.filter(z => {
     const l = leads.get(String(z.lead_id))
     if (!l) { weg('lead_fehlt', z); return false }
+    if (istCrmZeile(z)) {
+      if (!ctx.crmAktiv) { weg('echtzeit_aus', z); return false }
+      // Lead-ID aus dem Trigger (Stand beim Einreihen), sonst aus dem Lead
+      const lg = leadgenIdOderNull(z.daten?.leadgen_id) ?? leadgenIdOderNull(l.meta_leadgen_id)
+      if (!lg) { weg('ohne_leadgen_id', z); return false }
+      leadgenVon.set(z.id, lg)
+      if (!istMetaLead({ ...l, meta_leadgen_id: lg })) { weg('kein_meta_lead', z); return false }
+      return true
+    }
     if (!istMetaLead(l)) { weg('kein_meta_lead', z); return false }
     return true
   })
@@ -304,6 +343,17 @@ async function planen(ctx: Kontext, zeilen: OutboxZeile[]): Promise<{ skip: Map<
   const geplant: Geplant[] = []
   for (const z of rest) {
     const lead = leads.get(String(z.lead_id))!
+    const test = !!ctx.testCode && intern.has(String(z.lead_id))
+    if (istCrmZeile(z)) {
+      // Conversion-Leads-Stufe: kein Wert, keine Kategorie, nie als Website-Ereignis
+      const ev = await buildCrmStufenEvent({
+        ...kandidatAusLead(lead, { event_id: z.event_id, event_name: z.event_name, event_time: zeitVon(z), from_website: false }),
+        meta_leadgen_id: leadgenVon.get(z.id) ?? null,
+      }, jetzt)
+      if (!ev) weg('keine_merkmale', z)
+      else geplant.push({ zeile: z, ev, test, crm: true })
+      continue
+    }
     let value: number | undefined
     let contentCategory: string | null = null
     if (z.event_name === 'Schedule') {
@@ -326,7 +376,7 @@ async function planen(ctx: Kontext, zeilen: OutboxZeile[]): Promise<{ skip: Map<
       ...(contentCategory ? { content_category: contentCategory } : {}),
     }), jetzt)
     if (!ev) weg('keine_merkmale', z)
-    else geplant.push({ zeile: z, ev, test: !!ctx.testCode && intern.has(String(z.lead_id)) })
+    else geplant.push({ zeile: z, ev, test, crm: false })
   }
   return { skip, geplant }
 }
@@ -334,6 +384,7 @@ async function planen(ctx: Kontext, zeilen: OutboxZeile[]): Promise<{ skip: Map<
 // ── Senden ──────────────────────────────────────────────────────────────────
 
 async function alsGesendet(ctx: Kontext, summe: Summe, teil: Geplant[], antwort: Record<string, unknown>, test: boolean): Promise<void> {
+  if (!teil.length) return
   if (test) {
     // Test-Ereignis (nur interne Kontakte): kein capi_log, Zeile gilt nicht als gesendet
     await setze(ctx, teil.map(g => g.zeile.id), {
@@ -354,23 +405,57 @@ async function alsGesendet(ctx: Kontext, summe: Summe, teil: Geplant[], antwort:
     status: 'gesendet', gesendet_at: new Date().toISOString(), antwort, fehler: null, claimed_at: null, grund: null,
   })
   summe.gesendet += teil.length
+  summe.crm_gesendet += teil.filter(g => g.crm).length
 }
 
 const endgueltigerFehler = (err: unknown) => err instanceof MetaApiError && err.kind === 'validation'
 
-/** Echte Kunden und Test-Ereignisse (interne Kontakte) nie im selben POST. */
+/** Schreibprotokoll je CAPI-POST (meta_write_log): nur Anzahl, Datensatz, event_ids und Namen, keine Nutzerdaten. */
+async function protokolliere(ctx: Kontext, geplant: Geplant[], testCode: string | null, ergebnis: { ok: true; events_received: number; fbtrace_id: string | null } | { ok: false; err: unknown }): Promise<void> {
+  if (!geplant.length) return
+  if (!ergebnis.ok && ergebnis.err instanceof MetaApiError && ergebnis.err.userMsg === 'META_WRITES_DISABLED') return
+  const crm = geplant[0].crm
+  const datensatz = crm ? ctx.crmDatensatz : metaEnv().pixelId
+  await logMetaWrite(ctx.sb, {
+    actor_kind: 'system', fn: 'werbe-signal', mode: crm ? 'capi_crm' : 'capi', entity_level: 'pixel', entity_id: datensatz || null,
+    method: 'POST', path: `${datensatz}/events`,
+    request: {
+      anzahl: geplant.length,
+      event_ids: geplant.slice(0, 100).map(g => g.zeile.event_id),
+      namen: [...new Set(geplant.map(g => g.zeile.event_name))],
+      crm_stufen: crm,
+      test: !!testCode,
+    },
+    ...(ergebnis.ok
+      ? { ok: true, after: { events_received: ergebnis.events_received, fbtrace_id: ergebnis.fbtrace_id }, fbtrace_id: ergebnis.fbtrace_id }
+      : { ok: false, ...metaErrorLogFelder(ergebnis.err) }),
+    usage: getLastUsage(),
+  })
+}
+
+/**
+ * Echte Kunden und Test-Ereignisse (interne Kontakte) nie im selben POST; CRM-Stufen
+ * (Conversion-Leads, an den CRM-Datensatz) nie im selben POST wie die Standard-Ereignisse.
+ */
 async function senden(ctx: Kontext, summe: Summe, geplant: Geplant[]): Promise<void> {
-  await sendenGruppe(ctx, summe, geplant.filter(g => !g.test), null)
-  if (ctx.testCode) await sendenGruppe(ctx, summe, geplant.filter(g => g.test), ctx.testCode)
+  for (const crm of [false, true]) {
+    const teil = geplant.filter(g => g.crm === crm)
+    await sendenGruppe(ctx, summe, teil.filter(g => !g.test), null)
+    if (ctx.testCode) await sendenGruppe(ctx, summe, teil.filter(g => g.test), ctx.testCode)
+  }
 }
 
 async function sendenGruppe(ctx: Kontext, summe: Summe, geplant: Geplant[], testCode: string | null): Promise<void> {
   if (!geplant.length) return
+  // Gruppen sind immer rein CRM oder rein Standard (senden), der Datensatz folgt der ersten Zeile
+  const pixelId = geplant[0].crm ? ctx.crmDatensatz : undefined
   try {
-    const r = await sendCapiEvents(geplant.map(g => g.ev), { testEventCode: testCode })
+    const r = await sendCapiEvents(geplant.map(g => g.ev), { testEventCode: testCode, pixelId })
     const verworfen = new Set(r.verworfen)
     const alt = geplant.filter(g => verworfen.has(g.zeile.event_id))
     const ok = geplant.filter(g => !verworfen.has(g.zeile.event_id))
+    // nur protokollieren, wenn wirklich ein POST rausging (alles zu alt = kein Aufruf)
+    await protokolliere(ctx, ok, testCode, { ok: true, events_received: r.events_received, fbtrace_id: r.fbtrace_id })
     if (alt.length) await ueberspringen(ctx, summe, new Map([['zu_alt', alt.map(g => g.zeile)]]), true)
     await alsGesendet(ctx, summe, ok, {
       events_received: r.events_received, fbtrace_id: r.fbtrace_id, messages: r.messages.slice(0, 5), test: !!testCode,
@@ -378,6 +463,7 @@ async function sendenGruppe(ctx: Kontext, summe: Summe, geplant: Geplant[], test
   } catch (err) {
     const msg = err instanceof MetaApiError ? `${err.kind}: ${err.userMsg ?? err.message}` : errMsg(err)
     console.error('[werbe-signal] CAPI-Versand:', msg)
+    await protokolliere(ctx, geplant, testCode, { ok: false, err })
     if (endgueltigerFehler(err) && geplant.length > 1) {
       // Ein kaputtes Event kippt den ganzen Sammel-POST: einzeln senden
       const einzeln = geplant.slice(0, MAX_EINZELN)
@@ -427,14 +513,21 @@ async function testSenden(ctx: Kontext, eventId: string, dryRun: boolean): Promi
       }, 403)
     }
     if (dryRun) {
-      return json({ success: true, ...basis, dry_run: true, wuerde_test_senden: true, custom_data: g.ev.custom_data ?? null, action_source: g.ev.action_source, warnungen: ctx.warnungen })
+      return json({ success: true, ...basis, dry_run: true, wuerde_test_senden: true, crm_stufe: g.crm, custom_data: g.ev.custom_data ?? null, action_source: g.ev.action_source, warnungen: ctx.warnungen })
     }
-    const r = await sendCapiEvents([g.ev], { testEventCode: ctx.testCode })
+    let r: Awaited<ReturnType<typeof sendCapiEvents>>
+    try {
+      r = await sendCapiEvents([g.ev], { testEventCode: ctx.testCode, pixelId: g.crm ? ctx.crmDatensatz : undefined })
+    } catch (err) {
+      await protokolliere(ctx, [g], ctx.testCode, { ok: false, err })
+      throw err
+    }
     if (r.verworfen.includes(zeile.event_id)) {
       await freigeben()
       return json({ success: false, ...basis, uebersprungen: 'zu_alt', warnungen: ctx.warnungen }, 422)
     }
-    const antwort = { events_received: r.events_received, fbtrace_id: r.fbtrace_id, messages: r.messages.slice(0, 5), test: true }
+    await protokolliere(ctx, [g], ctx.testCode, { ok: true, events_received: r.events_received, fbtrace_id: r.fbtrace_id })
+    const antwort = { events_received: r.events_received, fbtrace_id: r.fbtrace_id, messages: r.messages.slice(0, 5), test: true, crm_stufe: g.crm }
     // Nur die eben belegte offene Zeile abschließen; schon erledigte Zeilen bleiben, wie sie sind
     if (belegt) {
       await setze(ctx, [zeile.id], {
@@ -484,14 +577,17 @@ Deno.serve(async (req: Request) => {
   }
 
   const sb = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')
-  const ctx: Kontext = { sb, testCode: null, evRef: null, gewichte: {}, warnungen: [] }
-  const summe: Summe = { geclaimt: 0, gesendet: 0, test_gesendet: 0, uebersprungen: {}, wiederholen: 0, fehler: 0 }
+  const ctx: Kontext = { sb, testCode: null, evRef: null, gewichte: {}, warnungen: [], crmAktiv: false, crmDatensatz: crmDatensatzId() }
+  const summe: Summe = { geclaimt: 0, gesendet: 0, crm_gesendet: 0, test_gesendet: 0, uebersprungen: {}, wiederholen: 0, fehler: 0 }
 
   try {
     // Test-Code (gilt nur für interne Kontakte, siehe planen) + Wertleiter
-    const { data: st, error: sErr } = await sb.from('ad_settings').select('capi_test_event_code').eq('id', 'default').maybeSingle()
+    const { data: st, error: sErr } = await sb.from('ad_settings').select('capi_test_event_code, capi_echtzeit').eq('id', 'default').maybeSingle()
     if (sErr && !spalteFehlt(sErr)) throw new Error(`ad_settings lesen: ${String(sErr.message ?? sErr)}`)
-    const dbCode = String((st as { capi_test_event_code?: string | null } | null)?.capi_test_event_code ?? '').trim().slice(0, 64)
+    const stRow = (st ?? null) as { capi_test_event_code?: string | null; capi_echtzeit?: boolean | null } | null
+    const dbCode = String(stRow?.capi_test_event_code ?? '').trim().slice(0, 64)
+    // CRM-Stufen nur bei Echtzeit-Versand (Svens Schalter); ein ausdrücklicher Test geht immer
+    ctx.crmAktiv = aktion === 'test' || stRow?.capi_echtzeit === true
     ctx.testCode = (aktion === 'test' ? bodyCode || dbCode : dbCode) || null
     if (aktion === 'test' && !ctx.testCode) {
       return json({ success: false, aktion, event_id: eventId, error: 'Kein test_event_code (Body oder ad_settings.capi_test_event_code)' }, 400)
@@ -517,8 +613,9 @@ Deno.serve(async (req: Request) => {
       return json({
         success: true, aktion, anlass, dry_run: true, offen: zeilen.length,
         wuerde_senden: geplant.filter(g => !g.test).length, wuerde_test_senden: geplant.filter(g => g.test).length,
+        wuerde_senden_crm: geplant.filter(g => !g.test && g.crm).length, crm_stufen_aktiv: ctx.crmAktiv,
         uebersprungen: summe.uebersprungen, test: !!ctx.testCode,
-        beispiel: geplant.slice(0, 20).map(g => ({ event_id: g.zeile.event_id, event_name: g.zeile.event_name, test: g.test, custom_data: g.ev.custom_data ?? null, action_source: g.ev.action_source })),
+        beispiel: geplant.slice(0, 20).map(g => ({ event_id: g.zeile.event_id, event_name: g.zeile.event_name, test: g.test, crm_stufe: g.crm, custom_data: g.ev.custom_data ?? null, action_source: g.ev.action_source })),
         warnungen: ctx.warnungen,
       })
     }
@@ -545,8 +642,8 @@ Deno.serve(async (req: Request) => {
       }
       if (zeilen.length < limit) break
     }
-    console.log(`[werbe-signal] ${anlass ?? 'ohne Anlass'}: geclaimt ${summe.geclaimt}, gesendet ${summe.gesendet}, test ${summe.test_gesendet}, übersprungen ${JSON.stringify(summe.uebersprungen)}, wiederholen ${summe.wiederholen}, fehler ${summe.fehler}`)
-    return json({ success: true, aktion, anlass, runden, ...summe, test: !!ctx.testCode, warnungen: ctx.warnungen, dauer_ms: Date.now() - start })
+    console.log(`[werbe-signal] ${anlass ?? 'ohne Anlass'}: geclaimt ${summe.geclaimt}, gesendet ${summe.gesendet} (CRM-Stufen ${summe.crm_gesendet}), test ${summe.test_gesendet}, übersprungen ${JSON.stringify(summe.uebersprungen)}, wiederholen ${summe.wiederholen}, fehler ${summe.fehler}`)
+    return json({ success: true, aktion, anlass, runden, ...summe, test: !!ctx.testCode, crm_stufen_aktiv: ctx.crmAktiv, warnungen: ctx.warnungen, dauer_ms: Date.now() - start })
   } catch (err) {
     const msg = errMsg(err)
     console.error('[werbe-signal]', msg)

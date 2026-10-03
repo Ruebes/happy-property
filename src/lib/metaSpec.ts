@@ -40,6 +40,25 @@ export const URL_TAGS_STANDARD =
 export const LEAD_FORM_LINK = 'http://fb.me/'
 export const PLAN_B_LP_LANG = 'https://steuervorteil-zypern-immobilien.com/vermoegen-absichern-zypern/'
 export const PLAN_B_LP_KURZ = 'https://steuervorteil-zypern-immobilien.com/vermoegen-absichern-zypern-kompakt/'
+/** Klick zu WhatsApp: fester Link laut Meta-Doku („Ads that Click to WhatsApp“, link_data.link). */
+export const WHATSAPP_LINK = 'https://api.whatsapp.com/send'
+/** Klick zum Messenger: Platzhalter-Link (Meta-Doku Click to Messenger; API-Pfad ungeprüft, per validate_only prüfen). */
+export const MESSENGER_LINK = 'https://fb.com/messenger_doc/'
+/**
+ * Mehrsprachige Anzeigen (asset_feed_spec optimization_type LANGUAGE): Sprach-IDs aus
+ * GET /search?type=adlocale. Deutsch = 5, Englisch (USA) = 6, Englisch (UK) = 24
+ * (6 und 24 aus der Meta-Doku; 5 per /search?type=adlocale&q=de bestätigen).
+ */
+export const SPRACH_LOCALES: Readonly<Record<'de' | 'en', readonly number[]>> = { de: [5], en: [6, 24] }
+/** Automatische Übersetzung (autotranslate): Zielsprache aus Deutsch, laut Meta-Doku nur Deutsch -> Englisch. */
+export const AUTOTRANSLATE_CODE: Readonly<Record<'en', string>> = { en: 'en_XX' }
+/** Telefonnummer im internationalen Format (E.164): +, Ländervorwahl, 7 bis 15 Ziffern. */
+export const TELEFON_RE = /^\+[1-9][0-9]{6,14}$/
+/** Telefonnummer vereinheitlichen: Leerzeichen, Striche, Klammern, Schrägstriche raus, 00 -> +. */
+export function normalizeTelefon(s: string | undefined | null): string {
+  const t = String(s ?? '').replace(/[\s\-().\/]/g, '')
+  return t.indexOf('00') === 0 ? `+${t.slice(2)}` : t
+}
 
 export const HOUSING_AGE_MIN = 18
 export const HOUSING_AGE_MAX = 65
@@ -90,6 +109,12 @@ export const LIMITS = {
   duplicateMaxTotal: 25,
   /** Budgetplanung: Zeiträume je Kampagne/Anzeigengruppe */
   budgetSchedulesMax: 50,
+  /** WhatsApp-Begrüßung und vorbefüllte Nachricht (eigene Obergrenze, Meta nennt keine) */
+  whatsappTextMax: 500,
+  /** weitere Pixel im Tracking einer Anzeige */
+  trackingPixelMax: 5,
+  /** Vorschau aller Platzierungen: höchstens so viele Meta-Aufrufe je Anfrage */
+  previewAlleMax: 10,
 } as const
 
 /**
@@ -123,6 +148,8 @@ export interface EnumOption<V extends string = string> {
   unsupported?: boolean
   /** HP-Empfehlung, im UI hervorheben. */
   recommended?: boolean
+  /** Grund, warum die Option grau/gesperrt ist (i18n-Schlüssel, ein Satz in einfachem Deutsch). */
+  reasonKey?: string
 }
 
 const K = 'crm.werbung.meta'
@@ -189,31 +216,40 @@ export const DESTINATION_TYPES = [
   'SHOP_AUTOMATIC', 'ON_AD', 'ON_POST', 'ON_EVENT', 'ON_VIDEO', 'ON_PAGE', 'INSTAGRAM_PROFILE',
   'FACEBOOK_PAGE', 'INSTAGRAM_PROFILE_AND_FACEBOOK_PAGE', 'INSTAGRAM_LIVE', 'FACEBOOK_LIVE', 'IMAGINE',
   'PHONE_CALL', 'LEAD_FROM_MESSENGER', 'LEAD_FROM_IG_DIRECT', 'WEBSITE_AND_PHONE_CALL',
+  // „Website und Instant-Formulare“ (im Konto an Anzeigengruppen der Kampagne 120248950711350314 gelesen)
+  'WEBSITE_AND_LEAD_FORM',
 ] as const
 export type Destination = typeof DESTINATION_TYPES[number]
+const destReason = (v: string): string => `${K}.destination_reason.${v}`
 export const DESTINATION_OPTIONS: readonly EnumOption<Destination>[] = [
   opt('destination', 'WEBSITE', { recommended: true }),
+  // API-Pfad ungeprüft (Ziel aus echten Anzeigengruppen gelesen): per validate_only prüfen
+  opt('destination', 'WEBSITE_AND_LEAD_FORM'),
   opt('destination', 'ON_AD'),
-  opt('destination', 'WEBSITE_AND_PHONE_CALL', { unsupported: true }),
-  opt('destination', 'PHONE_CALL', { unsupported: true }),
-  opt('destination', 'WHATSAPP', { unsupported: true }),
-  opt('destination', 'MESSENGER', { unsupported: true }),
-  opt('destination', 'INSTAGRAM_DIRECT', { unsupported: true }),
-  opt('destination', 'LEAD_FROM_IG_DIRECT', { unsupported: true }),
-  opt('destination', 'LEAD_FROM_MESSENGER', { deprecated: true, unsupported: true }),
-  opt('destination', 'APP', { unsupported: true }),
+  opt('destination', 'WEBSITE_AND_PHONE_CALL', { unsupported: true, reasonKey: destReason('WEBSITE_AND_PHONE_CALL') }),
+  opt('destination', 'PHONE_CALL'),
+  opt('destination', 'WHATSAPP'),
+  opt('destination', 'MESSENGER'),
+  opt('destination', 'INSTAGRAM_DIRECT', { unsupported: true, reasonKey: destReason('INSTAGRAM_DIRECT') }),
+  opt('destination', 'LEAD_FROM_IG_DIRECT', { unsupported: true, reasonKey: destReason('LEAD_FROM_IG_DIRECT') }),
+  // Meta hat Messenger-Lead-Anzeigen über die Schnittstelle mit v24 abgeschaltet (nur noch im Werbeanzeigenmanager)
+  opt('destination', 'LEAD_FROM_MESSENGER', { deprecated: true, unsupported: true, reasonKey: destReason('LEAD_FROM_MESSENGER') }),
+  opt('destination', 'APP', { unsupported: true, reasonKey: destReason('APP') }),
   opt('destination', 'ON_POST'),
   opt('destination', 'ON_VIDEO'),
-  opt('destination', 'ON_PAGE', { unsupported: true }),
-  opt('destination', 'ON_EVENT', { unsupported: true }),
+  opt('destination', 'ON_PAGE', { unsupported: true, reasonKey: destReason('ON_PAGE') }),
+  opt('destination', 'ON_EVENT', { unsupported: true, reasonKey: destReason('ON_EVENT') }),
   opt('destination', 'UNDEFINED'),
 ]
 /**
- * Ziele, für die der Assistent Anzeigen (Creatives) bauen kann.
+ * Ziele, für die der Assistent Anzeigen (Creatives) bauen kann (= Schlüssel von AD_KINDS_BY_DESTINATION).
  * WEBSITE_AND_PHONE_CALL: nur neue Website-Anzeigen in BESTEHENDEN Anzeigengruppen
  * (laufendes Plan B); neue Anzeigengruppen mit diesem Ziel bleiben „unsupported“.
  */
-export const AD_SUPPORTED_DESTINATIONS: readonly Destination[] = ['WEBSITE', 'ON_AD', 'UNDEFINED', 'ON_POST', 'ON_VIDEO', 'WEBSITE_AND_PHONE_CALL']
+export const AD_SUPPORTED_DESTINATIONS: readonly Destination[] = [
+  'WEBSITE', 'ON_AD', 'UNDEFINED', 'ON_POST', 'ON_VIDEO', 'WEBSITE_AND_PHONE_CALL',
+  'WEBSITE_AND_LEAD_FORM', 'WHATSAPP', 'PHONE_CALL', 'MESSENGER',
+]
 
 // ── Leistungsziel (optimization_goal) ──────────────────────────────────────
 /** Vollständiges Enum laut Referenz (für Import) + TWO_SECOND_CONTINUOUS_VIDEO_VIEWS aus der ODAX-Tabelle. */
@@ -247,12 +283,16 @@ export const GOALS_BY_OBJ_DEST: Readonly<Record<Objective, Partial<Record<Destin
     ON_VIDEO: ['THRUPLAY', 'TWO_SECOND_CONTINUOUS_VIDEO_VIEWS'],
     ON_PAGE: ['PAGE_LIKES'],
     ON_EVENT: ['EVENT_RESPONSES', 'POST_ENGAGEMENT', 'REACH', 'IMPRESSIONS'],
-    MESSENGER: ['CONVERSATIONS', 'LINK_CLICKS', 'LEAD_GENERATION'],
+    // ODAX erlaubt hier auch LEAD_GENERATION (Messenger-Lead-Anzeige). Meta hat Messenger-Lead-Anzeigen
+    // über die Schnittstelle mit v24 abgeschaltet: nicht anbieten (gesperrt mit Grund unter LEAD_FROM_MESSENGER).
+    MESSENGER: ['CONVERSATIONS', 'LINK_CLICKS'],
     WHATSAPP: ['CONVERSATIONS', 'LINK_CLICKS'],
     WEBSITE: ['OFFSITE_CONVERSIONS', 'LANDING_PAGE_VIEWS', 'LINK_CLICKS', 'REACH', 'IMPRESSIONS'],
   },
   OUTCOME_LEADS: {
     WEBSITE: ['OFFSITE_CONVERSIONS', 'LANDING_PAGE_VIEWS', 'LINK_CLICKS', 'REACH', 'IMPRESSIONS'],
+    // „Website und Instant-Formulare“: Meta optimiert auf das Pixel-Ereignis Lead (Werbeanzeigenmanager: nur „Lead“)
+    WEBSITE_AND_LEAD_FORM: ['OFFSITE_CONVERSIONS'],
     ON_AD: ['LEAD_GENERATION', 'QUALITY_LEAD'],
     LEAD_FROM_IG_DIRECT: ['LEAD_GENERATION'],
     LEAD_FROM_MESSENGER: ['LEAD_GENERATION'],
@@ -368,6 +408,7 @@ export const PROMOTED_OBJECT_RULES: readonly PromotedRule[] = [
   { objective: 'OUTCOME_ENGAGEMENT', destination: 'WEBSITE', anyOf: NOTHING, optional: [] },
   { objective: 'OUTCOME_LEADS', destination: 'WEBSITE', goals: ['OFFSITE_CONVERSIONS'], anyOf: PIXEL_EVENT, optional: ['pixel_id'] },
   { objective: 'OUTCOME_LEADS', destination: 'WEBSITE', anyOf: NOTHING, optional: [] },
+  { objective: 'OUTCOME_LEADS', destination: 'WEBSITE_AND_LEAD_FORM', anyOf: [['pixel_id', 'custom_event_type']], optional: [] },
   { objective: 'OUTCOME_LEADS', destination: 'ON_AD', anyOf: [['page_id']], optional: ['pixel_id'] },
   { objective: 'OUTCOME_LEADS', destination: 'LEAD_FROM_IG_DIRECT', anyOf: [['page_id']], optional: [] },
   { objective: 'OUTCOME_LEADS', destination: 'LEAD_FROM_MESSENGER', anyOf: [['page_id']], optional: [] },
@@ -525,9 +566,17 @@ export const CTA_TYPES = [
   'ASK_FOR_MORE_INFO', 'GET_DETAILS', 'FIND_OUT_MORE', 'GET_IN_TOUCH', 'VISIT_WEBSITE', 'SEE_MORE',
   'GET_OFFER', 'SUBSCRIBE', 'DOWNLOAD', 'NO_BUTTON',
   'WHATSAPP_MESSAGE', 'MESSAGE_PAGE', 'CHAT_WITH_US', 'CALL_NOW',
+  // „Details ansehen“ bei „Website und Instant-Formulare“ (in einer HP-Anzeige gelesen)
+  'SEE_DETAILS',
 ] as const
 export type CtaType = typeof CTA_TYPES[number]
-export type AdDestinationKind = 'website' | 'lead_form'
+/**
+ * Ziel der Werbeanzeige (Zielort je Conversion-Ort der Anzeigengruppe):
+ * website = Website-URL, lead_form = Sofortformular, website_lead_form = Website UND Sofortformular,
+ * whatsapp = Klick zu WhatsApp, phone_call = Anruf (Telefonnummer), messenger = Klick zum Messenger.
+ */
+export type AdDestinationKind = 'website' | 'lead_form' | 'website_lead_form' | 'whatsapp' | 'phone_call' | 'messenger'
+export const AD_DESTINATION_KINDS: readonly AdDestinationKind[] = ['website', 'lead_form', 'website_lead_form', 'whatsapp', 'phone_call', 'messenger']
 /** Sofortformular: NUR diese sechs (Meta-Lead-Ads-Doku). */
 export const CTA_LEAD_FORM: readonly CtaType[] = ['SIGN_UP', 'LEARN_MORE', 'GET_QUOTE', 'APPLY_NOW', 'DOWNLOAD', 'SUBSCRIBE']
 export const CTA_WEBSITE: readonly CtaType[] = [
@@ -536,9 +585,24 @@ export const CTA_WEBSITE: readonly CtaType[] = [
   'ASK_FOR_MORE_INFO', 'GET_DETAILS', 'FIND_OUT_MORE', 'GET_IN_TOUCH', 'VISIT_WEBSITE', 'SEE_MORE',
   'GET_OFFER', 'SUBSCRIBE', 'DOWNLOAD', 'NO_BUTTON',
 ]
+/**
+ * Website und Sofortformular: Liste der Meta-Hilfe zu Instant-Formularen (Jetzt bewerben, Jetzt buchen,
+ * Herunterladen, Angebot ansehen, Angebot anfordern, Mehr dazu, Details ansehen, Registrieren, Abonnieren).
+ * Per validate_only prüfen.
+ */
+export const CTA_WEBSITE_LEAD_FORM: readonly CtaType[] = [
+  'BOOK_NOW', 'SIGN_UP', 'LEARN_MORE', 'GET_QUOTE', 'APPLY_NOW', 'DOWNLOAD', 'SUBSCRIBE', 'GET_OFFER', 'SEE_DETAILS',
+]
 export const CTA_BY_DESTINATION: Readonly<Record<AdDestinationKind, readonly CtaType[]>> = {
   website: CTA_WEBSITE,
   lead_form: CTA_LEAD_FORM,
+  website_lead_form: CTA_WEBSITE_LEAD_FORM,
+  // Meta-Doku „Ads that Click to WhatsApp“: value { app_destination: 'WHATSAPP' }
+  whatsapp: ['WHATSAPP_MESSAGE'],
+  // Anrufe: value { link: 'tel:+49...' } (API-Pfad ungeprüft, per validate_only prüfen)
+  phone_call: ['CALL_NOW'],
+  // Messenger: value { app_destination: 'MESSENGER' } (API-Pfad ungeprüft, per validate_only prüfen)
+  messenger: ['MESSAGE_PAGE'],
 }
 export const CTA_OPTIONS: readonly EnumOption<CtaType>[] = CTA_TYPES.map(v =>
   opt('cta', v, v === 'BOOK_NOW' ? { recommended: true } : undefined))
@@ -548,12 +612,79 @@ export function ctaFor(kind: AdDestinationKind): readonly CtaType[] {
 export const AD_DESTINATION_KIND_OPTIONS: readonly EnumOption<AdDestinationKind>[] = [
   opt('destination_kind', 'website', { recommended: true }),
   opt('destination_kind', 'lead_form'),
+  opt('destination_kind', 'website_lead_form'),
+  opt('destination_kind', 'whatsapp'),
+  opt('destination_kind', 'phone_call'),
+  opt('destination_kind', 'messenger'),
 ]
+/** Welche Ziel-Arten der Werbeanzeige zum Conversion-Ort der Anzeigengruppe passen (Erstes = Standard). */
+export const AD_KINDS_BY_DESTINATION: Readonly<Partial<Record<Destination, readonly AdDestinationKind[]>>> = {
+  WEBSITE: ['website'],
+  UNDEFINED: ['website'],
+  ON_POST: ['website'],
+  ON_VIDEO: ['website'],
+  WEBSITE_AND_PHONE_CALL: ['website'],
+  ON_AD: ['lead_form'],
+  WEBSITE_AND_LEAD_FORM: ['website_lead_form'],
+  WHATSAPP: ['whatsapp'],
+  PHONE_CALL: ['phone_call'],
+  MESSENGER: ['messenger'],
+}
+export function adKindsFor(destination: Destination | undefined): readonly AdDestinationKind[] {
+  return (destination && AD_KINDS_BY_DESTINATION[destination]) || []
+}
+/** Ziel-Arten mit Website-URL (Lint, Conversion-Domain, UTM). */
+export const isWebsiteKind = (k: AdDestinationKind | undefined): boolean => k === 'website' || k === 'website_lead_form'
+/** Ziel-Arten mit Sofortformular. */
+export const isFormKind = (k: AdDestinationKind | undefined): boolean => k === 'lead_form' || k === 'website_lead_form'
 
 // ── Anzeigenformat ─────────────────────────────────────────────────────────
-export type AdFormat = 'single_image' | 'single_video' | 'carousel'
-export const AD_FORMATS: readonly AdFormat[] = ['single_image', 'single_video', 'carousel']
-export const AD_FORMAT_OPTIONS: readonly EnumOption<AdFormat>[] = AD_FORMATS.map(v => opt('format', v))
+/** collection = Sammlung/Instant Experience: sichtbar, aber gesperrt (folgt, Katalog/Canvas nötig). */
+export type AdFormat = 'single_image' | 'single_video' | 'carousel' | 'collection'
+export const AD_FORMATS: readonly AdFormat[] = ['single_image', 'single_video', 'carousel', 'collection']
+export const AD_FORMAT_OPTIONS: readonly EnumOption<AdFormat>[] = AD_FORMATS.map(v =>
+  opt('format', v, v === 'collection' ? { unsupported: true, reasonKey: `${K}.format_reason.collection` } : undefined))
+
+/** Anzeigeneinrichtung: neue Werbeanzeige erstellen oder vorhandenen Beitrag verwenden. */
+export type AdSetup = 'neu' | 'beitrag'
+export const AD_SETUP_OPTIONS: readonly EnumOption<AdSetup>[] = [
+  opt('setup', 'neu', { recommended: true }),
+  opt('setup', 'beitrag'),
+]
+export type BeitragQuelle = 'facebook' | 'instagram'
+export const BEITRAG_QUELLE_OPTIONS: readonly EnumOption<BeitragQuelle>[] = [opt('beitrag_quelle', 'facebook'), opt('beitrag_quelle', 'instagram')]
+
+// ── Sprachen (mehrsprachige Anzeige) ───────────────────────────────────────
+/** de = Standardsprache (Texte der Anzeige), weitere Sprachen als Varianten. */
+export type AdSprache = 'de' | 'en'
+export const AD_SPRACHEN: readonly AdSprache[] = ['de', 'en']
+export const SPRACHE_OPTIONS: readonly EnumOption<AdSprache>[] = AD_SPRACHEN.map(v => opt('sprache', v))
+export const SPRACH_LABEL_PREFIX = 'hp_lang_'
+
+// ── Zuschnitt (image_crops) ────────────────────────────────────────────────
+/** Metas Zuschnitt-Schlüssel (Breite x Höhe als Verhältnis), Rechteck [[x1, y1], [x2, y2]] in Pixeln. */
+export const CROP_KEYS = ['191x100', '100x72', '400x150', '600x360', '100x100', '400x500', '90x160', '300x400'] as const
+export type CropKey = typeof CROP_KEYS[number]
+export type CropBox = [[number, number], [number, number]]
+export type ImageCrops = Partial<Record<CropKey, CropBox>>
+export const CROP_KEY_OPTIONS: readonly EnumOption<CropKey>[] = CROP_KEYS.map(v => opt('crop', v))
+/** Passender Zuschnitt je Medien-Platz (1.91:1 / 4:5 / 9:16 / 1:1). */
+export const CROP_KEY_BY_SLOT: Readonly<Record<'feed_4x5' | 'story_9x16' | 'square_1x1' | 'landscape_191x1', CropKey>> = {
+  feed_4x5: '400x500', story_9x16: '90x160', square_1x1: '100x100', landscape_191x1: '191x100',
+}
+/** Rechteck gültig und im Seitenverhältnis des Schlüssels (1 % Toleranz, Meta verlangt das gleiche Verhältnis)? */
+export function cropValid(key: string, box: unknown): boolean {
+  if ((CROP_KEYS as readonly string[]).indexOf(key) < 0 || !Array.isArray(box) || box.length !== 2) return false
+  const a = box[0], b = box[1]
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== 2 || b.length !== 2) return false
+  const nums = [a[0], a[1], b[0], b[1]]
+  if (!nums.every(n => typeof n === 'number' && Number.isFinite(n) && n >= 0 && Math.round(n) === n)) return false
+  const w = (b[0] as number) - (a[0] as number), h = (b[1] as number) - (a[1] as number)
+  if (!(w > 0) || !(h > 0)) return false
+  const parts = key.split('x')
+  const soll = Number(parts[0]) / Number(parts[1])
+  return Math.abs(w / h - soll) / soll <= 0.01
+}
 
 // ── Advantage+ Creative (degrees_of_freedom_spec.creative_features_spec) ───
 export const CREATIVE_FEATURES = [
@@ -613,9 +744,38 @@ export const ENROLL_OPTIONS: readonly EnumOption<Enroll>[] = [
 export const PREVIEW_FORMATS = [
   'MOBILE_FEED_STANDARD', 'INSTAGRAM_STANDARD', 'INSTAGRAM_STORY', 'INSTAGRAM_REELS',
   'FACEBOOK_STORY_MOBILE', 'FACEBOOK_REELS_MOBILE', 'DESKTOP_FEED_STANDARD',
+  'RIGHT_COLUMN_STANDARD', 'MARKETPLACE_MOBILE', 'AUDIENCE_NETWORK_OUTSTREAM_VIDEO',
 ] as const
 export type PreviewFormat = typeof PREVIEW_FORMATS[number]
 export const PREVIEW_FORMAT_OPTIONS: readonly EnumOption<PreviewFormat>[] = PREVIEW_FORMATS.map(v => opt('preview', v))
+/** Platzierung je Vorschau-Format (für „Vorschau aller Platzierungen“: nur, was die Anzeigengruppe ausspielen kann). */
+export interface PreviewPlacement {
+  platform: PublisherPlatform
+  position: string
+  /** nur auf diesem Gerät */
+  device?: DevicePlatform
+  /** nur für Videos */
+  nurVideo?: true
+  /** zeigt kein Karussell (Facebook Stories) */
+  keinKarussell?: true
+}
+export const PREVIEW_PLACEMENT: Readonly<Record<PreviewFormat, PreviewPlacement>> = {
+  MOBILE_FEED_STANDARD: { platform: 'facebook', position: 'feed', device: 'mobile' },
+  INSTAGRAM_STANDARD: { platform: 'instagram', position: 'stream' },
+  INSTAGRAM_STORY: { platform: 'instagram', position: 'story' },
+  INSTAGRAM_REELS: { platform: 'instagram', position: 'reels' },
+  FACEBOOK_STORY_MOBILE: { platform: 'facebook', position: 'story', device: 'mobile', keinKarussell: true },
+  FACEBOOK_REELS_MOBILE: { platform: 'facebook', position: 'facebook_reels', device: 'mobile' },
+  DESKTOP_FEED_STANDARD: { platform: 'facebook', position: 'feed', device: 'desktop' },
+  RIGHT_COLUMN_STANDARD: { platform: 'facebook', position: 'right_hand_column', device: 'desktop' },
+  MARKETPLACE_MOBILE: { platform: 'facebook', position: 'marketplace', device: 'mobile' },
+  AUDIENCE_NETWORK_OUTSTREAM_VIDEO: { platform: 'audience_network', position: 'classic', nurVideo: true },
+}
+/** Reihenfolge der „Vorschau aller Platzierungen“ (SPEC3 E); Computer-Feed nur auf Wunsch. */
+export const PREVIEW_ALLE_FORMATS: readonly PreviewFormat[] = [
+  'MOBILE_FEED_STANDARD', 'INSTAGRAM_STANDARD', 'INSTAGRAM_STORY', 'INSTAGRAM_REELS', 'FACEBOOK_REELS_MOBILE',
+  'FACEBOOK_STORY_MOBILE', 'RIGHT_COLUMN_STANDARD', 'MARKETPLACE_MOBILE', 'AUDIENCE_NETWORK_OUTSTREAM_VIDEO',
+]
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 3. Entwurfs-Typen (meta_drafts.spec)
@@ -789,6 +949,19 @@ export interface MediaRef {
   image_hash?: string
   video_id?: string
   thumbnail_hash?: string
+  /** Seitenverhältnis (das Formular übernimmt es aus meta_media), für Karussell- und Platzierungs-Prüfung */
+  aspect?: MediaAspect
+  /** Zuschnitt (image_crops) je Seitenverhältnis, nur Bilder */
+  crops?: ImageCrops
+  /** Video: eigenes Vorschaubild = Bild aus meta_media (über media_upload hochgeladen) */
+  thumbnail_media_id?: string
+  /**
+   * Video: Herkunft des Vorschaubilds. 'meta_liste' = aus Metas Vorschlägen gewählt (video_vorschaubild,
+   * thumbnail_hash bleibt fest), 'upload' = thumbnail_media_id, sonst Metas bevorzugtes Bild.
+   */
+  thumbnail_quelle?: 'meta_standard' | 'meta_liste' | 'upload'
+  /** Video: Adresse des Vorschaubilds nur zur Anzeige im Formular (nicht an Meta) */
+  thumbnail_url?: string
 }
 export interface CardDraft {
   headline: string
@@ -800,6 +973,52 @@ export interface CardDraft {
 export type AdDestination =
   | { kind: 'website'; url: string; display_link?: string }
   | { kind: 'lead_form'; form_id: string }
+  /** Website und Sofortformular: Meta zeigt je Person die Website oder das Formular */
+  | { kind: 'website_lead_form'; url: string; form_id: string; display_link?: string }
+  /** Klick zu WhatsApp: Nummer steht in der Anzeigengruppe (promoted_object.whatsapp_phone_number) bzw. an der Seite */
+  | { kind: 'whatsapp'; begruessung?: string; nachricht?: string }
+  /** Anrufe: Telefonnummer im internationalen Format (+49...) */
+  | { kind: 'phone_call'; telefon: string }
+  | { kind: 'messenger' }
+
+/** Vorhandener Beitrag (Facebook: object_story_id „SeitenID_BeitragsID“, Instagram: Medien-ID). */
+export interface BeitragRef {
+  quelle: BeitragQuelle
+  id: string
+  /** nur zur Anzeige im Formular */
+  permalink?: string
+  vorschau_url?: string
+  text?: string
+}
+/** Karussell-Schalter: Endkarte mit Profilbild (Meta-Standard an, HP-Standard aus), Reihenfolge automatisch (an). */
+export interface KarussellOptionen { endkarte?: boolean; reihenfolge_automatisch?: boolean }
+/** Weitere Sprache einer mehrsprachigen Anzeige (Standard = Texte der Anzeige auf Deutsch). */
+export interface SprachVariante {
+  sprache: AdSprache
+  primary_text: string
+  headline: string
+  description?: string
+  /** leer = Website-URL der Anzeige */
+  url?: string
+}
+export interface SprachenSpec {
+  varianten: SprachVariante[]
+  /** Meta übersetzt die deutschen Texte automatisch (gekennzeichnet „Automatisch übersetzt“) */
+  automatisch_uebersetzen?: AdSprache[]
+}
+/**
+ * Partnerschaftswerbung (Branded Content): Partner als zweite Identität. partner_ist_absender = true:
+ * Partner ist die Hauptidentität (seine Seite in object_story_spec), HP die zweite.
+ */
+export interface PartnerschaftSpec { partner_page_id?: string; partner_ig_user_id?: string; partner_ist_absender?: boolean }
+/** Tracking der Anzeige: weitere Pixel (Website-Events), CRM-Lead-Qualität, eigene Conversion-Domain. */
+export interface AdTrackingSpec {
+  weitere_pixel?: string[]
+  /** leadgen_quality_conversion (Conversion-Leads aus dem CRM, nur Sofortformulare; API-Pfad ungeprüft) */
+  lead_qualitaet?: boolean
+  /** nur 1. und 2. Ebene (z. B. happy-property.com); leer = aus der Website-URL */
+  conversion_domain?: string
+}
 
 export interface AdDraft {
   key: string
@@ -813,7 +1032,14 @@ export interface AdDraft {
   descriptions: string[]
   cta_type: CtaType
   destination: AdDestination
-  media: { feed_4x5?: MediaRef; story_9x16?: MediaRef; square_1x1?: MediaRef; cards?: CardDraft[] }
+  media: { feed_4x5?: MediaRef; story_9x16?: MediaRef; square_1x1?: MediaRef; landscape_191x1?: MediaRef; cards?: CardDraft[] }
+  /** „Vorhandenen Beitrag verwenden“: Texte und Medien kommen aus dem Beitrag */
+  beitrag?: BeitragRef
+  karussell?: KarussellOptionen
+  /** mehrere Sprachen (asset_feed_spec optimization_type LANGUAGE) */
+  sprachen?: SprachenSpec
+  partnerschaft?: PartnerschaftSpec
+  tracking?: AdTrackingSpec
   creative_features: Partial<Record<CreativeFeature, Enroll>>
   multi_advertiser: Enroll
   source?: {
@@ -822,6 +1048,14 @@ export interface AdDraft {
     creative_id?: string
     /** nur Bearbeiten: Creative aus einem bestehenden Beitrag, Texte/Medien nicht änderbar */
     aus_beitrag?: boolean
+    /**
+     * nur Bearbeiten, nur lesen: Feed-Typ des Creatives bei Meta (aus asset_feed_spec.optimization_type).
+     * Beim Ersetzen erlaubt Meta keinen Wechsel des Feed-Typs; der Typ lässt sich aus Texten/Medien
+     * allein nicht sicher ableiten (z. B. gleiches Bild in beiden Platzierungs-Labels).
+     */
+    creative_mode?: CreativeMode
+    /** nur Bearbeiten, nur lesen: Partnerschaft bei Meta, die der Assistent nicht abbilden kann (branded_content.partners) */
+    partner_unbekannt?: boolean
   }
   /** nur Bearbeiten: Ein/Aus bei Meta (gewünscht) */
   status?: EditableStatus
@@ -1054,6 +1288,9 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
     immutableAfterCreate: true, visible: (d, node) => ruleHas(d, node, 'page_id'),
     required: (d, node) => ruleNeeds(d, node, 'page_id'),
   }),
+  fld('adset.promoted_object.whatsapp_phone_number', 'adset', 'promoted_object.whatsapp_phone_number', 'text', {
+    helpKey: help('adset_whatsapp'), immutableAfterCreate: true, visible: (d, node) => ruleHas(d, node, 'whatsapp_phone_number'),
+  }),
   fld('adset.attribution', 'adset', 'attribution_spec', 'enum', {
     helpKey: help('adset_attribution'),
     options: (d, node) => { const a = adsetOf(d, node); return a ? optionsFor(ATTRIBUTION_OPTIONS, attributionFor(a.optimization_goal)) : [] },
@@ -1199,48 +1436,107 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
       'object_story_spec.video_data.call_to_action', 'asset_feed_spec.call_to_action_types',
       'asset_feed_spec.call_to_actions', 'call_to_action',
     ],
-    required: () => true,
+    required: (d, node) => adOf(d, node)?.beitrag?.quelle !== 'facebook',
     options: (d, node) => { const ad = adOf(d, node); return optionsFor(CTA_OPTIONS, ctaFor(ad ? ad.destination.kind : 'website')) },
   }),
-  fld('ad.destination.kind', 'ad', 'destination', 'enum', { virtual: true, options: () => [...AD_DESTINATION_KIND_OPTIONS] }),
+  // Anzeigeneinrichtung (Werbeanzeige erstellen / Vorhandenen Beitrag verwenden)
+  fld('ad.setup', 'ad', 'setup', 'enum', { virtual: true, helpKey: help('ad_setup'), options: () => [...AD_SETUP_OPTIONS] }),
+  fld('ad.beitrag', 'ad', 'object_story_id', 'text', {
+    apiAliases: ['source_instagram_media_id', 'object_id', 'instagram_permalink_url', 'source_facebook_post_id'],
+    helpKey: help('ad_beitrag'), visible: (d, node) => !!adOf(d, node)?.beitrag, required: (d, node) => !!adOf(d, node)?.beitrag,
+  }),
+  fld('ad.destination.kind', 'ad', 'destination', 'enum', {
+    virtual: true, helpKey: help('ad_destination_kind'),
+    options: (d, node) => {
+      const ad = adOf(d, node)
+      const a = ad ? adsetByKey(d, ad.adset_key) : undefined
+      const kinds = a ? adKindsFor(a.destination) : AD_DESTINATION_KINDS
+      return optionsFor(AD_DESTINATION_KIND_OPTIONS, kinds.length ? kinds : ['website'])
+    },
+  }),
   fld('ad.destination.url', 'ad', 'object_story_spec.link_data.link', 'text', {
     apiAliases: [
       'asset_feed_spec.link_urls', 'object_story_spec.link_data.call_to_action.value.link',
-      'object_story_spec.video_data.call_to_action.value.link', 'link_url', 'object_url', 'conversion_domain',
+      'object_story_spec.video_data.call_to_action.value.link', 'link_url', 'object_url',
     ],
     maxLen: LIMITS.urlMax,
-    visible: (d, node) => adOf(d, node)?.destination.kind === 'website',
-    required: (d, node) => adOf(d, node)?.destination.kind === 'website',
+    visible: (d, node) => isWebsiteKind(adOf(d, node)?.destination.kind),
+    required: (d, node) => isWebsiteKind(adOf(d, node)?.destination.kind) && adOf(d, node)?.beitrag?.quelle !== 'facebook',
   }),
   fld('ad.destination.display_link', 'ad', 'object_story_spec.link_data.caption', 'text', {
     apiAliases: ['asset_feed_spec.link_urls.display_url'],
-    visible: (d, node) => adOf(d, node)?.destination.kind === 'website',
+    visible: (d, node) => isWebsiteKind(adOf(d, node)?.destination.kind),
   }),
   fld('ad.destination.form_id', 'ad', 'object_story_spec.link_data.call_to_action.value.lead_gen_form_id', 'enum', {
     apiAliases: [
       'object_story_spec.video_data.call_to_action.value.lead_gen_form_id',
       'asset_feed_spec.call_to_actions.value.lead_gen_form_id', 'lead_gen_form_id',
     ],
-    visible: (d, node) => adOf(d, node)?.destination.kind === 'lead_form',
-    required: (d, node) => adOf(d, node)?.destination.kind === 'lead_form',
+    visible: (d, node) => isFormKind(adOf(d, node)?.destination.kind),
+    required: (d, node) => isFormKind(adOf(d, node)?.destination.kind),
+  }),
+  fld('ad.destination.telefon', 'ad', 'destination.telefon', 'text', {
+    virtual: true, helpKey: help('ad_telefon'),
+    visible: (d, node) => adOf(d, node)?.destination.kind === 'phone_call',
+    required: (d, node) => adOf(d, node)?.destination.kind === 'phone_call',
+  }),
+  fld('ad.destination.whatsapp_begruessung', 'ad', 'object_story_spec.link_data.page_welcome_message', 'text', {
+    apiAliases: ['page_welcome_message', 'object_story_spec.video_data.page_welcome_message'],
+    maxLen: LIMITS.whatsappTextMax, helpKey: help('ad_whatsapp_begruessung'),
+    visible: (d, node) => adOf(d, node)?.destination.kind === 'whatsapp',
+  }),
+  fld('ad.destination.whatsapp_nachricht', 'ad', 'destination.whatsapp_nachricht', 'text', {
+    virtual: true, maxLen: LIMITS.whatsappTextMax, helpKey: help('ad_whatsapp_nachricht'),
+    visible: (d, node) => adOf(d, node)?.destination.kind === 'whatsapp',
   }),
   fld('ad.media.feed_4x5', 'ad', 'object_story_spec.link_data.image_hash', 'media', {
     apiAliases: [
       'object_story_spec.link_data.picture', 'object_story_spec.video_data.video_id',
-      'object_story_spec.video_data.image_hash', 'object_story_spec.video_data.image_url',
       'asset_feed_spec.images', 'asset_feed_spec.videos', 'asset_feed_spec.asset_customization_rules',
       'asset_feed_spec.ad_formats', 'asset_feed_spec', 'image_hash',
     ],
-    visible: (d, node) => adOf(d, node)?.format !== 'carousel',
+    visible: (d, node) => { const ad = adOf(d, node); return !!ad && ad.format !== 'carousel' && !ad.beitrag },
   }),
   fld('ad.media.story_9x16', 'ad', 'media.story_9x16', 'media', {
-    virtual: true, visible: (d, node) => adOf(d, node)?.format !== 'carousel',
+    virtual: true, visible: (d, node) => { const ad = adOf(d, node); return !!ad && ad.format !== 'carousel' && !ad.beitrag },
   }),
-  fld('ad.media.square_1x1', 'ad', 'media.square_1x1', 'media', { virtual: true }),
+  fld('ad.media.square_1x1', 'ad', 'media.square_1x1', 'media', { virtual: true, visible: (d, node) => !adOf(d, node)?.beitrag }),
+  fld('ad.media.landscape_191x1', 'ad', 'media.landscape_191x1', 'media', {
+    virtual: true, helpKey: help('ad_landscape'),
+    visible: (d, node) => { const ad = adOf(d, node); return !!ad && ad.format !== 'carousel' && !ad.beitrag },
+  }),
+  fld('ad.media.crops', 'ad', 'object_story_spec.link_data.image_crops', 'json', {
+    apiAliases: ['asset_feed_spec.images.image_crops', 'object_story_spec.link_data.child_attachments.image_crops', 'image_crops'],
+    helpKey: help('ad_crops'), visible: (d, node) => { const ad = adOf(d, node); return !!ad && ad.format !== 'single_video' && !ad.beitrag },
+  }),
+  fld('ad.media.thumbnail', 'ad', 'object_story_spec.video_data.image_hash', 'media', {
+    apiAliases: ['object_story_spec.video_data.image_url', 'asset_feed_spec.videos.thumbnail_hash', 'asset_feed_spec.videos.thumbnail_url', 'thumbnail_url'],
+    helpKey: help('ad_thumbnail'), visible: (d, node) => adOf(d, node)?.format === 'single_video' && !adOf(d, node)?.beitrag,
+  }),
+  fld('ad.media.untertitel', 'ad', 'media.untertitel', 'media', {
+    virtual: true, helpKey: help('ad_untertitel'), visible: (d, node) => adOf(d, node)?.format === 'single_video' && !adOf(d, node)?.beitrag,
+  }),
   fld('ad.media.cards', 'ad', 'object_story_spec.link_data.child_attachments', 'media', {
-    apiAliases: ['object_story_spec.link_data.multi_share_optimized', 'object_story_spec.link_data.multi_share_end_card'],
     visible: (d, node) => adOf(d, node)?.format === 'carousel',
     required: (d, node) => adOf(d, node)?.format === 'carousel',
+  }),
+  fld('ad.karussell.endkarte', 'ad', 'object_story_spec.link_data.multi_share_end_card', 'bool', {
+    helpKey: help('ad_karussell_endkarte'), visible: (d, node) => adOf(d, node)?.format === 'carousel',
+  }),
+  fld('ad.karussell.reihenfolge_automatisch', 'ad', 'object_story_spec.link_data.multi_share_optimized', 'bool', {
+    helpKey: help('ad_karussell_reihenfolge'), visible: (d, node) => adOf(d, node)?.format === 'carousel',
+  }),
+  fld('ad.sprachen', 'ad', 'asset_feed_spec.autotranslate', 'json', {
+    apiAliases: ['asset_feed_spec.asset_customization_rules.customization_spec.locales', 'asset_feed_spec.asset_customization_rules.is_default'],
+    helpKey: help('ad_sprachen'),
+    visible: (d, node) => {
+      const ad = adOf(d, node)
+      return !!ad && !ad.beitrag && isWebsiteKind(ad.destination.kind) && (ad.format === 'single_image' || ad.format === 'single_video')
+    },
+  }),
+  fld('ad.partnerschaft', 'ad', 'facebook_branded_content', 'json', {
+    apiAliases: ['instagram_branded_content', 'branded_content', 'branded_content_sponsor_page_id'],
+    helpKey: help('ad_partnerschaft'),
   }),
   fld('ad.creative_features', 'ad', 'degrees_of_freedom_spec', 'multi', {
     helpKey: help('ad_creative_features'), options: () => [...CREATIVE_FEATURE_OPTIONS],
@@ -1249,7 +1545,12 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
     helpKey: help('ad_multi_advertiser'), options: () => [...ENROLL_OPTIONS],
   }),
   fld('ad.url_tags', 'ad', 'url_tags', 'text', { readOnly: true, helpKey: help('ad_url_tags') }),
-  fld('ad.tracking_specs', 'ad', 'tracking_specs', 'json', { helpKey: help('ad_tracking'), visible: (d, node) => !!adOf(d, node)?.existing_id }),
+  fld('ad.tracking_specs', 'ad', 'tracking_specs', 'json', { helpKey: help('ad_tracking') }),
+  fld('ad.tracking.pixel', 'ad', 'tracking.pixel', 'multi', { virtual: true, helpKey: help('ad_tracking_pixel') }),
+  fld('ad.tracking.lead_qualitaet', 'ad', 'tracking.lead_qualitaet', 'bool', {
+    virtual: true, helpKey: help('ad_tracking_lead_qualitaet'), visible: (d, node) => isFormKind(adOf(d, node)?.destination.kind),
+  }),
+  fld('ad.tracking.conversion_domain', 'ad', 'conversion_domain', 'text', { helpKey: help('ad_conversion_domain') }),
   // nur Bearbeiten (bestehende Anzeige)
   fld('ad.status', 'ad', 'status', 'enum', {
     helpKey: help('status'), visible: (d, node) => !!adOf(d, node)?.existing_id, options: () => [...STATUS_OPTIONS],
@@ -1282,6 +1583,11 @@ export const ISSUE_CODES = [
   'carousel_multi_text', 'cta_invalid', 'cta_lead_form', 'url_invalid', 'url_has_utm', 'form_missing',
   'destination_mismatch', 'destination_unsupported', 'media_missing', 'video_thumb_missing',
   'cards_count', 'feature_unknown',
+  // Werbemittel komplett + Conversion-Orte (Runde 2)
+  'beitrag_invalid', 'beitrag_ziel', 'phone_invalid', 'whatsapp_invalid', 'website_form_event', 'crop_invalid',
+  'cards_ratio', 'card_thumb_missing', 'thumb_invalid', 'lang_invalid', 'lang_multi_text', 'lang_destination',
+  'lang_format', 'lang_auto_conflict', 'lang_no_pac', 'partner_missing', 'partner_page_required', 'partner_lead_form',
+  'tracking_invalid', 'domain_invalid', 'dash_char',
   // nur Bearbeiten (validateEditFields)
   'schedule_invalid', 'budget_schedule_invalid', 'spend_limits_order', 'spend_cap_high', 'budget_high',
   // nur serverseitig: Bearbeiten-Feld an einem neuen Objekt (würde beim Anlegen nicht gesendet)
@@ -1334,6 +1640,10 @@ export function effectiveAdvantageAudience(v: unknown): 0 | 1 {
 const nonEmpty = (v: unknown): boolean => Array.isArray(v) ? v.length > 0 : (v !== undefined && v !== null && v !== '')
 const isLookalike = (a: AudienceRef): boolean => (a.subtype ?? '').toUpperCase() === 'LOOKALIKE'
 const URL_RE = /^https?:\/\/[^\s/?#]+\.[^\s/?#]+[^\s]*$/i
+/** Gedankenstriche (U+2012-U+2015), Svens Regel: nie in Texten */
+const DASH_RE = /[\u2012-\u2015]/
+const META_ID_RE = /^[0-9]{6,25}$/
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 function validatePlacements(p: Placements, add: (field: string, code: IssueCode, sev?: IssueSeverity, params?: Record<string, string | number>) => void, isLeadGoal: boolean): void {
   if (p.mode !== 'manual') return
@@ -1543,6 +1853,9 @@ export function validateDraft(d: DraftSpec, opts: ValidateDraftOptions = {}): Dr
     if (po.pixel_id && !po.custom_event_type && !po.custom_conversion_id) add('adset.promoted_object.custom_event_type', 'pixel_needs_event')
     if (po.custom_event_type && !isIn(CUSTOM_EVENT_TYPES, po.custom_event_type)) add('adset.promoted_object.custom_event_type', 'invalid_option', 'error', { value: String(po.custom_event_type) })
     if (po.pixel_id && po.pixel_id !== HP_PIXEL_ID) add('adset.promoted_object.pixel_id', 'pixel_mismatch', 'warn', { pixel: po.pixel_id, expected: HP_PIXEL_ID })
+    // „Website und Instant-Formulare“: Meta erlaubt nur das Ereignis Lead
+    if (a.destination === 'WEBSITE_AND_LEAD_FORM' && po.custom_event_type && po.custom_event_type !== 'LEAD') add('adset.promoted_object.custom_event_type', 'website_form_event')
+    if (po.whatsapp_phone_number && !TELEFON_RE.test(normalizeTelefon(po.whatsapp_phone_number))) add('adset.promoted_object.whatsapp_phone_number', 'whatsapp_invalid')
     if (attributionFor(a.optimization_goal).indexOf(a.attribution) < 0) add('adset.attribution', 'attribution_invalid', 'error', { value: String(a.attribution) })
     // Budget
     const hasD = (a.daily_budget_cents ?? 0) > 0, hasL = (a.lifetime_budget_cents ?? 0) > 0
@@ -1593,13 +1906,96 @@ export function validateDraft(d: DraftSpec, opts: ValidateDraftOptions = {}): Dr
     if (!a) add('ad.name', 'adset_ref_missing', 'error', { key: String(ad.adset_key) })
     perAdset[ad.adset_key] = (perAdset[ad.adset_key] ?? 0) + 1
     if (ad.existing_id) continue
-    if (opts.server && (ad.tracking_specs ?? []).length) add('ad.tracking_specs', 'edit_only')
     if (!(ad.name ?? '').trim()) add('ad.name', 'required')
     else if (ad.name.length > LIMITS.nameMax) add('ad.name', 'too_long', 'error', { max: LIMITS.nameMax })
+    const beitrag = ad.beitrag
+    const fbBeitrag = !!beitrag && beitrag.quelle === 'facebook'
     if (AD_FORMATS.indexOf(ad.format) < 0) add('ad.format', 'invalid_option', 'error', { value: String(ad.format) })
+    else if (!beitrag && AD_FORMAT_OPTIONS.some(o => o.value === ad.format && o.unsupported)) add('ad.format', 'unsupported', 'error', { value: ad.format })
+    const partner = ad.partnerschaft
+    const partnerAbsender = !!partner && partner.partner_ist_absender === true
     if (!(ad.identity?.page_id ?? '').trim()) add('ad.identity.page_id', 'identity_page')
-    if (!(ad.identity?.instagram_user_id ?? '').trim()) add('ad.identity.instagram_user_id', 'identity_ig')
-    // Texte
+    // Partner als Hauptidentität: das Instagram-Konto kommt von der Seite des Partners
+    if (!partnerAbsender && !(ad.identity?.instagram_user_id ?? '').trim()) add('ad.identity.instagram_user_id', 'identity_ig')
+
+    // CTA + Ziel (Zielort je Conversion-Ort der Anzeigengruppe)
+    const kind = ad.destination?.kind
+    const kindOk = isIn(AD_DESTINATION_KINDS, kind)
+    if (!kindOk) add('ad.destination.kind', 'required')
+    if (a && kindOk) {
+      const kinds = adKindsFor(a.destination)
+      if (!kinds.length) add('ad.destination.kind', 'destination_unsupported', 'error', { value: a.destination })
+      else if (kinds.indexOf(kind) < 0) add('ad.destination.kind', 'destination_mismatch', 'error', { adset: a.destination })
+    }
+    // Facebook-Beitrag: Link und Button kommen aus dem Beitrag
+    if (kindOk && !fbBeitrag) {
+      if (!isIn(CTA_TYPES, ad.cta_type)) add('ad.cta_type', 'cta_invalid', 'error', { value: String(ad.cta_type) })
+      else if (ctaFor(kind).indexOf(ad.cta_type) < 0) add('ad.cta_type', kind === 'lead_form' ? 'cta_lead_form' : 'cta_invalid', 'error', { value: ad.cta_type })
+      const dst = ad.destination
+      if (dst.kind === 'website' || dst.kind === 'website_lead_form') {
+        const url = (dst.url ?? '').trim()
+        if (!URL_RE.test(url) || url.length > LIMITS.urlMax) add('ad.destination.url', 'url_invalid')
+        else if (/[?&]utm_/i.test(url)) add('ad.destination.url', 'url_has_utm', 'warn')
+      }
+      if ((dst.kind === 'lead_form' || dst.kind === 'website_lead_form') && !(dst.form_id ?? '').trim()) add('ad.destination.form_id', 'form_missing')
+      if (dst.kind === 'phone_call' && !TELEFON_RE.test(normalizeTelefon(dst.telefon))) add('ad.destination.telefon', 'phone_invalid')
+      if (dst.kind === 'whatsapp') {
+        const texte: Array<[string, string | undefined]> = [['ad.destination.whatsapp_begruessung', dst.begruessung], ['ad.destination.whatsapp_nachricht', dst.nachricht]]
+        for (const [f, v] of texte) {
+          if ((v ?? '').length > LIMITS.whatsappTextMax) add(f, 'too_long', 'error', { max: LIMITS.whatsappTextMax })
+          if (DASH_RE.test(v ?? '')) add(f, 'dash_char')
+        }
+      }
+    }
+
+    // Partnerschaftswerbung
+    if (partner) {
+      const pp = (partner.partner_page_id ?? '').trim(), pi = (partner.partner_ig_user_id ?? '').trim()
+      if (!pp && !pi) add('ad.partnerschaft', 'partner_missing')
+      else if ((pp && !META_ID_RE.test(pp)) || (pi && !META_ID_RE.test(pi))) add('ad.partnerschaft', 'invalid_option', 'error', { value: pp || pi })
+      if (partnerAbsender && !pp) add('ad.partnerschaft', 'partner_page_required')
+      if (isFormKind(kind)) add('ad.partnerschaft', 'partner_lead_form', 'warn')
+    }
+    // Tracking (weitere Pixel, Lead-Qualität, Conversion-Domain)
+    const tr = ad.tracking
+    if (tr) {
+      const px = Array.isArray(tr.weitere_pixel) ? tr.weitere_pixel : []
+      if (px.length > LIMITS.trackingPixelMax || px.some(x => !META_ID_RE.test(String(x ?? '').trim()))) add('ad.tracking.pixel', 'tracking_invalid', 'error', { max: LIMITS.trackingPixelMax })
+      if (tr.lead_qualitaet && !isFormKind(kind)) add('ad.tracking.lead_qualitaet', 'tracking_invalid', 'warn', { max: LIMITS.trackingPixelMax })
+      const dom = (tr.conversion_domain ?? '').trim().toLowerCase()
+      if (dom && !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(dom)) add('ad.tracking.conversion_domain', 'domain_invalid')
+      else if (dom && dom.split('.').length > 2) add('ad.tracking.conversion_domain', 'domain_invalid', 'warn')
+    }
+    for (const t of ad.tracking_specs ?? []) {
+      if (!t || typeof t !== 'object' || Array.isArray(t)) { add('ad.tracking_specs', 'tracking_invalid', 'error', { max: LIMITS.trackingPixelMax }); break }
+    }
+    // Conversion-Domain: Pflicht, wenn die Anzeige Daten mit einem Pixel teilt (Meta-Doku). Ohne Website-URL
+    // (Facebook-Beitrag, WhatsApp, Anruf, Messenger, Sofortformular) muss sie im Formular stehen.
+    const pixelGeteilt = !!(a?.promoted_object?.pixel_id ?? '').trim() || (Array.isArray(tr?.weitere_pixel) && (tr?.weitere_pixel ?? []).length > 0)
+    if (kindOk && pixelGeteilt && (fbBeitrag || !isWebsiteKind(kind)) && !adConversionDomain(ad)) add('ad.tracking.conversion_domain', 'required')
+    const featuresPruefen = () => {
+      for (const k of Object.keys(ad.creative_features ?? {})) {
+        if (!isIn(CREATIVE_FEATURES, k)) add('ad.creative_features', 'feature_unknown', 'warn', { value: k })
+        else { const v = (ad.creative_features ?? {})[k]; if (v !== 'OPT_IN' && v !== 'OPT_OUT') add('ad.creative_features', 'invalid_option', 'error', { value: String(v) }) }
+      }
+      if (ad.multi_advertiser !== 'OPT_IN' && ad.multi_advertiser !== 'OPT_OUT') add('ad.multi_advertiser', 'invalid_option', 'error', { value: String(ad.multi_advertiser) })
+    }
+
+    // Vorhandener Beitrag: Texte und Medien kommen aus dem Beitrag
+    if (beitrag) {
+      const id = String(beitrag.id ?? '').trim()
+      const okId = beitrag.quelle === 'facebook' ? /^[0-9]{6,25}_[0-9]{6,25}$/.test(id) : beitrag.quelle === 'instagram' ? META_ID_RE.test(id) : false
+      if (!okId) add('ad.beitrag', 'beitrag_invalid', 'error', { value: id })
+      else if (fbBeitrag && !partnerAbsender && (ad.identity?.page_id ?? '').trim() && id.split('_')[0] !== ad.identity.page_id.trim()) {
+        add('ad.beitrag', 'beitrag_invalid', 'warn', { value: id })
+      }
+      if (kindOk && !(fbBeitrag ? kind === 'website' : (kind === 'website' || kind === 'whatsapp'))) add('ad.beitrag', 'beitrag_ziel', 'error', { value: String(kind) })
+      if (hatSprachen(ad)) add('ad.sprachen', 'lang_format')
+      featuresPruefen()
+      continue
+    }
+
+    // Texte (bis 5 Varianten je Art; ohne Medien je Platzierung als Textvarianten, mit: Beschreibung nur eine)
     const lists: Array<[string, string[] | undefined, number, boolean]> = [
       ['ad.primary_texts', ad.primary_texts, LIMITS.primaryTextMax, true],
       ['ad.headlines', ad.headlines, LIMITS.headlineApiMax, true],
@@ -1612,47 +2008,75 @@ export function validateDraft(d: DraftSpec, opts: ValidateDraftOptions = {}): Dr
       if (arr.some(s => !(s ?? '').trim()) && arr.length > 1) add(field, 'text_missing', 'warn')
       if (arr.length > LIMITS.textsPerKind) add(field, 'too_many_texts', 'error', { max: LIMITS.textsPerKind })
       arr.forEach((s, i) => { if ((s ?? '').length > max) add(field, 'too_long', 'error', { max, index: i + 1 }) })
-      // Beschreibung: Meta kann sie nicht je Platzierung/Variante wechseln -> höchstens eine
-      if (field === 'ad.descriptions') { if (ad.format !== 'carousel' && cleanTexts(arr).length > 1) add(field, 'descriptions_single') }
-      else if (cleanTexts(arr).length > 1) multi = true
+      if (field !== 'ad.descriptions' && cleanTexts(arr).length > 1) multi = true
     }
     if (ad.format === 'carousel' && multi) add('ad.primary_texts', 'carousel_multi_text')
-    else if (multi && a && placementRulesFor(a.placements, ad.format === 'single_video').length < 2) add('ad.primary_texts', 'texts_dropped', 'warn')
-    // CTA + Ziel
-    const kind: AdDestinationKind = ad.destination?.kind === 'lead_form' ? 'lead_form' : 'website'
-    if (!isIn(CTA_TYPES, ad.cta_type)) add('ad.cta_type', 'cta_invalid', 'error', { value: String(ad.cta_type) })
-    else if (ctaFor(kind).indexOf(ad.cta_type) < 0) add('ad.cta_type', kind === 'lead_form' ? 'cta_lead_form' : 'cta_invalid', 'error', { value: ad.cta_type })
-    if (ad.destination?.kind === 'website') {
-      const url = (ad.destination.url ?? '').trim()
-      if (!URL_RE.test(url) || url.length > LIMITS.urlMax) add('ad.destination.url', 'url_invalid')
-      else if (/[?&]utm_/i.test(url)) add('ad.destination.url', 'url_has_utm', 'warn')
-    } else if (ad.destination?.kind === 'lead_form') {
-      if (!(ad.destination.form_id ?? '').trim()) add('ad.destination.form_id', 'form_missing')
-    } else add('ad.destination.kind', 'required')
-    if (a) {
-      if (AD_SUPPORTED_DESTINATIONS.indexOf(a.destination) < 0) add('ad.destination.kind', 'destination_unsupported', 'error', { value: a.destination })
-      else if ((a.destination === 'ON_AD') !== (kind === 'lead_form')) add('ad.destination.kind', 'destination_mismatch', 'error', { adset: a.destination })
-    }
+    // Medien je Platzierung (Meta-PAC-Guide): genau eine Beschreibung; Textvarianten ohne Platzierungs-Medien: bis 5
+    else if (ad.format !== 'carousel' && !hatSprachen(ad) && cleanTexts(ad.descriptions).length > 1 && usesPlacementFeed(ad, a?.placements)) add('ad.descriptions', 'descriptions_single')
+
     // Medien
     const m = ad.media ?? {}
+    const cropCheck = (r: MediaRef | undefined, field: string, index?: number) => {
+      if (!r || !r.crops || typeof r.crops !== 'object') return
+      for (const k of Object.keys(r.crops)) {
+        if (!cropValid(k, (r.crops as Record<string, unknown>)[k])) { add(field, 'crop_invalid', 'error', { value: k, ...(index ? { index } : {}) }); break }
+      }
+    }
+    const thumbCheck = (r: MediaRef | undefined, field: string) => {
+      if (r && r.thumbnail_media_id && !UUID_RE.test(r.thumbnail_media_id)) add(field, 'thumb_invalid')
+    }
     if (ad.format === 'carousel') {
       const cards = m.cards ?? []
       if (cards.length < LIMITS.carouselMin || cards.length > LIMITS.carouselMax) add('ad.media.cards', 'cards_count', 'error', { min: LIMITS.carouselMin, max: LIMITS.carouselMax })
+      const aspects: string[] = []
       cards.forEach((cd, i) => {
         if (!cd?.media?.media_id) add('ad.media.cards', 'media_missing', 'error', { index: i + 1 })
         if (!(cd?.headline ?? '').trim()) add('ad.media.cards', 'text_missing', 'error', { index: i + 1 })
         if (cd?.url && !URL_RE.test(cd.url)) add('ad.media.cards', 'url_invalid', 'error', { index: i + 1 })
+        if ((cd?.headline ?? '').length > LIMITS.headlineApiMax) add('ad.media.cards', 'too_long', 'error', { max: LIMITS.headlineApiMax, index: i + 1 })
+        if ((cd?.description ?? '').length > LIMITS.descriptionApiMax) add('ad.media.cards', 'too_long', 'error', { max: LIMITS.descriptionApiMax, index: i + 1 })
+        if (cd?.media?.video_id && !cd.media.thumbnail_hash && !cd.media.thumbnail_media_id) add('ad.media.cards', 'card_thumb_missing', opts.server ? 'error' : 'warn', { index: i + 1 })
+        if (cd?.media?.aspect) aspects.push(cd.media.aspect)
+        cropCheck(cd?.media, 'ad.media.crops', i + 1)
+        thumbCheck(cd?.media, 'ad.media.cards')
       })
-    } else {
-      const slots = [m.feed_4x5, m.story_9x16, m.square_1x1].filter((x): x is MediaRef => !!x && !!x.media_id)
+      // Karussell: alle Karten im gleichen Format, 1:1 oder 4:5
+      if (aspects.some(x => x !== '1:1' && x !== '4:5') || aspects.some(x => x !== aspects[0])) add('ad.media.cards', 'cards_ratio', 'warn')
+    } else if (ad.format !== 'collection') {
+      const slots = [m.feed_4x5, m.story_9x16, m.square_1x1, m.landscape_191x1].filter((x): x is MediaRef => !!x && !!x.media_id)
       if (!slots.length) add('ad.media.feed_4x5', 'media_missing')
-      if (ad.format === 'single_video') for (const s of slots) if (s.video_id && !s.thumbnail_hash) { add('ad.media.feed_4x5', 'video_thumb_missing', opts.server ? 'error' : 'warn'); break }
+      if (ad.format === 'single_video') {
+        for (const s of slots) if (s.video_id && !s.thumbnail_hash && !s.thumbnail_media_id) { add('ad.media.feed_4x5', 'video_thumb_missing', opts.server ? 'error' : 'warn'); break }
+      }
+      for (const s of slots) { cropCheck(s, 'ad.media.crops'); thumbCheck(s, 'ad.media.thumbnail') }
     }
-    for (const k of Object.keys(ad.creative_features ?? {})) {
-      if (!isIn(CREATIVE_FEATURES, k)) add('ad.creative_features', 'feature_unknown', 'warn', { value: k })
-      else { const v = (ad.creative_features ?? {})[k]; if (v !== 'OPT_IN' && v !== 'OPT_OUT') add('ad.creative_features', 'invalid_option', 'error', { value: String(v) }) }
+
+    // Mehrere Sprachen
+    if (hatSprachen(ad)) {
+      const sp = ad.sprachen as SprachenSpec
+      if (!isWebsiteKind(kind)) add('ad.sprachen', 'lang_destination')
+      if (ad.format !== 'single_image' && ad.format !== 'single_video') add('ad.sprachen', 'lang_format')
+      if (multi || cleanTexts(ad.descriptions).length > 1) add('ad.sprachen', 'lang_multi_text')
+      const seen: string[] = []
+      for (const v of Array.isArray(sp.varianten) ? sp.varianten : []) {
+        if (!v || !isIn(AD_SPRACHEN, v.sprache) || v.sprache === 'de' || seen.indexOf(v.sprache) >= 0) {
+          add('ad.sprachen', 'lang_invalid', 'error', { value: String(v?.sprache) })
+          continue
+        }
+        seen.push(v.sprache)
+        if (!(v.primary_text ?? '').trim() || !(v.headline ?? '').trim()) add('ad.sprachen', 'text_missing', 'error', { value: v.sprache })
+        if ((v.primary_text ?? '').length > LIMITS.primaryTextMax) add('ad.sprachen', 'too_long', 'error', { max: LIMITS.primaryTextMax })
+        if ((v.headline ?? '').length > LIMITS.headlineApiMax || (v.description ?? '').length > LIMITS.descriptionApiMax) add('ad.sprachen', 'too_long', 'error', { max: LIMITS.headlineApiMax })
+        if ((v.url ?? '').trim() && !URL_RE.test((v.url ?? '').trim())) add('ad.sprachen', 'url_invalid')
+        if (DASH_RE.test(`${v.primary_text ?? ''} ${v.headline ?? ''} ${v.description ?? ''}`)) add('ad.sprachen', 'dash_char')
+      }
+      for (const s of Array.isArray(sp.automatisch_uebersetzen) ? sp.automatisch_uebersetzen : []) {
+        if (s !== 'en') add('ad.sprachen', 'lang_invalid', 'error', { value: String(s) })
+        else if (seen.indexOf('en') >= 0) add('ad.sprachen', 'lang_auto_conflict')
+      }
+      if (Object.keys(pacSlots(ad)).length >= 2) add('ad.sprachen', 'lang_no_pac', 'warn')
     }
-    if (ad.multi_advertiser !== 'OPT_IN' && ad.multi_advertiser !== 'OPT_OUT') add('ad.multi_advertiser', 'invalid_option', 'error', { value: String(ad.multi_advertiser) })
+    featuresPruefen()
   }
   for (const k of Object.keys(perAdset)) {
     if (perAdset[k] > LIMITS.adsPerAdset) push('adset', k, 'adset.name', 'too_many_ads', 'error', { max: LIMITS.adsPerAdset })
@@ -1848,7 +2272,8 @@ function buildPromotedObject(c: CampaignDraft, a: AdsetDraft): PromotedObject | 
   const out: PromotedObject = {}
   for (const k of allowed) {
     const v = src[k]
-    if (v !== undefined && v !== null && v !== '') (out as Record<string, unknown>)[k] = v
+    // WhatsApp-Nummer so senden, wie validateDraft sie prüft (E.164, ohne Leerzeichen)
+    if (v !== undefined && v !== null && v !== '') (out as Record<string, unknown>)[k] = k === 'whatsapp_phone_number' ? normalizeTelefon(String(v)) : v
   }
   return Object.keys(out).length ? out : null
 }
@@ -1921,24 +2346,41 @@ export function buildAdsetPayload(a: AdsetDraft, c: CampaignDraft, campaignId: s
 
 // ── Creative ────────────────────────────────────────────────────────────────
 
-export type CreativeMode = 'link_data' | 'video_data' | 'carousel' | 'asset_feed'
+/**
+ * link_data / video_data = ein Medium, je ein Text; carousel = Karussell; asset_feed = Medien je
+ * Platzierung (optimization_type PLACEMENT); asset_feed_text = Textvarianten ohne Platzierungs-Medien;
+ * asset_feed_language = mehrere Sprachen (optimization_type LANGUAGE); beitrag = vorhandener Beitrag.
+ */
+export type CreativeMode = 'link_data' | 'video_data' | 'carousel' | 'asset_feed' | 'asset_feed_text' | 'asset_feed_language' | 'beitrag'
 export const CREATIVE_MODE_OPTIONS: readonly EnumOption<CreativeMode>[] = [
   opt('creative_mode', 'link_data'), opt('creative_mode', 'video_data'),
   opt('creative_mode', 'carousel'), opt('creative_mode', 'asset_feed'),
+  opt('creative_mode', 'asset_feed_text'), opt('creative_mode', 'asset_feed_language'), opt('creative_mode', 'beitrag'),
 ]
+/** Asset-Feed-Creative? (Beim Ersetzen erlaubt Meta keinen Wechsel des Feed-Typs.) */
+export function isAssetFeedMode(m: CreativeMode): boolean {
+  return m === 'asset_feed' || m === 'asset_feed_text' || m === 'asset_feed_language'
+}
 export const PAC_LABEL_FEED = 'hp_feed_4x5'
 export const PAC_LABEL_STORY = 'hp_story_9x16'
+export const PAC_LABEL_QUER = 'hp_quer_191x1'
+export const PAC_LABEL_QUADRAT = 'hp_quadrat_1x1'
+/** Medien-Platz einer Platzierungsregel: feed 4:5, story 9:16, quer 1.91:1 (16:9), quadrat 1:1 */
+export type PacSlot = 'feed' | 'story' | 'quer' | 'quadrat'
 export interface PlacementRule {
-  slot: 'feed' | 'story'
+  slot: PacSlot
   label: string
   customization_spec: { publisher_platforms: PublisherPlatform[]; facebook_positions?: string[]; instagram_positions?: string[] }
 }
 /**
  * Medien je Platzierung (asset_feed_spec optimization_type PLACEMENT): 9:16 für
- * Stories + Reels, 4:5 für Feeds. Bei manuellen Platzierungen auf die gewählten
- * Positionen geschnitten. Reels in customization_spec: per validate_only bestätigen.
+ * Stories + Reels, 4:5 für Feeds. Optional quer (1.91:1: rechte Spalte und Suche, bei Video
+ * In-Stream und Suche) und quadrat (1:1: Marketplace, ohne Quer-Medium auch rechte Spalte und
+ * Suche). Bei manuellen Platzierungen auf die gewählten Positionen geschnitten. Reels, quer und
+ * quadrat in customization_spec: per validate_only bestätigen.
  */
-export function placementRulesFor(placements: Placements | undefined, isVideo: boolean): PlacementRule[] {
+export function placementRulesFor(placements: Placements | undefined, isVideo: boolean, extra: { quer?: boolean; quadrat?: boolean } = {}): PlacementRule[] {
+  const querPos = isVideo ? ['instream_video', 'search'] : ['right_hand_column', 'search']
   const base: PlacementRule[] = [
     {
       slot: 'story', label: PAC_LABEL_STORY,
@@ -1947,11 +2389,16 @@ export function placementRulesFor(placements: Placements | undefined, isVideo: b
     {
       slot: 'feed', label: PAC_LABEL_FEED,
       customization_spec: {
-        publisher_platforms: ['facebook', 'instagram'], facebook_positions: ['feed', 'marketplace'],
+        publisher_platforms: ['facebook', 'instagram'], facebook_positions: extra.quadrat ? ['feed'] : ['feed', 'marketplace'],
         instagram_positions: isVideo ? ['stream', 'profile_feed'] : ['stream', 'profile_feed', 'explore_home'],
       },
     },
   ]
+  if (extra.quer) base.push({ slot: 'quer', label: PAC_LABEL_QUER, customization_spec: { publisher_platforms: ['facebook'], facebook_positions: querPos.slice() } })
+  if (extra.quadrat) {
+    const pos = ['marketplace', ...(extra.quer ? [] : (isVideo ? ['search'] : ['right_hand_column', 'search']))]
+    base.push({ slot: 'quadrat', label: PAC_LABEL_QUADRAT, customization_spec: { publisher_platforms: ['facebook'], facebook_positions: pos } })
+  }
   if (!placements || placements.mode !== 'manual') return base
   const out: PlacementRule[] = []
   for (const r of base) {
@@ -1973,15 +2420,53 @@ export function placementRulesFor(placements: Placements | undefined, isVideo: b
 
 const feedRef = (ad: AdDraft): MediaRef | undefined => ad.media?.feed_4x5 ?? ad.media?.square_1x1
 const storyRef = (ad: AdDraft): MediaRef | undefined => ad.media?.story_9x16
+const okRef = (r: MediaRef | undefined): r is MediaRef => !!r && !!r.media_id
+/** Gleiches Medium mit gleichem Zuschnitt = ein Platz (verschiedene Zuschnitte eines Fotos = verschiedene Plätze). */
+const slotKey = (r: MediaRef): string => `${r.media_id}|${editCanon(r.crops ?? null)}`
+
+/** Verschiedene Medien-Plätze der Anzeige (gleiches Medium + gleicher Zuschnitt zählt einmal). */
+export function pacSlots(ad: AdDraft): Partial<Record<PacSlot, MediaRef>> {
+  const m = ad.media ?? {}
+  const out: Partial<Record<PacSlot, MediaRef>> = {}
+  const feed = okRef(m.feed_4x5) ? m.feed_4x5 : okRef(m.square_1x1) ? m.square_1x1 : undefined
+  const taken: string[] = []
+  if (feed) { out.feed = feed; taken.push(slotKey(feed)) }
+  if (okRef(m.story_9x16) && taken.indexOf(slotKey(m.story_9x16)) < 0) { out.story = m.story_9x16; taken.push(slotKey(m.story_9x16)) }
+  if (okRef(m.landscape_191x1) && taken.indexOf(slotKey(m.landscape_191x1)) < 0) { out.quer = m.landscape_191x1; taken.push(slotKey(m.landscape_191x1)) }
+  if (okRef(m.feed_4x5) && okRef(m.square_1x1) && taken.indexOf(slotKey(m.square_1x1)) < 0) out.quadrat = m.square_1x1
+  return out
+}
+
+/** Hat die Anzeige weitere Sprachen (Varianten oder automatische Übersetzung)? */
+export function hatSprachen(ad: AdDraft): boolean {
+  const sp = ad.sprachen
+  return !!sp && ((Array.isArray(sp.varianten) && sp.varianten.length > 0) || (Array.isArray(sp.automatisch_uebersetzen) && sp.automatisch_uebersetzen.length > 0))
+}
+
+/** Medien je Platzierung (PAC): mindestens zwei verschiedene Medien-Plätze und zwei Platzierungsregeln. */
+export function usesPlacementFeed(ad: AdDraft, placements?: Placements): boolean {
+  if (ad.beitrag || ad.format === 'carousel' || ad.format === 'collection') return false
+  const s = pacSlots(ad)
+  if (Object.keys(s).length < 2) return false
+  return placementRulesFor(placements, ad.format === 'single_video', { quer: !!s.quer, quadrat: !!s.quadrat }).length >= 2
+}
 
 export function creativeMode(ad: AdDraft, placements?: Placements): CreativeMode {
+  if (ad.beitrag) return 'beitrag'
   if (ad.format === 'carousel') return 'carousel'
   const isVideo = ad.format === 'single_video'
-  // Beschreibungen zählen nicht: es gibt immer nur eine (descriptions_single)
-  const n = Math.max(cleanTexts(ad.primary_texts).length, cleanTexts(ad.headlines).length)
-  const f = feedRef(ad), s = storyRef(ad)
-  const both = !!f && !!s && f.media_id !== s.media_id
-  if ((n > 1 || both) && placementRulesFor(placements, isVideo).length >= 2) return 'asset_feed'
+  if (hatSprachen(ad)) return 'asset_feed_language'
+  if (usesPlacementFeed(ad, placements)) return 'asset_feed'
+  // Textvarianten mit einem Medium (bis 5 Primärtexte, Überschriften, Beschreibungen)
+  const nTexte = Math.max(cleanTexts(ad.primary_texts).length, cleanTexts(ad.headlines).length)
+  const nBeschr = cleanTexts(ad.descriptions).length
+  if (nTexte > 1 || nBeschr > 1) {
+    // Bewährter Weg (Runde 1, live): Platzierungs-Creative mit demselben Medium je Regel, solange
+    // eine Beschreibung reicht und zwei Platzierungsregeln möglich sind. asset_feed_text (ohne
+    // optimization_type) ist ungeprüft: erst nach validate_only für alle Textvarianten nutzen.
+    if (nBeschr <= 1 && placementRulesFor(placements, isVideo).length >= 2) return 'asset_feed'
+    return 'asset_feed_text'
+  }
   return isVideo ? 'video_data' : 'link_data'
 }
 
@@ -1993,118 +2478,317 @@ export function creativeFeaturesSpec(sel: Partial<Record<CreativeFeature, Enroll
 
 export interface CreativeBuild { mode: CreativeMode; payload: GraphParams }
 
+/** Link, Button-Wert und angezeigter Link je Ziel-Art der Werbeanzeige. */
+export interface AdCtaInfo {
+  /** link_data.link bzw. link_urls.website_url */
+  link: string
+  /** call_to_action.value */
+  value: GraphParams
+  /** angezeigter Link (nur Website-Ziele) */
+  display: string
+  /** Sofortformular im Spiel */
+  form: boolean
+  /** echte Website-URL (UTM, Lint, Conversion-Domain) */
+  website: boolean
+}
+export function adCtaInfo(ad: AdDraft): AdCtaInfo {
+  const d: AdDestination = ad.destination ?? { kind: 'website', url: '' }
+  switch (d.kind) {
+    case 'lead_form':
+      return { link: LEAD_FORM_LINK, value: { link: LEAD_FORM_LINK, lead_gen_form_id: d.form_id }, display: '', form: true, website: false }
+    case 'website_lead_form':
+      // Website-Link + Formular am Button (Aufbau aus einer HP-Anzeige gelesen; API-Pfad per validate_only prüfen)
+      return { link: (d.url ?? '').trim(), value: { lead_gen_form_id: d.form_id }, display: (d.display_link ?? '').trim(), form: true, website: true }
+    case 'whatsapp':
+      return { link: WHATSAPP_LINK, value: { app_destination: 'WHATSAPP' }, display: '', form: false, website: false }
+    case 'phone_call':
+      // Anruf-Button: value.link = tel:+49... (API-Pfad ungeprüft, per validate_only prüfen)
+      return { link: `https://www.facebook.com/${(ad.identity?.page_id ?? '').trim()}`, value: { link: `tel:${normalizeTelefon(d.telefon)}` }, display: '', form: false, website: false }
+    case 'messenger':
+      return { link: MESSENGER_LINK, value: { app_destination: 'MESSENGER' }, display: '', form: false, website: false }
+    default: {
+      const url = d.kind === 'website' ? (d.url ?? '').trim() : ''
+      return { link: url, value: { link: url }, display: d.kind === 'website' ? (d.display_link ?? '').trim() : '', form: false, website: true }
+    }
+  }
+}
+
+/**
+ * WhatsApp-Begrüßung (page_welcome_message, Aufbau laut Meta-Doku „Ads that Click to WhatsApp“).
+ * Als JSON-Text gesendet; API-Pfad per validate_only prüfen. null = Metas Standardtext.
+ */
+export function whatsappWillkommen(ad: AdDraft): string | null {
+  const d = ad.destination
+  if (!d || d.kind !== 'whatsapp') return null
+  const text = (d.begruessung ?? '').trim(), nachricht = (d.nachricht ?? '').trim()
+  if (!text && !nachricht) return null
+  const message: Record<string, unknown> = {}
+  if (text) message.text = text
+  if (nachricht) message.autofill_message = { content: nachricht }
+  return JSON.stringify({
+    type: 'VISUAL_EDITOR', version: 2, landing_screen_type: 'welcome_message', media_type: 'text',
+    text_format: { customer_action_type: 'autofill_message', message },
+  })
+}
+
+/**
+ * Partnerschaftswerbung: facebook_branded_content / instagram_branded_content (Meta-Doku Partnership Ads).
+ * API-Pfad ungeprüft, per validate_only prüfen: sponsor_page_id / sponsor_id bezeichnen bei Meta die
+ * zahlende Marke. Mit Happy Property als Hauptidentität könnten die Rollen vertauscht sein; dann
+ * stattdessen branded_content.partners mit identity_type senden (04 §1.6).
+ */
+function partnerFelder(ad: AdDraft, payload: GraphParams, story: GraphParams | null): void {
+  const p = ad.partnerschaft
+  if (!p) return
+  const pp = (p.partner_page_id ?? '').trim(), pi = (p.partner_ig_user_id ?? '').trim()
+  const ownPage = (ad.identity?.page_id ?? '').trim(), ownIg = (ad.identity?.instagram_user_id ?? '').trim()
+  if (p.partner_ist_absender === true && pp) {
+    // Partner = Hauptidentität, Happy Property = zweite Identität (Instagram-Konto kommt von der Partner-Seite)
+    if (story) { story.page_id = pp; delete story.instagram_user_id }
+    if (ownPage) payload.facebook_branded_content = { sponsor_page_id: ownPage }
+    if (ownIg) payload.instagram_branded_content = { sponsor_id: ownIg }
+    return
+  }
+  if (pp) payload.facebook_branded_content = { sponsor_page_id: pp }
+  if (pi) payload.instagram_branded_content = { sponsor_id: pi }
+}
+
+const cropsOf = (r: MediaRef | undefined): ImageCrops | undefined =>
+  (r && r.crops && typeof r.crops === 'object' && Object.keys(r.crops).length ? clone(r.crops) : undefined)
+
 /**
  * Creative-Payload für POST act_X/adcreatives (oder inline in POST act_X/ads).
  * Immer: url_tags = URL_TAGS_STANDARD, contextual_multi_ads OPT_OUT (außer bewusst an),
- * jede Advantage+ Creative-Funktion explizit, instagram_user_id, CTA mit value.link.
+ * jede Advantage+ Creative-Funktion explizit, instagram_user_id, CTA mit Wert je Ziel-Art.
  * Medien müssen aufgelöst sein (image_hash / video_id), sonst Error 'media_unresolved'.
  */
 export function buildCreativePayload(ad: AdDraft, ctx: { placements?: Placements } = {}): CreativeBuild {
   const mode = creativeMode(ad, ctx.placements)
   const isVideo = ad.format === 'single_video'
-  const isLead = ad.destination.kind === 'lead_form'
-  const link = ad.destination.kind === 'website' ? ad.destination.url.trim() : LEAD_FORM_LINK
-  const display = ad.destination.kind === 'website' ? (ad.destination.display_link ?? '').trim() : ''
-  const ctaValue: GraphParams = ad.destination.kind === 'lead_form'
-    ? { link: LEAD_FORM_LINK, lead_gen_form_id: ad.destination.form_id }
-    : { link }
-  const cta = { type: ad.cta_type, value: ctaValue }
+  const info = adCtaInfo(ad)
+  const cta = { type: ad.cta_type, value: info.value }
   const bodies = cleanTexts(ad.primary_texts)
   const titles = cleanTexts(ad.headlines)
   const descs = cleanTexts(ad.descriptions)
-  const story: GraphParams = { page_id: ad.identity.page_id }
-  if ((ad.identity.instagram_user_id ?? '').trim()) story.instagram_user_id = ad.identity.instagram_user_id.trim()
+  const ig = (ad.identity?.instagram_user_id ?? '').trim()
   const payload: GraphParams = {
     name: cleanName(ad.name, 100),
     url_tags: URL_TAGS_STANDARD,
     contextual_multi_ads: { enroll_status: ad.multi_advertiser === 'OPT_IN' ? 'OPT_IN' : 'OPT_OUT' },
     degrees_of_freedom_spec: { creative_features_spec: creativeFeaturesSpec(ad.creative_features) },
-    object_story_spec: story,
   }
   const need = (r: MediaRef | undefined, what: 'image' | 'video'): MediaRef => {
     if (!r || (what === 'image' ? !r.image_hash : !r.video_id)) throw new Error('media_unresolved')
     return r
   }
+  const imageItem = (r: MediaRef | undefined, label?: string): GraphParams => {
+    const x = need(r, 'image')
+    const item: GraphParams = { hash: x.image_hash }
+    const c = cropsOf(x)
+    if (c) item.image_crops = c
+    if (label) item.adlabels = [{ name: label }]
+    return item
+  }
+  const videoItem = (r: MediaRef | undefined, label?: string): GraphParams => {
+    const x = need(r, 'video')
+    const item: GraphParams = { video_id: x.video_id }
+    if (x.thumbnail_hash) item.thumbnail_hash = x.thumbnail_hash
+    if (label) item.adlabels = [{ name: label }]
+    return item
+  }
+
+  // Vorhandener Beitrag: kein object_story_spec, Texte und Medien kommen aus dem Beitrag
+  if (mode === 'beitrag') {
+    const b = ad.beitrag as BeitragRef
+    if (b.quelle === 'facebook') {
+      payload.object_story_id = String(b.id).trim()
+      // Instagram-Platzierungen mit dem HP-Konto (API-Pfad per validate_only prüfen)
+      if (ig) payload.instagram_user_id = ig
+    } else {
+      // Meta-Doku (Instagram-Inhalte als Anzeige): source_instagram_media_id + object_id (Seite) + instagram_user_id + call_to_action
+      payload.source_instagram_media_id = String(b.id).trim()
+      payload.object_id = ad.identity.page_id
+      if (ig) payload.instagram_user_id = ig
+      payload.call_to_action = ad.destination?.kind === 'whatsapp'
+        ? { type: ad.cta_type, value: { link: WHATSAPP_LINK, app_destination: 'WHATSAPP' } }
+        : cta
+    }
+    partnerFelder(ad, payload, null)
+    return { mode, payload }
+  }
+
+  const story: GraphParams = { page_id: ad.identity.page_id }
+  if (ig) story.instagram_user_id = ig
+  payload.object_story_spec = story
+  const willkommen = whatsappWillkommen(ad)
 
   if (mode === 'carousel') {
+    const endkarte = ad.karussell?.endkarte === true
+    const automatisch = ad.karussell?.reihenfolge_automatisch !== false
     const cards = (ad.media.cards ?? []).map(cd => {
-      const cardLink = isLead ? LEAD_FORM_LINK : ((cd.url ?? '').trim() || link)
+      const cardLink = info.website ? ((cd.url ?? '').trim() || info.link) : info.link
       const att: GraphParams = {
         link: cardLink,
         name: cd.headline.trim(),
-        call_to_action: { type: ad.cta_type, value: isLead ? ctaValue : { link: cardLink } },
+        call_to_action: { type: ad.cta_type, value: info.website && !info.form ? { link: cardLink } : info.value },
       }
       if ((cd.description ?? '').trim()) att.description = (cd.description ?? '').trim()
       if (cd.media.video_id) { att.video_id = cd.media.video_id; if (cd.media.thumbnail_hash) att.image_hash = cd.media.thumbnail_hash }
-      else att.image_hash = need(cd.media, 'image').image_hash
+      else {
+        att.image_hash = need(cd.media, 'image').image_hash
+        const c = cropsOf(cd.media)
+        if (c) att.image_crops = c
+      }
       return att
     })
-    const ld: GraphParams = { link, message: bodies[0] ?? '', child_attachments: cards, multi_share_optimized: true, multi_share_end_card: false, call_to_action: cta }
+    const ld: GraphParams = {
+      link: info.link, message: bodies[0] ?? '', child_attachments: cards,
+      multi_share_optimized: automatisch, multi_share_end_card: endkarte, call_to_action: cta,
+    }
     if (titles[0]) ld.name = titles[0]
-    if (display && !isLead) ld.caption = display
+    if (info.display && info.website) ld.caption = info.display
+    if (willkommen) ld.page_welcome_message = willkommen
     story.link_data = ld
+    partnerFelder(ad, payload, story)
+    return { mode, payload }
+  }
+
+  /** Grundgerüst eines Asset-Feeds (Format, Link, Button). */
+  const feedBasis = (): GraphParams => {
+    const linkUrl: GraphParams = { website_url: info.link }
+    if (info.display && info.website) linkUrl.display_url = info.display
+    const f: GraphParams = {
+      ad_formats: [isVideo ? 'SINGLE_VIDEO' : 'SINGLE_IMAGE'],
+      link_urls: [linkUrl],
+      call_to_action_types: [ad.cta_type],
+    }
+    // Sofortformular, WhatsApp, Anruf, Messenger: Button-Wert über call_to_actions (per validate_only prüfen)
+    if (!(info.website && !info.form)) f.call_to_actions = [{ type: ad.cta_type, value: info.value }]
+    return f
+  }
+  const rulesEinzel = placementRulesFor(ctx.placements, isVideo)
+  const onlyStory = rulesEinzel.length === 1 && rulesEinzel[0].slot === 'story'
+  const einzelRef = onlyStory ? (storyRef(ad) ?? feedRef(ad)) : (feedRef(ad) ?? storyRef(ad) ?? ad.media?.landscape_191x1)
+
+  if (mode === 'asset_feed_language') {
+    // Mehrsprachig (Meta-Doku Multi-Language Ads): ein Medium ohne Label gilt für alle Sprachen,
+    // genau eine Standardregel (Deutsch), je weitere Sprache eine Regel mit Sprach-IDs.
+    // Für OUTCOME_LEADS nicht ausdrücklich dokumentiert: per validate_only prüfen.
+    const sp = ad.sprachen as SprachenSpec
+    const vars = (Array.isArray(sp.varianten) ? sp.varianten : []).filter(v => !!v && v.sprache !== 'de' && isIn(AD_SPRACHEN, v.sprache))
+    const lbl = (s: AdSprache) => ({ name: `${SPRACH_LABEL_PREFIX}${s}` })
+    const f = feedBasis()
+    if (isVideo) f.videos = [videoItem(einzelRef)]
+    else f.images = [imageItem(einzelRef)]
+    const linkDe: GraphParams = { website_url: info.link, adlabels: [lbl('de')] }
+    if (info.display) linkDe.display_url = info.display
+    f.link_urls = [linkDe, ...vars.map(v => ({ website_url: (v.url ?? '').trim() || info.link, adlabels: [lbl(v.sprache)] }))]
+    f.bodies = [{ text: bodies[0] ?? '', adlabels: [lbl('de')] }, ...vars.map(v => ({ text: (v.primary_text ?? '').trim(), adlabels: [lbl(v.sprache)] }))]
+    f.titles = [{ text: titles[0] ?? '', adlabels: [lbl('de')] }, ...vars.map(v => ({ text: (v.headline ?? '').trim(), adlabels: [lbl(v.sprache)] }))]
+    f.descriptions = [
+      { text: descs[0] ?? ' ', adlabels: [lbl('de')] },
+      ...vars.map(v => ({ text: (v.description ?? '').trim() || ' ', adlabels: [lbl(v.sprache)] })),
+    ]
+    const regel = (s: AdSprache, isDefault: boolean): GraphParams => ({
+      customization_spec: { locales: SPRACH_LOCALES[s].slice() },
+      body_label: lbl(s), title_label: lbl(s), description_label: lbl(s), link_url_label: lbl(s), is_default: isDefault,
+    })
+    f.asset_customization_rules = [regel('de', true), ...vars.map(v => regel(v.sprache, false))]
+    f.optimization_type = 'LANGUAGE'
+    const manuellEn = vars.some(v => v.sprache === 'en')
+    const auto = (Array.isArray(sp.automatisch_uebersetzen) ? sp.automatisch_uebersetzen : []).filter(s => s === 'en' && !manuellEn)
+    if (auto.length) f.autotranslate = [AUTOTRANSLATE_CODE.en]
+    payload.asset_feed_spec = f
+    partnerFelder(ad, payload, story)
+    return { mode, payload }
+  }
+
+  if (mode === 'asset_feed_text') {
+    // Textvarianten ohne Platzierungs-Medien (Meta-Doku Asset Feed Spec Options: bis 5 je Textart).
+    // Ohne optimization_type; per validate_only prüfen.
+    const f = feedBasis()
+    if (isVideo) f.videos = [videoItem(einzelRef)]
+    else f.images = [imageItem(einzelRef)]
+    f.bodies = bodies.map(text => ({ text }))
+    f.titles = titles.map(text => ({ text }))
+    // leer = ein Leerzeichen, sonst holt Meta ungeprüften Text von der Landingpage
+    f.descriptions = descs.length ? descs.map(text => ({ text })) : [{ text: ' ' }]
+    // WhatsApp-Begrüßung bei Asset-Feeds unter object_story_spec (Meta-Doku); per validate_only prüfen
+    if (willkommen) story.page_welcome_message = willkommen
+    payload.asset_feed_spec = f
+    partnerFelder(ad, payload, story)
     return { mode, payload }
   }
 
   if (mode === 'asset_feed') {
-    const rules = placementRulesFor(ctx.placements, isVideo)
-    const f = feedRef(ad) ?? storyRef(ad)
-    const s = storyRef(ad) ?? feedRef(ad)
-    const assets: GraphParams[] = []
-    for (const r of rules) {
-      const ref = r.slot === 'story' ? s : f
-      if (isVideo) {
-        const v = need(ref, 'video')
-        const item: GraphParams = { video_id: v.video_id, adlabels: [{ name: r.label }] }
-        if (v.thumbnail_hash) item.thumbnail_hash = v.thumbnail_hash
-        assets.push(item)
-      } else {
-        assets.push({ hash: need(ref, 'image').image_hash, adlabels: [{ name: r.label }] })
-      }
-    }
-    const linkUrl: GraphParams = { website_url: link }
-    if (display && !isLead) linkUrl.display_url = display
-    const feed: GraphParams = {
-      ad_formats: [isVideo ? 'SINGLE_VIDEO' : 'SINGLE_IMAGE'],
-      optimization_type: 'PLACEMENT',
-      bodies: bodies.map(text => ({ text })),
-      titles: titles.map(text => ({ text })),
-      link_urls: [linkUrl],
-      call_to_action_types: [ad.cta_type],
-      asset_customization_rules: rules.map(r => ({
-        customization_spec: r.customization_spec,
-        [isVideo ? 'video_label' : 'image_label']: { name: r.label },
-      })),
-    }
-    feed[isVideo ? 'videos' : 'images'] = assets
+    const s = pacSlots(ad)
+    const rules = placementRulesFor(ctx.placements, isVideo, { quer: !!s.quer, quadrat: !!s.quadrat })
+    const fallback = s.feed ?? s.story ?? s.quer ?? s.quadrat
+    // Ein Medium (Textvarianten): dasselbe Medium in jeder Regel
+    const refFor = (slot: PacSlot): MediaRef | undefined =>
+      slot === 'story' ? (s.story ?? s.feed ?? fallback) : slot === 'feed' ? (s.feed ?? s.story ?? fallback) : (s[slot] ?? fallback)
+    const f = feedBasis()
+    f.optimization_type = 'PLACEMENT'
+    f.bodies = bodies.map(text => ({ text }))
+    f.titles = titles.map(text => ({ text }))
+    f.asset_customization_rules = rules.map(r => ({
+      customization_spec: r.customization_spec,
+      [isVideo ? 'video_label' : 'image_label']: { name: r.label },
+    }))
+    f[isVideo ? 'videos' : 'images'] = rules.map(r => (isVideo ? videoItem(refFor(r.slot), r.label) : imageItem(refFor(r.slot), r.label)))
     // Platzierungs-Creatives: genau eine Beschreibung (Meta-PAC-Guide). Leer = ein Leerzeichen,
     // sonst holt Meta ungeprüften Text von der Landingpage.
-    feed.descriptions = [{ text: descs[0] ?? ' ' }]
-    // Sofortformular im Asset-Feed: call_to_actions (nur Sonderkategorien sichtbar) - per validate_only prüfen
-    if (isLead) feed.call_to_actions = [{ type: ad.cta_type, value: ctaValue }]
-    payload.asset_feed_spec = feed
+    f.descriptions = [{ text: descs[0] ?? ' ' }]
+    if (willkommen) story.page_welcome_message = willkommen
+    payload.asset_feed_spec = f
+    partnerFelder(ad, payload, story)
     return { mode, payload }
   }
 
-  // Einzelmedium: Feed-Medium bevorzugt, sonst Story
-  const rules = placementRulesFor(ctx.placements, isVideo)
-  const onlyStory = rules.length === 1 && rules[0].slot === 'story'
-  const ref = onlyStory ? (storyRef(ad) ?? feedRef(ad)) : (feedRef(ad) ?? storyRef(ad))
+  // Einzelmedium: Feed-Medium bevorzugt, sonst Story bzw. quer
   if (mode === 'video_data') {
-    const v = need(ref, 'video')
-    const vd: GraphParams = { video_id: v.video_id, message: bodies[0] ?? '', call_to_action: cta }
+    const v = need(einzelRef, 'video')
+    // Video hat kein link-Feld: Website-Link steht im Button-Wert
+    const vValue = info.website && info.form ? { ...info.value, link: info.link } : info.value
+    const vd: GraphParams = { video_id: v.video_id, message: bodies[0] ?? '', call_to_action: { type: ad.cta_type, value: vValue } }
     if (v.thumbnail_hash) vd.image_hash = v.thumbnail_hash
     if (titles[0]) vd.title = titles[0]
     if (descs[0]) vd.link_description = descs[0]
+    if (willkommen) vd.page_welcome_message = willkommen
     story.video_data = vd
   } else {
-    const ld: GraphParams = { link, message: bodies[0] ?? '', image_hash: need(ref, 'image').image_hash, call_to_action: cta }
+    const ref = need(einzelRef, 'image')
+    const ld: GraphParams = { link: info.link, message: bodies[0] ?? '', image_hash: ref.image_hash, call_to_action: cta }
+    const c = cropsOf(ref)
+    if (c) ld.image_crops = c
     if (titles[0]) ld.name = titles[0]
     if (descs[0]) ld.description = descs[0]
-    if (display && !isLead) ld.caption = display
+    if (info.display && info.website) ld.caption = info.display
+    if (willkommen) ld.page_welcome_message = willkommen
     story.link_data = ld
   }
+  partnerFelder(ad, payload, story)
   return { mode, payload }
+}
+
+/**
+ * Vorschau-Formate, die die Anzeige in ihrer Anzeigengruppe wirklich ausspielen kann
+ * (aus basis; Standard = Liste „Vorschau aller Platzierungen“, PREVIEW_FORMATS = auch Computer-Feed).
+ */
+export function previewFormatsFor(ad: AdDraft, placements?: Placements, basis: readonly PreviewFormat[] = PREVIEW_ALLE_FORMATS): PreviewFormat[] {
+  const manual = placements && placements.mode === 'manual' ? placements : null
+  return basis.filter(f => {
+    const p = PREVIEW_PLACEMENT[f]
+    if (p.nurVideo && ad.format !== 'single_video') return false
+    if (p.keinKarussell && ad.format === 'carousel') return false
+    if (!manual) return true
+    if (manual.publisher_platforms.indexOf(p.platform) < 0) return false
+    const list = (manual[POSITION_FIELD_BY_PLATFORM[p.platform]] ?? []) as readonly string[]
+    if (list.length && list.indexOf(p.position) < 0) return false
+    const dev = manual.device_platforms ?? []
+    if (p.device && dev.length && dev.indexOf(p.device) < 0) return false
+    return true
+  })
 }
 
 /** Registrierbare Domain aus einer URL (portal.happy-property.com -> happy-property.com). */
@@ -2116,6 +2800,38 @@ export function registrableDomain(url: string): string | null {
 }
 export const draftAdLabel = (draftId: string): string => `hp_draft_${(draftId ?? '').replace(/-/g, '').slice(0, 8)}`
 
+/** Conversion-Domain der Anzeige: eigene Angabe, sonst aus der Website-URL (Pflicht bei Kampagnen mit Pixel). */
+export function adConversionDomain(ad: AdDraft): string | null {
+  const own = (ad.tracking?.conversion_domain ?? '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/[/?#].*$/, '')
+  if (own) return own
+  const d = ad.destination
+  if (ad.beitrag && ad.beitrag.quelle === 'facebook') return null
+  if (d && (d.kind === 'website' || d.kind === 'website_lead_form')) return registrableDomain(d.url)
+  return null
+}
+
+/**
+ * tracking_specs der Anzeige: übernommene Meta-Specs + weitere Pixel (offsite_conversion) +
+ * CRM-Lead-Qualität (leadgen_quality_conversion, Meta-Doku Tracking Specs; per validate_only prüfen).
+ * Doppelte Einträge fallen weg.
+ */
+export function buildTrackingSpecs(ad: AdDraft): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = []
+  const seen: string[] = []
+  const push = (x: Record<string, unknown>) => { const k = editCanon(x); if (seen.indexOf(k) < 0) { seen.push(k); out.push(x) } }
+  for (const t of Array.isArray(ad.tracking_specs) ? ad.tracking_specs : []) {
+    if (t && typeof t === 'object' && !Array.isArray(t)) push(clone(t))
+  }
+  for (const px of Array.isArray(ad.tracking?.weitere_pixel) ? (ad.tracking?.weitere_pixel ?? []) : []) {
+    const id = String(px ?? '').trim()
+    if (META_ID_RE.test(id)) push({ 'action.type': ['offsite_conversion'], fb_pixel: [id] })
+  }
+  if (ad.tracking?.lead_qualitaet && isFormKind(ad.destination?.kind)) {
+    push({ 'action.type': ['leadgen_quality_conversion'], fb_pixel: [HP_PIXEL_ID] })
+  }
+  return out
+}
+
 /** Ad-Payload für POST act_X/ads. creative = {creative_id} oder Inline-Creative (validate_only). */
 export function buildAdPayload(ad: AdDraft, adsetId: string, creative: { creative_id: string } | GraphParams, opts: { draftId?: string } = {}): GraphParams {
   const p: GraphParams = {
@@ -2126,10 +2842,10 @@ export function buildAdPayload(ad: AdDraft, adsetId: string, creative: { creativ
   }
   if (opts.draftId) p.adlabels = [{ name: draftAdLabel(opts.draftId) }]
   // Pflicht in Kampagnen, die Daten mit einem Pixel teilen (Meta-Doku)
-  if (ad.destination.kind === 'website') {
-    const dom = registrableDomain(ad.destination.url)
-    if (dom) p.conversion_domain = dom
-  }
+  const dom = adConversionDomain(ad)
+  if (dom) p.conversion_domain = dom
+  const ts = buildTrackingSpecs(ad)
+  if (ts.length) p.tracking_specs = ts
   return p
 }
 
@@ -2320,6 +3036,7 @@ export const EDIT_LOCKS: Readonly<Record<Level, readonly string[]>> = {
   ],
   adset: [
     'adset.destination', 'adset.billing_event', 'adset.promoted_object.page_id', 'adset.promoted_object.custom_conversion_id',
+    'adset.promoted_object.whatsapp_phone_number',
   ],
   ad: ['ad.identity.page_id'],
 }
@@ -2494,13 +3211,34 @@ const schedKey = (x: unknown): string => {
   return editCanon(r)
 }
 const schedNorm = (v: unknown): unknown => (Array.isArray(v) ? v.map(schedKey).sort() : [])
-const mediaNorm = (v: unknown): unknown => strOrNull(asRec(v).media_id)
+/** Medium über media_id vergleichen, dazu Zuschnitt und bewusst gewähltes Video-Vorschaubild. */
+const mediaNorm = (v: unknown): unknown => {
+  const r = asRec(v)
+  const id = strOrNull(r.media_id)
+  if (!id) return null
+  const thumb = strOrNull(r.thumbnail_media_id) ?? (r.thumbnail_quelle === 'meta_liste' ? strOrNull(r.thumbnail_hash) : null)
+  return { id, crops: leer(r.crops) ? null : r.crops, thumb }
+}
 const cardsNorm = (v: unknown): unknown => (Array.isArray(v)
   ? v.map(cd => {
     const c = asRec(cd)
     return { headline: strOrNull(c.headline), description: strOrNull(c.description), url: strOrNull(c.url), media: mediaNorm(c.media) }
   })
   : [])
+const sprachenNorm = (v: unknown): unknown => {
+  const r = asRec(v)
+  const vars = Array.isArray(r.varianten) ? r.varianten.map(x => {
+    const o = asRec(x)
+    return { s: strOrNull(o.sprache), p: strOrNull(o.primary_text), h: strOrNull(o.headline), d: strOrNull(o.description), u: strOrNull(o.url) }
+  }) : []
+  const auto = sortedStrings(r.automatisch_uebersetzen)
+  return vars.length || auto.length ? { vars, auto } : null
+}
+const partnerNorm = (v: unknown): unknown => {
+  const r = asRec(v)
+  if (!Object.keys(r).length) return null
+  return { page: strOrNull(r.partner_page_id), ig: strOrNull(r.partner_ig_user_id), absender: r.partner_ist_absender === true }
+}
 const featuresNorm = (v: unknown): unknown => {
   const r = asRec(v)
   const out: Rec = {}
@@ -2585,6 +3323,7 @@ const ADSET_EDIT: readonly EditDef<AdsetDraft>[] = [
   { key: 'adset.promoted_object.custom_event_type', learning: 'neu', get: a => a.promoted_object?.custom_event_type ?? null },
   { key: 'adset.promoted_object.custom_conversion_id', learning: 'neu', get: a => strOrNull(a.promoted_object?.custom_conversion_id) },
   { key: 'adset.promoted_object.page_id', learning: 'neu', get: a => strOrNull(a.promoted_object?.page_id) },
+  { key: 'adset.promoted_object.whatsapp_phone_number', learning: 'neu', get: a => strOrNull(a.promoted_object?.whatsapp_phone_number) },
   { key: 'adset.attribution', learning: 'neu', get: a => a.attribution ?? null },
   { key: 'adset.daily_budget_cents', learning: sizeLearning, get: a => centsOrNull(a.daily_budget_cents) },
   { key: 'adset.lifetime_budget_cents', learning: sizeLearning, get: a => centsOrNull(a.lifetime_budget_cents) },
@@ -2628,12 +3367,20 @@ const ADSET_EDIT: readonly EditDef<AdsetDraft>[] = [
   { key: 'adset.targeting', learning: 'neu', get: a => targetingRest(a.targeting) },
 ]
 
+const destUrl = (a: AdDraft): string | null => {
+  const d = a.destination
+  return d && (d.kind === 'website' || d.kind === 'website_lead_form') ? strOrNull(d.url) : null
+}
 const AD_EDIT: readonly EditDef<AdDraft>[] = [
   { key: 'ad.name', learning: 'nein', get: a => strOrNull(a.name) },
   { key: 'ad.status', learning: 'nein', get: a => a.status ?? null },
-  { key: 'ad.tracking_specs', learning: 'nein', get: a => a.tracking_specs ?? [], norm: sortedCanon },
+  // Tracking: übernommene Meta-Specs + weitere Pixel + Lead-Qualität (so wie buildAdPayload sendet)
+  { key: 'ad.tracking_specs', learning: 'nein', get: a => buildTrackingSpecs(a), norm: sortedCanon },
+  // eigene Conversion-Domain: nur die Angabe im Formular (Meta liefert den Wert beim Laden nicht mit)
+  { key: 'ad.tracking.conversion_domain', learning: 'nein', get: a => strOrNull((a.tracking?.conversion_domain ?? '').toLowerCase()) },
   // Werbemittel: Änderung = neues Creative (ersetzen oder neue Anzeige)
   { key: 'ad.format', learning: 'neu', creative: true, get: a => a.format ?? null },
+  { key: 'ad.beitrag', learning: 'neu', creative: true, get: a => (a.beitrag ? { quelle: a.beitrag.quelle, id: strOrNull(a.beitrag.id) } : null) },
   { key: 'ad.identity.page_id', learning: 'neu', creative: true, get: a => strOrNull(a.identity?.page_id) },
   { key: 'ad.identity.instagram_user_id', learning: 'neu', creative: true, get: a => strOrNull(a.identity?.instagram_user_id) },
   { key: 'ad.primary_texts', learning: 'neu', creative: true, get: a => cleanTexts(a.primary_texts) },
@@ -2641,13 +3388,27 @@ const AD_EDIT: readonly EditDef<AdDraft>[] = [
   { key: 'ad.descriptions', learning: 'neu', creative: true, get: a => cleanTexts(a.descriptions) },
   { key: 'ad.cta_type', learning: 'neu', creative: true, get: a => a.cta_type ?? null },
   { key: 'ad.destination.kind', learning: 'neu', creative: true, get: a => a.destination?.kind ?? null },
-  { key: 'ad.destination.url', learning: 'neu', creative: true, get: a => (a.destination?.kind === 'website' ? strOrNull(a.destination.url) : null) },
-  { key: 'ad.destination.display_link', learning: 'neu', creative: true, get: a => (a.destination?.kind === 'website' ? strOrNull(a.destination.display_link) : null) },
-  { key: 'ad.destination.form_id', learning: 'neu', creative: true, get: a => (a.destination?.kind === 'lead_form' ? strOrNull(a.destination.form_id) : null) },
+  { key: 'ad.destination.url', learning: 'neu', creative: true, get: destUrl },
+  {
+    key: 'ad.destination.display_link', learning: 'neu', creative: true,
+    get: a => (a.destination?.kind === 'website' || a.destination?.kind === 'website_lead_form' ? strOrNull(a.destination.display_link) : null),
+  },
+  {
+    key: 'ad.destination.form_id', learning: 'neu', creative: true,
+    get: a => (a.destination?.kind === 'lead_form' || a.destination?.kind === 'website_lead_form' ? strOrNull(a.destination.form_id) : null),
+  },
+  { key: 'ad.destination.telefon', learning: 'neu', creative: true, get: a => (a.destination?.kind === 'phone_call' ? strOrNull(normalizeTelefon(a.destination.telefon)) : null) },
+  { key: 'ad.destination.whatsapp_begruessung', learning: 'neu', creative: true, get: a => (a.destination?.kind === 'whatsapp' ? strOrNull(a.destination.begruessung) : null) },
+  { key: 'ad.destination.whatsapp_nachricht', learning: 'neu', creative: true, get: a => (a.destination?.kind === 'whatsapp' ? strOrNull(a.destination.nachricht) : null) },
   { key: 'ad.media.feed_4x5', learning: 'neu', creative: true, get: a => a.media?.feed_4x5 ?? null, norm: mediaNorm },
   { key: 'ad.media.story_9x16', learning: 'neu', creative: true, get: a => a.media?.story_9x16 ?? null, norm: mediaNorm },
   { key: 'ad.media.square_1x1', learning: 'neu', creative: true, get: a => a.media?.square_1x1 ?? null, norm: mediaNorm },
+  { key: 'ad.media.landscape_191x1', learning: 'neu', creative: true, get: a => a.media?.landscape_191x1 ?? null, norm: mediaNorm },
   { key: 'ad.media.cards', learning: 'neu', creative: true, get: a => a.media?.cards ?? [], norm: cardsNorm },
+  { key: 'ad.karussell.endkarte', learning: 'neu', creative: true, get: a => (a.format === 'carousel' ? a.karussell?.endkarte === true : null) },
+  { key: 'ad.karussell.reihenfolge_automatisch', learning: 'neu', creative: true, get: a => (a.format === 'carousel' ? a.karussell?.reihenfolge_automatisch !== false : null) },
+  { key: 'ad.sprachen', learning: 'neu', creative: true, get: a => a.sprachen ?? null, norm: sprachenNorm },
+  { key: 'ad.partnerschaft', learning: 'neu', creative: true, get: a => a.partnerschaft ?? null, norm: partnerNorm },
   { key: 'ad.creative_features', learning: 'neu', creative: true, get: a => a.creative_features ?? {}, norm: featuresNorm },
   { key: 'ad.multi_advertiser', learning: 'neu', creative: true, get: a => (a.multi_advertiser === 'OPT_IN' ? 'OPT_IN' : 'OPT_OUT') },
 ]
@@ -2719,6 +3480,7 @@ export const EDIT_BLOCK_TEXT = {
   budgetplanungEntfernen: 'Bestehende Zeiträume der Budgetplanung lassen sich hier nicht entfernen.',
   beitrag: 'Diese Anzeige nutzt einen bestehenden Beitrag; Texte und Medien lassen sich hier nicht ändern.',
   ersetzenModus: 'Beim Ersetzen erlaubt Meta keinen Wechsel zwischen Medien je Platzierung und Einzelmedium. Bitte „Neue Anzeige“ wählen.',
+  partnerUnbekannt: 'Diese Partnerschaftswerbung kann der Assistent nicht nachbauen; ein neues Werbemittel würde den Partner verlieren. Bitte im Werbeanzeigenmanager ändern.',
 } as const
 
 // ── Vergleich ───────────────────────────────────────────────────────────────
@@ -2741,6 +3503,7 @@ const EDIT_KNOWN_KEYS: Readonly<Record<Level, readonly string[]>> = {
   ad: [
     'key', 'adset_key', 'existing_id', 'name', 'format', 'identity', 'primary_texts', 'headlines', 'descriptions', 'cta_type',
     'destination', 'media', 'creative_features', 'multi_advertiser', 'source', 'status', 'meta_status', 'tracking_specs',
+    'beitrag', 'karussell', 'sprachen', 'partnerschaft', 'tracking',
   ],
 }
 
@@ -2905,11 +3668,14 @@ export function editDiff(baseline: DraftSpec, spec: DraftSpec): EditDiffResult {
       if (lockOrArchive('ad', ch, b.meta_status)) continue
       if (!ch.creative) continue
       if (b.source?.aus_beitrag) block(ch, EDIT_BLOCK_TEXT.beitrag)
+      else if (b.source?.partner_unbekannt) block(ch, EDIT_BLOCK_TEXT.partnerUnbekannt)
     }
     if (tausch === 'ersetzen' && creative.some(c => !c.blocked)) {
-      const mb = creativeMode(b, bSet?.placements) === 'asset_feed'
-      const ms = creativeMode(s, sSet?.placements ?? bSet?.placements) === 'asset_feed'
-      if (mb !== ms) for (const ch of creative) block(ch, EDIT_BLOCK_TEXT.ersetzenModus)
+      // Meta: Asset-Feed-Creatives lassen sich beim Ersetzen nicht in einen anderen Typ wechseln.
+      // Ausgangstyp wie bei Meta gelesen (Import), sonst aus Texten/Medien abgeleitet.
+      const mb = b.source?.creative_mode ?? creativeMode(b, bSet?.placements)
+      const ms = creativeMode(s, sSet?.placements ?? bSet?.placements)
+      if (mb !== ms && (isAssetFeedMode(mb) || isAssetFeedMode(ms))) for (const ch of creative) block(ch, EDIT_BLOCK_TEXT.ersetzenModus)
     }
     changes.push(...list)
     const label = name('ad', s, s.key)
@@ -3135,11 +3901,17 @@ export const BUILDER_MODES = [
   'usage', 'validate', 'import', 'media_status', 'discard',
   'preview', 'media_upload', 'create', 'resume', 'activate_draft', 'duplicate', 'leadform_create',
   'edit_load', 'edit_diff', 'edit_apply', 'bulk',
+  // Runde 2: Werbemittel komplett
+  'posts_list', 'preview_alle', 'ad_vorschau_link', 'video_vorschaubilder', 'video_vorschaubild', 'video_untertitel',
 ] as const
 export type BuilderMode = typeof BUILDER_MODES[number]
-/** Brauchen ad_settings.builder_enabled + META_WRITES_DISABLED != '1' (+ Schreibrecht). */
+/**
+ * Brauchen ad_settings.builder_enabled + META_WRITES_DISABLED != '1' (+ Schreibrecht).
+ * preview_alle wie preview (lädt fehlende Medien hoch), video_vorschaubild (Bild-Upload), video_untertitel (SRT-Upload).
+ */
 export const BUILDER_WRITE_MODES: readonly BuilderMode[] = [
   'preview', 'media_upload', 'create', 'resume', 'activate_draft', 'duplicate', 'leadform_create', 'edit_apply', 'bulk',
+  'preview_alle', 'video_vorschaubild', 'video_untertitel',
 ]
 export const BUILDER_ERROR_CODES = [
   'builder_disabled', 'writes_disabled', 'forbidden', 'not_found', 'invalid_request', 'validation_failed',
@@ -3368,6 +4140,93 @@ export interface BulkResult {
   after: Record<string, unknown>
 }
 export interface BulkResponse { results: BulkResult[]; guardrail: GuardrailInfo | null }
+// ── Werbemittel komplett (Runde 2) ──────────────────────────────────────────
+/** Beiträge der Seite bzw. des Instagram-Kontos für „Vorhandenen Beitrag verwenden“ (nur Lesen). */
+export interface PostsListRequest {
+  quelle: BeitragQuelle
+  /** 1 bis 50, Standard 25 */
+  limit?: number
+  /** Standard: Seite aus den Werbe-Einstellungen */
+  page_id?: string
+  /** Standard: Instagram-Konto aus den Werbe-Einstellungen bzw. der Seite */
+  instagram_user_id?: string
+  /** Blättern: next aus der vorigen Antwort */
+  after?: string
+}
+export interface PostsListItem {
+  /** Facebook: „SeitenID_BeitragsID“ (object_story_id), Instagram: Medien-ID (source_instagram_media_id) */
+  id: string
+  quelle: BeitragQuelle
+  text: string
+  erstellt: string | null
+  permalink: string | null
+  bild_url: string | null
+  /** z. B. added_photos, IMAGE, VIDEO, REELS, CAROUSEL_ALBUM */
+  typ: string | null
+  /** Meta: als Anzeige nutzbar (null = unbekannt) */
+  bewerbbar: boolean | null
+}
+export interface PostsListResponse {
+  quelle: BeitragQuelle
+  page_id: string
+  instagram_user_id: string | null
+  items: PostsListItem[]
+  /** Cursor für die nächste Seite (null = Ende) */
+  next: string | null
+  warnings: string[]
+}
+/**
+ * Vorschau aller Platzierungen: Anzeige im Entwurf (draft_id + ad_key, generatepreviews bzw.
+ * /{ad_id}/previews, wenn schon angelegt) oder laufende Anzeige ohne Entwurf (ad_id).
+ */
+export interface PreviewAlleRequest {
+  draft_id?: string
+  ad_key?: string
+  ad_id?: string
+  /** mehrsprachige Anzeige: Vorschau dieser Sprache (dynamic_asset_label) */
+  sprache?: AdSprache
+  /** nur diese Formate (Standard: previewFormatsFor) */
+  formats?: PreviewFormat[]
+}
+export interface PreviewAlleItem { format: PreviewFormat; label_key: string; body: string | null; error?: string }
+export interface PreviewAlleResponse {
+  previews: PreviewAlleItem[]
+  /** nicht passende Platzierungen (Anzeigengruppe spielt dort nicht aus, Format passt nicht) */
+  uebersprungen: Array<{ format: PreviewFormat; label_key: string; grund: string }>
+  /** Vorschau-iframes gelten bei Meta 24 Stunden */
+  gueltig_bis: string
+}
+/** Teilbarer Vorschaulink einer bestehenden Anzeige (Feld preview_shareable_link). */
+export interface AdVorschauLinkRequest { ad_id: string }
+export interface AdVorschauLinkResponse { ad_id: string; name: string | null; link: string | null; hinweis: string }
+/** Metas Vorschaubild-Vorschläge eines Videos (GET /{video_id}/thumbnails, nur Lesen). */
+export interface VideoVorschaubilderRequest { media_id: string }
+export interface VideoThumbnail { uri: string; width: number | null; height: number | null; is_preferred: boolean }
+export interface VideoVorschaubilderResponse { media_id: string; video_id: string | null; vorschaubilder: VideoThumbnail[] }
+/** Vorschaubild eines Videos aus Metas Vorschlägen wählen (Bild wird in die Bildbibliothek geladen). */
+export interface VideoVorschaubildRequest {
+  /** meta_media.id des Videos */
+  media_id: string
+  /** uri aus media_status vorschaubilder */
+  uri: string
+  /** true = auch als Standard-Vorschaubild des Videos speichern (meta_media.thumbnail_hash) */
+  als_standard?: boolean
+}
+export interface VideoVorschaubildResponse { media_id: string; thumbnail_hash: string; uri: string; als_standard: boolean }
+/** Untertitel (SRT) zu einem Video hochladen (POST /{video_id}/captions; API-Pfad für Werbekonto-Videos ungeprüft). */
+export type UntertitelSprache = 'de_DE' | 'en_US' | 'en_GB'
+export const UNTERTITEL_SPRACHEN: readonly UntertitelSprache[] = ['de_DE', 'en_US', 'en_GB']
+export interface VideoUntertitelRequest {
+  /** meta_media.id des Videos */
+  media_id: string
+  /** SRT-Datei im Bucket ad-creatives */
+  storage_path: string
+  sprache: UntertitelSprache
+  /** als Standard-Untertitel setzen (default_locale) */
+  standard?: boolean
+}
+export interface VideoUntertitelResponse { media_id: string; video_id: string; sprache: UntertitelSprache; ok: boolean; hinweis?: string }
+
 export interface LeadformCreateRequest { page_id?: string; spec: LeadFormSpec }
 export interface LeadformCreateResponse { form_id: string }
 export interface DiscardRequest { draft_id: string }
@@ -3396,6 +4255,12 @@ export interface BuilderRequestMap {
   edit_diff: EditDiffRequest
   edit_apply: EditApplyRequest
   bulk: BulkRequest
+  posts_list: PostsListRequest
+  preview_alle: PreviewAlleRequest
+  ad_vorschau_link: AdVorschauLinkRequest
+  video_vorschaubilder: VideoVorschaubilderRequest
+  video_vorschaubild: VideoVorschaubildRequest
+  video_untertitel: VideoUntertitelRequest
 }
 export interface BuilderResponseMap {
   catalog: CatalogResponse
@@ -3420,6 +4285,12 @@ export interface BuilderResponseMap {
   edit_diff: EditDiffResponse
   edit_apply: EditApplyResponse
   bulk: BulkResponse
+  posts_list: PostsListResponse
+  preview_alle: PreviewAlleResponse
+  ad_vorschau_link: AdVorschauLinkResponse
+  video_vorschaubilder: VideoVorschaubilderResponse
+  video_vorschaubild: VideoVorschaubildResponse
+  video_untertitel: VideoUntertitelResponse
 }
 export type BuilderRequest<M extends BuilderMode = BuilderMode> = M extends BuilderMode ? { mode: M } & BuilderRequestMap[M] : never
 export type BuilderResponse<M extends BuilderMode> = BuilderResponseMap[M]
@@ -3431,7 +4302,7 @@ export type BuilderResponse<M extends BuilderMode> = BuilderResponseMap[M]
 export function allLabelKeys(): string[] {
   const keys: string[] = []
   const add = (k: string | undefined) => { if (k && keys.indexOf(k) < 0) keys.push(k) }
-  const addOpts = (list: readonly EnumOption[]) => { for (const o of list) { add(o.labelKey); add(o.hintKey) } }
+  const addOpts = (list: readonly EnumOption[]) => { for (const o of list) { add(o.labelKey); add(o.hintKey); add(o.reasonKey) } }
   for (const l of LEVELS) add(`${K}.level.${l}`)
   addOpts(OBJECTIVE_OPTIONS); addOpts(SAC_OPTIONS); addOpts(BUYING_TYPE_OPTIONS); addOpts(BUDGET_LEVEL_OPTIONS)
   addOpts(DESTINATION_OPTIONS); addOpts(GOAL_OPTIONS); addOpts(BILLING_OPTIONS); addOpts(CUSTOM_EVENT_OPTIONS)
@@ -3442,6 +4313,7 @@ export function allLabelKeys(): string[] {
   addOpts(AD_DESTINATION_KIND_OPTIONS); addOpts(AD_FORMAT_OPTIONS); addOpts(CREATIVE_FEATURE_OPTIONS)
   addOpts(ENROLL_OPTIONS); addOpts(PREVIEW_FORMAT_OPTIONS); addOpts(CREATIVE_MODE_OPTIONS)
   addOpts(STATUS_OPTIONS); addOpts(CREATIVE_TAUSCH_OPTIONS); addOpts(EDIT_LEARNING_OPTIONS)
+  addOpts(AD_SETUP_OPTIONS); addOpts(BEITRAG_QUELLE_OPTIONS); addOpts(SPRACHE_OPTIONS); addOpts(CROP_KEY_OPTIONS)
   for (const f of FIELD_SPECS) { add(f.labelKey); add(f.helpKey); add(f.housing?.noteKey) }
   for (const c of ISSUE_CODES) add(issueMessageKey(c))
   for (const c of HOUSING_CHANGE_CODES) add(housingChangeKey(c))
