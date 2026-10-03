@@ -42,6 +42,13 @@ const QUOTA_RETRY_MIN   = 10
 // alle 30 Minuten neu versuchen, danach endgültig 'failed'.
 const ACCOUNT_MAX_RETRIES = 48
 const ACCOUNT_RETRY_MIN   = 30
+// Wiederholung, wenn das IONOS-Postfach sein Sende-Budget erschoepft hat (SMTP
+// 450 "Mail send limit exceeded", rund 50 Mails pro Stunde). Am 3.10.2026 blieben
+// so 348 von 561 Newsletter-Mails endgueltig auf 'failed' liegen, dazu neun
+// Erstkontakt-Mails an neue Leads. 450 ist laut RFC 5321 eine voruebergehende
+// Ablehnung: bis zu 12 Stunden jede Stunde neu versuchen, danach 'failed'.
+const MAILLIMIT_MAX_RETRIES = 12
+const MAILLIMIT_RETRY_MIN   = 60
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -611,6 +618,8 @@ Deno.serve(async (req: Request) => {
         let emailSent = false
         let waQuotaHit = false
         let waAccountGone = false
+        let waSent = false
+        let mailLimitHit = false
         const retryCount = msg.retry_count ?? 0
 
         // ── Termin-Bot: an booking-bot delegieren (dynamische AM/PM-Slots statt statischem
@@ -866,6 +875,7 @@ Deno.serve(async (req: Request) => {
               console.error(`[process-scheduled] E-Mail Fehler (${msg.id}):`, errMsg)
               errors.push(`email: ${errMsg}`)
               success = false
+              mailLimitHit = /\b450\b|send limit exceeded/i.test(errMsg)
             }
           } else {
             // SMTP nicht konfiguriert → simulieren + loggen
@@ -898,6 +908,7 @@ Deno.serve(async (req: Request) => {
                   alsLotte: !msg.recipient || msg.recipient === 'client',
                   contactCard: msg.contact_card ?? null,
                 })
+                waSent = true
                 await logActivity(supabase, {
                   lead_id: msg.lead_id,
                   deal_id: msg.deal_id,
@@ -940,6 +951,7 @@ Deno.serve(async (req: Request) => {
         // WhatsApp umgestellt, damit der Kunde die Mail nicht doppelt bekommt.
         const retryPlan =
           waQuotaHit    && retryCount < QUOTA_MAX_RETRIES   ? { min: QUOTA_RETRY_MIN,   max: QUOTA_MAX_RETRIES,   tag: 'quota',   grund: 'TimelinesAI-Kontingent erschöpft' } :
+          mailLimitHit  && retryCount < MAILLIMIT_MAX_RETRIES ? { min: MAILLIMIT_RETRY_MIN, max: MAILLIMIT_MAX_RETRIES, tag: 'maillimit', grund: 'Sende-Budget des Mail-Postfachs erschöpft' } :
           waAccountGone && retryCount < ACCOUNT_MAX_RETRIES ? { min: ACCOUNT_RETRY_MIN, max: ACCOUNT_MAX_RETRIES, tag: 'account', grund: waProvider === 'evolution' ? 'WhatsApp-Nummer auf dem eigenen Server nicht verbunden (Pairing-Code neu eingeben)' : 'WhatsApp-Konto in TimelinesAI nicht verbunden (Handy per QR-Code neu verbinden)' } :
           null
         if (retryPlan) {
@@ -951,6 +963,9 @@ Deno.serve(async (req: Request) => {
               scheduled_at:  next,
               retry_count:   retryCount + 1,
               ...(emailSent && msg.type === 'both' ? { type: 'whatsapp' } : {}),
+              // Beim Mail-Retry ist die WhatsApp schon raus: nur noch die Mail
+              // wiederholen, sonst kommt die WhatsApp doppelt.
+              ...(retryPlan.tag === 'maillimit' && waSent && msg.type === 'both' ? { type: 'email' } : {}),
               error_message: `${retryPlan.grund} - Wiederholung ${retryCount + 1}/${retryPlan.max} um ${next.slice(11, 16)} UTC`,
             })
             .eq('id', msg.id)

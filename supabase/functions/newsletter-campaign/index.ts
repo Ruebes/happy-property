@@ -159,7 +159,11 @@ const TZ = 'Europe/Berlin'
 const SEND_START_H = 8, SEND_END_H = 20
 const STEP_SEC = 180            // Grundabstand 3 Min (alles mit WhatsApp)
 const JITTER_SEC = 60           // + Zufall bis 60s
-const MAIL_STEP_SEC = 20        // reine E-Mails: Grundabstand 20 s (Sender schafft max. 20 je 5 Min)
+// Reine E-Mails: Grundabstand 85 s, also rund 40 Mails pro Stunde. Das IONOS-
+// Postfach nimmt nur etwa 50 Mails pro Stunde an (danach SMTP 450 "Mail send
+// limit exceeded"); am 3.10.2026 scheiterten bei 20 s Abstand 348 von 561 Mails.
+// Die restlichen rund 10 pro Stunde bleiben fuer Termin- und Erstkontakt-Mails.
+const MAIL_STEP_SEC = 85
 const MAIL_JITTER_SEC = 5       // + Zufall bis 5s
 
 interface CampaignProperty {

@@ -125,7 +125,7 @@ export default function Newsletter() {
   const [deckChatToken, setDeckChatToken] = useState<string | null>(null)   // Master-Deck per Chat verfeinern
   const [status, setStatus] = useState<{ status: string; total: number; done: number; error?: string | null } | null>(null)
   const [startAt, setStartAt] = useState('')   // '' = sofort; sonst datetime-local
-  const [progress, setProgress] = useState<Record<string, { sent: number; pending: number; next_at: string | null }>>({})
+  const [progress, setProgress] = useState<Record<string, { sent: number; pending: number; failed?: number; next_at: string | null }>>({})
   const [pastCampaigns, setPastCampaigns] = useState<Array<{ id: string; title: string; status: string; recipients_total: number; recipients_done: number; created_at: string }>>([])
   // Inhalts-Modus: 'structured' = aus Objekten bauen; 'html' = eigenes HTML einfügen.
   const [contentMode, setContentMode] = useState<'structured' | 'html'>('structured')
@@ -327,7 +327,10 @@ export default function Newsletter() {
   // Newsletter-eigenes Tracking (Sven 2.10.26): Oeffnungen und Klicks je Link-Art.
   // Die RPC oben kennt nur Deck-Klone; Newsletter im Eigenes-HTML-Modus haben keine,
   // deshalb kamen dort immer Nullen heraus.
-  interface NlTrack { opens: number; clicks: Array<{ label: string; count: number }> }
+  // people: wer hat geoeffnet / was geklickt (Sven 3.10.26: "ich konnte mal sehen,
+  // wer was geoeffnet hat"). Die RPC-Tabelle kennt nur Deck-Empfaenger.
+  interface NlPerson { key: string; lead_id: string | null; name: string | null; email: string | null; opened: string | null; clicks: string[]; last: string }
+  interface NlTrack { opens: number; clicks: Array<{ label: string; count: number }>; people: NlPerson[] }
   const [nlTrack, setNlTrack] = useState<Record<string, NlTrack>>({})
   const toggleArchive = async (id: string) => {
     if (archiveOpen === id) { setArchiveOpen(null); return }
@@ -340,9 +343,10 @@ export default function Newsletter() {
       setArchiveData(prev => ({ ...prev, [id]: data as EngData }))
       // Oeffnungen und Klicks aus dem Newsletter-Tracking dazuholen.
       const { data: ev } = await supabase.from('engagement_events')
-        .select('type, label, lead_id, subscriber_id')
+        .select('type, label, lead_id, subscriber_id, occurred_at')
         .eq('token', id).in('type', ['newsletter_open', 'newsletter_click'])
-      const rows = (ev ?? []) as Array<{ type: string; label: string | null; lead_id: string | null; subscriber_id: string | null }>
+        .order('occurred_at', { ascending: true }).limit(5000)
+      const rows = (ev ?? []) as Array<{ type: string; label: string | null; lead_id: string | null; subscriber_id: string | null; occurred_at: string }>
       const wer = (r: typeof rows[number]) => r.lead_id ?? r.subscriber_id ?? '?'
       const opener = new Set(rows.filter(r => r.type === 'newsletter_open').map(wer))
       const proLabel = new Map<string, Set<string>>()
@@ -351,7 +355,31 @@ export default function Newsletter() {
         if (!proLabel.has(l)) proLabel.set(l, new Set())
         proLabel.get(l)!.add(wer(r))
       }
+      // Je Person: erste Oeffnung, geklickte Link-Arten, letzte Aktivitaet.
+      const pers = new Map<string, NlPerson>()
+      for (const r of rows) {
+        const k = wer(r)
+        const p = pers.get(k) ?? { key: k, lead_id: r.lead_id, name: null, email: null, opened: null, clicks: [], last: r.occurred_at }
+        if (r.type === 'newsletter_open') { if (!p.opened) p.opened = r.occurred_at }
+        else { const l = r.label || 'Link'; if (!p.clicks.includes(l)) p.clicks.push(l) }
+        if (r.occurred_at > p.last) p.last = r.occurred_at
+        pers.set(k, p)
+      }
+      const leadIds = [...new Set(rows.map(r => r.lead_id).filter(Boolean))] as string[]
+      const subIds = [...new Set(rows.filter(r => !r.lead_id).map(r => r.subscriber_id).filter(Boolean))] as string[]
+      const namen = new Map<string, { name: string | null; email: string | null }>()
+      const nm = (x: { first_name: string | null; last_name: string | null }) => [x.first_name, x.last_name].filter(Boolean).join(' ').trim() || null
+      for (let i = 0; i < leadIds.length; i += 200) {
+        const { data: ls } = await supabase.from('leads').select('id, first_name, last_name, email').in('id', leadIds.slice(i, i + 200))
+        for (const l of (ls ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; email: string | null }>) namen.set(l.id, { name: nm(l), email: l.email })
+      }
+      for (let i = 0; i < subIds.length; i += 200) {
+        const { data: ss } = await supabase.from('newsletter_subscribers').select('id, first_name, last_name, email').in('id', subIds.slice(i, i + 200))
+        for (const x of (ss ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; email: string | null }>) namen.set(x.id, { name: nm(x), email: x.email })
+      }
+      for (const p of pers.values()) { const n = namen.get(p.key); if (n) { p.name = n.name; p.email = n.email } }
       setNlTrack(prev => ({ ...prev, [id]: {
+        people: [...pers.values()].sort((a, b) => (b.clicks.length - a.clicks.length) || b.last.localeCompare(a.last)),
         opens: opener.size,
         clicks: [...proLabel.entries()].map(([label, set]) => ({ label, count: set.size })).sort((a, b) => b.count - a.count),
       } }))
@@ -770,11 +798,12 @@ export default function Newsletter() {
                       {c.status !== 'draft' && (() => {
                         const pr = progress[c.id]
                         if (!pr) return <> · {c.recipients_done}/{c.recipients_total} {t('crm.newsletter.mails', 'Mails')}</>
-                        const total = pr.sent + pr.pending
+                        const total = pr.sent + pr.pending + (pr.failed ?? 0)
                         if (pr.sent === 0 && pr.pending > 0) {
                           return <> · {total} {t('crm.newsletter.mails', 'Mails')}</>
                         }
-                        return <> · <strong className="text-gray-600">{pr.sent}/{total}</strong> {t('crm.newsletter.sentLabel', 'gesendet')}</>
+                        return <> · <strong className="text-gray-600">{pr.sent}/{total}</strong> {t('crm.newsletter.sentLabel', 'gesendet')}
+                          {(pr.failed ?? 0) > 0 && <> · <strong className="text-red-600">{pr.failed} {t('crm.newsletter.failedLabel', 'fehlgeschlagen')}</strong></>}</>
                       })()}
                     </span>
                     <span className="ml-auto flex items-center gap-2">
@@ -796,7 +825,10 @@ export default function Newsletter() {
                     </span>
                   </div>
                   {archiveOpen === c.id && archiveData[c.id] && (() => {
-                    const ad = archiveData[c.id]
+                    // Empfaenger = zugestellte Mails. Die RPC zaehlt nur Deck-Klone und
+                    // liefert im Eigenes-HTML-Modus 0, dann waeren alle Quoten "–".
+                    const ad = { ...archiveData[c.id], recipients: Math.max(archiveData[c.id].recipients, progress[c.id]?.sent ?? 0) }
+                    const nl = nlTrack[c.id]
                     const pct = (n: number) => ad.recipients > 0 ? `${Math.round((n / ad.recipients) * 100)} %` : '–'
                     const totalCalcViews = (ad.calc_views ?? []).reduce((a, cv) => a + cv.views, 0)
                     const fmtDt = (v: string) => new Date(v).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
@@ -840,7 +872,40 @@ export default function Newsletter() {
                             📊 {(ad.calc_views ?? []).map(cv => `${cv.project}: ${cv.views}×`).join(' · ')} — {t('crm.newsletter.calcHint', 'die Rechnung ist für alle Empfänger identisch, Aufrufe sind daher nicht einzelnen Kunden zuordenbar')}
                           </p>
                         )}
-                        {ad.rows.length === 0 ? (
+                        {ad.rows.length === 0 && (nl?.people.length ?? 0) > 0 ? (
+                          <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="text-left text-[11px] text-gray-400 uppercase">
+                                  <th className="py-1 pr-3">{t('crm.newsletter.colName', 'Empfänger')}</th>
+                                  <th className="py-1 pr-3">📧 {t('crm.newsletter.colMail', 'Mail geöffnet')}</th>
+                                  <th className="py-1 pr-3">🖱 {t('crm.newsletter.colClicks', 'Geklickt')}</th>
+                                  <th className="py-1 text-right">{t('crm.newsletter.colLast', 'Zuletzt')}</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {nl!.people.map(r => (
+                                  <tr key={r.key} className="border-t border-gray-50">
+                                    <td className="py-1.5 pr-3">
+                                      {r.lead_id ? (
+                                        <a href={`/admin/crm/leads/${r.lead_id}`} className="font-medium text-gray-800 hover:underline">{r.name || r.email || '—'}</a>
+                                      ) : (
+                                        <span className="font-medium text-gray-800">{r.name || r.email || '—'} <span className="text-[10px] text-gray-400">{t('crm.newsletter.subscriber', 'Abonnent')}</span></span>
+                                      )}
+                                    </td>
+                                    <td className="py-1.5 pr-3 text-gray-600 text-xs">
+                                      {r.opened ? <>✓ {fmtDt(r.opened)}</> : <span className="text-gray-300">—</span>}
+                                    </td>
+                                    <td className="py-1.5 pr-3 text-gray-700 capitalize">
+                                      {r.clicks.length ? r.clicks.join(' · ') : <span className="text-gray-300">—</span>}
+                                    </td>
+                                    <td className="py-1.5 text-right text-gray-500 text-xs">{fmtDt(r.last)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : ad.rows.length === 0 ? (
                           <p className="text-sm text-gray-400">{t('crm.newsletter.noOpens', 'Noch keine Öffnungen.')}</p>
                         ) : (
                           <div className="overflow-x-auto">
