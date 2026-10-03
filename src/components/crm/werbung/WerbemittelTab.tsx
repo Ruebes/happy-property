@@ -6,11 +6,14 @@ import type { AudienceDraft } from '../../../lib/crmTypes'
 import { useWerbeKontext } from './useWerbeDaten'
 import { useWerbeFormat } from './format'
 import { BTN_KLEIN_BREIT } from './felder'
+import WerbeVorrat from './vorrat/WerbeVorrat'
 
 // ── Reiter „Werbemittel" des Werbemanagers ────────────────────────────────────
 // Bisher „Anzeigen-Studio": KI-Studio, Vorbereitete Anzeigen und der
-// Zielgruppen-Assistent (System-Kampagne). Unverändert aus AdsManager.tsx
-// übernommen; der Vorrat (Creative-Pool) kommt als eigener Abschnitt dazu.
+// Zielgruppen-Assistent (System-Kampagne), unverändert aus AdsManager.tsx
+// übernommen. Dazu der Vorrat (ad_creative_pool, Ordner vorrat/) als dritter
+// Abschnitt über den Vorbereiteten Anzeigen: was dort hochgeladen wird, landet
+// pausiert unter „Vorbereitete Anzeigen".
 
 const spinnerWeiss = <span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
 
@@ -90,6 +93,9 @@ export default function WerbemittelTab() {
     <div>
       {/* KI-Anzeigen-Studio: Brief -> Anzeige (Bild/Karussell + Caption) -> Chat-Bearbeitung */}
       <AdStudio showToast={showToast} onPublished={() => { void runSync() }} />
+
+      {/* Vorrat: geprüfte, freigegebene Werbemittel für den Autopiloten */}
+      <WerbeVorrat />
 
       {/* Vorbereitete Anzeigen: erstellt, aber noch nicht in der Übersicht.
           „Freigeben" nimmt sie (weiterhin pausiert) zu den anderen Anzeigen dazu. */}

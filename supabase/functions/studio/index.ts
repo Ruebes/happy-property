@@ -10,9 +10,24 @@
 // als Shim deployt (ad-studio/index.ts importiert diese Datei), damit alte
 // gecachte Frontends weiterlaufen. NIE wieder Functions mit „ad-" benennen!
 //
-//   { mode: 'generate', brief }                  → Entwurf (single | carousel)
-//   { mode: 'refine',   draft, instruction }     → Chat-Änderung (Caption ODER Bild)
-//   { mode: 'publish',  draft }                  → Creative + Ad (PAUSED) in der System-Kampagne
+//   { mode: 'generate', brief, image_brief?, base_image?, aspect? }
+//                                                → Entwurf (single | carousel)
+//   { mode: 'refine',   draft, instruction, aspect? } → Chat-Änderung (Caption ODER Bild)
+//   { mode: 'review',   draft }                  → Agentur-Prüfung (Note + Mängel)
+//   { mode: 'image_status', job }                → Stand eines Bild-Jobs
+//   { mode: 'publish',  draft, force?, adset_id?, link? }
+//       → Creative + Ad (PAUSED). Ohne adset_id wie bisher in die erste
+//       Anzeigengruppe der System-Kampagne. Mit adset_id: Gruppe muss zu unserem
+//       Werbekonto gehören UND ihre Kampagne die Sonderkategorie Wohnen (HOUSING)
+//       haben, sonst 400 { error, code: 'not_housing' }. link nur auf erlaubte
+//       Domains (LINT_ALLOWED_HOSTS aus _shared/metaLint.ts), sonst Standard
+//       ad_settings.default_link bzw. portal.happy-property.com/termin.
+//       Creative immer mit instagram_user_id (ad_settings.default_ig_user_id oder
+//       Instagram-Konto der Seite), allen Advantage+ Creative-Funktionen OPT_OUT
+//       (CREATIVE_FEATURES aus _shared/metaSpec.ts), contextual_multi_ads OPT_OUT,
+//       CTA mit value.link und url_tags = URL_TAGS_STANDARD.
+//   aspect: '1:1' (Standard wie bisher) | '4:5' (Feed) | '9:16' (Story/Reels)
+//       gilt für Einzelbilder; Overlay und Zuschnitt folgen dem Format.
 //
 // Karussell nutzt ECHTE Projektfotos: crm_projects.images + die Drive-
 // synchronisierte Galerie aus deck_assets.gallery (keine KI-Bilder).
@@ -21,7 +36,11 @@
 // ads_ai_rules (kind='creative'). Bild-KI = AUSSCHLIESSLICH Higgsfield (Sven
 // 11.8.26), kein OpenAI.
 //
+// Graph-Version, Token, Bild-Upload und der Not-Aus META_WRITES_DISABLED kommen
+// aus _shared/metaGraph.ts; jeder Schreibzugriff an Meta landet in meta_write_log.
+//
 // ── Secrets ──  META_ACCESS_TOKEN, META_AD_ACCOUNT_ID, ANTHROPIC_API_KEY
+//               optional META_GRAPH_VERSION, META_WRITES_DISABLED, META_PAGE_ID
 //               Higgsfield-Tokens rotieren in connector_secrets (siehe _shared/higgsfield.ts)
 // ── Deployment ──  supabase functions deploy studio --no-verify-jwt
 //                   supabase functions deploy ad-studio --no-verify-jwt   (Shim)
@@ -33,6 +52,12 @@ import { requireAdsAccess, AdsAuthError } from '../_shared/adsAuth.ts'
 import { hfGenerateBytes, hfShrinkUrl, hfUploadImage, type HfStore } from '../_shared/higgsfield.ts'
 import { CI, CI_FONT, CI_LOOK, loadCiFonts } from '../_shared/brand.ts'
 import { checkAd, composeMessage, COPY_PLAYBOOK, issuesForPrompt, type AdCopy, type AdIssue } from '../_shared/adCopy.ts'
+import {
+  graphGet, graphPost, uploadImage, metaEnv, MetaApiError, logMetaWrite, metaErrorLogFelder,
+  getLastUsage, assertOwnAccount, URL_TAGS_STANDARD, type MetaWriteLogRow,
+} from '../_shared/metaGraph.ts'
+import { cleanName, creativeFeaturesSpec } from '../_shared/metaSpec.ts'
+import { LINT_ALLOWED_HOSTS } from '../_shared/metaLint.ts'
 
 declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
 
@@ -42,8 +67,6 @@ const CORS = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
-const GRAPH = 'https://graph.facebook.com/v21.0'
-const PAGE_ID = '556440087559971'
 const SVEN_PHOTO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg'
 // Echtes Lotte-Foto als Persona-Referenz (für „Lotte mit ins Bild")
 const LOTTE_PHOTO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte1.jpg'
@@ -52,8 +75,59 @@ const LOTTE_PHOTO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/
 // Badge, unten fuer das Creme-Panel. Ohne diese Ansage landete der Text
 // mitten im Gesicht (Sven, 26.8.26).
 const FRAMING = 'Photorealistic documentary style, natural light, no text, no watermark. Framing: keep the top 20 percent and the bottom 30 percent of the frame free of faces and important detail (sky, wall, open space) - text banners are placed there. The main subject sits in the middle of the frame. ' + CI_LOOK
-const URL_TAGS = 'utm_source=meta&utm_medium=paid&utm_campaign={{campaign.id}}&utm_term={{adset.id}}&utm_content={{ad.id}}'
+// Hochformat 9:16 (Story/Reels): oben ca. 14 % und unten ca. 35 % verdeckt die
+// App (Profilzeile, Text, Button). Badge und Panel sitzen deshalb innerhalb
+// dieser Ränder, das Motiv im oberen Mittelteil.
+const FRAMING_STORY = 'Photorealistic documentary style, natural light, no text, no watermark. Vertical 9:16 story framing: the main subject (face and upper body) sits between 20 and 45 percent of the frame height; keep the top 15 percent and the lower half of the frame calm and free of faces and important detail (sky, wall, floor, open space) - text banners and app buttons are placed there. ' + CI_LOOK
+// Standard-Ziel, wenn weder body.link noch ad_settings.default_link gesetzt ist
 const LINK = 'https://portal.happy-property.com/termin'
+
+// ── Bildformate ─────────────────────────────────────────────────────────────
+type Aspect = '1:1' | '4:5' | '9:16'
+const ASPECTS: readonly Aspect[] = ['1:1', '4:5', '9:16']
+/** Leinwand 1080 px breit; Höhe je Format */
+const CANVAS_H: Record<Aspect, number> = { '1:1': 1080, '4:5': 1350, '9:16': 1920 }
+// Seitenverhältnis an Higgsfield: flux_kontext kennt 1:1, 4:3, 3:4, 16:9, 9:16
+// (wie social-agent FLUX_AR). 4:5 entsteht deshalb als 3:4 und wird danach
+// mittig auf 4:5 zugeschnitten (fitAspect).
+const GEN_ASPECT: Record<Aspect, string> = { '1:1': '1:1', '4:5': '3:4', '9:16': '9:16' }
+
+/** body.aspect lesen: leer = null (Aufrufer nimmt Standard), unbekannt = Fehler. */
+function parseAspect(v: unknown): Aspect | null {
+  if (v === undefined || v === null || v === '') return null
+  const s = String(v).trim()
+  const hit = ASPECTS.find(a => a === s)
+  if (!hit) throw new Error(`Seitenverhältnis "${s.slice(0, 12)}" unbekannt (erlaubt: 1:1, 4:5, 9:16)`)
+  return hit
+}
+const framingFor = (a: Aspect): string => (a === '9:16' ? FRAMING_STORY : FRAMING)
+
+/** Ziel-Link prüfen: https, erlaubte Domain (wie metaLint), keine utm-Parameter (setzt url_tags). */
+function pruefeLink(raw: string): { ok: true; url: string } | { ok: false; error: string } {
+  let u: URL
+  try { u = new URL(raw) } catch { return { ok: false, error: 'Ziel-Link ist keine gültige Adresse.' } }
+  if (u.protocol !== 'https:') return { ok: false, error: 'Ziel-Link muss mit https:// beginnen.' }
+  if (u.username || u.password) return { ok: false, error: 'Ziel-Link darf keine Zugangsdaten enthalten.' }
+  const host = u.hostname.toLowerCase()
+  if (LINT_ALLOWED_HOSTS.indexOf(host) < 0) {
+    return { ok: false, error: `Ziel-Link auf „${host}" ist nicht erlaubt. Erlaubt sind: ${LINT_ALLOWED_HOSTS.join(', ')}.` }
+  }
+  if (/[?&]utm_/i.test(u.search)) {
+    return { ok: false, error: 'Ziel-Link bitte ohne utm-Parameter angeben, die setzt das System automatisch.' }
+  }
+  return { ok: true, url: u.toString() }
+}
+
+/** Bildtyp aus den ersten Bytes (Storage liefert nicht immer den richtigen Content-Type). */
+function bildTyp(bytes: Uint8Array, header: string | null): string {
+  const b = bytes
+  if (b.length > 3 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png'
+  if (b.length > 2 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg'
+  if (b.length > 11 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return 'image/webp'
+  if (b.length > 3 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return 'image/gif'
+  const h = String(header ?? '').toLowerCase().split(';')[0].trim()
+  return h.startsWith('image/') ? h : 'image/jpeg'
+}
 
 interface Card { title: string; description: string; image_url: string }
 // Text-Overlay AUF dem Anzeigenbild (Badge + Subheadline + Checkmarks) —
@@ -75,6 +149,8 @@ interface Draft {
   issues?: AdIssue[]
   overlay?: Overlay | null
   cards?: Card[]
+  /** Bildformat des Einzelbilds (fehlt = 1:1) */
+  aspect?: Aspect
 }
 
 // Stärkstes Modell zuerst, mit Fallback + Retry: ein einzelnes überlastetes/
@@ -141,7 +217,7 @@ function hfStoreFrom(sb: SupabaseClient): HfStore {
 // Higgsfield: Basisbild(er) + Prompt → PNG-Bytes. 1 Referenz = flux_kontext
 // (bearbeitet die Vorlage, behält sie), mehrere Referenzen (z.B. eigenes Bild
 // + Sven + Lotte) = nano_banana (Gemini, max 3 Refs). NUR Higgsfield.
-async function generateImage(store: HfStore, bases: string[], prompt: string): Promise<Uint8Array> {
+async function generateImage(store: HfStore, bases: string[], prompt: string, aspect: Aspect = '1:1'): Promise<Uint8Array> {
   const refs: Array<{ id: string }> = []
   for (const url of bases.slice(0, 3)) {
     // Verkleinerte Fassung holen (Bildtransformation) — das Original ist bis zu
@@ -153,7 +229,21 @@ async function generateImage(store: HfStore, bases: string[], prompt: string): P
   }
   if (!refs.length) throw new Error('Kein Basisbild')
   const jobType = refs.length > 1 ? 'nano_banana' : 'flux_kontext'
-  return await hfGenerateBytes(store, jobType, { prompt, aspect_ratio: '1:1', image_references: refs })
+  return await hfGenerateBytes(store, jobType, { prompt, aspect_ratio: GEN_ASPECT[aspect], image_references: refs })
+}
+
+// KI-Foto exakt aufs Zielformat bringen (mittig zuschneiden). 1:1 bleibt wie
+// bisher unangetastet; sonst nur, wenn das Verhältnis um mehr als 1 % abweicht.
+async function fitAspect(bytes: Uint8Array, aspect: Aspect): Promise<{ bytes: Uint8Array; ext: 'png' | 'jpg' }> {
+  if (aspect === '1:1') return { bytes, ext: 'png' }
+  const img = await Image.decode(bytes)
+  const target = 1080 / CANVAS_H[aspect]
+  const ratio = img.width / img.height
+  if (Math.abs(ratio - target) / target < 0.01) return { bytes, ext: 'png' }
+  let cw = img.width, ch = img.height
+  if (ratio > target) cw = Math.round(ch * target); else ch = Math.round(cw / target)
+  const out = img.crop(Math.round((img.width - cw) / 2), Math.round((img.height - ch) / 2), cw, ch)
+  return { bytes: await out.encodeJPEG(92), ext: 'jpg' }
 }
 
 // ── Text-Overlay: SVG → PNG (resvg) → aufs Foto komponieren (imagescript) ───
@@ -174,11 +264,15 @@ function xwrap(s: string, max: number): string[] {
   if (cur) lines.push(cur); return lines.length ? lines : ['']
 }
 
-// Overlay-Layout (1080×1080, transparent): Korall-Badge mit Headline oben links,
+// Overlay-Layout (1080 breit, transparent): Korall-Badge mit Headline oben links,
 // unten cremefarbenes Panel mit navy Subheadline + Checkmark-Zeilen. Farben und
 // Schriften kommen ALLE aus _shared/brand.ts (CI) — nichts hier hart setzen.
-function overlaySvg(ov: Overlay): string {
-  const W = 1080, H = 1080
+// Höhe je Format (1:1 = 1080 wie bisher, 4:5 = 1350, 9:16 = 1920). Bei 9:16
+// liegen Badge und Panel innerhalb der App-Ränder (oben 14 %, unten 35 %).
+function overlaySvg(ov: Overlay, aspect: Aspect = '1:1'): string {
+  const W = 1080, H = CANVAS_H[aspect]
+  const topY = aspect === '9:16' ? Math.round(H * 0.14) : 48
+  const bottomY = aspect === '9:16' ? H - Math.round(H * 0.35) : H
   const F = `font-family="${CI_FONT.body}"`
   const FH = `font-family="${CI_FONT.heading}"`
   const parts: string[] = []
@@ -190,8 +284,8 @@ function overlaySvg(ov: Overlay): string {
     // 0.58 statt 0.62: Playfair Display Bold läuft schmaler als die alte Sans.
     const bw = Math.min(W - 96, Math.round(wMax * fs * 0.58) + padX * 2)
     const bh = lines.length * lh + padY * 2 - (lh - fs)
-    parts.push(`<rect x="48" y="48" width="${bw}" height="${bh}" rx="14" fill="${CI.coral}"/>`)
-    parts.push(`<text ${FH} font-size="${fs}" font-weight="700" fill="${CI.white}">${lines.map((l, i) => `<tspan x="${48 + padX}" y="${48 + padY + fs - 6 + i * lh}">${xesc(l)}</tspan>`).join('')}</text>`)
+    parts.push(`<rect x="48" y="${topY}" width="${bw}" height="${bh}" rx="14" fill="${CI.coral}"/>`)
+    parts.push(`<text ${FH} font-size="${fs}" font-weight="700" fill="${CI.white}">${lines.map((l, i) => `<tspan x="${48 + padX}" y="${topY + padY + fs - 6 + i * lh}">${xesc(l)}</tspan>`).join('')}</text>`)
   }
   // Unteres Panel (creme) mit Subheadline + Checks
   const checks = (ov.checks ?? []).map(c => (c ?? '').trim()).filter(Boolean).slice(0, 4)
@@ -200,9 +294,11 @@ function overlaySvg(ov: Overlay): string {
     const subH = subLines.length ? subLines.length * 52 + 14 : 0
     const checksH = checks.length * 56
     const panelH = 36 + subH + checksH + 30
-    const py = H - panelH
+    const py = bottomY - panelH
     parts.push(`<rect x="0" y="${py}" width="${W}" height="${panelH}" fill="${CI.cream}" fill-opacity="0.97"/>`)
     parts.push(`<rect x="0" y="${py}" width="${W}" height="6" fill="${CI.coral}"/>`)
+    // 9:16: Panel schwebt über dem App-Rand, unten mit Korall-Linie abschließen
+    if (bottomY < H) parts.push(`<rect x="0" y="${bottomY - 6}" width="${W}" height="6" fill="${CI.coral}"/>`)
     let cy = py + 36
     if (subLines.length) {
       parts.push(`<text ${FH} font-size="40" font-weight="700" fill="${CI.navy}">${subLines.map((l, i) => `<tspan x="52" y="${cy + 34 + i * 52}">${xesc(l)}</tspan>`).join('')}</text>`)
@@ -218,20 +314,20 @@ function overlaySvg(ov: Overlay): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${parts.join('\n')}</svg>`
 }
 
-// Foto (cover 1080×1080) + Overlay-PNG zusammenfügen → JPEG-Bytes.
-async function composeCreative(photoBytes: Uint8Array, ov: Overlay): Promise<Uint8Array> {
-  const W = 1080, H = 1080
+// Foto (cover 1080 x Formathöhe) + Overlay-PNG zusammenfügen → JPEG-Bytes.
+async function composeCreative(photoBytes: Uint8Array, ov: Overlay, aspect: Aspect = '1:1'): Promise<Uint8Array> {
+  const W = 1080, H = CANVAS_H[aspect]
   const img = await Image.decode(photoBytes)
   let cw = img.width, ch = img.height
   if (cw / ch > W / H) cw = Math.round(ch * (W / H)); else ch = Math.round(cw / (W / H))
   const base = img.clone().crop(Math.round((img.width - cw) / 2), Math.round((img.height - ch) / 2), cw, ch).resize(W, H)
-  const ovPng = await svgToPng(overlaySvg(ov))
+  const ovPng = await svgToPng(overlaySvg(ov, aspect))
   base.composite(await Image.decode(ovPng), 0, 0)
   return await base.encodeJPEG(92)
 }
-// Svens Schreibregel: nie Gedankenstrich/Bis-Strich. Die KI haelt sich im
-// Overlay nicht zuverlaessig daran, deshalb hier hart nachziehen.
-const deDash = (s: string): string => (s ?? '').replace(/[\u2013\u2014]/g, '-')
+// Svens Schreibregel: nie Gedankenstrich/Bis-Strich (U+2012 bis U+2015). Die KI
+// haelt sich im Overlay nicht zuverlaessig daran, deshalb hier hart nachziehen.
+const deDash = (s: string): string => (s ?? '').replace(/[\u2012-\u2015]/g, '-')
 
 // Der rote Badge sitzt oben im Bild. Wird er zu lang, waechst er auf drei Zeilen
 // und liegt dann ueber dem Gesicht (Sven, 26.8.26). Deshalb hart auf zwei
@@ -274,11 +370,9 @@ Deno.serve(async (req) => {
   try {
     // Rechte-Guard: läuft mit --no-verify-jwt, kann aber Anzeigen anlegen und
     // KI-Bilder erzeugen (kostet Geld) — deshalb Login + 'werbung'-Recht Pflicht.
-    await requireAdsAccess(req)
+    const caller = await requireAdsAccess(req)
 
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-    const token = Deno.env.get('META_ACCESS_TOKEN')!
-    const account = Deno.env.get('META_AD_ACCOUNT_ID') ?? '4065490590399677'
     const body = await req.json().catch(() => ({})) as Record<string, unknown>
     const mode = String(body.mode ?? '')
 
@@ -302,16 +396,21 @@ Deno.serve(async (req) => {
     // langsameren Verbindungen (Giona). Jetzt: Job anlegen, sofort antworten,
     // Frontend fragt per mode:'image_status' nach. Mit Overlay wird das fertige
     // Foto zusätzlich mit dem gerenderten Text komponiert (bg_url = rohes Foto).
-    const startImageJob = async (bases: string[], prompt: string, overlay?: Overlay | null): Promise<string> => {
+    const startImageJob = async (bases: string[], prompt: string, overlay?: Overlay | null, aspect: Aspect = '1:1'): Promise<string> => {
       const jobId = crypto.randomUUID()
       await supabase.from('studio_image_jobs').insert({ id: jobId })
       const work = async () => {
         try {
-          const photo = await generateImage(hfStore, bases, prompt)
-          const bgUrl = await storeImage(photo)
+          const raw = await generateImage(hfStore, bases, prompt, aspect)
+          // Zuschnitt aufs Format; scheitert das Dekodieren, lieber das ungeschnittene Foto als gar keins
+          const photo = await fitAspect(raw, aspect).catch((fe): { bytes: Uint8Array; ext: 'png' | 'jpg' } => {
+            console.error('[studio] Zuschnitt:', fe)
+            return { bytes: raw, ext: 'png' }
+          })
+          const bgUrl = await storeImage(photo.bytes, photo.ext)
           let finalUrl = bgUrl
           if (hasOverlayText(overlay)) {
-            try { finalUrl = await storeImage(await composeCreative(photo, overlay), 'jpg') }
+            try { finalUrl = await storeImage(await composeCreative(photo.bytes, overlay, aspect), 'jpg') }
             catch (ce) { console.error('[studio] compose:', ce) /* Netz: rohes Foto statt gar nichts */ }
           }
           await supabase.from('studio_image_jobs').update({ image_url: finalUrl, bg_url: bgUrl }).eq('id', jobId)
@@ -394,6 +493,8 @@ Antworte NUR mit JSON:
       // dient). Nur eigene Storage-URLs zulassen (kein Fremd-Fetch).
       const baseImage = typeof body.base_image === 'string' && body.base_image.startsWith(`${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/`)
         ? body.base_image : ''
+      // Bildformat des Einzelbilds (Standard 1:1 wie bisher)
+      const aspect = parseAspect(body.aspect) ?? '1:1'
 
       // Projekte mit echten Fotos als Material für Karussells.
       // Fotoquellen: crm_projects.images (manuell gepflegt) + deck_assets.gallery
@@ -443,7 +544,7 @@ Antworte NUR mit JSON:
     "hook": "erste Zeile, max. 60 Zeichen, nennt Ergebnis ODER Schmerzpunkt",
     "problem": "1-2 Sätze zum Schmerzpunkt, Du-Ansprache",
     "mechanism": "1-2 Sätze, WIE es funktioniert",
-    "proof": "ein Beleg MIT ZAHL (Steuersatz, Rendite, Anzahl Kunden, Zeitraum)",
+    "proof": "ein Beleg MIT ZAHL (z.B. Steuersatz, Anzahl begleiteter Kunden, Zeitraum). NIE Rendite, Mietrendite, Wertsteigerung oder Zinsen als Beleg - Renditeprognosen sind in Anzeigen tabu",
     "benefits": ["3 Vorteile, je max. 60 Zeichen, mindestens zwei davon mit Zahl"],
     "cta": "nächster Schritt MIT Aufwand, z.B. '30 Minuten Videocall, unverbindlich'"
   },
@@ -491,6 +592,7 @@ Antworte NUR mit JSON im GLEICHEN Aufbau: {"headline":"...","copy":{"hook","prob
       if (plan.format === 'single' || baseImage) {
         draft.format = 'single'
         draft.overlay = hasOverlayText(overlay) ? overlay : null
+        draft.aspect = aspect
         // Vorlage im Entwurf merken: spaetere Chat-Aenderungen am Bild muessen
         // wieder AUF DER VORLAGE aufsetzen, nicht auf dem KI-Ergebnis.
         if (baseImage) draft.base_image = baseImage
@@ -508,18 +610,18 @@ Antworte NUR mit JSON im GLEICHEN Aufbau: {"headline":"...","copy":{"hook","prob
             personas.includes('sven') ? 'One reference photo shows Sven Rüprich (real person) - his face must match that reference exactly.' : '',
             personas.includes('lotte') ? "One reference shows Lotte, Sven's chocolate labrador - she must match that reference exactly." : '',
           ].filter(Boolean).join(' ')
-          prompt = `${bases.length > 1 ? 'The FIRST reference is the base image to edit and build upon.' : 'Edit the reference image.'} ${plan.image_prompt ?? brief}. ${personaNote} ${FRAMING}`
+          prompt = `${bases.length > 1 ? 'The FIRST reference is the base image to edit and build upon.' : 'Edit the reference image.'} ${plan.image_prompt ?? brief}. ${personaNote} ${framingFor(aspect)}`
         } else {
           bases = [SVEN_PHOTO]
           // Pose UND Kleidung unangetastet lassen — je mehr das Modell am
           // Menschen ändert, desto künstlicher wirkt das Ergebnis (12.8.).
-          prompt = `Same man as in the reference photo. Keep his face, pose AND clothing EXACTLY as in the reference - change ONLY the surroundings. ${plan.image_prompt ?? 'Umgebung: modernes Neubauprojekt am Mittelmeer auf Zypern, Meer im Hintergrund'}. ${FRAMING}`
+          prompt = `Same man as in the reference photo. Keep his face, pose AND clothing EXACTLY as in the reference - change ONLY the surroundings. ${plan.image_prompt ?? 'Umgebung: modernes Neubauprojekt am Mittelmeer auf Zypern, Meer im Hintergrund'}. ${framingFor(aspect)}`
         }
-        const jobId = await startImageJob(bases, prompt, draft.overlay)
+        const jobId = await startImageJob(bases, prompt, draft.overlay, aspect)
         return json({ success: true, draft, image_job: jobId })
       }
       draft.cards = cards
-      if (!draft.cards.length) throw new Error('Zum genannten Projekt habe ich keine Fotos — bitte Fotos im Projekt hinterlegen (oder Drive-Sync abwarten) und nochmal versuchen')
+      if (!draft.cards.length) throw new Error('Zum genannten Projekt habe ich keine Fotos. Bitte Fotos im Projekt hinterlegen (oder Drive-Sync abwarten) und nochmal versuchen.')
       return json({ success: true, draft })
     }
 
@@ -528,6 +630,9 @@ Antworte NUR mit JSON im GLEICHEN Aufbau: {"headline":"...","copy":{"hook","prob
       const draft = body.draft as Draft | undefined
       const instruction = String(body.instruction ?? '').trim().slice(0, 1000)
       if (!draft || !instruction) throw new Error('draft/instruction fehlt')
+      // Format: aus dem Aufruf, sonst wie bisher im Entwurf, sonst 1:1. Gilt nur,
+      // wenn Bild oder Overlay neu entstehen.
+      const aspect = parseAspect(body.aspect) ?? parseAspect(draft.aspect) ?? '1:1'
 
       const decision = parseJson<{ target: 'caption' | 'image' | 'overlay' | 'cards'; headline?: string; copy?: AdCopy; image_prompt?: string; overlay?: Overlay | null; cards?: Card[] }>(
         await claude(`Sven bearbeitet einen Anzeigen-Entwurf per Chat. Entscheide, was er ändern will, und liefere die Änderung.
@@ -568,9 +673,10 @@ Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für 
           if (res.ok) {
             const photo = new Uint8Array(await res.arrayBuffer())
             updated.image_url = hasOverlayText(updated.overlay)
-              ? await storeImage(await composeCreative(photo, updated.overlay), 'jpg')
+              ? await storeImage(await composeCreative(photo, updated.overlay, aspect), 'jpg')
               : (draft.bg_url ?? draft.image_url)
             updated.bg_url = draft.bg_url ?? draft.image_url
+            updated.aspect = aspect
           }
         }
         updated.issues = checkAd(updated)
@@ -584,9 +690,11 @@ Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für 
         const editBase = draft.base_image ?? draft.bg_url ?? draft.image_url ?? SVEN_PHOTO
         const jobId = await startImageJob(
           [editBase],
-          `Edit the reference image: ${decision.image_prompt ?? instruction}. Keep everything else intact. ${FRAMING}`,
+          `Edit the reference image: ${decision.image_prompt ?? instruction}. Keep everything else intact. ${framingFor(aspect)}`,
           updated.overlay,
+          aspect,
         )
+        updated.aspect = aspect
         updated.issues = checkAd(updated)
         return json({ success: true, draft: updated, changed: 'image', image_job: jobId })
       } else if (decision.target === 'cards' && draft.format === 'carousel') {
@@ -596,7 +704,7 @@ Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für 
       return json({ success: true, draft: updated, changed: decision.target })
     }
 
-    // ── Als pausierte Anzeige in der System-Kampagne anlegen ─────────────────
+    // ── Als pausierte Anzeige anlegen (System-Kampagne oder gewählte Gruppe) ──
     if (mode === 'publish') {
       const draft = body.draft as Draft | undefined
       if (!draft?.headline || !draft?.message) throw new Error('draft unvollständig')
@@ -613,79 +721,209 @@ Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für 
         }, 400)
       }
 
-      const { data: st } = await supabase.from('ad_settings').select('system_campaign_id').eq('id', 'default').maybeSingle()
-      const sysCampaign = (st as { system_campaign_id?: string } | null)?.system_campaign_id
-      if (!sysCampaign) throw new Error('Keine System-Kampagne konfiguriert')
-      const adsetsRes = await fetch(`${GRAPH}/${sysCampaign}/adsets?fields=id&limit=5`, { headers: { Authorization: `Bearer ${token}` } })
-      const adsetsJson = await adsetsRes.json()
-      const adsetId = adsetsJson.data?.[0]?.id
-      if (!adsetId) throw new Error('Kein Adset in der System-Kampagne')
+      const env = metaEnv()
+      // select('*'): die neuen Spalten (default_link, default_page_id,
+      // default_ig_user_id) gibt es erst nach der Migration 20261003100000 -
+      // vorher einfach leer statt Fehler.
+      const { data: stRow } = await supabase.from('ad_settings').select('*').eq('id', 'default').maybeSingle()
+      const st = (stRow ?? {}) as Record<string, unknown>
+      const setting = (k: string): string => (typeof st[k] === 'string' ? (st[k] as string).trim() : '')
 
+      // Ziel-Link: body.link (geprüft), sonst ad_settings.default_link, sonst /termin
+      let link = LINK
+      const rawLink = typeof body.link === 'string' ? body.link.trim() : ''
+      if (rawLink) {
+        const chk = pruefeLink(rawLink)
+        if (!chk.ok) return json({ error: chk.error, code: 'link_not_allowed' }, 400)
+        link = chk.url
+      } else if (setting('default_link')) {
+        const chk = pruefeLink(setting('default_link'))
+        if (chk.ok) link = chk.url
+        else console.warn('[studio] ad_settings.default_link ungültig, nehme Standard:', chk.error)
+      }
+
+      // Anzeigengruppe: gewählt (Konto + Wohnen-Kategorie geprüft) oder wie
+      // bisher die erste Gruppe der System-Kampagne.
+      let adsetId = ''
+      const wantAdset = body.adset_id !== undefined && body.adset_id !== null && String(body.adset_id).trim() !== ''
+      if (wantAdset) {
+        adsetId = String(body.adset_id).replace(/[^0-9]/g, '')
+        if (!adsetId) return json({ error: 'adset_id ist keine gültige ID einer Anzeigengruppe.', code: 'adset_invalid' }, 400)
+        try {
+          await assertOwnAccount(adsetId)
+        } catch (e) {
+          if (e instanceof MetaApiError && (e.kind === 'permission' || e.kind === 'validation')) {
+            return json({ error: 'Die gewählte Anzeigengruppe gibt es nicht oder sie gehört nicht zu unserem Werbekonto.', code: 'adset_foreign' }, 400)
+          }
+          throw e
+        }
+        type AdsetInfo = { name?: string; campaign?: { name?: string; special_ad_categories?: string[] } }
+        let info: AdsetInfo
+        try {
+          // optimization_goal gibt es nur an Anzeigengruppen: eine Kampagnen- oder
+          // Anzeigen-ID fällt hier mit einem Validierungsfehler heraus.
+          info = await graphGet<AdsetInfo>(adsetId, { fields: 'name,optimization_goal,campaign{name,special_ad_categories}' })
+        } catch (e) {
+          if (e instanceof MetaApiError && e.kind === 'validation') {
+            return json({ error: 'Die angegebene ID ist keine Anzeigengruppe.', code: 'adset_invalid' }, 400)
+          }
+          throw e
+        }
+        const rawCats = info?.campaign?.special_ad_categories
+        const cats = Array.isArray(rawCats) ? rawCats.map(String) : []
+        if (cats.indexOf('HOUSING') < 0) {
+          const kampagne = info?.campaign?.name ? ` „${info.campaign.name}"` : ''
+          return json({
+            error: `Die Kampagne${kampagne} hat nicht die Sonderkategorie Wohnen (HOUSING). Studio-Anzeigen legen wir nur in Wohnen-Kampagnen an, bitte eine Anzeigengruppe aus einer Wohnen-Kampagne wählen.`,
+            code: 'not_housing',
+          }, 400)
+        }
+      } else {
+        const sysCampaign = String(st.system_campaign_id ?? '').replace(/[^0-9]/g, '')
+        if (!sysCampaign) throw new Error('Keine System-Kampagne konfiguriert')
+        const adsetsJson = await graphGet<{ data?: Array<{ id?: string }> }>(`${sysCampaign}/adsets`, { fields: 'id', limit: 5 })
+        adsetId = String(adsetsJson?.data?.[0]?.id ?? '')
+        if (!adsetId) throw new Error('Kein Adset in der System-Kampagne')
+      }
+
+      // Identität: Facebook-Seite + Instagram-Konto (sonst zeigt Instagram nur
+      // die Seite statt des HP-Profils). IG-Konto aus den Einstellungen, sonst
+      // das mit der Seite verknüpfte Business-Konto.
+      const pageId = setting('default_page_id').replace(/[^0-9]/g, '') || env.pageId
+      let igUserId = setting('default_ig_user_id').replace(/[^0-9]/g, '')
+      if (!igUserId) {
+        try {
+          const pg = await graphGet<{ instagram_business_account?: { id?: string } }>(pageId, { fields: 'instagram_business_account' })
+          igUserId = String(pg?.instagram_business_account?.id ?? '').replace(/[^0-9]/g, '')
+        } catch (e) {
+          console.warn('[studio] Instagram-Konto der Seite nicht lesbar:', e instanceof Error ? e.message : String(e))
+        }
+        if (!igUserId) console.warn('[studio] Kein Instagram-Konto gefunden, Anzeige läuft auf Instagram unter der Facebook-Seite')
+      }
+
+      const logBase = (): Omit<MetaWriteLogRow, 'path' | 'ok'> => ({
+        actor: caller.userId, actor_kind: caller.system ? 'system' : 'user', fn: 'studio', mode: 'publish',
+      })
+      const metaFehler = (schritt: string, e: unknown): Response => {
+        if (e instanceof MetaApiError) {
+          if (e.kind === 'dev_mode') {
+            return json({ error: 'app_dev_mode', hint: 'Die Meta-App „appy Property Analytics" (ID 1645131469886027) steht noch im Entwicklungsmodus. Auf developers.facebook.com auf „Live" schalten, dann klappt das Anlegen aus dem Studio.' }, 500)
+          }
+          if (e.userMsg === 'META_WRITES_DISABLED') {
+            return json({ error: 'Schreibzugriffe an Meta sind gerade per Not-Aus gesperrt (META_WRITES_DISABLED).', code: 'writes_disabled' }, 500)
+          }
+          return json({ error: `${schritt}: ${String(e.userMsg || e.message).slice(0, 250)}`, code: e.kind, meta: e.detail() }, 500)
+        }
+        return json({ error: `${schritt}: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300) }, 500)
+      }
+
+      // Bilder in die Bildbibliothek des Werbekontos (echter Content-Type)
       const uploadToMeta = async (url: string): Promise<string> => {
         const imgRes = await fetch(url)
         if (!imgRes.ok) throw new Error(`Bild laden ${imgRes.status}`)
-        const form = new FormData()
-        form.append('filename', new Blob([new Uint8Array(await imgRes.arrayBuffer())], { type: 'image/png' }), `studio-${Date.now()}.png`)
-        const up = await fetch(`${GRAPH}/act_${account}/adimages`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form })
-        const upJson = await up.json()
-        if (!up.ok) throw new Error(`Meta-Upload: ${JSON.stringify(upJson.error ?? upJson).slice(0, 150)}`)
-        return (Object.values(upJson.images)[0] as { hash: string }).hash
+        const bytes = new Uint8Array(await imgRes.arrayBuffer())
+        const contentType = bildTyp(bytes, imgRes.headers.get('content-type'))
+        const name = `studio-${Date.now()}`
+        const path = `act_${env.account}/adimages`
+        const request = { name, content_type: contentType, bytes: bytes.length, source: url.slice(0, 300) }
+        try {
+          const hash = await uploadImage(env.account, bytes, contentType, name)
+          await logMetaWrite(supabase, { ...logBase(), entity_level: 'image', path, request, after: { image_hash: hash }, ok: true, http_status: 200, usage: getLastUsage() })
+          return hash
+        } catch (e) {
+          await logMetaWrite(supabase, { ...logBase(), entity_level: 'image', path, request, ok: false, ...metaErrorLogFelder(e), usage: getLastUsage() })
+          throw e
+        }
       }
 
-      const linkData: Record<string, unknown> = { link: LINK, message: draft.message, call_to_action: { type: 'BOOK_NOW' } }
-      if (draft.format === 'single') {
-        if (!draft.image_url) throw new Error('Bild fehlt')
-        linkData.name = draft.headline
-        linkData.image_hash = await uploadToMeta(draft.image_url)
-      } else {
-        linkData.name = draft.headline
-        linkData.child_attachments = await Promise.all((draft.cards ?? []).map(async c => ({
-          link: LINK, name: c.title.slice(0, 40), description: c.description.slice(0, 80),
-          image_hash: await uploadToMeta(c.image_url),
-        })))
-        linkData.multi_share_optimized = true
-        linkData.multi_share_end_card = false
+      // Name ohne Gedankenstrich (cleanName ersetzt U+2012 bis U+2015)
+      const adName = cleanName(`Studio - ${draft.headline}`, 100)
+      const linkData: Record<string, unknown> = {
+        link, message: draft.message,
+        call_to_action: { type: 'BOOK_NOW', value: { link } },
       }
-      const creativeRes = await fetch(`${GRAPH}/act_${account}/adcreatives`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: `Studio – ${draft.headline}`.slice(0, 100),
-          url_tags: URL_TAGS,
-          object_story_spec: { page_id: PAGE_ID, link_data: linkData },
-        }),
-      })
-      const creativeJson = await creativeRes.json()
-      if (!creativeRes.ok) {
-        const sub = creativeJson?.error?.error_subcode
-        if (sub === 1885183) return json({ error: 'app_dev_mode', hint: 'Die Meta-App „appy Property Analytics" (ID 1645131469886027) steht noch im Entwicklungsmodus — auf developers.facebook.com auf „Live" schalten, dann klappt das Anlegen aus dem Studio.' }, 500)
-        throw new Error(`Creative: ${JSON.stringify(creativeJson.error?.error_user_msg ?? creativeJson.error?.message ?? creativeJson).slice(0, 250)}`)
+      try {
+        if (draft.format === 'single') {
+          if (!draft.image_url) throw new Error('Bild fehlt')
+          linkData.name = draft.headline
+          linkData.image_hash = await uploadToMeta(draft.image_url)
+        } else {
+          linkData.name = draft.headline
+          linkData.child_attachments = await Promise.all((draft.cards ?? []).map(async c => ({
+            link, name: c.title.slice(0, 40), description: c.description.slice(0, 80),
+            image_hash: await uploadToMeta(c.image_url),
+          })))
+          linkData.multi_share_optimized = true
+          linkData.multi_share_end_card = false
+        }
+      } catch (e) {
+        return metaFehler('Bild-Upload', e)
       }
-      const adRes = await fetch(`${GRAPH}/act_${account}/ads`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: `Studio – ${draft.headline}`.slice(0, 100),
-          adset_id: adsetId,
-          creative: { creative_id: creativeJson.id },
-          status: 'PAUSED',
-        }),
-      })
-      const adJson = await adRes.json()
-      if (!adRes.ok) throw new Error(`Ad: ${JSON.stringify(adJson.error?.message ?? adJson).slice(0, 200)}`)
-      console.log(`[ad-studio] Anzeige angelegt (PAUSED): ${adJson.id}`)
+
+      const objectStorySpec: Record<string, unknown> = { page_id: pageId, link_data: linkData }
+      if (igUserId) objectStorySpec.instagram_user_id = igUserId
+      const creativeBody: Record<string, unknown> = {
+        name: adName,
+        url_tags: URL_TAGS_STANDARD,
+        object_story_spec: objectStorySpec,
+        // Jede Advantage+ Creative-Funktion ausdrücklich AUS (echte Fotos, Svens
+        // Texte, keine KI-Varianten); Meta schaltet sonst einige still ein.
+        degrees_of_freedom_spec: { creative_features_spec: creativeFeaturesSpec(undefined) },
+        contextual_multi_ads: { enroll_status: 'OPT_OUT' },
+      }
+      const creativePath = `act_${env.account}/adcreatives`
+      let creativeId = ''
+      try {
+        const cr = await graphPost<{ id?: string }>(creativePath, creativeBody)
+        creativeId = String(cr?.id ?? '')
+        if (!creativeId) throw new Error('Meta hat keine Creative-ID geliefert')
+        await logMetaWrite(supabase, { ...logBase(), entity_level: 'creative', entity_id: creativeId, path: creativePath, request: creativeBody, after: { id: creativeId }, ok: true, http_status: 200, usage: getLastUsage() })
+      } catch (e) {
+        await logMetaWrite(supabase, { ...logBase(), entity_level: 'creative', path: creativePath, request: creativeBody, ok: false, ...metaErrorLogFelder(e), usage: getLastUsage() })
+        return metaFehler('Creative', e)
+      }
+
+      const adBody: Record<string, unknown> = {
+        name: adName,
+        adset_id: adsetId,
+        creative: { creative_id: creativeId },
+        status: 'PAUSED',
+      }
+      const adPath = `act_${env.account}/ads`
+      let adId = ''
+      try {
+        const ad = await graphPost<{ id?: string }>(adPath, adBody)
+        adId = String(ad?.id ?? '')
+        if (!adId) throw new Error('Meta hat keine Anzeigen-ID geliefert')
+        await logMetaWrite(supabase, { ...logBase(), entity_level: 'ad', entity_id: adId, path: adPath, request: adBody, after: { id: adId, status: 'PAUSED' }, ok: true, http_status: 200, usage: getLastUsage() })
+      } catch (e) {
+        await logMetaWrite(supabase, { ...logBase(), entity_level: 'ad', path: adPath, request: adBody, ok: false, ...metaErrorLogFelder(e), usage: getLastUsage() })
+        return metaFehler('Ad', e)
+      }
+      console.log(`[studio] Anzeige angelegt (PAUSED): ${adId} in Anzeigengruppe ${adsetId}`)
       // In die „Vorbereitete Anzeigen"-Ablage: bleibt aus der Haupt-Übersicht
       // draussen, bis Sven/Giona sie dort per „Freigeben" dazunehmen.
       await supabase.from('studio_prepared_ads')
-        .upsert({ ad_id: String(adJson.id), ad_name: `Studio – ${draft.headline}`.slice(0, 100) }, { onConflict: 'ad_id' })
-      return json({ success: true, ad_id: adJson.id, creative_id: creativeJson.id })
+        .upsert({ ad_id: adId, ad_name: adName }, { onConflict: 'ad_id' })
+      return json({ success: true, ad_id: adId, creative_id: creativeId, adset_id: adsetId, instagram_user_id: igUserId || null, link })
     }
 
     throw new Error(`Unbekannter mode "${mode}"`)
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+    let msg = err instanceof Error ? err.message : String(err)
     const status = err instanceof AdsAuthError ? err.status : 500
+    const extra: Record<string, unknown> = {}
+    if (err instanceof MetaApiError) {
+      if (err.userMsg === 'META_WRITES_DISABLED') {
+        msg = 'Schreibzugriffe an Meta sind gerade per Not-Aus gesperrt (META_WRITES_DISABLED).'
+        extra.code = 'writes_disabled'
+      } else {
+        msg = String(err.userMsg || err.message).slice(0, 300)
+        extra.code = err.kind
+        extra.meta = err.detail()
+      }
+    }
     console.error('[studio]', status, msg)
-    return json({ error: msg }, status)
+    return json({ error: msg, ...extra }, status)
   }
 })

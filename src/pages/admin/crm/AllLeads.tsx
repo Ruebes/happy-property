@@ -80,7 +80,10 @@ export default function AllLeads() {
   const [filterStatus, setFilterStatus] = useState('')
   // Qualitaets-Ansicht: nur Leads, deren Gespraech vorbei ist und die noch keine
   // Bewertung haben. Genau diese Bewertung geht als QualifiedLead an Meta zurueck.
-  const [onlyRate, setOnlyRate] = useState(false)
+  // ?bewerten=1 (Link aus dem Werbemanager, Reiter Qualität) startet gefiltert.
+  const [onlyRate, setOnlyRate] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get('bewerten') === '1' } catch { return false }
+  })
   // leadId → id des juengsten vergangenen Termins (fuer AppointmentHeld).
   const [pastAppt, setPastAppt] = useState<Record<string, string>>({})
   const [rating, setRating] = useState<string | null>(null)

@@ -721,6 +721,258 @@ const checkWaConnection: Check = {
   },
 }
 
+// ── Pruefung 20: Werbung (Meta) - Daten, Freigaben, Pixel ───────────────────
+// Werbemanager + Autopilot (Okt 2026) brauchen frische Zahlen, eine fertige
+// Nachtkette und saubere Zuordnung. Faellt davon etwas aus, entscheidet der
+// Autopilot blind oder gar nicht, und niemand merkt es (Ausfall 01.10.: alle
+// Nacht-Jobs "job startup timeout", erst der Folgelauf fuellte die Daten).
+// Jede Abfrage ist tolerant: fehlt eine Tabelle oder Spalte (Migration noch
+// nicht eingespielt), entfaellt nur dieser Teil.
+const WERBE_PIXEL_ID = '1083578343946189'   // Pixel, das /termin und die Landing Pages feuern
+const WERBE_LINK = 'https://portal.happy-property.com/admin/crm/ads'
+const AUTOPILOT_LINK = 'https://portal.happy-property.com/admin/crm/ads?tab=autopilot'
+const META_QUELLEN = ['meta', 'facebook', 'fb', 'instagram', 'ig']
+const KETTE: Array<[string, string]> = [['sync', 'Abgleich mit Meta'], ['qualitaet', 'Qualitätsrechnung'], ['regeln', 'Regelprüfung']]
+
+type Zeile = Record<string, unknown>
+const stunden = (iso: unknown): number => {
+  const t = typeof iso === 'string' ? Date.parse(iso) : NaN
+  return Number.isFinite(t) ? (Date.now() - t) / 36e5 : Infinity
+}
+const utcDatum = (d: Date) => d.toISOString().slice(0, 10)
+const berlinDatum = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d)
+const euro = (v: number) => `${Math.round(v).toLocaleString('de-DE')} €`
+const kurz = (s: unknown, n: number) => { const t = String(s ?? '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 3)}...` : t }
+
+// Einstellungen des Werbemanagers (eine Zeile). '*', damit fehlende neue Spalten nicht stören.
+async function werbeEinstellungen(sb: Sb): Promise<Zeile | null> {
+  try {
+    const { data, error } = await sb.from('ad_settings').select('*').eq('id', 'default').maybeSingle()
+    return error ? null : ((data ?? null) as Zeile | null)
+  } catch { return null }
+}
+
+const checkWerbungDaten: Check = {
+  key: 'werbung_daten',
+  title: 'Werbung: Daten, Prüfung und Pixel',
+  run: async (sb) => {
+    const out: Finding[] = []
+    const fund = (id: string, severity: Finding['severity'], what: string, fix: string) => out.push({
+      check_key: 'werbung_daten', severity, entity_kind: 'system', entity_id: id, entity_label: 'Werbung (Meta)',
+      what_plain: what, action: 'proposed', fix_plain: fix,
+    })
+    const settings = await werbeEinstellungen(sb)
+
+    // 1. Abgleich mit Meta älter als 30 Stunden? Ist der Katalog frisch, läuft der
+    //    Abgleich und Meta hat nur nichts ausgeliefert: dann kein Alarm.
+    try {
+      const { data: ins, error } = await sb.from('ad_insights_daily').select('synced_at').order('synced_at', { ascending: false }).limit(1)
+      const insH = error ? -1 : stunden((ins as Zeile[] | null)?.[0]?.synced_at)
+      if (insH > 30) {
+        const { data: kat, error: katErr } = await sb.from('ad_catalog').select('updated_at').order('updated_at', { ascending: false }).limit(1)
+        const katH = katErr ? Infinity : stunden((kat as Zeile[] | null)?.[0]?.updated_at)
+        if (katH > 30 && Number.isFinite(insH)) {
+          fund('werbe_sync', 'hoch',
+            `Der Abgleich mit Meta ist seit ${Math.round(insH)} Stunden nicht gelaufen. Werbemanager und Autopilot arbeiten mit alten Zahlen.`,
+            'Im Werbemanager oben "Jetzt abgleichen" klicken. Kommt ein Fehler, ist meist der Meta-Zugang (Token) abgelaufen.')
+        }
+      }
+    } catch { /* Tabelle fehlt: kein Befund */ }
+
+    // 2. Nachtkette (Abgleich -> Qualität -> Regeln) bis 05:30 UTC fertig? Nur prüfen,
+    //    wenn die Kette überhaupt schon läuft (Einträge der letzten 7 Tage).
+    try {
+      const jetzt = new Date()
+      const frist = Date.UTC(jetzt.getUTCFullYear(), jetzt.getUTCMonth(), jetzt.getUTCDate(), 5, 30)
+      const soll = utcDatum(jetzt.getTime() >= frist ? jetzt : new Date(jetzt.getTime() - 864e5))
+      const { data: runs, error } = await sb.from('ad_autopilot_runs').select('lauf_datum, schritt, status, fehler')
+        .gte('lauf_datum', utcDatum(new Date(jetzt.getTime() - 7 * 864e5))).order('lauf_datum', { ascending: false }).limit(80)
+      const rows = (error ? [] : (runs ?? [])) as Zeile[]
+      if (rows.length) {
+        const amTag = rows.filter(r => String(r.lauf_datum) === soll)
+        const offen = KETTE.filter(([s]) => !['fertig', 'uebersprungen'].includes(String(amTag.find(r => r.schritt === s)?.status ?? '')))
+        if (offen.length) {
+          const fehler = amTag.map(r => r.fehler).find(f => typeof f === 'string' && f.trim())
+          fund('werbe_kette', 'hoch',
+            `Die nächtliche Werbe-Auswertung vom ${soll} ist nicht fertig geworden (offen: ${offen.map(([, l]) => l).join(', ')}).${fehler ? ` Letzter Fehler: ${kurz(fehler, 160)}` : ''} Bis dahin gibt es keine neuen Vorschläge.`,
+            'Läuft der Nachholer (04:50 UTC) auch nicht durch, Claude den Fehler aus dieser Mail geben.')
+        }
+      }
+    } catch { /* Tabelle fehlt */ }
+
+    // 3. Conversions-API: Fehler in den letzten 24 Stunden, mit Echtzeit auch Stau.
+    try {
+      const seit = new Date(Date.now() - 24 * 36e5).toISOString()
+      const { data: fe, error } = await sb.from('capi_outbox').select('event_name, fehler').eq('status', 'fehler').gte('updated_at', seit).limit(200)
+      const fehlerRows = (error ? [] : (fe ?? [])) as Zeile[]
+      if (fehlerRows.length) {
+        fund('werbe_capi', 'mittel',
+          `${fehlerRows.length} Rückmeldungen an Meta (Conversions-API) sind in den letzten 24 Stunden gescheitert. Meta lernt dann nicht, welche Anzeigen gute Termine bringen. Beispiel: ${kurz(fehlerRows[0].fehler ?? fehlerRows[0].event_name, 140)}`,
+          'Claude den Fehlertext geben. Häufig: Meta-Zugang abgelaufen oder ein Ereignis älter als 7 Tage.')
+      }
+      if (!error && settings?.capi_echtzeit === true) {
+        const { data: st, error: stErr } = await sb.from('capi_outbox').select('id').eq('status', 'offen')
+          .lt('created_at', new Date(Date.now() - 2 * 36e5).toISOString()).gte('created_at', new Date(Date.now() - 7 * 864e5).toISOString()).limit(200)
+        const stau = (stErr ? [] : (st ?? [])) as Zeile[]
+        if (stau.length) {
+          fund('werbe_capi_stau', 'mittel',
+            `${stau.length} Rückmeldungen an Meta warten seit über 2 Stunden auf den Versand, obwohl Echtzeit eingeschaltet ist.`,
+            'Echtzeit-Versand prüfen (werbe-signal). Der Tageslauf holt Termine nach, Lead-Ereignisse aber nicht.')
+        }
+      }
+    } catch { /* Tabelle fehlt */ }
+
+    // 4. Zuordnungsquote Lead -> Anzeige (Konto, 14 Tage, sonst 30/7) unter 80 %?
+    try {
+      const { data: q, error } = await sb.from('ad_quality_daily').select('stichtag, fenster, attribution_coverage, leads')
+        .eq('entity_level', 'account').in('fenster', [7, 14, 30]).order('stichtag', { ascending: false }).limit(9)
+      const rows = (error ? [] : (q ?? [])) as Zeile[]
+      const neuester = rows[0]?.stichtag
+      const zeile = [14, 30, 7].map(f => rows.find(r => r.stichtag === neuester && Number(r.fenster) === f && r.attribution_coverage != null)).find(Boolean)
+      const cov = zeile ? Number(zeile.attribution_coverage) : NaN
+      if (zeile && Number.isFinite(cov) && cov < 0.8 && Number(zeile.leads ?? 0) > 0) {
+        fund('werbe_zuordnung', 'mittel',
+          `Nur ${Math.round(cov * 100)} % der Meta-Leads (${zeile.fenster} Tage) lassen sich einer Anzeige zuordnen, Ziel sind mindestens 80 %. Kill-Regeln macht der Autopilot deshalb nur als Vorschlag.`,
+          'Bei den betroffenen Anzeigen die URL-Parameter auf den Standard setzen (Werbemanager, Anzeige bearbeiten) - oder Giona bitten.')
+      }
+    } catch { /* Tabelle fehlt */ }
+
+    // 5. Abgelehnte oder eingeschränkte Anzeigen, die eigentlich laufen sollen.
+    try {
+      const { data: ads, error } = await sb.from('ad_catalog').select('ad_id, ad_name, campaign_id, campaign_name, status, effective_status')
+        .in('effective_status', ['DISAPPROVED', 'WITH_ISSUES']).limit(50)
+      let rows = ((error ? [] : (ads ?? [])) as Zeile[]).filter(a => String(a.status ?? '').toUpperCase() === 'ACTIVE')
+      const kampagnen = [...new Set(rows.map(a => String(a.campaign_id ?? '')).filter(Boolean))]
+      if (rows.length && kampagnen.length) {
+        const { data: ks, error: kErr } = await sb.from('meta_campaigns').select('campaign_id, status').in('campaign_id', kampagnen)
+        if (!kErr) {
+          const aus = new Set(((ks ?? []) as Zeile[]).filter(k => k.status && String(k.status).toUpperCase() !== 'ACTIVE').map(k => String(k.campaign_id)))
+          rows = rows.filter(a => !aus.has(String(a.campaign_id ?? '')))
+        }
+      }
+      if (rows.length) {
+        const abgelehnt = rows.filter(a => a.effective_status === 'DISAPPROVED').length
+        const namen = rows.slice(0, 4).map(a => `"${kurz(a.ad_name ?? a.ad_id, 50)}"`).join(', ')
+        fund('werbe_pruefung', 'hoch',
+          `${rows.length} eingeschaltete Anzeige(n) laufen nicht oder nur eingeschränkt (${abgelehnt} abgelehnt, ${rows.length - abgelehnt} mit Problemen): ${namen}${rows.length > 4 ? ' ...' : ''}.`,
+          `Im Werbemanager (${WERBE_LINK}) den Ablehnungsgrund ansehen und die Anzeige ersetzen oder pausieren.`)
+      }
+    } catch { /* Spalte fehlt */ }
+
+    // 6. Aktive Anzeigengruppen, die auf ein anderes Pixel optimieren als das,
+    //    das /termin füttert (Plan-B 10/2026: Pixel 987745530157374 bekommt nichts).
+    try {
+      const { data: sets, error } = await sb.from('meta_adsets').select('adset_id, name, promoted_object').eq('effective_status', 'ACTIVE').limit(100)
+      const falsch = ((error ? [] : (sets ?? [])) as Zeile[]).filter(s => {
+        const pid = String(((s.promoted_object ?? {}) as Zeile).pixel_id ?? '').trim()
+        return !!pid && pid !== WERBE_PIXEL_ID
+      })
+      if (falsch.length) {
+        const pixel = String(((falsch[0].promoted_object ?? {}) as Zeile).pixel_id ?? '')
+        fund('werbe_pixel', 'hoch',
+          `${falsch.length} aktive Anzeigengruppe(n) optimieren auf das Pixel ${pixel}, der Termin-Funnel meldet aber an ${WERBE_PIXEL_ID}: ${falsch.slice(0, 3).map(s => `"${kurz(s.name ?? s.adset_id, 50)}"`).join(', ')}. Meta lernt dort nichts über Leads und Termine.`,
+          'Mit Giona klären, welches Pixel gilt. Umstellen startet die Lernphase neu, deshalb an einem Montag oder Donnerstag.')
+      }
+    } catch { /* Tabelle fehlt */ }
+
+    // 7. Vorrat an freigegebenen Werbemitteln (nur, wenn der Vorrat schon benutzt wird).
+    try {
+      const { data: pool, error } = await sb.from('ad_creative_pool').select('status').limit(1000)
+      const rows = (error ? [] : (pool ?? [])) as Zeile[]
+      const frei = rows.filter(p => p.status === 'freigegeben').length
+      if (rows.length && frei < 4) {
+        fund('werbe_vorrat', 'niedrig',
+          `Im Vorrat liegen nur ${frei} freigegebene Werbemittel (Ziel mindestens 4). Ermüdet eine Anzeige, hat der Autopilot nichts zum Nachschieben.`,
+          `Im Werbemanager unter Werbemittel (${WERBE_LINK}?tab=werbemittel) Entwürfe prüfen und freigeben.`)
+      }
+    } catch { /* Tabelle fehlt */ }
+
+    // Autopilot vom System gestoppt? (werbe_autopilot_stopp setzt Modus 'aus' + Grund)
+    if (settings && settings.autopilot_mode === 'aus' && typeof settings.autopilot_stop_grund === 'string' && settings.autopilot_stop_grund.trim()) {
+      fund('werbe_autopilot_stopp', 'mittel',
+        `Der Werbe-Autopilot ist gestoppt: ${kurz(settings.autopilot_stop_grund, 160)}`,
+        `Grund prüfen und den Autopilot im Werbemanager (${AUTOPILOT_LINK}) wieder einschalten (nur Admin).`)
+    }
+    return out
+  },
+}
+
+// ── Werbe-Block für die Morgenmail (max. 8 Zeilen) ──────────────────────────
+interface WerbeZeile { text: string; link?: string }
+
+async function buildWerbeBlock(sb: Sb, probleme: Finding[] = []): Promise<WerbeZeile[]> {
+  const zeilen: WerbeZeile[] = []
+  const settings = await werbeEinstellungen(sb)
+  const ziel = Number(settings?.target_cpte_eur ?? 145) || 145
+
+  // Ausgaben gestern / 7 Tage (spend_eur ist schon in EUR umgerechnet)
+  let spend7: number | null = null
+  try {
+    const gestern = berlinDatum(new Date(Date.now() - 864e5))
+    const ab = berlinDatum(new Date(Date.now() - 7 * 864e5))
+    const { data, error } = await sb.from('ad_insights_daily').select('day, spend_eur').gte('day', ab).lte('day', gestern).limit(5000)
+    if (!error) {
+      const rows = (data ?? []) as Zeile[]
+      spend7 = rows.reduce((s, r) => s + (Number(r.spend_eur) || 0), 0)
+      const g = rows.filter(r => String(r.day) === gestern).reduce((s, r) => s + (Number(r.spend_eur) || 0), 0)
+      zeilen.push({ text: `Ausgaben gestern: ${euro(g)}, letzte 7 Tage: ${euro(spend7)}` })
+    }
+  } catch { /* ohne Zahlen keine Zeile */ }
+
+  // Termine + Kosten je Termin-Äquivalent (Konto, 7 Tage) aus der Qualitätsrechnung,
+  // sonst Termine von Meta-Leads direkt aus dem Kalender.
+  let terminZeile = false
+  try {
+    const { data, error } = await sb.from('ad_quality_daily').select('stichtag, spend_eur, booked, te_capped')
+      .eq('entity_level', 'account').eq('fenster', 7).order('stichtag', { ascending: false }).limit(1)
+    const q = (error ? null : ((data ?? []) as Zeile[])[0]) ?? null
+    if (q) {
+      const te = Number(q.te_capped) || 0
+      const cpte = te > 0 ? Number(q.spend_eur) / te : null
+      zeilen.push({ text: `Termine aus Meta (7 Tage): ${Number(q.booked) || 0}, Kosten je Termin-Äquivalent: ${cpte != null ? euro(cpte) : 'noch keins'} (Ziel ${euro(ziel)})` })
+      terminZeile = true
+    }
+  } catch { /* Tabelle fehlt */ }
+  if (!terminZeile) {
+    try {
+      const { data, error } = await sb.from('crm_appointments').select('id, leads!inner(utm_source)')
+        .eq('internal', false).gte('created_at', new Date(Date.now() - 7 * 864e5).toISOString())
+        .in('leads.utm_source', META_QUELLEN).limit(500)
+      if (!error) {
+        const n = ((data ?? []) as Zeile[]).length
+        zeilen.push({ text: `Termine aus Meta (7 Tage): ${n}${n && spend7 != null ? `, Kosten je Termin: ${euro(spend7 / n)} (Ziel je Termin-Äquivalent ${euro(ziel)})` : ''}` })
+      }
+    } catch { /* ohne Zahl keine Zeile */ }
+  }
+
+  // Offene Vorschläge des Autopiloten
+  let vorschlaege = 0
+  try {
+    const { data, error } = await sb.from('ad_actions').select('id, gruppe_id, expires_at')
+      .eq('freigabe', 'vorgeschlagen').is('status', null).limit(500)
+    if (!error) {
+      const jetzt = Date.now()
+      const gueltig = ((data ?? []) as Zeile[]).filter(r => !r.expires_at || Date.parse(String(r.expires_at)) > jetzt)
+      vorschlaege = new Set(gueltig.map(r => String(r.gruppe_id ?? r.id))).size
+      zeilen.push(vorschlaege
+        ? { text: `Offene Vorschläge des Autopiloten: ${vorschlaege}`, link: AUTOPILOT_LINK }
+        : { text: 'Offene Vorschläge des Autopiloten: keine' })
+    }
+  } catch { /* Spalten fehlen */ }
+
+  // Probleme (aus Prüfung 20) und was Sven tun muss
+  if (probleme.length) {
+    zeilen.push({ text: `Probleme: ${probleme.length} (Details unten). Wichtigstes: ${kurz(probleme[0].what_plain, 140)}` })
+  } else if (zeilen.length) {
+    zeilen.push({ text: 'Probleme: keine' })
+  }
+  const tun: string[] = []
+  if (vorschlaege) tun.push('Vorschläge prüfen und freigeben oder ablehnen')
+  if (probleme[0]?.fix_plain) tun.push(kurz(probleme[0].fix_plain, 140))
+  if (zeilen.length) zeilen.push({ text: `Für dich zu tun: ${tun.length ? tun.join('; ') : 'nichts'}`, link: vorschlaege ? AUTOPILOT_LINK : undefined })
+  return zeilen.slice(0, 8)
+}
+
 const CHECKS: Check[] = [
   checkPropertyDrift, checkDuplicateUnits, checkStaleDecks,
   checkEmptyPortals, checkAppointmentsNoOutcome, checkStuckMessages, checkFailedMessages,
@@ -729,10 +981,14 @@ const CHECKS: Check[] = [
   checkDirtyPhones, checkFurnitureData, checkProjectBasics, checkCalcItemBasics,
   // Pruefung 18 war bis 17.9.2026 definiert, aber nie registriert.
   checkWaQuota, checkWaConnection,
+  // Pruefung 17 (Zeitplan-Jobs) war ebenfalls definiert, aber nie registriert (Okt 2026).
+  checkCronHealth, checkWerbungDaten,
 ]
 
 // ── Morgenbericht in Alltagssprache ─────────────────────────────────────────
-function buildReport(fixed: Finding[], open: Finding[], datum: string, dryRun: boolean): { subject: string; html: string } {
+const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+function buildReport(fixed: Finding[], open: Finding[], datum: string, dryRun: boolean, werbe: WerbeZeile[] = []): { subject: string; html: string } {
   const li = (f: Finding) => `
     <tr><td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#374151;">
       <strong style="color:#111827;">${f.entity_label || ''}</strong><br>
@@ -758,6 +1014,10 @@ function buildReport(fixed: Finding[], open: Finding[], datum: string, dryRun: b
       <p style="font-size:13px;color:#6b7280;margin:0 0 8px;">Hier entscheide lieber du — ich habe nichts verändert.</p>
       <table style="width:100%;border-collapse:collapse;background:#fffaf3;border-radius:10px;">${open.map(li).join('')}</table>` : ''}
     ${!fixed.length && !open.length ? `<p style="font-size:15px;">Alles sauber — keine Auffälligkeiten gefunden. 🎉</p>` : ''}
+    ${werbe.length ? `
+      <h3 style="font-size:16px;color:#111827;margin:24px 0 8px;">Werbung (Meta)</h3>
+      <table style="width:100%;border-collapse:collapse;background:#f6f8fc;border-radius:10px;">${werbe.map(z => `
+        <tr><td style="padding:8px 12px;border-bottom:1px solid #eef0f4;font-size:14px;color:#374151;">${esc(z.text)}${z.link ? ` <a href="${esc(z.link)}" style="color:#ff795d;">ansehen</a>` : ''}</td></tr>`).join('')}</table>` : ''}
     <p style="text-align:center;margin:28px 0;">
       <a href="https://portal.happy-property.com/admin/crm" style="background:#ff795d;color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;display:inline-block;">Im CRM ansehen</a>
     </p>
@@ -818,7 +1078,11 @@ Deno.serve(async (req) => {
   // sehen, was gefunden wurde. Im dry_run steht alles unter „ansehen", nichts verändert.
   if (notify) {
     const datum = new Date().toLocaleDateString('de-DE', { day: '2-digit', month: 'long', year: 'numeric' })
-    const { subject, html } = buildReport(fixed, open, datum, dryRun)
+    // Werbe-Block: Kennzahlen + Probleme aus Prüfung 20. Darf die Mail nie verhindern.
+    let werbe: WerbeZeile[] = []
+    try { werbe = await buildWerbeBlock(sb, all.filter(f => f.check_key === 'werbung_daten')) }
+    catch (e) { console.warn('[nightly-health] Werbe-Block:', e) }
+    const { subject, html } = buildReport(fixed, open, datum, dryRun, werbe)
     await sb.functions.invoke('send-email', {
       body: { to: Deno.env.get('HEALTH_REPORT_TO') ?? 'sven@happy-property.com', subject, html },
     }).catch((e: unknown) => console.warn('[nightly-health] Mail:', e))

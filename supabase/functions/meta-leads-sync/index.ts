@@ -24,6 +24,18 @@
 //                        Einstellungen → Systembenutzer → Token generieren, dabei
 //                        die Seite Happy Property mit auswählen).
 //   META_AD_ACCOUNT_ID = 4065490590399677 (Sveru Marketing LLC)
+//   META_GRAPH_VERSION = optional (Form vNN.0), sonst v25.0 aus _shared/metaGraph.ts.
+//                        Rückweg ohne Neu-Deploy: Secret auf v21.0 setzen.
+//
+// ── Zuordnung Lead -> Anzeige (Okt 2026) ──
+//   Port aus dem Live-Stand v18: utm_term = ad_id beim Anlegen, fehlende Herkunft
+//   (utm_*) bei Wiederkehrern nachtragen. Neu: Graph liefert zusätzlich adset_id,
+//   campaign_id, form_id; geschrieben nach leads.meta_ad_id/meta_adset_id/
+//   meta_campaign_id/meta_form_id/meta_leadgen_id (+ meta_attr_quelle 'leadgen',
+//   meta_attr_at). Die Spalten kommen mit 20261003101000_leads_meta_zuordnung.sql;
+//   fehlen sie (Deploy vor der Migration), werden sie einfach weggelassen. Ein
+//   Lauf prüft das genau einmal (select meta_ad_id limit 1).
+//   Token nur im Authorization-Header, nie in der URL (Logs, Fehlertexte).
 //
 // ── Deployment ──
 //   supabase functions deploy meta-leads-sync   (verify_jwt = true, so ist sie live)
@@ -37,14 +49,13 @@
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { gateCaller } from '../_shared/callerGate.ts'
+import { GRAPH, metaEnv } from '../_shared/metaGraph.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
-const GRAPH = 'https://graph.facebook.com/v21.0'
-const PAGE_ID = '556440087559971'   // Immobilien in Zypern - Happy Property
 
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { ...CORS, 'Content-Type': 'application/json' } })
@@ -56,9 +67,70 @@ interface RawLead {
   field_data?: FieldEntry[]
   ad_id?: string
   ad_name?: string
+  adset_id?: string
+  campaign_id?: string
   campaign_name?: string
+  form_id?: string
   form_name?: string
 }
+
+// ── Graph-Aufrufe: Token nur im Header ───────────────────────────────────────
+interface GraphAntwort {
+  data?: unknown[]
+  paging?: { next?: string }
+  error?: { message?: string }
+}
+async function graphJson(url: string, token: string): Promise<GraphAntwort> {
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  try { return await res.json() as GraphAntwort }
+  catch { return { error: { message: `HTTP ${res.status}, keine JSON-Antwort` } } }
+}
+// Paging-Link von Meta: nur graph.facebook.com, ein eventuell angehängter Token fliegt raus.
+function naechsteSeite(raw: unknown): string {
+  if (typeof raw !== 'string' || !raw) return ''
+  try {
+    const u = new URL(raw)
+    if (u.protocol !== 'https:' || u.hostname !== 'graph.facebook.com') return ''
+    u.searchParams.delete('access_token')
+    return u.toString()
+  } catch { return '' }
+}
+
+// ── Feste Zuordnung Lead -> Anzeige (leads.meta_*) ───────────────────────────
+const META_SPALTEN = ['meta_ad_id', 'meta_adset_id', 'meta_campaign_id', 'meta_form_id', 'meta_leadgen_id', 'meta_attr_quelle', 'meta_attr_at'] as const
+
+// Gibt es die Spalten schon? Einmal je Lauf prüfen, damit ein Deploy vor der
+// Migration keinen einzigen Lead verliert.
+async function metaSpaltenVorhanden(admin: SupabaseClient): Promise<boolean> {
+  try {
+    const { error } = await admin.from('leads').select('meta_ad_id').limit(1)
+    if (error) console.warn('[meta-leads-sync] leads.meta_* fehlen noch, Zuordnung wird nicht geschrieben')
+    return !error
+  } catch { return false }
+}
+
+const nurId = (v: unknown): string | null => {
+  const s = String(v ?? '').trim().replace(/^l:/i, '')
+  return /^\d{6,25}$/.test(s) ? s : null
+}
+
+function metaZuordnung(raw: RawLead): Record<string, string | null> {
+  const ad = nurId(raw.ad_id), adset = nurId(raw.adset_id), kampagne = nurId(raw.campaign_id)
+  const leadgen = nurId(raw.id)   // CSV ohne ID-Spalte: "csv-…" -> null
+  if (!ad && !adset && !kampagne && !leadgen) return {}
+  return {
+    meta_ad_id: ad, meta_adset_id: adset, meta_campaign_id: kampagne,
+    meta_form_id: nurId(raw.form_id), meta_leadgen_id: leadgen,
+    meta_attr_quelle: 'leadgen', meta_attr_at: new Date().toISOString(),
+  }
+}
+
+const ohneMeta = (row: Record<string, unknown>): Record<string, unknown> => {
+  const r = { ...row }
+  for (const k of META_SPALTEN) delete r[k]
+  return r
+}
+const hatMeta = (row: Record<string, unknown>) => META_SPALTEN.some(k => k in row)
 
 // Meta liefert Feldnamen je nach Formular unterschiedlich („email", „e-mail",
 // „email_address", deutsche Beschriftungen …). Deshalb nach Bedeutung suchen,
@@ -80,7 +152,7 @@ const normPhone = (v: string) => v.replace(/[^0-9+]/g, '')
 
 // Ein Lead aus Meta ins CRM übernehmen. Gibt zurück, was passiert ist, damit der
 // Aufrufer eine ehrliche Bilanz bekommt (angelegt / ergänzt / übersprungen).
-async function upsertLead(admin: SupabaseClient, raw: RawLead): Promise<{ status: 'created' | 'updated' | 'skipped'; leadId?: string }> {
+async function upsertLead(admin: SupabaseClient, raw: RawLead, metaSpalten: boolean): Promise<{ status: 'created' | 'updated' | 'skipped'; leadId?: string }> {
   const fields = raw.field_data ?? []
   const email = (pick(fields, 'email') || '').toLowerCase()
   const phone = normPhone(pick(fields, 'phone'))
@@ -137,22 +209,57 @@ async function upsertLead(admin: SupabaseClient, raw: RawLead): Promise<{ status
 
   let ergebnis: 'created' | 'updated'
   if (leadId) {
-    const { data: old } = await admin.from('leads').select('notes').eq('id', leadId).maybeSingle()
+    const basis = 'notes, utm_source, utm_campaign, utm_content, utm_term'
+    let { data: old, error: oldErr } = await admin.from('leads')
+      .select(metaSpalten ? `${basis}, meta_ad_id, meta_adset_id, meta_campaign_id, meta_leadgen_id` : basis)
+      .eq('id', leadId).maybeSingle()
+    // Ohne gelesene Notiz würde die Dubletten-Sperre unten nicht greifen und
+    // jeder Lauf hängt dieselbe Notiz erneut an: im Zweifel ohne meta_* lesen.
+    if (oldErr && metaSpalten) ({ data: old, error: oldErr } = await admin.from('leads').select(basis).eq('id', leadId).maybeSingle())
+    if (oldErr) { console.error('[meta-leads-sync] Lead lesen:', oldErr.message); return { status: 'skipped', leadId } }
     const prev = (old as { notes?: string } | null)?.notes ?? ''
     if (prev.includes(`Meta-Lead-ID: ${raw.id}`)) return { status: 'skipped', leadId }    // schon drin
-    await admin.from('leads').update({
+    const patch: Record<string, unknown> = {
       notes: `${prev ? prev + '\n\n' : ''}${notiz}\nMeta-Lead-ID: ${raw.id}`,
-    }).eq('id', leadId)
+    }
+    // Herkunft nachtragen, wenn der bestehende Datensatz noch keine hat. Ohne das
+    // verliert jeder Wiederkehrer seine Anzeigen-Zuordnung, und genau die brauchen
+    // wir, um Kosten pro Termin je Werbemittel zu rechnen.
+    const alt = (old ?? {}) as Record<string, string | null>
+    if (!alt.utm_source) { patch.utm_source = 'meta'; patch.utm_medium = 'lead_ad' }
+    if (!alt.utm_campaign && raw.campaign_name) patch.utm_campaign = raw.campaign_name
+    if (!alt.utm_content && raw.ad_name) patch.utm_content = raw.ad_name
+    if (!alt.utm_term && raw.ad_id) patch.utm_term = raw.ad_id
+    // Feste Zuordnung nur, wenn der Lead noch gar keine hat: die erste Anzeige
+    // bleibt stehen, genau wie bei den utm_*-Feldern oben.
+    if (metaSpalten && 'meta_ad_id' in alt && !alt.meta_ad_id && !alt.meta_adset_id && !alt.meta_campaign_id && !alt.meta_leadgen_id) {
+      Object.assign(patch, metaZuordnung(raw))
+    }
+    const { error: upErr } = await admin.from('leads').update(patch).eq('id', leadId)
+    if (upErr && hatMeta(patch)) {
+      console.warn('[meta-leads-sync] Update mit meta_* fehlgeschlagen, ohne:', upErr.message)
+      await admin.from('leads').update(ohneMeta(patch)).eq('id', leadId)
+    }
     ergebnis = 'updated'
   } else {
-    const { data: nl, error } = await admin.from('leads').insert({
+    const neu: Record<string, unknown> = {
       first_name: first, last_name: last || '',
       email: email || null, phone: phone || null, whatsapp: phone || null,
       source: 'meta',
       utm_source: 'meta', utm_medium: 'lead_ad',
       utm_campaign: raw.campaign_name ?? null, utm_content: raw.ad_name ?? null,
+      // Anzeigen-ID ist der einzige stabile Schluessel zu ad_insights_daily -
+      // Anzeigennamen werden umbenannt und doppelt vergeben.
+      utm_term: raw.ad_id ?? null,
+      ...(metaSpalten ? metaZuordnung(raw) : {}),
       notes: `${notiz}\nMeta-Lead-ID: ${raw.id}`,
-    }).select('id').single()
+    }
+    let { data: nl, error } = await admin.from('leads').insert(neu).select('id').single()
+    // Spaltenfehler bei meta_* (z.B. Migration zurückgerollt): Lead trotzdem anlegen.
+    if (error && hatMeta(neu) && /meta_/.test(String(error.message ?? ''))) {
+      console.warn('[meta-leads-sync] Insert mit meta_* fehlgeschlagen, ohne:', error.message)
+      ;({ data: nl, error } = await admin.from('leads').insert(ohneMeta(neu)).select('id').single())
+    }
     if (error) { console.error('[meta-leads-sync] Lead-Insert:', error.message); return { status: 'skipped' } }
     leadId = (nl as { id: string }).id
     ergebnis = 'created'
@@ -287,11 +394,12 @@ Deno.serve(async (req) => {
       if (!body.csv) return json({ error: 'csv fehlt' }, 400)
       const leads = parseCsv(body.csv)
       if (!leads.length) return json({ error: 'CSV enthält keine Zeilen' }, 400)
+      const metaSpalten = await metaSpaltenVorhanden(admin)
       let created = 0, updated = 0, skipped = 0
       const kontaktiert: string[] = []
       for (const l of leads) {
         if (body.form_name && !l.form_name) l.form_name = body.form_name
-        const r = await upsertLead(admin, l)
+        const r = await upsertLead(admin, l, metaSpalten)
         if (r.status === 'created') { created++; if (r.leadId) kontaktiert.push(await starteErstkontakt(admin, r.leadId)) }
         else if (r.status === 'updated') updated++; else skipped++
       }
@@ -300,9 +408,8 @@ Deno.serve(async (req) => {
     }
 
     // ── Graph-API-Abruf ───────────────────────────────────────────
-    const token = Deno.env.get('META_ACCESS_TOKEN') ?? ''
+    const { token, account, pageId } = metaEnv()
     if (!token) return json({ error: 'META_ACCESS_TOKEN fehlt' }, 500)
-    const account = Deno.env.get('META_AD_ACCOUNT_ID') ?? '4065490590399677'
     const days = Math.min(90, Math.max(1, body.days ?? 30))
     const since = Math.floor((Date.now() - days * 86400e3) / 1000)
 
@@ -314,8 +421,7 @@ Deno.serve(async (req) => {
       // object_story_spec, bei Advantage+/Dynamischen Anzeigen dagegen im
       // asset_feed_spec.call_to_actions — genau dort lag sie bei „Investment 12
       // Jahre abbezahlt 2" (Formular LF 21/07/25 V4 Kapital). Beide prüfen.
-      const adsRes = await fetch(`${GRAPH}/act_${account}/ads?fields=id,name,creative{object_story_spec,asset_feed_spec}&limit=200&access_token=${token}`)
-      const adsJson = await adsRes.json()
+      const adsJson = await graphJson(`${GRAPH}/act_${account}/ads?fields=id,name,creative{object_story_spec,asset_feed_spec}&limit=200`, token)
       if (adsJson?.error) return json({ error: `Meta: ${adsJson.error.message}`, hinweis: 'Für den Abruf braucht der Token leads_retrieval + pages_manage_ads.' }, 502)
       type Cta = { value?: { lead_gen_form_id?: string } }
       for (const ad of (adsJson?.data ?? []) as Array<{ creative?: {
@@ -340,13 +446,11 @@ Deno.serve(async (req) => {
       // "(#190) This method must be called with a Page Access Token").
       let pageToken = token
       try {
-        const acc = await fetch(`${GRAPH}/me/accounts?fields=id,access_token&access_token=${token}`)
-        const aj = await acc.json() as { data?: Array<{ id: string; access_token?: string }> }
-        const own = (aj.data ?? []).find(p => p.id === PAGE_ID) ?? (aj.data ?? [])[0]
+        const aj = await graphJson(`${GRAPH}/me/accounts?fields=id,access_token`, token) as { data?: Array<{ id: string; access_token?: string }> }
+        const own = (aj.data ?? []).find(p => p.id === pageId) ?? (aj.data ?? [])[0]
         if (own?.access_token) pageToken = own.access_token
       } catch (e) { console.warn('[meta-leads-sync] Seiten-Token:', e) }
-      const pf = await fetch(`${GRAPH}/${PAGE_ID}/leadgen_forms?fields=id,name,leads_count&limit=100&access_token=${pageToken}`)
-      const pj = await pf.json() as { data?: Array<{ id: string; leads_count?: number }>; error?: { message: string } }
+      const pj = await graphJson(`${GRAPH}/${pageId}/leadgen_forms?fields=id,name,leads_count&limit=100`, pageToken) as { data?: Array<{ id: string; leads_count?: number }>; error?: { message?: string } }
       if (pj.error) console.warn('[meta-leads-sync] Seiten-Formulare:', pj.error.message)
       for (const f of (pj.data ?? [])) {
         if ((f.leads_count ?? 0) > 0 && !formIds.includes(f.id)) formIds.push(f.id)
@@ -355,21 +459,21 @@ Deno.serve(async (req) => {
 
     if (!formIds.length) return json({ success: true, hinweis: 'Keine Lead-Formulare gefunden.', angelegt: 0 })
 
+    const metaSpalten = await metaSpaltenVorhanden(admin)
     let created = 0, updated = 0, skipped = 0
     const kontaktiert: string[] = []
     const fehler: string[] = []
     for (const fid of formIds) {
-      let url = `${GRAPH}/${fid}/leads?fields=id,created_time,field_data,ad_id,ad_name,campaign_name,form_id&filtering=[{"field":"time_created","operator":"GREATER_THAN","value":${since}}]&limit=100&access_token=${token}`
+      let url = `${GRAPH}/${fid}/leads?fields=id,created_time,field_data,ad_id,ad_name,adset_id,campaign_id,campaign_name,form_id&filtering=[{"field":"time_created","operator":"GREATER_THAN","value":${since}}]&limit=100`
       for (let page = 0; page < 20 && url; page++) {
-        const res = await fetch(url)
-        const j = await res.json()
+        const j = await graphJson(url, token)
         if (j?.error) { fehler.push(`Formular ${fid}: ${j.error.message}`); break }
         for (const l of (j?.data ?? []) as RawLead[]) {
-          const r = await upsertLead(admin, l)
+          const r = await upsertLead(admin, l, metaSpalten)
           if (r.status === 'created') { created++; if (r.leadId) kontaktiert.push(await starteErstkontakt(admin, r.leadId)) }
           else if (r.status === 'updated') updated++; else skipped++
         }
-        url = j?.paging?.next ?? ''
+        url = naechsteSeite(j?.paging?.next)
       }
     }
     console.log(`[meta-leads-sync] ${created} neu, ${updated} ergänzt, ${skipped} übersprungen, ${formIds.length} Formulare, kontaktiert: ${kontaktiert.join(',') || '-'}`)

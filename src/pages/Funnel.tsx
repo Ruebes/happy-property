@@ -111,7 +111,7 @@ function readCookie(name: string): string {
   return m ? decodeURIComponent(m[1]) : ''
 }
 
-export interface MetaMatchKeys { fbc?: string; fbp?: string; user_agent?: string }
+export interface MetaMatchKeys { fbc?: string; fbp?: string; user_agent?: string; event_id?: string }
 
 // Bewusst erst beim Absenden aufrufen, nicht beim Rendern: das Pixel-Skript
 // lädt asynchron, direkt beim ersten Render fehlen die Cookies meistens noch.
@@ -129,6 +129,28 @@ function metaMatchKeys(): MetaMatchKeys {
   if (fbc) keys.fbc = fbc.slice(0, 400)
   if (navigator.userAgent) keys.user_agent = navigator.userAgent.slice(0, 400)
   return keys
+}
+
+// ── Gemeinsame Ereignis-IDs Browser + Server (Entdopplung bei Meta) ─────────
+// Lead: eine UUID je Absenden des Kontaktformulars. Der Browser meldet
+// eventID 'lead-<uuid>', funnel-api reiht dieselbe ID für die Conversions-API
+// ein. Schedule: 'appt-<Termin-ID>', wie der capi_outbox-Trigger am Termin.
+function neueEventUuid(): string {
+  const c = typeof crypto !== 'undefined' ? crypto : undefined
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID()
+  const b = new Uint8Array(16)
+  if (c && typeof c.getRandomValues === 'function') c.getRandomValues(b)
+  else for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256)
+  b[6] = (b[6] & 0x0f) | 0x40
+  b[8] = (b[8] & 0x3f) | 0x80
+  const h = Array.from(b, x => x.toString(16).padStart(2, '0')).join('')
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
+}
+
+// Nur feuern, wenn das Pixel auf der Seite schon läuft (PageView beim Laden).
+function metaPixelWennGeladen(...args: unknown[]) {
+  const w = window as unknown as { fbq?: (...a: unknown[]) => void }
+  if (typeof w.fbq === 'function') w.fbq(...args)
 }
 
 export default function Funnel() {
@@ -253,17 +275,18 @@ export default function Funnel() {
     if (!/^\S+@\S+\.\S+$/.test(email)) { setError(t('funnel.err_email', 'Bitte prüfe deine E-Mail-Adresse.')); return }
     if (phone.length < 8) { setError(t('funnel.err_phone', 'Bitte prüfe deine Telefonnummer.')); return }
     setBusy(true)
+    const leadEventUuid = neueEventUuid()
     try {
       const { data, error: e } = await supabase.functions.invoke('funnel-api', { body: {
         action: 'contact', session_id: sessionRef.current,
         contact: { ...contact, email, phone },
         answers: Object.entries(answers).map(([k, v]) => ({ question: QUESTION_TEXT[k] ?? k, answer: v })),
-        utm, meta_match: metaMatchKeys(),
+        utm, meta_match: { ...metaMatchKeys(), event_id: leadEventUuid },
       } })
       if (e) throw new Error(e.message)
       leadRef.current = (data as { lead_id?: string } | null)?.lead_id ?? null
       void track(QUESTIONS.length + 1, 'contact_submitted')
-      try { metaPixel('track', 'Lead') } catch { /* Pixel darf nie blocken */ }
+      try { metaPixel('track', 'Lead', {}, { eventID: `lead-${leadEventUuid}` }) } catch { /* Pixel darf nie blocken */ }
       // Schnellbuchung: Terminart + Slot stehen schon → jetzt verbindlich buchen.
       if (rebook && slot) { await performBooking(slot); return }
       setPhase('meeting_type')
@@ -316,13 +339,16 @@ export default function Funnel() {
         slot_start_iso: s, meeting_type: meetingType, source,
       } })
       if (e) throw new Error(e.message)
-      const d = data as { ok?: boolean; error?: string } | null
+      const d = data as { ok?: boolean; error?: string; appointment_id?: string | null } | null
       if (d?.error === 'slot_taken' || d?.error === 'slot_invalid') {
         setError(t('funnel.err_slot_taken', 'Dieser Termin wurde gerade vergeben — bitte wähle einen anderen.'))
         setSlot(''); setPhase('slot'); void loadSlots(); return
       }
       if (!d?.ok) throw new Error(d?.error || 'Buchung fehlgeschlagen')
       setPhase('done')
+      if (d.appointment_id) {
+        try { metaPixelWennGeladen('track', 'Schedule', {}, { eventID: `appt-${d.appointment_id}` }) } catch { /* Pixel darf nie blocken */ }
+      }
       // Web-Analytics: Buchung als Conversion markieren (fire-and-forget).
       ;(window as unknown as { hpwa?: (c: string, n: string) => void }).hpwa?.('event', 'booking_done')
     } catch {

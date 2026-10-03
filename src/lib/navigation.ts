@@ -209,6 +209,7 @@ export const NAV_ENTRIES: NavEntry[] = [
   { id: 'myPropertiesList',            path: '/eigentuemer/properties',     labelKey: 'shell.nav.myPropertiesList',            icon: 'properties', group: 'portal',      order: 91, roles: [E], module: 'm9',   hidden: 'alias',  parent: 'myProperties' },
   { id: 'whatsappTemplates',           path: '/admin/crm/settings/whatsapp',   labelKey: 'shell.nav.whatsappTemplates',        icon: 'chat',       group: 'einstellungen', order: 90, roles: AV, module: 'base', hidden: 'legacy', parent: 'stageMessages' },
   { id: 'automationRules',             path: '/admin/crm/settings/automation', labelKey: 'shell.nav.automationRules',          icon: 'rules',      group: 'einstellungen', order: 91, roles: AV, module: 'base', hidden: 'legacy', parent: 'stageMessages' },
+  { id: 'werbeFreigabe',               path: '/admin/crm/werbung/freigabe/:gruppeId', labelKey: 'shell.nav.werbeFreigabe',   icon: 'ads',        group: 'marketing',   order: 90, roles: AVM, perm: 'werbung', module: 'm4', hidden: 'detail', parent: 'ads' },
 ]
 
 // ── Helfer ───────────────────────────────────────────────────────────────────

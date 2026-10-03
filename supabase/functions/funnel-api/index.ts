@@ -6,12 +6,28 @@
 //   book  → Konflikt-Check + Lead-Upsert + Termin (CRM + Google) + Zoom-Meeting +
 //           Bestätigung über die „Termin gebucht"-Pipeline-Vorlagen (Mail + WhatsApp)
 //
+// Werbe-Zuordnung (Okt 2026, contact):
+//   - utm_source Meta + numerische utm-IDs -> leads.meta_ad_id/meta_adset_id/
+//     meta_campaign_id (über ad_catalog bzw. meta_adsets abgesichert, weil ältere
+//     Anzeigen utm_term/utm_content vertauscht tragen). Fehlen die Spalten (vor
+//     20261003101000_leads_meta_zuordnung.sql), passiert nichts.
+//   - meta_match.event_id (UUID aus dem Browser, dort fbq Lead mit eventID
+//     'lead-<uuid>'): bei ad_settings.capi_echtzeit = true und Meta-Lead wird
+//     ein Lead-Ereignis 'lead-<uuid>' in capi_outbox eingereiht (werbe-signal
+//     sendet, Meta entdoppelt mit dem Browser-Ereignis). Fehlt Tabelle/Spalte,
+//     passiert nichts.
+//   book liefert appointment_id; der Browser feuert damit Schedule 'appt-<id>'
+//   (gleiche event_id wie der capi_outbox-Trigger auf crm_appointments).
+//   Importiert _shared/werbeCapi.ts (und darüber metaGraph.ts): nach Änderungen
+//   dort auch funnel-api neu deployen.
+//
 // Deployment: supabase functions deploy funnel-api --no-verify-jwt
 
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { isInternalContact } from '../_shared/internalContact.ts'
 import { nextApptTitle } from '../_shared/apptTitle.ts'
 import { notifyIfToday, cyTime, isTodayCy } from '../_shared/notifyToday.ts'
+import { CAPI_EVENT_SOURCE_URL, META_UTM_SOURCES, istMetaLead, type MetaLeadMerkmale } from '../_shared/werbeCapi.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -115,6 +131,115 @@ async function computeSlots(admin: SupabaseClient): Promise<string[]> {
   return out
 }
 
+// ── Werbe-Zuordnung + CAPI-Lead (siehe Kopfkommentar) ───────────────────────
+const META_ID_RE = /^\d{6,25}$/
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const metaId = (v: unknown): string | null => { const s = String(v ?? '').trim(); return META_ID_RE.test(s) ? s : null }
+const uuidOderNull = (v: unknown): string | null => { const s = String(v ?? '').trim().toLowerCase(); return UUID_RE.test(s) ? s : null }
+
+// Welche Anzeige steckt hinter den UTM-Werten? Standard-Schema (Studio/Assistent):
+// utm_campaign={{campaign.id}}, utm_term={{adset.id}}, utm_content={{ad.id}}. Drei
+// Anzeigen vom 27.08. tragen content/term vertauscht. Deshalb nur schreiben, was
+// sich im Katalog (ad_catalog) oder im Anzeigengruppen-Spiegel (meta_adsets)
+// bestätigen lässt; die Kampagnen-ID ist in allen Schemata eindeutig.
+async function metaZuordnungAusUtm(admin: SupabaseClient, utm: Record<string, string>): Promise<Record<string, string> | null> {
+  const quelle = String(utm.utm_source ?? '').trim().toLowerCase()
+  if (!META_UTM_SOURCES.includes(quelle)) return null
+  const term = metaId(utm.utm_term), content = metaId(utm.utm_content), kampagne = metaId(utm.utm_campaign)
+  if (!term && !content && !kampagne) return null
+  const kandidaten = [content, term].filter((x): x is string => !!x)
+  let ad: string | null = null, adset: string | null = null, camp: string | null = kampagne
+  if (kandidaten.length) {
+    const { data, error } = await admin.from('ad_catalog').select('ad_id, adset_id, campaign_id').in('ad_id', kandidaten).limit(2)
+    const treffer = (error ? [] : (data ?? [])) as Array<{ ad_id: string; adset_id: string | null; campaign_id: string | null }>
+    if (treffer.length === 1) {
+      ad = treffer[0].ad_id
+      adset = metaId(treffer[0].adset_id)
+      camp = metaId(treffer[0].campaign_id) ?? kampagne
+    } else if (!treffer.length) {
+      const { data: gr, error: grErr } = await admin.from('meta_adsets').select('adset_id, campaign_id').in('adset_id', kandidaten).limit(2)
+      const g = (grErr ? [] : (gr ?? [])) as Array<{ adset_id: string; campaign_id: string | null }>
+      if (g.length === 1) {
+        adset = g[0].adset_id
+        ad = kandidaten.find(k => k !== adset) ?? null
+        camp = metaId(g[0].campaign_id) ?? kampagne
+      }
+    }
+  }
+  if (!ad && !adset && !camp) return null
+  const out: Record<string, string> = { meta_attr_quelle: 'funnel_utm', meta_attr_at: new Date().toISOString() }
+  if (ad) out.meta_ad_id = ad
+  if (adset) out.meta_adset_id = adset
+  if (camp) out.meta_campaign_id = camp
+  return out
+}
+
+// Nur setzen, solange der Lead noch keine feste Zuordnung hat (erste Anzeige
+// bleibt, wie bei utm_*). Fehlen die Spalten, schlägt das Update still fehl.
+async function metaSpaltenSetzen(admin: SupabaseClient, leadId: string, utm: Record<string, string>): Promise<void> {
+  try {
+    const felder = await metaZuordnungAusUtm(admin, utm)
+    if (!felder) return
+    const { error } = await admin.from('leads').update(felder).eq('id', leadId)
+      .is('meta_ad_id', null).is('meta_adset_id', null).is('meta_campaign_id', null).is('meta_leadgen_id', null)
+    if (error) console.warn('[funnel-api] meta_* nicht gesetzt:', error.message)
+  } catch (e) { console.warn('[funnel-api] meta_* fehlgeschlagen:', e) }
+}
+
+// Seite, auf der das Ereignis passiert ist: Origin des Browsers (portal- oder
+// analytics-Domain), sonst die Standard-URL.
+function funnelUrl(req: Request): string {
+  const origin = (req.headers.get('origin') ?? '').trim().toLowerCase()
+  return /^https:\/\/([a-z0-9-]+\.)*happy-property\.com$/.test(origin) ? `${origin}/termin` : CAPI_EVENT_SOURCE_URL
+}
+
+interface CapiLeadEingabe {
+  leadId: string
+  eventUuid: string
+  utm: Record<string, string>
+  mm: { fbc?: string; fbp?: string; user_agent?: string }
+  email: string
+  phone: string
+  sessionId: string | null
+}
+
+// Lead-Ereignis für die Conversions-API einreihen. Nur mit capi_echtzeit, nur
+// für Meta-Leads (fbp allein zählt nicht: unser Pixel setzt es bei jedem
+// Besucher), nie für interne Kontakte. Darf den Kontakt-Schritt nie stören.
+async function capiLeadEinreihen(admin: SupabaseClient, req: Request, a: CapiLeadEingabe): Promise<void> {
+  try {
+    const { data: st, error: stErr } = await admin.from('ad_settings').select('capi_echtzeit').eq('id', 'default').maybeSingle()
+    if (stErr || !(st as { capi_echtzeit?: boolean } | null)?.capi_echtzeit) return
+    let meta = istMetaLead({ utm_source: a.utm.utm_source ?? null, fbc: a.mm.fbc ?? null })
+    if (!meta) {
+      const { data: l } = await admin.from('leads').select('utm_source, source, fbc').eq('id', a.leadId).maybeSingle()
+      meta = istMetaLead(l as MetaLeadMerkmale | null)
+    }
+    if (!meta) return
+    if (await isInternalContact(admin, { email: a.email, phone: a.phone })) return
+    const eventId = `lead-${a.eventUuid}`
+    const eventTime = new Date().toISOString()
+    const daten: Record<string, unknown> = {
+      action_source: 'website', from_website: true, event_source_url: funnelUrl(req), anlass: 'funnel_contact',
+    }
+    if (a.mm.user_agent) daten.client_user_agent = a.mm.user_agent.slice(0, 400)
+    if (a.mm.fbc) daten.fbc = a.mm.fbc.slice(0, 400)
+    if (a.mm.fbp) daten.fbp = a.mm.fbp.slice(0, 200)
+    const quelleId = uuidOderNull(a.sessionId)
+    // Über die DB-Funktion: die stößt bei capi_echtzeit werbe-signal sofort an.
+    const { error: rpcErr } = await admin.rpc('werbe_capi_einreihen', {
+      p_event_id: eventId, p_event_name: 'Lead', p_lead_id: a.leadId, p_quelle: 'funnel',
+      p_quelle_id: quelleId, p_event_time: eventTime, p_daten: daten,
+    })
+    if (!rpcErr) return
+    const { error: insErr } = await admin.from('capi_outbox').insert({
+      event_id: eventId, event_name: 'Lead', lead_id: a.leadId, quelle: 'funnel',
+      quelle_id: quelleId, event_time: eventTime, daten,
+    })
+    if (insErr && String(insErr.code ?? '') !== '23505') console.warn('[funnel-api] CAPI-Lead nicht eingereiht:', rpcErr.message, '/', insErr.message)
+  } catch (e) { console.warn('[funnel-api] CAPI-Lead fehlgeschlagen:', e) }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: CORS })
   try {
@@ -132,7 +257,8 @@ Deno.serve(async (req) => {
       utm?: Record<string, string>; referrer?: string
       // Zuordnungsmerkmale für die Conversions-API (siehe Funnel.tsx):
       // Klick-ID, Browser-ID und Browserkennung aus der Buchungssitzung.
-      meta_match?: { fbc?: string; fbp?: string; user_agent?: string }
+      // event_id: UUID je Absenden des Kontaktformulars, Browser-Lead hat eventID 'lead-<uuid>'.
+      meta_match?: { fbc?: string; fbp?: string; user_agent?: string; event_id?: string }
       slot_start_iso?: string
       meeting_type?: 'zoom' | 'whatsapp'
       source?: string
@@ -265,6 +391,8 @@ Deno.serve(async (req) => {
       if (mm.fbc) matchPatch.fbc = mm.fbc.slice(0, 400)
       if (mm.fbp) matchPatch.fbp = mm.fbp.slice(0, 200)
       if (mm.user_agent) matchPatch.client_user_agent = mm.user_agent.slice(0, 400)
+      // Werbe-Zuordnung folgt den utm-Werten, die dieser Aufruf am Lead speichert.
+      let utmGespeichert = false
       if (!leadId) {
         const { data: nl, error: nlErr } = await admin.from('leads').insert({
           first_name: c.first_name?.trim(), last_name: (c.last_name ?? '').trim(),
@@ -277,6 +405,7 @@ Deno.serve(async (req) => {
         }).select('id').single()
         if (nlErr) console.error('[funnel-api] Lead-Insert fehlgeschlagen:', nlErr.message)
         leadId = (nl as { id: string } | null)?.id ?? null
+        utmGespeichert = !!leadId
       } else {
         const { data: old } = await admin.from('leads').select('notes, utm_source').eq('id', leadId).single()
         const prev = (old as { notes?: string } | null)?.notes ?? ''
@@ -285,6 +414,7 @@ Deno.serve(async (req) => {
           patch.utm_source = utm.utm_source; patch.utm_medium = utm.utm_medium ?? null
           patch.utm_campaign = utm.utm_campaign ?? null; patch.utm_content = utm.utm_content ?? null
           patch.utm_term = utm.utm_term ?? null
+          utmGespeichert = true
         }
         await admin.from('leads').update(patch).eq('id', leadId)
       }
@@ -330,6 +460,12 @@ Deno.serve(async (req) => {
       // Fallback-Automation: greift nur, wenn KEIN Termin gebucht wird (book storniert)
       try { await admin.functions.invoke('schedule-message', { body: { lead_id: leadId, deal_id: dealId, event_type: 'erstkontakt' } }) }
       catch (e) { console.warn('[funnel-api] erstkontakt-Trigger fehlgeschlagen:', e) }
+      // Werbe-Zuordnung + CAPI-Lead: beide fangen jeden Fehler selbst ab.
+      if (utmGespeichert) await metaSpaltenSetzen(admin, leadId, utm)
+      const eventUuid = uuidOderNull(String(mm.event_id ?? '').replace(/^lead-/i, ''))
+      if (eventUuid) {
+        await capiLeadEinreihen(admin, req, { leadId, eventUuid, utm, mm, email, phone, sessionId: body.session_id ?? null })
+      }
       return json({ ok: true, lead_id: leadId })
     }
 

@@ -7,7 +7,15 @@ import { supabase } from '../../lib/supabase'
 // („Erstelle mir ein Karussell vom Projekt Luma"), darunter entsteht der
 // Entwurf (Bild/Karten + Caption). Caption ist direkt editierbar, alles Weitere
 // per Chat („mach den Himmel blauer", „nur 4 Karten", …). „Anlegen" erstellt
-// die Anzeige PAUSIERT in der System-Kampagne (Edge Function ad-studio).
+// die Anzeige PAUSIERT in der System-Kampagne (Edge Function studio).
+//
+// Optionale Props (ohne sie bleibt alles wie bisher):
+//   target          Ziel-Anzeigengruppe: publish schickt adset_id mit (der Server
+//                   prüft Konto und Sonderkategorie Wohnen der Kampagne).
+//   mode 'toDraft'  kein Anlegen bei Meta: Überschrift, Text und Bild gehen an
+//                   onDraft (Kampagnen-Assistent übernimmt sie in den Entwurf).
+//   aspectSelector  Bildformat 1:1 / 4:5 (Feed) / 9:16 (Story) wählbar; geht als
+//                   aspect an generate und refine.
 
 interface Card { title: string; description: string; image_url: string }
 interface Issue { severity: 'blocker' | 'hinweis'; field: string; problem: string; fix: string }
@@ -20,7 +28,7 @@ interface Draft {
   image_url?: string
   /** rohes Hintergrundfoto ohne Text-Overlay (Server nutzt es für Änderungen) */
   bg_url?: string
-  /** hochgeladene Vorlage — Bild-Änderungen per Chat setzen wieder darauf auf */
+  /** hochgeladene Vorlage - Bild-Änderungen per Chat setzen wieder darauf auf */
   base_image?: string
   /** benannte Textbausteine vom Server; null, sobald die Caption von Hand editiert wurde */
   copy?: unknown
@@ -28,12 +36,36 @@ interface Draft {
   issues?: Issue[]
   overlay?: Overlay | null
   cards?: Card[]
+  /** Bildformat, mit dem der Server das Bild erstellt hat ('1:1' | '4:5' | '9:16') */
+  aspect?: string
 }
 
+/** Bildformate, die die Function studio kennt (Standard 1:1 wie bisher) */
+export type StudioAspect = '1:1' | '4:5' | '9:16'
+const ASPECTS: ReadonlyArray<{ value: StudioAspect; key: string; fallback: string }> = [
+  { value: '1:1',  key: 'crm.studio.aspect11',  fallback: '1:1 Quadrat' },
+  { value: '4:5',  key: 'crm.studio.aspect45',  fallback: '4:5 Feed' },
+  { value: '9:16', key: 'crm.studio.aspect916', fallback: '9:16 Story/Reels' },
+]
+
+/** Was der Kampagnen-Assistent aus dem Studio übernimmt (mode 'toDraft') */
+export interface StudioDraftUebergabe { headline: string; message: string; imageUrl: string | null }
+
 interface Props {
-  onPublished: () => void           // Werbemanager neu laden (neue Ad im Katalog)
+  onPublished?: () => void          // Werbemanager neu laden (neue Ad im Katalog)
   showToast: (msg: string) => void
+  /** Ziel-Anzeigengruppe für „Anlegen" (sonst erste Gruppe der System-Kampagne) */
+  target?: { adsetId: string; label: string }
+  /** 'publish' (Standard): bei Meta anlegen; 'toDraft': nur an onDraft übergeben */
+  mode?: 'publish' | 'toDraft'
+  onDraft?: (d: StudioDraftUebergabe) => void
+  /** Bildformat-Wahl anzeigen und als aspect mitschicken */
+  aspectSelector?: boolean
 }
+
+// Vorschaugröße je Bildformat (1:1 wie bisher)
+const vorschauBreite = (a: string | undefined) => (a === '9:16' ? 'max-w-xs' : a === '4:5' ? 'max-w-md' : 'max-w-xl')
+const vorschauFlaeche = (a: string | undefined) => (a === '9:16' ? 'aspect-[9/16] max-w-xs' : a === '4:5' ? 'aspect-[4/5] max-w-md' : 'aspect-square max-w-xl')
 
 /** Fehler der Edge Function inkl. Nutzdaten (z.B. die Mängelliste der Sperre). */
 class CallError extends Error {
@@ -41,8 +73,11 @@ class CallError extends Error {
   constructor(message: string, detail?: Record<string, unknown>) { super(message); this.detail = detail }
 }
 
-export default function AdStudio({ onPublished, showToast }: Props) {
+export default function AdStudio({ onPublished, showToast, target, mode = 'publish', onDraft, aspectSelector = false }: Props) {
   const { t } = useTranslation()
+  // Bildformat nur mitschicken, wenn die Auswahl gezeigt wird (sonst wie bisher ohne aspect)
+  const [aspect, setAspect] = useState<StudioAspect>('1:1')
+  const aspectBody = (): Record<string, unknown> => (aspectSelector ? { aspect } : {})
   const [brief, setBrief] = useState('')
   // Zweites Fenster: eigener Auftrag fuer das Bild (Motiv bzw. Aenderung am
   // hochgeladenen Basisbild). Der Server verlangt trotzdem, dass Motiv und
@@ -80,7 +115,7 @@ export default function AdStudio({ onPublished, showToast }: Props) {
     }
   }
 
-  // Slug „studio" statt „ad-studio": Werbeblocker filtern „ad-"-URLs — der
+  // Slug „studio" statt „ad-studio": Werbeblocker filtern „ad-"-URLs - der
   // alte Aufruf kam bei aktivem Blocker nie am Server an (22.7.).
   // Bei Netz-Wacklern (Anfrage kam gar nicht an, z.B. Gionas Verbindung 12.8.)
   // wird EINMAL automatisch neu versucht, bevor der Fehler gezeigt wird.
@@ -91,7 +126,7 @@ export default function AdStudio({ onPublished, showToast }: Props) {
       // die Klartext-Meldung der Function steckt bei non-2xx im Response-Body.
       const detail = await (error as { context?: Response }).context?.json?.().catch(() => null) as Record<string, unknown> | null
       if (detail && typeof detail.error === 'string') {
-        // hint (verständliche Erklärung) hat Vorrang vor dem Fehlercode —
+        // hint (verständliche Erklärung) hat Vorrang vor dem Fehlercode -
         // sonst sieht Giona kryptisches „app_dev_mode" statt der Anleitung.
         throw new CallError(typeof detail.hint === 'string' && detail.hint ? detail.hint : detail.error, detail)
       }
@@ -100,7 +135,7 @@ export default function AdStudio({ onPublished, showToast }: Props) {
           await new Promise(r => setTimeout(r, 1500))
           return call(body, true)
         }
-        throw new Error(t('crm.studio.networkError', 'Der Aufruf kam nicht am Server an — Internet prüfen und ggf. Werbeblocker für diese Seite ausschalten.'))
+        throw new Error(t('crm.studio.networkError', 'Der Aufruf kam nicht am Server an - Internet prüfen und ggf. Werbeblocker für diese Seite ausschalten.'))
       }
       throw error
     }
@@ -118,7 +153,7 @@ export default function AdStudio({ onPublished, showToast }: Props) {
       if (s.status === 'done' && s.image_url) return { url: String(s.image_url), bg: s.bg_url ? String(s.bg_url) : null }
       if (s.status === 'error') throw new Error(String(s.error ?? t('crm.studio.imgError', 'Bild konnte nicht erstellt werden')))
     }
-    throw new Error(t('crm.studio.imgSlow', 'Bild dauert ungewöhnlich lange — bitte noch einmal versuchen'))
+    throw new Error(t('crm.studio.imgSlow', 'Bild dauert ungewöhnlich lange - bitte noch einmal versuchen'))
   }
 
   const runImageJob = async (jobId: string) => {
@@ -133,7 +168,7 @@ export default function AdStudio({ onPublished, showToast }: Props) {
   }
 
   // Agentur-Review: zweiter Blick auf den fertigen Entwurf. Läuft absichtlich
-  // NEBEN dem Bild-Job — das Bild braucht ohnehin gut eine Minute, die Prüfung
+  // NEBEN dem Bild-Job - das Bild braucht ohnehin gut eine Minute, die Prüfung
   // ist in ~15 s durch und kostet damit keine wahrnehmbare Zeit.
   const runReview = async (d: Draft) => {
     setReviewBusy(true)
@@ -156,7 +191,7 @@ export default function AdStudio({ onPublished, showToast }: Props) {
     setDraft(null)
     let jobId: string | null = null
     try {
-      const d = await call({ mode: 'generate', brief: brief.trim(), ...(imageBrief.trim() ? { image_brief: imageBrief.trim() } : {}), ...(baseImage ? { base_image: baseImage } : {}) })
+      const d = await call({ mode: 'generate', brief: brief.trim(), ...(imageBrief.trim() ? { image_brief: imageBrief.trim() } : {}), ...(baseImage ? { base_image: baseImage } : {}), ...aspectBody() })
       setDraft(d.draft as Draft)
       setLastChange('')
       setReview(null)
@@ -177,7 +212,7 @@ export default function AdStudio({ onPublished, showToast }: Props) {
     setBusy('refine')
     let jobId: string | null = null
     try {
-      const d = await call({ mode: 'refine', draft, instruction: chat.trim() })
+      const d = await call({ mode: 'refine', draft, instruction: chat.trim(), ...aspectBody() })
       setDraft(d.draft as Draft)
       setLastChange(String(d.changed ?? ''))
       setChat('')
@@ -193,19 +228,37 @@ export default function AdStudio({ onPublished, showToast }: Props) {
     if (jobId) await runImageJob(jobId)
   }
 
+  // Nach Anlegen bzw. Übernehmen: Studio leeren
+  const zuruecksetzen = () => {
+    setDraft(null)
+    setBrief('')
+    setImageBrief('')
+    setBaseImage('')
+    setReview(null)
+    setBlockers(null)
+    setLastChange('')
+  }
+
+  // mode 'toDraft': nichts bei Meta anlegen, Überschrift/Text/Bild an den Aufrufer geben
+  const uebernehmen = () => {
+    if (!draft || busy || !onDraft) return
+    onDraft({
+      headline: draft.headline,
+      message: draft.message,
+      imageUrl: draft.image_url ?? draft.cards?.[0]?.image_url ?? null,
+    })
+    showToast(t('crm.studio.toDraftDone', '✅ Überschrift, Text und Bild in den Entwurf übernommen'))
+    zuruecksetzen()
+  }
+
   const publish = async (force = false) => {
     if (!draft || busy) return
     setBusy('publish')
     try {
-      await call({ mode: 'publish', draft, ...(force ? { force: true } : {}) })
-      setBlockers(null)
-      showToast(t('crm.studio.published', '✅ Anzeige gespeichert — liegt unter „Vorbereitete Anzeigen" und ist noch NICHT veröffentlicht'))
-      setDraft(null)
-      setBrief('')
-      setImageBrief('')
-      setBaseImage('')
-      setReview(null)
-      onPublished()
+      await call({ mode: 'publish', draft, ...(force ? { force: true } : {}), ...(target ? { adset_id: target.adsetId } : {}) })
+      showToast(t('crm.studio.published', '✅ Anzeige gespeichert - liegt unter „Vorbereitete Anzeigen" und ist noch NICHT veröffentlicht'))
+      zuruecksetzen()
+      onPublished?.()
     } catch (err) {
       console.error('[AdStudio] publish:', err)
       // Qualitäts-Sperre: Mängel anzeigen statt nur meckern, mit der Möglichkeit
@@ -213,7 +266,7 @@ export default function AdStudio({ onPublished, showToast }: Props) {
       const det = err instanceof CallError ? err.detail : undefined
       if (det?.error === 'quality_blocked') {
         setBlockers((det.issues as Issue[] | undefined) ?? [])
-        showToast(`⛔ ${t('crm.studio.blocked', 'Die Anzeige verstößt gegen harte Regeln — siehe Prüfung unten')}`)
+        showToast(`⛔ ${t('crm.studio.blocked', 'Die Anzeige verstößt gegen harte Regeln - siehe Prüfung unten')}`)
       } else {
         showToast(`❌ ${err instanceof Error ? err.message : t('crm.studio.error', 'Das hat nicht geklappt')}`)
       }
@@ -228,7 +281,7 @@ export default function AdStudio({ onPublished, showToast }: Props) {
     <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-6">
       <h2 className="text-lg font-bold text-gray-800 mb-1">🎨 {t('crm.studio.title', 'Anzeigen-Studio (KI)')}</h2>
       <p className="text-sm text-gray-400 mb-3">
-        {t('crm.studio.sub', 'Beschreibe die Anzeige, die du willst — z.B. „Erstelle mir ein Karussell vom Projekt Luma" oder „Einzelbild: ich am Strand, Thema Steuern sparen". Danach bearbeitest du alles per Chat.')}
+        {t('crm.studio.sub', 'Beschreibe die Anzeige, die du willst - z.B. „Erstelle mir ein Karussell vom Projekt Luma" oder „Einzelbild: ich am Strand, Thema Steuern sparen". Danach bearbeitest du alles per Chat.')}
       </p>
       {/* Zwei Fenster nebeneinander: links die Anzeige/Caption (mit optionalem
           Basisbild darunter), rechts der eigene Auftrag fuer das Bild. */}
@@ -277,6 +330,25 @@ export default function AdStudio({ onPublished, showToast }: Props) {
         </div>
       </div>
 
+      {/* Bildformat (optional): Feed 4:5 und Story 9:16 für Meta-Platzierungen */}
+      {aspectSelector && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{t('crm.studio.aspectLabel', 'Bildformat')}</span>
+          <div role="radiogroup" aria-label={t('crm.studio.aspectLabel', 'Bildformat')} className="inline-flex flex-wrap overflow-hidden rounded-lg border border-gray-200 text-xs">
+            {ASPECTS.map(a => (
+              <button key={a.value} type="button" role="radio" aria-checked={aspect === a.value}
+                disabled={busy !== null || imgBusy} onClick={() => setAspect(a.value)}
+                className={`px-3 py-1.5 ${aspect === a.value ? 'bg-hp-navy text-white' : 'bg-white text-gray-700 hover:bg-gray-50'} disabled:opacity-50`}>
+                {t(a.key, a.fallback)}
+              </button>
+            ))}
+          </div>
+          {draft && draft.aspect && draft.aspect !== aspect && (
+            <span className="text-[11px] text-gray-400">{t('crm.studio.aspectHint', 'Gilt für das nächste Bild (neu erstellen oder per Chat ändern).')}</span>
+          )}
+        </div>
+      )}
+
       <div className="mt-3">
         <button onClick={() => void generate()} disabled={busy !== null || uploading || !brief.trim()}
           className="px-6 py-3 rounded-xl text-base font-semibold text-white flex items-center gap-2 disabled:opacity-60"
@@ -284,23 +356,23 @@ export default function AdStudio({ onPublished, showToast }: Props) {
           {busy === 'generate' && spinner}
           ✨ {t('crm.studio.cta', 'Anzeige erstellen')}
         </button>
-        {uploading && <p className="mt-1 text-[11px] text-gray-400">{t('crm.studio.waitUpload', 'Basisbild lädt noch hoch — gleich geht es los.')}</p>}
+        {uploading && <p className="mt-1 text-[11px] text-gray-400">{t('crm.studio.waitUpload', 'Basisbild lädt noch hoch - gleich geht es los.')}</p>}
       </div>
       {busy === 'generate' && (
-        <p className="mt-2 text-[11px] text-gray-400">{t('crm.studio.generating', 'Erstelle Copy und Bildmaterial — bei KI-Bildern dauert das bis zu einer Minute …')}</p>
+        <p className="mt-2 text-[11px] text-gray-400">{t('crm.studio.generating', 'Erstelle Copy und Bildmaterial - bei KI-Bildern dauert das bis zu einer Minute …')}</p>
       )}
 
       {draft && (
         <div className="mt-4 rounded-2xl border border-orange-200 bg-orange-50/40 p-5">
           {/* Bild bzw. Karussell-Karten */}
           {draft.format === 'single' && draft.image_url && (
-            <div className="relative w-full max-w-xl mb-4">
+            <div className={`relative w-full ${vorschauBreite(draft.aspect)} mb-4`}>
               <img src={draft.image_url} alt="" className={`w-full rounded-2xl shadow-sm ${imgBusy ? 'opacity-50' : ''}`} />
               {imgBusy && <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-700 bg-white/40 rounded-2xl gap-2">{spinner}{t('crm.studio.imgWorking', 'Neues Bild wird erstellt …')}</div>}
             </div>
           )}
           {draft.format === 'single' && !draft.image_url && imgBusy && (
-            <div className="w-full max-w-xl aspect-square rounded-2xl mb-4 bg-gray-100 border border-dashed border-gray-300 flex items-center justify-center text-sm text-gray-500 gap-2">
+            <div className={`w-full ${vorschauFlaeche(draft.aspect ?? (aspectSelector ? aspect : undefined))} rounded-2xl mb-4 bg-gray-100 border border-dashed border-gray-300 flex items-center justify-center text-sm text-gray-500 gap-2`}>
               {spinner}{t('crm.studio.imgWorking', 'Bild wird erstellt … (bis zu einer Minute)')}
             </div>
           )}
@@ -341,7 +413,7 @@ export default function AdStudio({ onPublished, showToast }: Props) {
               💬 {t('crm.studio.chatCta', 'Ändern')}
             </button>
           </div>
-          {imgBusy && <p className="mt-1 text-[11px] text-gray-400">{t('crm.studio.chatBlocked', 'Das Bild wird gerade erstellt — Änderungen per Chat gehen gleich wieder.')}</p>}
+          {imgBusy && <p className="mt-1 text-[11px] text-gray-400">{t('crm.studio.chatBlocked', 'Das Bild wird gerade erstellt - Änderungen per Chat gehen gleich wieder.')}</p>}
           {draft.base_image && !imgBusy && <p className="mt-1 text-[11px] text-gray-400">{t('crm.studio.chatOnBase', 'Bild-Änderungen per Chat setzen wieder auf deiner hochgeladenen Vorlage auf.')}</p>}
           {lastChange && <p className="mt-1 text-[11px] text-gray-400">{t('crm.studio.changed', 'Zuletzt geändert')}: {lastChange === 'caption' ? t('crm.studio.caption', 'Caption') : lastChange === 'image' ? t('crm.studio.image', 'Bild') : t('crm.studio.cards', 'Karten')}</p>}
 
@@ -388,13 +460,25 @@ export default function AdStudio({ onPublished, showToast }: Props) {
             </div>
           )}
 
-          <div className="flex gap-2 mt-3">
-            <button onClick={() => void publish()} disabled={busy !== null || imgBusy || reviewBusy || (draft.format === 'single' && !draft.image_url)}
-              className="px-4 py-2 rounded-lg text-sm font-semibold text-white flex items-center gap-1.5 disabled:opacity-60" style={{ backgroundColor: '#16a34a' }}>
-              {busy === 'publish' && spinner}
-              ✅ {t('crm.studio.publish', 'Als Anzeige anlegen (pausiert)')}
-            </button>
-            {(blockers ?? []).length > 0 && (
+          {mode === 'publish' && target && (
+            <p className="mt-3 text-[11px] text-gray-500">
+              🎯 {t('crm.studio.target', 'Ziel-Anzeigengruppe: {{label}}', { label: target.label })}
+            </p>
+          )}
+          <div className="flex flex-wrap gap-2 mt-3">
+            {mode === 'toDraft' ? (
+              <button onClick={uebernehmen} disabled={busy !== null || imgBusy || !onDraft || (draft.format === 'single' && !draft.image_url)}
+                className="hp-btn hp-btn-primary px-4 py-2 text-sm font-semibold">
+                ✅ {t('crm.studio.toDraft', 'In den Entwurf übernehmen')}
+              </button>
+            ) : (
+              <button onClick={() => void publish()} disabled={busy !== null || imgBusy || reviewBusy || (draft.format === 'single' && !draft.image_url)}
+                className="px-4 py-2 rounded-lg text-sm font-semibold text-white flex items-center gap-1.5 disabled:opacity-60" style={{ backgroundColor: '#16a34a' }}>
+                {busy === 'publish' && spinner}
+                ✅ {t('crm.studio.publish', 'Als Anzeige anlegen (pausiert)')}
+              </button>
+            )}
+            {mode === 'publish' && (blockers ?? []).length > 0 && (
               <button onClick={() => void publish(true)} disabled={busy !== null || imgBusy}
                 className="px-3 py-2 rounded-lg text-sm font-medium border border-[#ff795d] text-[#ff795d] hover:bg-[#fff0ec] disabled:opacity-50">
                 {t('crm.studio.publishAnyway', 'Trotzdem anlegen')}

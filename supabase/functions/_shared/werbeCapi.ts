@@ -16,7 +16,7 @@
 //   sha256(s)                -> hex
 //   buildCapiEvent(c, nowSec?)   -> Event | null   (null: zu alt oder ohne Zuordnungsmerkmal)
 //   istMetaLead(lead)        -> boolean  (utm_source Meta ODER source meta/meta_lead_form
-//                              ODER fbc/fbp ODER meta_leadgen_id)
+//                              ODER fbc ODER meta_leadgen_id; fbp allein zählt NICHT)
 //   kandidatAusLead(lead, basis) -> CapiCandidate   (Telefon = whatsapp ?? phone, Land aus Vorwahl)
 //   CAPI_LEAD_FIELDS         Select-Liste für leads (enthält meta_leadgen_id: erst nach
 //                            Migration 20261003101000_leads_meta_zuordnung.sql verwenden;
@@ -155,14 +155,20 @@ export interface MetaLeadMerkmale {
   meta_leadgen_id?: string | null
 }
 
-/** Nur Meta-Leads gehen an die Conversions API (Compliance + saubere Optimierung). */
+/**
+ * Nur Meta-Leads gehen an die Conversions API (Compliance + saubere Optimierung).
+ * Meta-Lead = utm_source Meta ODER source meta/meta_lead_form ODER fbc (Klick-ID aus
+ * einer Anzeige) ODER meta_leadgen_id (Sofortformular). fbp allein reicht NICHT:
+ * unser Pixel setzt fbp bei jedem Besucher, auch bei Google-, YouTube- oder
+ * Direkt-Leads (Entscheidung Orchestrator, CONTRACTS.md Runde 2).
+ */
 export function istMetaLead(lead: MetaLeadMerkmale | null | undefined): boolean {
   if (!lead) return false
   const utm = String(lead.utm_source ?? '').trim().toLowerCase()
   if (utm && META_UTM_SOURCES.includes(utm)) return true
   const src = String(lead.source ?? '').trim().toLowerCase()
   if (src && META_LEAD_SOURCES.includes(src)) return true
-  if (String(lead.fbc ?? '').trim() || String(lead.fbp ?? '').trim()) return true
+  if (String(lead.fbc ?? '').trim()) return true
   return !!String(lead.meta_leadgen_id ?? '').trim()
 }
 

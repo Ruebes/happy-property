@@ -166,6 +166,25 @@ verify_jwt = false
 [functions.ad-studio]
 verify_jwt = false
 
+# Kampagnen-Assistent (Entwürfe -> Meta, alles PAUSED), Guard requireAdsAccess im Code;
+# Schreib-Modi zusätzlich ad_settings.builder_enabled + META_WRITES_DISABLED.
+[functions.meta-builder]
+verify_jwt = false
+
+# Werbe-Autopilot: Meta-Schreiber (freigabe/fenster/hochladen/rueckgaengig), Guard
+# authorizeCaller (cron, service, admin/verwalter, Recht werbung) im Code.
+[functions.werbe-ausfuehren]
+verify_jwt = false
+
+# CAPI-Ausgang (pg_net mit x-cron-secret), Guard gateCaller (cron, service, admin) im Code.
+[functions.werbe-signal]
+verify_jwt = false
+
+# Nachtkette/Wochenlauf des Autopiloten (pg_net mit x-cron-secret, meta-ads-sync mit
+# Service-Key), Guard gateCaller (cron, service, admin) im Code. Schreibt nie bei Meta.
+[functions.werbe-autopilot]
+verify_jwt = false
+
 # Deck-/Projekt-Functions (Sicherheitspaket S3, Befund E4-4): Guard per
 # gateCaller im Code, verify_jwt wie live.
 [functions.generate-deck]
