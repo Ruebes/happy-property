@@ -31,15 +31,19 @@
 //   { mode: 'media_upload', storage_path, kind, aspect, ai_generated, eu_band_confirmed, ki_label_confirmed }
 //       Bild aus Bucket ad-creatives -> adimages (sha256-Dublettenschutz); Video -> advideos file_url
 //   { mode: 'preview', draft_id, ad_key, formats[] }          generatepreviews (lädt fehlende Medien hoch)
-//   { mode: 'create' | 'resume', draft_id, force_lint_reason? }
+//   { mode: 'create' | 'resume', draft_id, force_lint_reason?, housing_override_reason? }
 //       Schritt-Läufer (~50 s je Aufruf; Client ruft resume, solange next != null):
 //       Kampagne -> Anzeigengruppen -> Medien -> Creatives -> Anzeigen -> Rücklesen.
 //       Voraussetzung: Prüfung (validate) jünger als 30 min und Inhalt unverändert.
 //       Lint-Blocker darf nur ein Admin mit Begründung übergehen (force_lint_reason,
 //       bei jedem resume erneut mitschicken; steht in jedem meta_write_log-Eintrag).
-//       Fehler 1885183 (Meta-App im Entwicklungsmodus) -> Status partial.
+//       Neues in einer bestehenden Kampagne ohne HOUSING: 409 housing_required, außer
+//       Admin mit housing_override_reason (mindestens 10 Zeichen, bei jedem resume erneut).
+//       Schon Angelegtes im Entwurf entfernt/geändert (Fingerabdruck meta_ids.hashes):
+//       409 created_changed. Fehler 1885183 (Meta-App im Entwicklungsmodus) -> Status partial.
 //   { mode: 'activate_draft', draft_id, levels[], confirm: true }
-//       nur Personen, nur Status created; Anzeigen -> Gruppen -> Kampagne, vorher budgetHeadroom
+//       nur Personen, nur Status created; Anzeigen -> Gruppen -> Kampagne, vorher budgetHeadroom;
+//       nur Knoten, die noch im Entwurf stehen (Rest in skipped, bleibt pausiert)
 //   { mode: 'duplicate', level, id, target_adset_id?, deep?, rename_suffix? }  POST /{id}/copies, PAUSED
 //   { mode: 'leadform_create', page_id?, spec }               Sofortformular (Seiten-Token, Höhere Absicht)
 //

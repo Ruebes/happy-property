@@ -294,14 +294,20 @@ export function eurZuCents(eur: number, usdPerEur: number): number {
 
 // ── Kennung (Werbemittel-Ebene) ─────────────────────────────────────────────
 
-/** Anzeigenname ohne Suffix _lang / _kurz (wie regexp_replace(ad_name, '_(lang|kurz)$', '')). */
-export function kennungBasis(adName: string | null | undefined): string {
-  return String(adName ?? '').replace(/_(lang|kurz)$/, '')
+/**
+ * Basisname einer Anzeige wie in werbe_qualitaet_berechnen (SQL):
+ * coalesce(nullif(regexp_replace(btrim(ad_name), '_(lang|kurz)$', '', 'i'), ''), ad_id).
+ * btrim entfernt nur Leerzeichen, das Suffix zählt ohne Groß-/Kleinschreibung,
+ * leerer Rest fällt auf die Anzeigen-ID zurück.
+ */
+export function kennungBasis(adName: string | null | undefined, adId?: string | null): string {
+  const b = String(adName ?? '').replace(/^ +| +$/g, '').replace(/_(lang|kurz)$/i, '')
+  return b || String(adId ?? '')
 }
 
-/** Kennungs-ID wie in ad_quality_daily: campaign_id || ':' || Basisname. */
-export function kennungId(campaignId: string | null | undefined, adName: string | null | undefined): string {
-  return `${campaignId ?? ''}:${kennungBasis(adName)}`
+/** Kennungs-ID wie in ad_quality_daily: campaign_id || ':' || Basisname (Rückfall Anzeigen-ID). */
+export function kennungId(campaignId: string | null | undefined, adName: string | null | undefined, adId?: string | null): string {
+  return `${campaignId ?? ''}:${kennungBasis(adName, adId)}`
 }
 
 /** Höchstzahl aktiver Anzeigen je Anzeigengruppe: clamp(floor(Tagesbudget / 20), 4, 10). */

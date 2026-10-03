@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import DataTable, { type DataTableColumn } from '../../ui/DataTable'
 import type { ActionItem } from '../../ui/ActionMenu'
@@ -44,7 +44,7 @@ export default function KampagnenTab() {
   const toast = useToast()
   const confirm = useConfirm()
   const fmt = useWerbeFormat()
-  const { catalog } = useWerbeKontext()
+  const { catalog, loading: seiteLaedt } = useWerbeKontext()
 
   const [zeilen, setZeilen] = useState<EntwurfZeile[]>([])
   const [laden, setLaden] = useState(true)
@@ -86,12 +86,16 @@ export default function KampagnenTab() {
     }
   }, [])
 
+  // Erst nach den Seitendaten laden, nie parallel dazu (Micro-Instanz), danach seriell
+  const gestartet = useRef(false)
   useEffect(() => {
+    if (seiteLaedt || gestartet.current) return
+    gestartet.current = true
     void (async () => {
       await ladeListe()
       setEinstellungen(await ladeBuilderEinstellungen())
     })()
-  }, [ladeListe])
+  }, [seiteLaedt, ladeListe])
 
   // ── Einstiege ─────────────────────────────────────────────────────────────
   /** Katalog (DSA-Standard des Kontos, Instagram-Konto) für neue Entwürfe; ohne ihn mit ad_settings */

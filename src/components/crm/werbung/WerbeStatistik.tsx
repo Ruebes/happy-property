@@ -8,6 +8,7 @@ import { useWerbeKontext } from './useWerbeDaten'
 import { AD_STATUS_BADGE, AKTION_SICHTBAR, CHART_COLORS, aktionErledigt, aktionIcon, colorFor, useWerbeFormat } from './format'
 import { berechneEmpfehlungen } from './empfehlungen'
 import { BTN_KLEIN } from './felder'
+import { dbFehlerText } from './autopilot/werbeTexte'
 
 // ── Reiter „Statistik" des Werbemanagers ──────────────────────────────────────
 // KPI-Kacheln, Budget-Wächter, Leitplanken, Empfehlungen + Aktions-Warteschlange,
@@ -109,6 +110,7 @@ function FragmentRows({ children }: { children: ReactNode }) {
 export default function WerbeStatistik() {
   const { t } = useTranslation()
   const { profile } = useAuth()
+  const istAdmin = profile?.role === 'admin'
   const fmt = useWerbeFormat()
   const { eur, int, pct, per, locale } = fmt
   const {
@@ -133,6 +135,11 @@ export default function WerbeStatistik() {
       showToast(`❌ ${t('crm.ads.settingsInvalid', 'Bitte gültige Beträge eingeben')}`)
       return
     }
+    // Erhöhen des Tageslimits darf nur ein Admin (Schutz-Trigger werbe_settings_guard, 42501)
+    if (!istAdmin && maxB > settings.max_account_daily_budget + 0.001) {
+      showToast(`❌ ${t('crm.ads.limitNurAdmin', 'Das Tageslimit erhöhen darf nur ein Admin. Senken geht.')}`)
+      return
+    }
     try {
       const { error } = await supabase.from('ad_settings')
         .update({ target_cpl: target, max_account_daily_budget: maxB, updated_at: new Date().toISOString() })
@@ -143,7 +150,7 @@ export default function WerbeStatistik() {
       showToast(t('crm.ads.settingsSaved', '✅ Leitplanken gespeichert'))
     } catch (err) {
       console.error('[AdsManager] saveSettings:', err)
-      showToast(`❌ ${t('crm.ads.toastError', 'Fehler beim Speichern')}`)
+      showToast(`❌ ${dbFehlerText(t, err)}`)
     }
   }
 
@@ -265,6 +272,7 @@ export default function WerbeStatistik() {
               {t('crm.ads.dailyLimit', 'Tageslimit')}
               <input value={settingsForm.max_budget} onChange={e => setSettingsForm(f => ({ ...f, max_budget: e.target.value }))}
                 className="w-20 border border-gray-200 rounded-lg px-2 py-1 text-right" inputMode="decimal" /> €
+              {!istAdmin && <span className="text-[11px] text-gray-400">{t('crm.ads.limitNurSenken', 'nur senken (erhöhen darf nur ein Admin)')}</span>}
             </label>
             <button onClick={() => void saveSettings()} className={BTN_KLEIN}>
               {t('common.save', 'Speichern')}

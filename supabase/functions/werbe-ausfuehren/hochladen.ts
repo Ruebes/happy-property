@@ -2,9 +2,14 @@
 // (ad_creative_pool) als PAUSIERTE Anzeige(n) bei Meta anlegen.
 //
 // Ablauf (PLAN-B §3/§4 Schritt 5):
-//   1 Recht (darfSchreiben), META_WRITES_DISABLED, Vorrat-Zeile mit status 'freigegeben'
+//   1 Recht (darfSchreiben), META_WRITES_DISABLED, ad_settings.builder_enabled (Schalter
+//     „Kampagnen-Assistent“, wie meta-builder writeGate), Vorrat-Zeile mit status 'freigegeben'
 //     (bereits 'hochgeladen' -> vorhandene IDs zurück, nichts doppelt).
-//   2 Inhalt: nur Format 'bild', 1 oder 2 Ziel-Anzeigengruppen (ziel_adset_ids), Texte aus
+//     Lease: vor jedem Meta-Aufruf qa.hochladen_lauf {token, at} per bedingtem Update
+//     (updated_at unverändert, status freigegeben). Läuft schon ein Lauf (< 10 Min.) -> 409
+//     code 'hochladen_laeuft'. Freigabe der Lease am Ende jedes Laufs (finally).
+//   2 Inhalt: nur Format 'bild', 1 oder 2 Ziel-Anzeigengruppen (ziel_adset_ids; aus einer
+//     freigegebenen ersatz_hochladen-Gruppe die payload.adset_id der Zeilen), Texte aus
 //     texte {primaer[], ueberschriften[], beschreibungen[]}, CTA (Standard BOOK_NOW, nur
 //     Website-CTAs), letzte Text-Prüfung mit metaLint (Blocker -> abbrechen).
 //   3 Ziele live bei Meta: Anzeigengruppe + Kampagne gehören zu unserem Konto, Kampagne hat
@@ -21,11 +26,21 @@
 //     endet der Lauf hier (die Bilder liegen dann schon in der Bildbibliothek, harmlos).
 //   7 Anlegen je Gruppe: Creative, Anzeige (PAUSED), Rücklesen. Fortschritt nach jeder
 //     Anzeige am Vorrat (meta_ad_ids {adset_id: ad_id}), damit ein erneuter Aufruf nur die
-//     fehlenden Gruppen anlegt. Danach Vorrat -> 'hochgeladen', ad_catalog (PAUSED),
+//     fehlenden Gruppen anlegt. Vor dem Anlegen (und nach einem unklaren Fehler beim
+//     Anzeigen-POST) wird in der Gruppe nach einer Anzeige mit genau diesem Namen gesucht und
+//     sie übernommen statt doppelt angelegt. Danach Vorrat -> 'hochgeladen', ad_catalog (PAUSED),
 //     studio_prepared_ads, ad_autopilot_log. Jeder Meta-Aufruf steht in meta_write_log.
 //
+// hochladenAusAktionen: führt eine freigegebene ersatz_hochladen-Gruppe aus (vom gemeinsamen
+// Ausführer als Ergebnis.delegiert übergeben, Claim gehalten) und schließt die ad_actions-
+// Zeilen ab: ausgeführt (Anzeige angelegt), fehlgeschlagen (Meta-Fehler), abgelehnt
+// (Leitplanke) oder Claim lösen und 'bestätigt' lassen (vorübergehend, Lease, Not-Aus).
+//
 // Namen: eine Gruppe -> <kennung>; zwei Gruppen -> <kennung>_lang / <kennung>_kurz (aus dem
-// Gruppennamen „Lang"/„Kurz", sonst Reihenfolge der ziel_adset_ids).
+// Gruppennamen „Lang"/„Kurz", sonst Reihenfolge der ziel_adset_ids bzw. des Plan-B-Paars).
+// Zählen dabei ALLE Ziele des Werbemittels (ziel_adset_ids, schon angelegte meta_ad_ids, Auftrag
+// und der Plan-B-Partner aus budgetGruppenLesen): ein Lauf für nur eine Hälfte heißt also auch
+// <kennung>_lang/_kurz, bekommt den passenden Link und legt nur die fehlenden Anzeigen an.
 // Ziel-Link: lp_url des Vorrats (sonst ad_settings.default_link). Ist lp_url eine der beiden
 // Plan-B-Seiten, bekommt _lang die lange und _kurz die kompakte Seite (wie TEMPLATES.plan_b).
 // meta_creative_id = Creative der ersten Anzeige; das Creative jeder Anzeige steht in
@@ -33,6 +48,7 @@
 // Nie: löschen, archivieren, aktivieren. Aktivieren macht der Autopilot (R1/R2) bzw. ein Mensch.
 
 import type { Caller } from '../_shared/callerAuth.ts'
+import { type AktionsZeile, budgetGruppenLesen, PLAN_B_BUDGET_GRUPPE, type Uebersprungen } from '../_shared/werbeAusfuehren.ts'
 import {
   getLastUsage, graphGet, graphPost, logMetaWrite, metaEnv, metaErrorLogFelder, metaWritesDisabled,
   MetaApiError, uploadImage, URL_TAGS_STANDARD, type MetaWriteLogRow,
@@ -48,6 +64,10 @@ import { akteurVon, darfSchreiben, digits, errMsg, fehler, json, type Sb } from 
 const FN = 'werbe-ausfuehren'
 const MAX_BILD_BYTES = 30 * 1024 * 1024
 const BILD_TIMEOUT_MS = 60_000
+/** qa-Schlüssel der Hochlade-Sperre; länger als jede Laufzeit einer Edge Function */
+const LEASE_KEY = 'hochladen_lauf'
+const LEASE_MS = 10 * 60_000
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 interface PoolZeile {
   id: string
@@ -68,6 +88,25 @@ interface PoolZeile {
   meta_image_hashes: Record<string, unknown> | null
   meta_creative_id: string | null
   meta_ad_ids: Record<string, unknown> | null
+  updated_at?: string | null
+}
+
+/** Log-Felder der auslösenden ad_actions-Zeile (Hochladen aus einer freigegebenen Gruppe). */
+export interface AktionsBezug {
+  action_id: string
+  gruppe_id: string | null
+  rule_key: string | null
+  rule_version: number | null
+  approval_level: number | null
+  idempotency_key: string | null
+}
+
+/** Zusatz, wenn hochladen aus einer freigegebenen ersatz_hochladen-Gruppe läuft. */
+export interface HochladenAuftrag {
+  /** Ziel-Anzeigengruppen aus payload.adset_id (Vorrang vor ziel_adset_ids, muss darin liegen, falls gesetzt) */
+  adsetIds?: string[]
+  /** je Anzeigengruppe die auslösende Zeile (für ad_autopilot_log) */
+  aktionen?: Record<string, AktionsBezug>
 }
 
 interface Ziel {
@@ -166,6 +205,68 @@ async function poolSpeichern(sb: Sb, id: string, patch: Record<string, unknown>)
   return null
 }
 
+/**
+ * Lease auf der Vorrat-Zeile: qa.hochladen_lauf per bedingtem Update (updated_at unverändert,
+ * status freigegeben). Der Pool-Guard setzt updated_at bei jedem Update neu, ein paralleler
+ * Lauf verliert also das Rennen. Ergebnis: Token oder 409-Antwort.
+ */
+async function leaseNehmen(sb: Sb, pool: PoolZeile): Promise<string | Response> {
+  const qa = obj(pool.qa) ?? {}
+  const lauf = obj(qa[LEASE_KEY])
+  const seit = lauf ? Date.parse(String(lauf.at ?? '')) : NaN
+  const laeuft = { code: 'hochladen_laeuft', pool_id: pool.id }
+  if (Number.isFinite(seit) && Date.now() - seit < LEASE_MS) {
+    return fehler(409, 'Dieses Werbemittel wird gerade schon hochgeladen. Bitte in ein paar Minuten noch einmal prüfen.', laeuft)
+  }
+  if (!pool.updated_at) return fehler(500, 'Vorrat-Zeile ohne updated_at, Hochladen nicht sicher sperrbar')
+  const token = crypto.randomUUID()
+  const neu = { ...qa, [LEASE_KEY]: { token, at: new Date().toISOString() } }
+  const { data, error } = await sb.from('ad_creative_pool').update({ qa: neu })
+    .eq('id', pool.id).eq('status', 'freigegeben').eq('updated_at', pool.updated_at).select('id')
+  if (error) return fehler(500, `Hochlade-Sperre setzen: ${String(error.message ?? error).slice(0, 300)}`)
+  if (!((data ?? []) as unknown[]).length) {
+    return fehler(409, 'Das Werbemittel wurde gerade geändert oder wird schon hochgeladen. Bitte gleich noch einmal versuchen.', laeuft)
+  }
+  pool.qa = neu
+  return token
+}
+
+/** Lease lösen, falls sie noch uns gehört. Wirft nie. */
+async function leaseFreigeben(sb: Sb, poolId: string, token: string): Promise<void> {
+  try {
+    const { data, error } = await sb.from('ad_creative_pool').select('qa').eq('id', poolId).maybeSingle()
+    if (error) throw new Error(String(error.message ?? error))
+    const qa = obj((data as { qa?: unknown } | null)?.qa)
+    if (!qa || obj(qa[LEASE_KEY])?.token !== token) return
+    const rest = { ...qa }
+    delete rest[LEASE_KEY]
+    const { error: uErr } = await sb.from('ad_creative_pool').update({ qa: rest }).eq('id', poolId)
+    if (uErr) throw new Error(String(uErr.message ?? uErr))
+  } catch (err) {
+    console.warn(`[werbe-ausfuehren] Hochlade-Sperre ${poolId} lösen (läuft nach 10 Min. ab):`, errMsg(err))
+  }
+}
+
+/**
+ * Anzeige mit genau diesem Namen in der Gruppe (nicht gelöscht/archiviert)? Fängt Anzeigen
+ * ab, die ein früherer Lauf angelegt, aber nicht mehr gespeichert hat (Timeout). null bei
+ * keinem Treffer oder wenn die Liste nicht lesbar ist.
+ */
+async function vorhandeneAnzeige(adsetId: string, name: string): Promise<{ id: string; creative_id: string | null } | null> {
+  try {
+    const j = await graphGet<{ data?: Array<Record<string, unknown>> }>(`${adsetId}/ads`, { fields: 'id,name,effective_status,creative{id}', limit: 200 })
+    for (const a of j.data ?? []) {
+      if (String(a.name ?? '') !== name) continue
+      if (['DELETED', 'ARCHIVED'].includes(String(a.effective_status ?? ''))) continue
+      const id = digits(a.id)
+      if (id) return { id, creative_id: digits(obj(a.creative)?.id) || null }
+    }
+  } catch (err) {
+    console.warn(`[werbe-ausfuehren] Anzeigen der Gruppe ${adsetId} lesen:`, errMsg(err))
+  }
+  return null
+}
+
 /** Meta-Fehler als Antwort; Entwicklungsmodus der App mit eigenem Code. */
 function metaFehlerAntwort(err: unknown, wobei: string, extra: Record<string, unknown> = {}): Response {
   if (err instanceof MetaApiError) {
@@ -184,7 +285,19 @@ function metaFehlerAntwort(err: unknown, wobei: string, extra: Record<string, un
   return json({ success: false, error: `${wobei}: ${errMsg(err)}`.slice(0, 400), wobei, ...extra }, 500)
 }
 
-export async function hochladen(sb: Sb, caller: Caller, body: Record<string, unknown>): Promise<Response> {
+interface Einstellungen { default_page_id?: string | null; default_ig_user_id?: string | null; default_link?: string | null }
+
+interface Lauf {
+  env: ReturnType<typeof metaEnv>
+  akteur: string | null
+  kind: MetaWriteLogRow['actor_kind']
+  laufId: string
+  nurValidieren: boolean
+  st: Einstellungen
+  auftrag: HochladenAuftrag
+}
+
+export async function hochladen(sb: Sb, caller: Caller, body: Record<string, unknown>, auftrag: HochladenAuftrag = {}): Promise<Response> {
   if (!darfSchreiben(caller)) return fehler(403, 'Hochladen dürfen nur Admin oder Nutzer mit dem Recht Werbung')
   const poolId = String(body.pool_id ?? '').trim()
   if (!/^[0-9a-f-]{36}$/i.test(poolId)) return fehler(400, 'pool_id fehlt oder ist ungültig')
@@ -198,6 +311,21 @@ export async function hochladen(sb: Sb, caller: Caller, body: Record<string, unk
   const kind = actorKind(caller)
   const laufId = crypto.randomUUID()
 
+  // Einstellungen + Schalter „Kampagnen-Assistent“ (Anlegen bei Meta nur, wenn ein Admin ihn eingeschaltet hat)
+  const { data: s0, error: sErr } = await sb.from('ad_settings')
+    .select('builder_enabled, default_page_id, default_ig_user_id, default_link').eq('id', 'default').maybeSingle()
+  if (sErr) {
+    const msg = String(sErr.message ?? sErr)
+    if (/builder_enabled/.test(msg)) {
+      return fehler(503, 'Der Kampagnen-Assistent ist noch nicht eingerichtet (Datenbank-Migration fehlt)', { code: 'builder_disabled' })
+    }
+    return fehler(500, `ad_settings lesen: ${msg}`)
+  }
+  const st = (s0 ?? {}) as Einstellungen & { builder_enabled?: boolean | null }
+  if (st.builder_enabled !== true) {
+    return fehler(403, 'Der Kampagnen-Assistent ist ausgeschaltet. Hochladen zu Meta ist gesperrt, einschalten kann nur ein Admin.', { code: 'builder_disabled' })
+  }
+
   // 1 Vorrat-Zeile
   const { data: p0, error: pErr } = await sb.from('ad_creative_pool').select('*').eq('id', poolId).maybeSingle()
   if (pErr) return fehler(500, `Vorrat lesen: ${String(pErr.message ?? pErr)}`)
@@ -208,10 +336,36 @@ export async function hochladen(sb: Sb, caller: Caller, body: Record<string, unk
   }
   if (pool.status !== 'freigegeben') return fehler(409, `Hochladen geht nur aus dem Status freigegeben (jetzt: ${pool.status})`)
 
+  // Lease vor jedem Meta-Aufruf (zwei Klicks, zwei Tabs, Wiederholung nach Timeout)
+  const token = await leaseNehmen(sb, pool)
+  if (typeof token !== 'string') return token
+  try {
+    return await hochladenGesperrt(sb, pool, { env, akteur, kind, laufId, nurValidieren, st, auftrag })
+  } finally {
+    await leaseFreigeben(sb, pool.id, token)
+  }
+}
+
+async function hochladenGesperrt(sb: Sb, pool: PoolZeile, l: Lauf): Promise<Response> {
+  const { env, akteur, kind, laufId, nurValidieren, st, auftrag } = l
+  const bezug = (adsetId: string): Record<string, unknown> => {
+    const b = auftrag.aktionen?.[adsetId]
+    return b ? { ...b } : {}
+  }
+
   // 2 Inhalt
   if (pool.format && pool.format !== 'bild') return fehler(422, 'Automatisch hochladen geht bisher nur für Bild-Werbemittel')
   if (pool.housing_ok === false) return fehler(409, 'Die Prüfung „Sonderkategorie Wohnen“ ist für dieses Werbemittel fehlgeschlagen')
-  const adsetIds = [...new Set((pool.ziel_adset_ids ?? []).map(digits).filter(Boolean))]
+  const poolZiele = [...new Set((pool.ziel_adset_ids ?? []).map(digits).filter(Boolean))]
+  let adsetIds = poolZiele
+  if (auftrag.adsetIds?.length) {
+    const wunsch = [...new Set(auftrag.adsetIds.map(digits).filter(Boolean))]
+    const fremd = wunsch.filter(id => poolZiele.length && !poolZiele.includes(id))
+    if (fremd.length) {
+      return fehler(409, `Anzeigengruppe ${fremd.join(', ')} gehört nicht zu den Zielen dieses Werbemittels`, { code: 'ziel_passt_nicht' })
+    }
+    adsetIds = wunsch
+  }
   if (adsetIds.length < 1 || adsetIds.length > 2) return fehler(422, 'Bitte 1 oder 2 Ziel-Anzeigengruppen angeben (ziel_adset_ids)')
   const texte = obj(pool.texte)
   const primaer = textListe(texte, ['primaer', 'primary_texts', 'bodies'])
@@ -227,10 +381,6 @@ export async function hochladen(sb: Sb, caller: Caller, body: Record<string, unk
   if (!pool.asset_story_url) warnungen.push('Kein Story-Bild (9:16): Stories und Reels zeigen das Feed-Bild')
 
   // Einstellungen
-  const { data: s0, error: sErr } = await sb.from('ad_settings')
-    .select('default_page_id, default_ig_user_id, default_link').eq('id', 'default').maybeSingle()
-  if (sErr) return fehler(500, `ad_settings lesen: ${String(sErr.message ?? sErr)}`)
-  const st = (s0 ?? {}) as { default_page_id?: string | null; default_ig_user_id?: string | null; default_link?: string | null }
   const pageId = digits(st.default_page_id) || env.pageId || HP_PAGE_ID
   const lpBasis = (pool.lp_url ?? '').trim() || (st.default_link ?? '').trim() || HP_DEFAULT_LINK
   if (!/^https:\/\//i.test(lpBasis)) return fehler(422, 'Ziel-Link muss mit https:// beginnen')
@@ -266,16 +416,56 @@ export async function hochladen(sb: Sb, caller: Caller, body: Record<string, unk
     return metaFehlerAntwort(err, 'Ziel-Anzeigengruppe prüfen')
   }
 
-  // Namen + Links
-  if (ziele.length === 2) {
-    const s = ziele.map(z => suffixAusName(z.adsetName))
-    const eindeutig = s[0] && s[1] && s[0] !== s[1]
-    ziele[0].suffix = eindeutig ? s[0] : 'lang'
-    ziele[1].suffix = eindeutig ? s[1] : 'kurz'
-    if (!eindeutig) warnungen.push('Gruppennamen ohne eindeutiges „Lang“/„Kurz“: Reihenfolge der Ziel-Gruppen entscheidet')
+  // Namen + Links aus ALLEN Zielen des Werbemittels (ziel_adset_ids, schon angelegte, Auftrag,
+  // Plan-B-Partner): ein zweiter Lauf für nur eine Hälfte bekommt denselben Namen und Link wie
+  // im ersten Lauf (und die Namensprüfung sucht nach <kennung>_lang/_kurz).
+  let paare: string[][]
+  try {
+    paare = (await budgetGruppenLesen(sb)).filter(g => g.length === 2)
+  } catch (err) {
+    console.warn('[werbe-ausfuehren] Budget-Gruppen lesen:', errMsg(err))
+    paare = [[...PLAN_B_BUDGET_GRUPPE]]
+  }
+  const schonAngelegt = Object.entries(obj(pool.meta_ad_ids) ?? {}).filter(([, v]) => digits(v)).map(([k]) => digits(k)).filter(Boolean)
+  let namensIds = [...new Set([...poolZiele, ...schonAngelegt, ...adsetIds])]
+  if (namensIds.length > 2) namensIds = [...adsetIds]
+  if (namensIds.length === 1) {
+    const paar = paare.find(g => g.includes(namensIds[0]))
+    if (paar) namensIds = [...paar]
+  }
+  if (namensIds.length === 2) {
+    const gruppenName = new Map(ziele.map(z => [z.adsetId, z.adsetName]))
+    for (const id of namensIds) {
+      if (gruppenName.has(id)) continue
+      try {
+        const a = await graphGet<Record<string, unknown>>(id, { fields: 'name' })
+        gruppenName.set(id, String(a.name ?? ''))
+      } catch (err) {
+        console.warn(`[werbe-ausfuehren] Name der Partner-Gruppe ${id}:`, errMsg(err))
+      }
+    }
+    const s = namensIds.map(id => suffixAusName(gruppenName.get(id) ?? ''))
+    // Eine Hälfte bekannt: die andere ist das Gegenstück
+    if (s[0] && !s[1]) s[1] = s[0] === 'lang' ? 'kurz' : 'lang'
+    else if (s[1] && !s[0]) s[0] = s[1] === 'lang' ? 'kurz' : 'lang'
+    const suffixJe = new Map<string, 'lang' | 'kurz'>()
+    if (s[0] && s[1] && s[0] !== s[1]) {
+      namensIds.forEach((id, i) => suffixJe.set(id, s[i]!))
+    } else {
+      // feste Reihenfolge (Vorrat, sonst Plan-B-Paar), damit jeder Lauf gleich benennt
+      const paar = paare.find(g => namensIds.every(id => g.includes(id)))
+      const ordnung = namensIds.every(id => poolZiele.includes(id)) ? poolZiele : paar ?? namensIds
+      const geordnet = [...namensIds].sort((a, b) => ordnung.indexOf(a) - ordnung.indexOf(b))
+      suffixJe.set(geordnet[0], 'lang')
+      suffixJe.set(geordnet[1], 'kurz')
+      warnungen.push('Gruppennamen ohne eindeutiges „Lang“/„Kurz“: Reihenfolge der Ziel-Gruppen entscheidet')
+    }
     for (const z of ziele) {
-      z.name = `${kennung}_${z.suffix}`
-      if (istPlanBLp(lpBasis)) z.link = z.suffix === 'lang' ? PLAN_B_LP_LANG : PLAN_B_LP_KURZ
+      const sx = suffixJe.get(z.adsetId)
+      if (!sx) continue
+      z.suffix = sx
+      z.name = `${kennung}_${sx}`
+      if (istPlanBLp(lpBasis)) z.link = sx === 'lang' ? PLAN_B_LP_LANG : PLAN_B_LP_KURZ
     }
   }
 
@@ -415,6 +605,7 @@ export async function hochladen(sb: Sb, caller: Caller, body: Record<string, unk
         const text = err instanceof MetaApiError ? (err.userMsg ?? err.message) : errMsg(err)
         await poolSpeichern(sb, pool.id, { qa: { ...(pool.qa ?? {}), hochladen: { fehler: text.slice(0, 300), at: new Date().toISOString(), schritt: `validieren_${level}` } } })
         await apLog(sb, {
+          ...bezug(z.adsetId),
           lauf_id: laufId, art: 'fehler', modus: 'hochladen', entity_level: 'adset', entity_id: z.adsetId, entity_name: z.name,
           aktion: 'ersatz_hochladen', evidence: { pool_id: pool.id, kennung, schritt: `validieren_${level}` },
           meta_response: err instanceof MetaApiError ? err.detail() : { message: text }, ergebnis: `validierung_fehler: ${text}`.slice(0, 300),
@@ -441,40 +632,56 @@ export async function hochladen(sb: Sb, caller: Caller, body: Record<string, unk
     const ad = entwurf(z)
     const creativePayload = buildCreativePayload(ad, { placements: z.placements }).payload
     const cPath = `act_${env.account}/adcreatives`
-    let creativeId: string
-    try {
-      const r = await graphPost<{ id?: string }>(cPath, creativePayload)
-      creativeId = digits(r?.id)
-      if (!creativeId) throw new MetaApiError({ status: 200, kind: 'unknown', message: 'Meta lieferte keine Creative-ID' })
-      await logMetaWrite(sb, {
-        actor: akteur, actor_kind: kind, fn: FN, mode: 'hochladen', entity_level: 'creative', entity_id: creativeId,
-        path: cPath, request: creativePayload, after: r, ok: true, usage: getLastUsage(),
-      })
-    } catch (err) {
-      await logMetaWrite(sb, {
-        actor: akteur, actor_kind: kind, fn: FN, mode: 'hochladen', entity_level: 'creative', path: cPath,
-        request: creativePayload, ok: false, ...metaErrorLogFelder(err), usage: getLastUsage(),
-      })
-      return await abbruch(sb, pool, laufId, z, kennung, akteur, adIds, ersteCreative, angelegt, err, 'Creative anlegen')
-    }
-
-    const adPayload = buildAdPayload(ad, z.adsetId, { creative_id: creativeId })
     const aPath = `act_${env.account}/ads`
-    let adId: string
-    try {
-      const r = await graphPost<{ id?: string }>(aPath, adPayload)
-      adId = digits(r?.id)
-      if (!adId) throw new MetaApiError({ status: 200, kind: 'unknown', message: 'Meta lieferte keine Anzeigen-ID' })
-      await logMetaWrite(sb, {
-        actor: akteur, actor_kind: kind, fn: FN, mode: 'hochladen', entity_level: 'ad', entity_id: adId,
-        path: aPath, request: adPayload, after: r, ok: true, usage: getLastUsage(),
-      })
-    } catch (err) {
-      await logMetaWrite(sb, {
-        actor: akteur, actor_kind: kind, fn: FN, mode: 'hochladen', entity_level: 'ad', entity_id: z.adsetId, path: aPath,
-        request: adPayload, ok: false, ...metaErrorLogFelder(err), usage: getLastUsage(),
-      })
-      return await abbruch(sb, pool, laufId, z, kennung, akteur, adIds, ersteCreative, angelegt, err, 'Anzeige anlegen', creativeId)
+    let creativeId = ''
+    let adId = ''
+    // Idempotenz: Anzeige mit diesem Namen schon in der Gruppe (früherer Lauf, Timeout)? Übernehmen.
+    const schon = await vorhandeneAnzeige(z.adsetId, z.name)
+    if (schon) {
+      adId = schon.id
+      creativeId = schon.creative_id ?? ''
+      warnungen.push(`Anzeige ${z.name} war in ${z.adsetId} schon angelegt (${adId}) und wurde übernommen`)
+    }
+    if (!adId) {
+      try {
+        const r = await graphPost<{ id?: string }>(cPath, creativePayload)
+        creativeId = digits(r?.id)
+        if (!creativeId) throw new MetaApiError({ status: 200, kind: 'unknown', message: 'Meta lieferte keine Creative-ID' })
+        await logMetaWrite(sb, {
+          actor: akteur, actor_kind: kind, fn: FN, mode: 'hochladen', entity_level: 'creative', entity_id: creativeId,
+          path: cPath, request: creativePayload, after: r, ok: true, usage: getLastUsage(),
+        })
+      } catch (err) {
+        await logMetaWrite(sb, {
+          actor: akteur, actor_kind: kind, fn: FN, mode: 'hochladen', entity_level: 'creative', path: cPath,
+          request: creativePayload, ok: false, ...metaErrorLogFelder(err), usage: getLastUsage(),
+        })
+        return await abbruch(sb, pool, laufId, z, kennung, akteur, adIds, ersteCreative, angelegt, err, 'Creative anlegen', null, bezug(z.adsetId))
+      }
+
+      const adPayload = buildAdPayload(ad, z.adsetId, { creative_id: creativeId })
+      try {
+        const r = await graphPost<{ id?: string }>(aPath, adPayload)
+        adId = digits(r?.id)
+        if (!adId) throw new MetaApiError({ status: 200, kind: 'unknown', message: 'Meta lieferte keine Anzeigen-ID' })
+        await logMetaWrite(sb, {
+          actor: akteur, actor_kind: kind, fn: FN, mode: 'hochladen', entity_level: 'ad', entity_id: adId,
+          path: aPath, request: adPayload, after: r, ok: true, usage: getLastUsage(),
+        })
+      } catch (err) {
+        await logMetaWrite(sb, {
+          actor: akteur, actor_kind: kind, fn: FN, mode: 'hochladen', entity_level: 'ad', entity_id: z.adsetId, path: aPath,
+          request: adPayload, ok: false, ...metaErrorLogFelder(err), usage: getLastUsage(),
+        })
+        // Unklarer Ausgang (Timeout, 5xx): hat Meta die Anzeige doch angelegt?
+        const klar = err instanceof MetaApiError && ['validation', 'permission', 'auth', 'dev_mode', 'deprecated_version'].includes(err.kind)
+        const doch = klar ? null : await vorhandeneAnzeige(z.adsetId, z.name)
+        if (!doch) {
+          return await abbruch(sb, pool, laufId, z, kennung, akteur, adIds, ersteCreative, angelegt, err, 'Anzeige anlegen', creativeId, bezug(z.adsetId))
+        }
+        adId = doch.id
+        warnungen.push(`Anzeige ${z.name}: Antwort von Meta unklar, Anzeige ${adId} gefunden und übernommen`)
+      }
     }
 
     // Rücklesen (darf scheitern; die Anzeige ist angelegt)
@@ -490,7 +697,7 @@ export async function hochladen(sb: Sb, caller: Caller, body: Record<string, unk
     }
 
     adIds[z.adsetId] = adId
-    ersteCreative = ersteCreative ?? creativeId
+    ersteCreative = ersteCreative ?? (creativeId || null)
     angelegt.push({ adset_id: z.adsetId, ad_id: adId, creative_id: creativeId, name: z.name, link: z.link, effective_status: effektiv })
     // Fortschritt sofort sichern (erneuter Aufruf legt diese Gruppe nicht doppelt an)
     await poolSpeichern(sb, pool.id, { meta_ad_ids: adIds, meta_creative_id: ersteCreative })
@@ -499,13 +706,14 @@ export async function hochladen(sb: Sb, caller: Caller, body: Record<string, unk
     const { error: cErr } = await sb.from('ad_catalog').upsert({
       ad_id: adId, platform: 'meta', account_id: env.account, campaign_id: z.campaignId, campaign_name: z.campaignName,
       adset_id: z.adsetId, adset_name: z.adsetName, ad_name: z.name, status, configured_status: status,
-      effective_status: effektiv, creative_id: creativeId, creative_body: primaer[0] ?? null,
+      effective_status: effektiv, creative_id: creativeId || null, creative_body: primaer[0] ?? null,
       thumbnail_url: pool.asset_feed_url, url_tags: URL_TAGS_STANDARD, created_time: jetzt, updated_time: jetzt, updated_at: jetzt,
     }, { onConflict: 'ad_id' })
     if (cErr) warnungen.push(`ad_catalog: ${String(cErr.message ?? cErr)}`.slice(0, 200))
     const { error: spErr } = await sb.from('studio_prepared_ads').upsert({ ad_id: adId, ad_name: z.name.slice(0, 100) }, { onConflict: 'ad_id' })
     if (spErr) warnungen.push(`studio_prepared_ads: ${String(spErr.message ?? spErr)}`.slice(0, 200))
     await apLog(sb, {
+      ...bezug(z.adsetId),
       lauf_id: laufId, art: 'ausfuehrung', modus: 'hochladen', entity_level: 'ad', entity_id: adId, entity_name: z.name,
       aktion: 'ersatz_hochladen', after: { status, adset_id: z.adsetId, creative_id: creativeId, link: z.link },
       readback: { status, effective_status: effektiv }, evidence: { pool_id: pool.id, kennung },
@@ -516,6 +724,7 @@ export async function hochladen(sb: Sb, caller: Caller, body: Record<string, unk
   // Vorrat -> hochgeladen (Guard stempelt hochgeladen_at und schreibt den Vorrat-Log)
   const qa = { ...(pool.qa ?? {}) }
   delete qa.hochladen
+  delete qa[LEASE_KEY]
   const endFehler = await poolSpeichern(sb, pool.id, {
     status: 'hochgeladen', meta_image_hashes: hashes, meta_ad_ids: adIds, meta_creative_id: ersteCreative, qa,
   })
@@ -530,7 +739,7 @@ export async function hochladen(sb: Sb, caller: Caller, body: Record<string, unk
 async function abbruch(
   sb: Sb, pool: PoolZeile, laufId: string, z: Ziel, kennung: string, akteur: string | null,
   adIds: Record<string, string>, creativeId: string | null, angelegt: Angelegt[], err: unknown, wobei: string,
-  verwaistesCreative: string | null = null,
+  verwaistesCreative: string | null = null, bezug: Record<string, unknown> = {},
 ): Promise<Response> {
   const text = err instanceof MetaApiError ? (err.userMsg ?? err.message) : errMsg(err)
   await poolSpeichern(sb, pool.id, {
@@ -538,10 +747,160 @@ async function abbruch(
     qa: { ...(pool.qa ?? {}), hochladen: { fehler: text.slice(0, 300), at: new Date().toISOString(), schritt: wobei } },
   })
   await apLog(sb, {
+    ...bezug,
     lauf_id: laufId, art: 'fehler', modus: 'hochladen', entity_level: 'adset', entity_id: z.adsetId, entity_name: z.name,
     aktion: 'ersatz_hochladen', evidence: { pool_id: pool.id, kennung, schritt: wobei, schon_angelegt: angelegt.map(a => a.ad_id), creative_ohne_anzeige: verwaistesCreative },
     meta_response: err instanceof MetaApiError ? err.detail() : { message: text }, ergebnis: `fehler: ${text}`.slice(0, 300),
     akteur, akteur_art: 'system',
   })
   return metaFehlerAntwort(err, wobei, { pool_id: pool.id, teilweise: angelegt.length > 0, angelegt, meta_ad_ids: adIds })
+}
+
+// ── Freigegebene ersatz_hochladen-Gruppe (vom gemeinsamen Ausführer delegiert) ──
+
+export interface AuftragsErgebnis {
+  ausgefuehrt: number
+  fehlgeschlagen: number
+  uebersprungen: Uebersprungen[]
+}
+
+/** result-Hinweis an gehaltenen Zeilen, solange der Kampagnen-Assistent aus ist. */
+export const HINWEIS_ASSISTENT_AUS = 'Wartet: Kampagnen-Assistent ist ausgeschaltet. Hochladen läuft erst, wenn ein Admin ihn einschaltet.'
+
+/**
+ * Claims lösen, Zeilen bleiben 'bestätigt' (nächster Lauf oder Ablauf schließt sie); mit hinweis
+ * zusätzlich result setzen (gehalten, z.B. Kampagnen-Assistent aus). Wirft nie.
+ */
+export async function aktionenFreigeben(sb: Sb, ids: string[], hinweis?: string): Promise<void> {
+  if (!ids.length) return
+  try {
+    const patch: Record<string, unknown> = { claimed_at: null }
+    if (hinweis) patch.result = hinweis.slice(0, 200)
+    const { error } = await sb.from('ad_actions').update(patch).in('id', ids).eq('status', 'bestätigt')
+    if (error) console.warn('[werbe-ausfuehren] Claim lösen:', String(error.message ?? error).slice(0, 200))
+  } catch (err) {
+    console.warn('[werbe-ausfuehren] Claim lösen:', errMsg(err))
+  }
+}
+
+/**
+ * Führt eine ersatz_hochladen-Gruppe aus: alle Zeilen mit derselben payload.pool_id, Ziele aus
+ * payload.adset_id (sonst entity_id). Danach je Zeile:
+ *   ausgeführt     Anzeige in ihrer Anzeigengruppe angelegt (auch: schon hochgeladen)
+ *   fehlgeschlagen Meta hat abgelehnt (Validierung, Rechte, App nicht Live)
+ *   abgelehnt      Leitplanke (kein HOUSING, Lint, fremdes Konto, Status)
+ *   bestätigt      vorübergehend (Rate-Limit, 5xx, Lease, Not-Aus): Claim lösen;
+ *                  Kampagnen-Assistent aus: Claim lösen + result-Hinweis (gehalten, nicht abgelehnt)
+ * Validieren ruft das hier nie auf (kein Lease, kein Bild-Upload): werbe-ausfuehren meldet
+ * delegierte Zeilen dort als übersprungen 'nur_bei_ausfuehrung'.
+ */
+export async function hochladenAusAktionen(sb: Sb, caller: Caller, rows: AktionsZeile[]): Promise<AuftragsErgebnis> {
+  const erg: AuftragsErgebnis = { ausgefuehrt: 0, fehlgeschlagen: 0, uebersprungen: [] }
+  const ids = rows.map(r => r.id)
+  const adsetVon = (r: AktionsZeile) => digits(r.payload?.adset_id ?? r.entity_id)
+  const poolIds = [...new Set(rows.map(r => String(r.payload?.pool_id ?? '').trim()))]
+  const adsets = [...new Set(rows.map(adsetVon))]
+  const akteur = akteurVon(caller)
+
+  const logZeile = async (r: AktionsZeile, ergebnis: string, extra: Record<string, unknown> = {}) => {
+    await apLog(sb, {
+      art: 'ausfuehrung', modus: 'hochladen', rule_key: r.rule_key ?? null, rule_version: r.rule_version ?? null,
+      approval_level: r.approval_level ?? null, entity_level: 'adset', entity_id: adsetVon(r) || null,
+      entity_name: typeof r.payload?.entity_name === 'string' ? r.payload.entity_name : null, aktion: 'ersatz_hochladen',
+      action_id: r.id, gruppe_id: r.gruppe_id ?? null, idempotency_key: r.idempotency_key ?? null,
+      evidence: { pool_id: r.payload?.pool_id ?? null }, ergebnis: ergebnis.slice(0, 300),
+      akteur: akteur ?? r.approved_by ?? null, akteur_art: 'system', ...extra,
+    })
+  }
+  const abschliessen = async (r: AktionsZeile, status: 'ausgeführt' | 'fehlgeschlagen' | 'abgelehnt', result: string, readback: Record<string, unknown> | null = null) => {
+    const patch: Record<string, unknown> = { status, executed_at: new Date().toISOString(), result: result.slice(0, 200) }
+    if (readback) patch.readback = readback
+    const { error } = await sb.from('ad_actions').update(patch).eq('id', r.id).eq('status', 'bestätigt')
+    if (error) console.warn(`[werbe-ausfuehren] ad_actions ${r.id}:`, String(error.message ?? error).slice(0, 200))
+  }
+
+  // Gruppe muss eindeutig sein: ein Werbemittel, 1 oder 2 Anzeigengruppen
+  let problem: string | null = null
+  if (poolIds.length !== 1 || !UUID.test(poolIds[0])) problem = 'payload.pool_id fehlt oder ist in der Gruppe nicht eindeutig'
+  else if (adsets.some(a => !a)) problem = 'Ziel-Anzeigengruppe fehlt (payload.adset_id)'
+  else if (adsets.length > 2) problem = 'Höchstens 2 Ziel-Anzeigengruppen je Werbemittel'
+  if (problem) {
+    for (const r of rows) {
+      await abschliessen(r, 'abgelehnt', `Leitplanke: ${problem}`)
+      await logZeile(r, 'abgelehnt', { after: { grund: problem } })
+      erg.uebersprungen.push({ id: r.id, grund: `abgelehnt: ${problem}`.slice(0, 200) })
+    }
+    return erg
+  }
+
+  const aktionen: Record<string, AktionsBezug> = {}
+  for (const r of rows) {
+    aktionen[adsetVon(r)] ??= {
+      action_id: r.id, gruppe_id: r.gruppe_id ?? null, rule_key: r.rule_key ?? null, rule_version: r.rule_version ?? null,
+      approval_level: r.approval_level ?? null, idempotency_key: r.idempotency_key ?? null,
+    }
+  }
+
+  let status = 0
+  let body: Record<string, unknown> = {}
+  try {
+    const res = await hochladen(sb, caller, { pool_id: poolIds[0] }, { adsetIds: adsets, aktionen })
+    status = res.status
+    body = obj(await res.json().catch(() => null)) ?? {}
+  } catch (err) {
+    status = 500
+    body = { success: false, error: `Hochladen: ${errMsg(err)}`.slice(0, 400) }
+  }
+
+  const ok = status >= 200 && status < 300 && body.success === true
+  const text = String(body.error ?? (ok ? '' : `HTTP ${status}`)).slice(0, 300)
+  const code = String(body.code ?? '')
+
+  // Kampagnen-Assistent aus: nichts bei Meta passiert; Zeilen halten (nicht endgültig ablehnen)
+  if (code === 'builder_disabled') {
+    await aktionenFreigeben(sb, ids, HINWEIS_ASSISTENT_AUS)
+    for (const r of rows) erg.uebersprungen.push({ id: r.id, grund: 'builder_disabled' })
+    console.warn(`[werbe-ausfuehren] Hochladen ${poolIds[0]} gehalten: Kampagnen-Assistent aus`)
+    return erg
+  }
+
+  const metaIds = obj(body.meta_ad_ids) ?? {}
+  const vorUebergehend = status === 429 || status >= 500 || code === 'hochladen_laeuft' || code === 'META_WRITES_DISABLED'
+  const metaFehler = code.startsWith('meta_') || code === 'app_dev_mode'
+  const freigeben: string[] = []
+  for (const r of rows) {
+    const adId = digits(metaIds[adsetVon(r)])
+    if (adId) {
+      const result = body.bereits_hochgeladen === true
+        ? `Werbemittel war schon hochgeladen (Anzeige ${adId})`
+        : `Anzeige ${adId} angelegt (PAUSED)`
+      await abschliessen(r, 'ausgeführt', result, {
+        pool_id: poolIds[0], ad_id: adId, meta_creative_id: body.meta_creative_id ?? null,
+        angelegt: Array.isArray(body.angelegt) ? (body.angelegt as unknown[]).filter(a => obj(a)?.adset_id === adsetVon(r)) : [],
+        warnungen: Array.isArray(body.warnungen) ? body.warnungen : [],
+      })
+      erg.ausgefuehrt++
+      continue
+    }
+    if (ok) {
+      // schon hochgeladen, aber nicht in diese Anzeigengruppe
+      const grund = 'Werbemittel wurde schon in andere Anzeigengruppen hochgeladen'
+      await abschliessen(r, 'abgelehnt', `Leitplanke: ${grund}`)
+      await logZeile(r, 'abgelehnt', { after: { grund } })
+      erg.uebersprungen.push({ id: r.id, grund: `abgelehnt: ${grund}` })
+    } else if (vorUebergehend) {
+      freigeben.push(r.id)
+      erg.uebersprungen.push({ id: r.id, grund: (code || `hochladen_http_${status}`).slice(0, 200) })
+    } else if (metaFehler) {
+      await abschliessen(r, 'fehlgeschlagen', text)
+      erg.fehlgeschlagen++
+    } else {
+      await abschliessen(r, 'abgelehnt', `Leitplanke: ${text}`)
+      await logZeile(r, 'abgelehnt', { after: { grund: text, code: code || null } })
+      erg.uebersprungen.push({ id: r.id, grund: `abgelehnt: ${text}`.slice(0, 200) })
+    }
+  }
+  await aktionenFreigeben(sb, freigeben)
+  if (!ok) console.warn(`[werbe-ausfuehren] Hochladen ${poolIds[0]} (Aktionen ${ids.join(', ')}): HTTP ${status} ${text}`)
+  return erg
 }

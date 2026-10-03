@@ -167,6 +167,19 @@ check(Math.abs(m.betaPosteriorMean(5, 6, 0.65, 20) - 18 / 26) < 1e-12, 'betaPost
 check(m.usdProEur(114, 100) === 1.14 && m.usdProEur(0, 0) === 1.14 && Math.abs(m.usdProEur(120, 100) - 1.2) < 1e-12, 'usdProEur')
 check(m.eurZuCents(50, 1.14) === 5700 && Math.abs(m.centsZuEur(5700, 1.14) - 50) < 1e-9, 'Cent/EUR-Umrechnung')
 check(m.kennungId('123', 'plan_b_miete_lang') === '123:plan_b_miete' && m.kennungBasis('x_kurz') === 'x' && m.kennungBasis('x_kurz_v2') === 'x_kurz_v2', 'kennungId/kennungBasis')
+// wie SQL: coalesce(nullif(regexp_replace(btrim(ad_name), '_(lang|kurz)$', '', 'i'), ''), ad_id)
+{
+  const faelle = [
+    [['X_Kurz', '9'], 'X'], [['x_LANG', '9'], 'x'], [['a1_kurz ', '9'], 'a1'], [['  a1_lang', '9'], 'a1'],
+    [['', '9'], '9'], [[null, '9'], '9'], [['_kurz', '9'], '9'], [['   ', '9'], '9'], [['a_kurz_kurz', '9'], 'a_kurz'],
+    [['a\t', '9'], 'a\t'], [['', undefined], ''], [['plan_b_kurz', null], 'plan_b'],
+  ]
+  for (const [[name, id], soll] of faelle) {
+    const ist = m.kennungBasis(name, id)
+    check(ist === soll, `kennungBasis(${JSON.stringify(name)}, ${JSON.stringify(id)}) = ${JSON.stringify(ist)}, erwartet ${JSON.stringify(soll)}`)
+  }
+  check(m.kennungId('C1', 'a1_Kurz ', '7') === 'C1:a1' && m.kennungId('C1', '', '7') === 'C1:7' && m.kennungId('C1', null, '7') === 'C1:7', 'kennungId mit Anzeigen-ID-Rückfall')
+}
 check(m.maxAktiveAnzeigen(120) === 6 && m.maxAktiveAnzeigen(300) === 10 && m.maxAktiveAnzeigen(50) === 4, 'maxAktiveAnzeigen clamp(floor(b/20), 4, 10)')
 check(m.berlinTag(Date.parse('2026-10-04T22:30:00Z')).datum === '2026-10-05' && m.berlinTag(Date.parse('2026-10-05T04:30:00Z')).wochentag === 1, 'berlinTag Zeitzone Europe/Berlin')
 check(m.monatsende('2026-02-11') === '2026-02-28' && m.tageZwischen('2026-10-01', '2026-10-05') === 4, 'monatsende/tageZwischen')

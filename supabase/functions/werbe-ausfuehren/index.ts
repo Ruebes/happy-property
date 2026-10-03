@@ -10,9 +10,13 @@
 //                                      freigegeben wurde (Ein-Klick in der Oberfläche; Sven ODER
 //                                      Giona). Alternativ ids: uuid[].
 //   { modus: 'fenster' }               alle bestätigten Autopilot-Zeilen (Änderungsfenster-Lauf,
-//                                      werbe-autopilot im Modus autonom, pg_cron)
+//                                      werbe-autopilot nacht/nachholen, pg_cron)
+//   Freigegebene ersatz_hochladen-Gruppen gibt der Ausführer als delegiert zurück (Claim
+//   gehalten); sie laufen hier über hochladen.ts (hochladenAusAktionen, payload.pool_id,
+//   payload.adset_id) und werden danach abgeschlossen.
 //   { modus: 'validieren', gruppe_id } Leitplanken + execution_options validate_only bei Meta,
-//                                      ändert nichts (auch für noch nicht freigegebene Vorschläge)
+//                                      ändert nichts (auch für noch nicht freigegebene Vorschläge);
+//                                      ersatz_hochladen-Zeilen: übersprungen 'nur_bei_ausfuehrung'
 //   { modus: 'rueckgaengig', action_id, grund? }
 //                                      Gegenaktion zu einer ausgeführten Zeile (pause <-> activate,
 //                                      budget_set auf den Vorher-Wert), siehe rueckgaengig.ts
@@ -49,7 +53,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { authorizeCaller, safeEqual, type Caller, type CallerRule } from '../_shared/callerAuth.ts'
 import { ausfuehren, type AusfuehrenErgebnis } from '../_shared/werbeAusfuehren.ts'
 import { CORS, akteurVon, darfSchreiben, errMsg, fehler, json, stoppMail } from './gemeinsam.ts'
-import { hochladen } from './hochladen.ts'
+import { aktionenFreigeben, hochladen, hochladenAusAktionen } from './hochladen.ts'
 import { rueckgaengig } from './rueckgaengig.ts'
 
 const REGEL: CallerRule = { cron: true, service: true, roles: ['admin', 'verwalter'], perms: ['werbung'] }
@@ -114,6 +118,32 @@ Deno.serve(async (req: Request) => {
         akteur,
         fn: 'werbe-ausfuehren',
       })
+    }
+    // Delegierte Hochlade-Gruppen (ersatz_hochladen) ausführen; nie an die Oberfläche durchreichen
+    const delegiert = erg.delegiert ?? []
+    delete erg.delegiert
+    for (const rows of delegiert) {
+      // Validieren lädt nie hoch (kein Lease, kein Bild-Upload; validateOnly hält keinen Claim)
+      if (modus === 'validieren') {
+        for (const r of rows) erg.uebersprungen.push({ id: r.id, grund: 'nur_bei_ausfuehrung' })
+        continue
+      }
+      if (erg.gestoppt || erg.abgebrochen) {
+        await aktionenFreigeben(sb, rows.map(r => r.id))
+        for (const r of rows) erg.uebersprungen.push({ id: r.id, grund: erg.gestoppt ? 'autopilot_gestoppt' : `abgebrochen_${erg.abgebrochen}` })
+        continue
+      }
+      // Jede Gruppe für sich: ein Fehler hier hält nie die Claims der anderen Gruppen fest
+      try {
+        const t = await hochladenAusAktionen(sb, caller, rows)
+        erg.ausgefuehrt += t.ausgefuehrt
+        erg.fehlgeschlagen += t.fehlgeschlagen
+        erg.uebersprungen.push(...t.uebersprungen)
+      } catch (err) {
+        console.error('[werbe-ausfuehren] Hochlade-Gruppe:', errMsg(err))
+        await aktionenFreigeben(sb, rows.map(r => r.id))
+        for (const r of rows) erg.uebersprungen.push({ id: r.id, grund: 'interner_fehler' })
+      }
     }
     console.log(`[werbe-ausfuehren] ${modus} (${wer}): ausgeführt ${erg.ausgefuehrt}, fehlgeschlagen ${erg.fehlgeschlagen}, übersprungen ${erg.uebersprungen.length}${erg.gestoppt ? ', GESTOPPT' : ''}${erg.abgebrochen ? `, abgebrochen ${erg.abgebrochen}` : ''}`)
     let mail: boolean | undefined

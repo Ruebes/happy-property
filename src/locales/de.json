@@ -3778,7 +3778,7 @@
       "tgAllPositions": "alle Positionen",
       "tgHousingAge": "Alter 18 bis 65+, alle Geschlechter (Sonderkategorie Wohnen, nicht änderbar)",
       "tgHousingDetailed": "Wohnen: Verhalten, Jobtitel und Arbeitgeber sind nicht erlaubt. Interessen prüft Meta beim Prüfen.",
-      "tgHousingGeo": "Wohnen: keine Ortsausschlüsse, keine PLZ, Umkreis um Städte mindestens 15 km.",
+      "tgHousingGeo": "Wohnen: keine Ortsausschlüsse, keine PLZ, Umkreis um Städte mindestens 17 km.",
       "tgHousingLookalike": "Wohnen: Lookalike-Zielgruppen werden nicht angeboten.",
       "tgLangDe": "Deutsch",
       "tgLangEnAll": "Englisch (alle)",
@@ -3797,13 +3797,15 @@
       "tgLockExclusions": "Ausschlüsse",
       "tgLockGender": "Geschlecht",
       "tgLockLookalike": "Lookalike-Zielgruppen",
-      "tgLockRadius": "Umkreis mindestens 15 km",
+      "tgLockRadius": "Umkreis um Städte mindestens 17 km, um Adressen 15 km",
       "tgLookalikeHousing": "Lookalike: unter Wohnen nicht erlaubt, wird beim Speichern entfernt",
       "tgPositionsAuto": "Einzelne Positionen lassen sich wählen, sobald du Plattformen von Hand auswählst.",
       "tgRadius": "Umkreis",
       "tgRadiusStandard": "Standard (Meta)",
       "tgRemove": "Entfernen",
-      "preview": "Vorschau"
+      "preview": "Vorschau",
+      "limitNurAdmin": "Das Tageslimit erhöhen darf nur ein Admin. Senken geht.",
+      "limitNurSenken": "nur senken (erhöhen darf nur ein Admin)"
     },
     "studio": {
       "title": "Anzeigen-Studio (KI)",
@@ -5057,7 +5059,9 @@
           "werbemittel": "Werbemittel",
           "ziel": "Ziel und Call-to-Action",
           "zielAnpassen": "Anpassen",
-          "zielPasstNicht": "Das Ziel passt nicht zum Conversion-Ort der Anzeigengruppe."
+          "zielPasstNicht": "Das Ziel passt nicht zum Conversion-Ort der Anzeigengruppe.",
+          "angelegt": "Diese Werbeanzeige ist schon bei Meta angelegt (ID {{id}}). Texte, Medien und Einstellungen lassen sich hier nicht mehr ändern.",
+          "funktionenNichtUebernommen": "In der Vorlage waren diese Advantage+ Funktionen an und sind hier aus: {{liste}}. Bei Bedarf unter „Advantage+ Creative“ bewusst einschalten."
         },
         "baum": {
           "anzeige": "Anzeige",
@@ -5082,7 +5086,8 @@
           "paarFehlt": "Für Paare braucht es die Anzeigengruppen „Kalt · Lang“ und „Kalt · Kurz“ der Vorlage.",
           "paarHilfe": "Eine Anzeige in Lang und eine in Kurz",
           "rot": "Fehler",
-          "titel": "Aufbau der Kampagne"
+          "titel": "Aufbau der Kampagne",
+          "entfernenGesperrt": "Schon bei Meta angelegt: lässt sich nicht mehr aus dem Entwurf nehmen."
         },
         "fehler": {
           "app_dev_mode": "Die Meta-App steht noch im Entwicklungsmodus. Anzeigen lassen sich erst anlegen, wenn sie live ist.",
@@ -5141,7 +5146,8 @@
           "name": "Name der Anzeigengruppe",
           "pixelWarnung": "Achtung: Landingpages und /termin feuern nur das HP-Pixel. Mit diesem Pixel lernt Meta womöglich nichts.",
           "roasHilfe": "Als Faktor, z. B. 1,5",
-          "synchronAn": "Budgets synchron: eine Änderung gilt für alle neuen Anzeigengruppen."
+          "synchronAn": "Budgets synchron: eine Änderung gilt für alle neuen Anzeigengruppen.",
+          "angelegt": "Diese Anzeigengruppe ist schon bei Meta angelegt (ID {{id}}). Ihre Einstellungen lassen sich hier nicht mehr ändern."
         },
         "importHinweise": "Hinweise zur Übernahme:",
         "kampagne": {
@@ -5152,7 +5158,8 @@
           "limitUndZeit": "Ausgabenlimit und Laufzeit",
           "name": "Kampagnenname",
           "synchron": "Budgets der Anzeigengruppen synchron halten",
-          "synchronHilfe": "Ändert sich das Budget einer Anzeigengruppe, bekommen alle neuen Anzeigengruppen denselben Betrag (wie bei Plan B Lang und Kurz)."
+          "synchronHilfe": "Ändert sich das Budget einer Anzeigengruppe, bekommen alle neuen Anzeigengruppen denselben Betrag (wie bei Plan B Lang und Kurz).",
+          "angelegt": "Diese Kampagne ist schon bei Meta angelegt (ID {{id}}). Ihre Einstellungen lassen sich hier nicht mehr ändern."
         },
         "katalogFehler": "Seiten, Pixel und Formulare von Meta konnten nicht geladen werden ({{fehler}}). IDs lassen sich trotzdem von Hand eintragen.",
         "ladeFehler": "Der Entwurf konnte nicht geladen werden: {{fehler}}",
@@ -5219,7 +5226,14 @@
           "ohneFeld": "Allgemein",
           "ok": "Geprüft um {{zeit}}: Meta hat nichts zu beanstanden.",
           "titel": "Prüfung",
-          "veraltet": "Geprüft um {{zeit}}, inzwischen veraltet."
+          "veraltet": "Geprüft um {{zeit}}, inzwischen veraltet.",
+          "skip": {
+            "app_dev_mode": "Nicht prüfbar: die Meta-App ist im Entwicklungsmodus.",
+            "no_proxy_campaign": "Nicht prüfbar: keine pausierte Prüf-Kampagne mit gleichem Ziel vorhanden.",
+            "call_cap": "Nicht geprüft: Höchstzahl an Prüfaufrufen erreicht.",
+            "existing": "Besteht schon bei Meta, wird nicht neu angelegt.",
+            "rate_limited": "Nicht geprüft: Meta bremst gerade."
+          }
         },
         "pruefMitFehlern": "Meta hat den Entwurf geprüft und meldet Fehler. Details rechts.",
         "pruefOk": "Meta hat den Entwurf geprüft: keine Fehler.",
@@ -5312,6 +5326,15 @@
         "weiter": "Weiter",
         "zielgruppe": {
           "entfernt": "Wegen Wohnen automatisch angepasst:"
+        },
+        "status": {
+          "draft": "Entwurf",
+          "validated": "Geprüft",
+          "creating": "Wird angelegt",
+          "partial": "Teilweise angelegt",
+          "created": "Angelegt (pausiert)",
+          "failed": "Fehlgeschlagen",
+          "discarded": "Verworfen"
         }
       },
       "autopilot": {
@@ -5639,7 +5662,7 @@
         },
         "titel": "Kosten pro Termin-Äquivalent",
         "stand": "Stand {{datum}}, Ziel {{ziel}} pro TE",
-        "ohneBewertung": "{{n}} gehaltene Termine ohne Bewertung",
+        "ohneBewertung": "{{n}} Kunden nach Termin ohne Bewertung",
         "konto": {
           "ausgaben": "Ausgaben gesamt",
           "te": "TE gesamt",
@@ -6186,7 +6209,7 @@
           "genders": "Bei Wohnen werden immer alle Geschlechter erreicht.",
           "geo": "Bei Wohnen sind PLZ und kleinräumige Orte (Stadtteile, Bezirke) nicht erlaubt.",
           "lookalike": "Bei Wohnen sind Lookalike Audiences nicht erlaubt, Custom Audiences nur, wenn Meta sie freigibt.",
-          "radius": "Bei Wohnen beträgt der Radius um Orte mindestens 15 km."
+          "radius": "Bei Wohnen beträgt der Radius um Adressen und Orte mindestens 15 km, um Städte mindestens 17 km."
         },
         "housing_change": {
           "advantage_audience_set": "Advantage+ Zielgruppe ausdrücklich gesetzt.",
@@ -6201,7 +6224,7 @@
           "geo_type_removed": "PLZ bzw. kleinräumige Orte entfernt.",
           "individual_setting_removed": "Alter und Geschlecht als Vorschlag entfernt.",
           "lookalike_removed": "Lookalike Audiences entfernt.",
-          "radius_raised": "Radius auf 15 km angehoben."
+          "radius_raised": "Radius auf das Minimum angehoben (Städte 17 km, Adressen und Orte 15 km)."
         },
         "issue": {
           "adset_ref_missing": "Die Anzeigengruppe {{key}} gibt es in diesem Entwurf nicht.",
@@ -6242,7 +6265,7 @@
           "housing_geo_type": "Wohnen: Ortstyp {{type}} ist nicht erlaubt.",
           "housing_lookalike": "Wohnen: Lookalike Audiences sind nicht erlaubt.",
           "housing_missing": "Immobilienkampagnen müssen in der Sonderkategorie Wohnen laufen.",
-          "housing_radius": "Wohnen: Radius mindestens 15 km (gesetzt: {{km}} km).",
+          "housing_radius": "Wohnen: Radius um Adressen und Orte mindestens 15 km (gesetzt: {{km}} km).",
           "identity_ig": "Das Instagram-Konto fehlt.",
           "identity_page": "Die Facebook-Seite fehlt.",
           "invalid_option": "Ungültiger Wert: {{value}}.",
@@ -6275,7 +6298,9 @@
           "unsupported": "Wird vom Assistenten nicht unterstützt: {{value}}.",
           "url_has_utm": "Die URL enthält schon UTM-Parameter. Die URL-Parameter hängt der Assistent selbst an.",
           "url_invalid": "Ungültige Website-URL.",
-          "video_thumb_missing": "Für das Video fehlt noch das Vorschaubild."
+          "video_thumb_missing": "Für das Video fehlt noch das Vorschaubild.",
+          "city_radius": "Umkreis um Städte: Meta erlaubt {{min}} bis {{max}} km (gesetzt: {{km}} km).",
+          "descriptions_single": "Höchstens eine Beschreibung: Meta wechselt sie nicht je Platzierung oder Variante."
         },
         "level": {
           "ad": "Werbeanzeige",

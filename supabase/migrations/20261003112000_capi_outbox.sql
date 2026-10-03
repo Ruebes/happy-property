@@ -21,7 +21,9 @@
 -- Ausgang nur.
 --
 -- Die Trigger dürfen den eigentlichen Schreibvorgang NIE scheitern lassen: jeder
--- Fehler wird als WARNING geloggt, die Zeile wird trotzdem gespeichert.
+-- Fehler wird als WARNING geloggt, die Zeile wird trotzdem gespeichert. Ein
+-- fehlgeschlagener pg_net-Anstoß nimmt den Ausgangs-Eintrag NICHT mit zurück
+-- (eigene Subtransaktion nur um den Anstoß in werbe_capi_einreihen).
 --
 -- Additiv, idempotent. Rückbau: rollback/20261003112000_capi_outbox.down.sql
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -112,19 +114,27 @@ begin
     return;
   end if;
 
-  select c.value into v_secret from public.connector_secrets c where c.key = 'CRON_SECRET';
-  if v_secret is null then
-    raise warning 'werbe_capi_einreihen: CRON_SECRET fehlt in connector_secrets, kein Anstoß';
-    return;
-  end if;
+  -- Nur der Anstoß ist abgesichert: scheitert er (pg_net fehlt/Fehler, Secret nicht
+  -- lesbar), bleibt die Zeile im Ausgang (Subtransaktion nur um den Anstoß), und der
+  -- nächste Anstoß bzw. der Tageslauf sendet sie.
+  begin
+    select c.value into v_secret from public.connector_secrets c where c.key = 'CRON_SECRET';
+    if v_secret is null then
+      raise warning 'werbe_capi_einreihen: CRON_SECRET fehlt in connector_secrets, kein Anstoß';
+      return;
+    end if;
 
-  perform set_config('werbe.capi_anstoss', '1', true);
-  perform net.http_post(
-    url := 'https://vjlwgajmtqlwjjreowbu.supabase.co/functions/v1/werbe-signal',
-    headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-secret', v_secret),
-    body := jsonb_build_object('aktion', 'outbox', 'anlass', p_event_id),
-    timeout_milliseconds := 5000
-  );
+    perform net.http_post(
+      url := 'https://vjlwgajmtqlwjjreowbu.supabase.co/functions/v1/werbe-signal',
+      headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-secret', v_secret),
+      body := jsonb_build_object('aktion', 'outbox', 'anlass', p_event_id),
+      timeout_milliseconds := 5000
+    );
+    perform set_config('werbe.capi_anstoss', '1', true);
+  exception when others then
+    raise warning 'werbe_capi_einreihen: Anstoß fehlgeschlagen, Ereignis % bleibt im Ausgang: % [%]',
+      p_event_id, sqlerrm, sqlstate;
+  end;
 end
 $fn$;
 

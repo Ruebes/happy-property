@@ -15,7 +15,8 @@ import {
 } from '../_shared/metaGraph.ts'
 import {
   adByKey, adsetByKey, applyHousing, buildAdPayload, buildAdsetPayload, buildCampaignPayload, buildCreativePayload,
-  cleanName, HEC_CATEGORIES, hasErrors, isHec, PREVIEW_FORMATS, targetsEu, validateDraft,
+  cleanName, effectiveAdvantageAudience, HEC_CATEGORIES, hasErrors, isHec, isRealEstateDraft, PREVIEW_FORMATS,
+  SPECIAL_AD_CATEGORIES, targetsEu, validateDraft, type SpecialCat,
   type ActivateDraftRequest, type ActivateDraftResponse, type AdDraft, type AdsetDraft, type BuilderErrorBody,
   type CampaignDraft, type CreateRequest, type CreateResponse, type CreativeBuild, type DiscardRequest,
   type DiscardResponse, type DraftIssue, type DraftLastError, type DraftMetaIds, type DraftSpec, type DraftStatus,
@@ -27,11 +28,11 @@ import { DASH_CHARS, lintDraft, type LintContext, type LintIssue, type LintMedia
 import {
   adMediaRefs, APP_DEV_MODE_HINT, arr, BuilderError, digits, errText, fillAdMedia, forbiddenNames, fromMetaError,
   guardrailInfo, hashSpec, isUuid, issuesFromError, leaseActive, LEASE_MS, loadDraft, loadMediaRows, metaHint,
-  metaId, metaPost, nowIso, num, obj, specOf, stableStringify, str, uniq, VALIDATION_MAX_AGE_MS,
+  metaId, metaPost, nowIso, num, obj, sha256Hex, specOf, stableStringify, str, uniq, VALIDATION_MAX_AGE_MS,
   type Ctx, type DraftRow, type MediaIds, type Raw, type StoredValidation,
 } from './common.ts'
 import { accountDsaDefaults, pageInstagram } from './catalog.ts'
-import { ensureMediaReady } from './media.ts'
+import { ensureMediaReady, retryVideoThumbnails } from './media.ts'
 import { readback } from './readback.ts'
 
 const VALIDATE_CALL_CAP = 15
@@ -59,6 +60,23 @@ interface Prepared {
   mediaRows: Record<string, MetaMediaRow>
 }
 
+/**
+ * Sonderkategorien einer bestehenden Ziel-Kampagne: live bei Meta, sonst aus dem
+ * Spiegel meta_campaigns. null = unbekannt (dann gilt, was im Entwurf steht).
+ */
+async function targetCategories(ctx: Ctx, campaignId: string): Promise<{ cats: string[]; countries: string[] } | null> {
+  const list = (v: unknown) => arr<unknown>(v).map(str).filter(Boolean)
+  try {
+    const j = await graphGet<Raw>(metaId(campaignId, 'Kampagnen-ID'), { fields: 'id,special_ad_categories,special_ad_category_country' })
+    return { cats: list(j.special_ad_categories), countries: list(j.special_ad_category_country) }
+  } catch (e) { console.warn('[meta-builder] Sonderkategorie der Ziel-Kampagne (live):', errText(e).slice(0, 200)) }
+  const { data, error } = await ctx.sb.from('meta_campaigns')
+    .select('special_ad_categories, special_ad_category_country').eq('campaign_id', campaignId).maybeSingle()
+  if (error || !data) return null
+  const r = obj(data)
+  return { cats: list(r.special_ad_categories), countries: list(r.special_ad_category_country) }
+}
+
 /** Leere Pflichtwerte NEUER Knoten aus den Einstellungen/Meta füllen (Seite, IG-Konto, DSA). */
 async function fillDefaults(ctx: Ctx, spec: DraftSpec): Promise<void> {
   const st = await ctx.settings()
@@ -76,6 +94,15 @@ async function fillDefaults(ctx: Ctx, spec: DraftSpec): Promise<void> {
         try { ig = (await pageInstagram(page))?.id ?? null } catch { ig = null }
       }
       if (ig) ad.identity.instagram_user_id = ig
+    }
+  }
+  // Advantage+ Zielgruppe immer ausdrücklich (fehlt = 1, so wie buildTargeting sendet)
+  for (const a of spec.adsets) {
+    if (a.existing_id || !a.targeting || typeof a.targeting !== 'object') continue
+    const ta = a.targeting.targeting_automation && typeof a.targeting.targeting_automation === 'object' ? a.targeting.targeting_automation : {}
+    if (ta.advantage_audience !== 0 && ta.advantage_audience !== 1) {
+      ta.advantage_audience = effectiveAdvantageAudience(ta.advantage_audience)
+      a.targeting.targeting_automation = ta
     }
   }
   const needDsa = spec.adsets.filter(a => !a.existing_id && targetsEu(a.targeting) && (!str(a.dsa_beneficiary).trim() || !str(a.dsa_payor).trim()))
@@ -98,9 +125,22 @@ async function fillDefaults(ctx: Ctx, spec: DraftSpec): Promise<void> {
 async function prepareSpec(ctx: Ctx, draft: DraftRow, extraMedia: Record<string, MediaIds>): Promise<Prepared> {
   const raw = specOf(draft)
   await fillDefaults(ctx, raw)
+  // Bestehende Ziel-Kampagne (add_adsets/add_ads/edit): ihre echte Sonderkategorie zählt,
+  // nicht der Stand beim Import. Mit HOUSING greifen die Wohnen-Regeln auch für neue Gruppen.
+  const campExisting = str(raw.campaign.existing_id) || str(draft.target_campaign_id)
+  if (campExisting) {
+    const t = await targetCategories(ctx, campExisting)
+    if (t) {
+      const known = SPECIAL_AD_CATEGORIES as readonly string[]
+      raw.campaign.special_ad_categories = t.cats.filter(x => known.indexOf(x) >= 0) as SpecialCat[]
+      if (t.countries.length) raw.campaign.special_ad_category_country = t.countries
+    }
+  }
   const spec = applyHousing(raw).spec
   const refs = spec.ads.flatMap(adMediaRefs).map(r => r.media_id)
   const mediaRows = await loadMediaRows(ctx.sb, refs)
+  // Fertige Videos ohne Vorschaubild: jetzt nachholen (sonst bleibt video_thumb_missing stehen)
+  await retryVideoThumbnails(ctx, mediaRows, draft.id)
   spec.ads = spec.ads.map(ad => (ad.existing_id ? ad : fillAdMedia(ad, mediaRows, extraMedia)))
   const media: Record<string, LintMediaInfo> = {}
   for (const id of Object.keys(mediaRows)) {
@@ -302,7 +342,7 @@ export async function modeValidate(ctx: Ctx, req: ValidateRequest): Promise<Vali
   const specHash = await hashSpec(draft.spec)
   const ids: DraftMetaIds = draft.meta_ids ?? {}
   const prep = await prepareSpec(ctx, draft, ids.media ?? {})
-  const local = validateDraft(prep.spec)
+  const local = validateDraft(prep.spec, { realEstate: isRealEstateDraft(draft.template_key), server: true })
   const lint = lintNew(prep.spec, prep.lintCtx)
   const levels = levelsParam(req.levels)
   if (!levels.size) { levels.add('campaign'); levels.add('adset'); levels.add('ad') }
@@ -345,12 +385,70 @@ interface RunState {
 const hasCreated = (ids: DraftMetaIds): boolean =>
   !!(ids.campaign || Object.keys(ids.adsets ?? {}).length || Object.keys(ids.creatives ?? {}).length || Object.keys(ids.ads ?? {}).length)
 
-function ensureIdMaps(ids: DraftMetaIds): Required<Pick<DraftMetaIds, 'adsets' | 'creatives' | 'ads' | 'media'>> & DraftMetaIds {
+function ensureIdMaps(ids: DraftMetaIds): Required<Pick<DraftMetaIds, 'adsets' | 'creatives' | 'ads' | 'media' | 'hashes'>> & DraftMetaIds {
   ids.adsets = ids.adsets ?? {}
   ids.creatives = ids.creatives ?? {}
   ids.ads = ids.ads ?? {}
   ids.media = ids.media ?? {}
-  return ids as Required<Pick<DraftMetaIds, 'adsets' | 'creatives' | 'ads' | 'media'>> & DraftMetaIds
+  ids.hashes = ids.hashes ?? {}
+  return ids as Required<Pick<DraftMetaIds, 'adsets' | 'creatives' | 'ads' | 'media' | 'hashes'>> & DraftMetaIds
+}
+
+// ── Fingerabdrücke angelegter Knoten (Abgleich beim Fortsetzen) ──────────────
+
+const nodeHash = async (v: unknown): Promise<string> => (await sha256Hex(stableStringify(v))).slice(0, 24)
+
+/** Anzeige/Creative: Inhalt des Knotens ohne aufgelöste Medien-Hashes (die ergänzt der Server) + Platzierungen der Gruppe. */
+function adFingerprint(ad: AdDraft, spec: DraftSpec): Promise<string> {
+  const a = JSON.parse(JSON.stringify(ad)) as AdDraft
+  const m = a.media ?? {}
+  const strip = (r: { media_id: string } | undefined) => (r && r.media_id ? { media_id: r.media_id } : r)
+  if (m.feed_4x5) m.feed_4x5 = strip(m.feed_4x5) as typeof m.feed_4x5
+  if (m.story_9x16) m.story_9x16 = strip(m.story_9x16) as typeof m.story_9x16
+  if (m.square_1x1) m.square_1x1 = strip(m.square_1x1) as typeof m.square_1x1
+  if (m.cards) m.cards = m.cards.map(cd => (cd?.media ? { ...cd, media: strip(cd.media) as typeof cd.media } : cd))
+  return nodeHash({ ad: a, placements: adsetByKey(spec, ad.adset_key)?.placements ?? null })
+}
+
+/**
+ * Fortsetzen nur, wenn alles schon Angelegte noch unverändert im Entwurf steht.
+ * Sonst würde resume Geändertes stillschweigend überspringen (altes Creative,
+ * altes Budget) und activate_draft Entferntes einschalten.
+ */
+async function assertCreatedUnchanged(st: RunState): Promise<void> {
+  const { spec, ids } = st
+  const fresh = (list: Array<{ key: string; existing_id?: string }>, key: string) => list.some(x => x.key === key && !x.existing_id)
+  const missing: string[] = []
+  for (const k of Object.keys(ids.adsets ?? {})) if (!fresh(spec.adsets, k)) missing.push(`adset:${k}`)
+  for (const k of Object.keys(ids.creatives ?? {})) if (!fresh(spec.ads, k)) missing.push(`creative:${k}`)
+  for (const k of Object.keys(ids.ads ?? {})) if (!fresh(spec.ads, k)) missing.push(`ad:${k}`)
+  const h = ids.hashes ?? {}
+  const changed: string[] = []
+  const c = spec.campaign
+  if (ids.campaign && !st.campaignExisting && h.campaign && h.campaign !== await nodeHash(buildCampaignPayload(c))) changed.push('campaign')
+  const campaignId = st.campaignExisting || ids.campaign || ''
+  for (const a of spec.adsets) {
+    const k = `adset:${a.key}`
+    if (a.existing_id || !ids.adsets?.[a.key] || !h[k]) continue
+    if (h[k] !== await nodeHash(buildAdsetPayload(a, c, campaignId))) changed.push(k)
+  }
+  for (const ad of spec.ads) {
+    if (ad.existing_id) continue
+    const hc = h[`creative:${ad.key}`], ha = h[`ad:${ad.key}`]
+    if (!(ids.creatives?.[ad.key] && hc) && !(ids.ads?.[ad.key] && ha)) continue
+    const fp = await adFingerprint(ad, spec)
+    if (ids.creatives?.[ad.key] && hc && hc !== fp) changed.push(`creative:${ad.key}`)
+    if (ids.ads?.[ad.key] && ha && ha !== fp) changed.push(`ad:${ad.key}`)
+  }
+  if (!missing.length && !changed.length) return
+  const parts = [
+    ...(missing.length ? [`entfernt: ${missing.join(', ')}`] : []),
+    ...(changed.length ? [`geändert: ${changed.join(', ')}`] : []),
+  ]
+  throw new BuilderError(409, 'created_changed',
+    `Schon bei Meta Angelegtes wurde danach im Entwurf entfernt oder geändert (${parts.join('; ')}). Fortsetzen würde etwas anderes anlegen, als der Entwurf zeigt.`,
+    'Änderungen an schon angelegten Teilen zurücknehmen oder den Entwurf verwerfen und neu anlegen. Bei Meta Angelegtes bleibt pausiert.',
+    { missing, changed, meta_ids: ids })
 }
 
 function doneSteps(spec: DraftSpec, ids: DraftMetaIds, campaignExisting: string): string[] {
@@ -574,8 +672,12 @@ async function runSteps(st: RunState): Promise<CreateResponse> {
       setStep('campaign')
       const j = await graphGet<Raw>(st.campaignExisting, { fields: 'id,account_id,objective,special_ad_categories' })
       if (digits(j.account_id) !== acct) throw new BuilderError(403, 'forbidden', 'Die Ziel-Kampagne gehört nicht zu unserem Werbekonto.')
-      if (isHec(c.special_ad_categories) && arr<unknown>(j.special_ad_categories).map(str).indexOf('HOUSING') < 0) {
-        throw new BuilderError(409, 'invalid_request', 'Die Ziel-Kampagne hat die Sonderkategorie Wohnen nicht.', 'Immobilien-Anzeigen nur in Wohnen-Kampagnen anlegen.')
+      // Rückhalt zur Prüfung in modeCreateOrResume: Neues nur in Wohnen-Kampagnen (außer Admin-Begründung)
+      const createsNew = spec.adsets.some(a => !a.existing_id && !ids.adsets[a.key]) || spec.ads.some(a => !a.existing_id && !ids.ads[a.key])
+      const override = !!obj(st.logExtra).housing_override
+      if (createsNew && !override && arr<unknown>(j.special_ad_categories).map(str).indexOf('HOUSING') < 0
+        && (isHec(c.special_ad_categories) || isRealEstateDraft(st.draft.template_key))) {
+        throw new BuilderError(409, 'housing_required', 'Die Ziel-Kampagne hat die Sonderkategorie Wohnen (HOUSING) nicht.', 'Immobilien-Anzeigen nur in Wohnen-Kampagnen anlegen.')
       }
       campaignId = st.campaignExisting
     } else if (ids.campaign) {
@@ -588,6 +690,7 @@ async function runSteps(st: RunState): Promise<CreateResponse> {
       campaignId = found ?? str((await post<Raw>(`act_${acct}/campaigns`, payload, 'campaign')).id)
       if (!campaignId) throw new BuilderError(502, 'meta_error', 'Meta hat keine Kampagnen-ID zurückgegeben.')
       ids.campaign = campaignId
+      ids.hashes.campaign = await nodeHash(payload)
       await persistIds(st)
     }
 
@@ -606,6 +709,7 @@ async function runSteps(st: RunState): Promise<CreateResponse> {
       const id = found ?? str((await post<Raw>(`act_${acct}/adsets`, payload, 'adset')).id)
       if (!id) throw new BuilderError(502, 'meta_error', 'Meta hat keine Anzeigengruppen-ID zurückgegeben.')
       ids.adsets[a.key] = id
+      ids.hashes[`adset:${a.key}`] = await nodeHash(payload)
       await persistIds(st)
     }
 
@@ -613,7 +717,8 @@ async function runSteps(st: RunState): Promise<CreateResponse> {
     const needCreative = spec.ads.filter(ad => !ad.existing_id && !ids.ads[ad.key] && !ids.creatives[ad.key])
     for (const mid of uniq(needCreative.flatMap(adMediaRefs).map(r => r.media_id).filter(isUuid))) {
       const row = st.mediaRows[mid]
-      const readyRow = row && ((row.kind === 'image' && !!row.meta_image_hash) || (row.kind === 'video' && !!row.meta_video_id && row.meta_status === 'ready'))
+      // Video erst mit Vorschaubild fertig (sonst ensureMediaReady: Thumbnail nachholen bzw. warten)
+      const readyRow = row && ((row.kind === 'image' && !!row.meta_image_hash) || (row.kind === 'video' && !!row.meta_video_id && row.meta_status === 'ready' && !!row.thumbnail_hash))
       if (readyRow && row) {
         ids.media[mid] = {
           ...(row.meta_image_hash ? { image_hash: row.meta_image_hash } : {}),
@@ -636,9 +741,13 @@ async function runSteps(st: RunState): Promise<CreateResponse> {
         if (r.reason === 'error') {
           throw new BuilderError(409, 'media_not_ready', `Meta konnte ein Video nicht verarbeiten${r.row.meta_error ? ` (${r.row.meta_error})` : ''}.`, 'Video neu exportieren (H.264, MP4) und erneut hochladen.')
         }
+        if (r.reason === 'thumbnail') {
+          throw new BuilderError(409, 'media_not_ready', 'Meta liefert für ein Video kein Vorschaubild.', 'Später erneut prüfen und fortsetzen. Hilft das nicht: Video neu exportieren (H.264, MP4) und erneut hochladen.')
+        }
         await persistIds(st)
         return await pause(st, {
-          error: 'Das Video wird bei Meta noch verarbeitet.', code: 'media_not_ready',
+          error: r.row.meta_status === 'ready' ? 'Meta erstellt noch das Vorschaubild des Videos.' : 'Das Video wird bei Meta noch verarbeitet.',
+          code: 'media_not_ready',
           hint: 'In ein bis zwei Minuten „Fortsetzen“. Angelegtes bleibt erhalten.',
         }, { retry_after_sec: 30 })
       }
@@ -659,6 +768,7 @@ async function runSteps(st: RunState): Promise<CreateResponse> {
         const cid = str((await post<Raw>(`act_${acct}/adcreatives`, build.payload, 'creative')).id)
         if (!cid) throw new BuilderError(502, 'meta_error', 'Meta hat keine Creative-ID zurückgegeben.')
         ids.creatives[ad.key] = cid
+        ids.hashes[`creative:${ad.key}`] = await adFingerprint(ad, spec)
         await persistIds(st)
       }
       if (timeUp()) return await pause(st)
@@ -668,6 +778,7 @@ async function runSteps(st: RunState): Promise<CreateResponse> {
       const id = found ?? str((await post<Raw>(`act_${acct}/ads`, payload, 'ad')).id)
       if (!id) throw new BuilderError(502, 'meta_error', 'Meta hat keine Anzeigen-ID zurückgegeben.')
       ids.ads[ad.key] = id
+      ids.hashes[`ad:${ad.key}`] = await adFingerprint(ad, spec)
       await persistIds(st)
     }
 
@@ -736,7 +847,27 @@ async function modeCreateOrResume(ctx: Ctx, req: CreateRequest): Promise<CreateR
   const restStatus = (): DraftStatus => (hasCreated(st.ids) ? 'partial' : 'draft')
   try {
     const prep = await prepareSpec(ctx, draft, st.ids.media ?? {})
-    const errors = validateDraft(prep.spec).filter(i => i.severity === 'error')
+    // Beim Fortsetzen wartet der Medien-Schritt selbst auf das Video-Vorschaubild
+    const resuming = hasCreated(st.ids)
+    let errors = validateDraft(prep.spec, { realEstate: isRealEstateDraft(draft.template_key), server: true })
+      .filter(i => i.severity === 'error' && !(resuming && i.code === 'video_thumb_missing'))
+    const housing = errors.filter(i => i.code === 'housing_existing')
+    if (housing.length) {
+      const reason = str(req.housing_override_reason).trim()
+      const isAdmin = ctx.caller.role === 'admin'
+      if (!isAdmin || reason.length < 10) {
+        await finish(st, restStatus(), null)
+        throw new BuilderError(409, 'housing_required',
+          'Die Ziel-Kampagne hat die Sonderkategorie Wohnen (HOUSING) nicht. Neue Immobilien-Anzeigengruppen und -Anzeigen legt der Assistent nur in Wohnen-Kampagnen an.',
+          isAdmin
+            ? 'Eine neue Kampagne mit Sonderkategorie Wohnen anlegen oder als Admin mit Begründung (mindestens 10 Zeichen) bewusst übergehen.'
+            : 'Eine neue Kampagne mit Sonderkategorie Wohnen anlegen. Übergehen kann nur ein Admin mit Begründung.',
+          housing)
+      }
+      errors = errors.filter(i => i.code !== 'housing_existing')
+      st.logExtra = { ...(st.logExtra ?? {}), housing_override: { reason: reason.slice(0, 500), by: ctx.caller.userId, at: nowIso() } }
+      console.warn(`[meta-builder] Wohnen-Pflicht bewusst übergangen (${draft.id}) von ${ctx.caller.userId}: ${reason.slice(0, 200)}`)
+    }
     if (errors.length) {
       await finish(st, restStatus(), null)
       throw new BuilderError(422, 'validation_failed', `Der Entwurf hat noch ${errors.length} Fehler.`, 'Im Assistenten die rot markierten Felder korrigieren.', errors)
@@ -752,6 +883,7 @@ async function modeCreateOrResume(ctx: Ctx, req: CreateRequest): Promise<CreateR
           blockers)
       }
       st.logExtra = {
+        ...(st.logExtra ?? {}),
         lint_override: { reason: reason.slice(0, 500), by: ctx.caller.userId, at: nowIso(), blockers: blockers.map(b => `${b.rule}:${b.node ?? ''}:${b.field}`) },
       }
       console.warn(`[meta-builder] Lint bewusst übergangen (${draft.id}) von ${ctx.caller.userId}: ${reason.slice(0, 200)}`)
@@ -764,6 +896,7 @@ async function modeCreateOrResume(ctx: Ctx, req: CreateRequest): Promise<CreateR
       if (error) console.warn('[meta-builder] Inhalt speichern:', String(error.message ?? error).slice(0, 200))
     }
     if (draft.status === 'creating' || draft.status === 'partial' || draft.status === 'failed') await reconcileFromLog(st)
+    if (hasCreated(st.ids)) await assertCreatedUnchanged(st)
   } catch (err) {
     if (!st.finished) await finish(st, restStatus(), null)
     throw err
@@ -800,8 +933,19 @@ export async function modeActivateDraft(ctx: Ctx, req: ActivateDraftRequest): Pr
   const levels = levelsParam(req.levels)
   if (!levels.size) throw new BuilderError(400, 'invalid_request', 'levels fehlt (campaign, adset, ad).')
   const ids: DraftMetaIds = draft.meta_ids ?? {}
-  const adIds = levels.has('ad') ? Object.values(ids.ads ?? {}) : []
-  const adsetIds = levels.has('adset') ? Object.values(ids.adsets ?? {}) : []
+  // Nur, was noch im Entwurf steht: Entferntes (z. B. in einem Teil-Entwurf gelöscht) bleibt pausiert
+  const spec = specOf(draft)
+  const adsetKeys = spec.adsets.filter(a => !a.existing_id && ids.adsets?.[a.key]).map(a => a.key)
+  const adKeys = spec.ads.filter(a => !a.existing_id && ids.ads?.[a.key]).map(a => a.key)
+  const specAdsetIds = uniq(adsetKeys.map(k => (ids.adsets ?? {})[k]))
+  const specAdIds = uniq(adKeys.map(k => (ids.ads ?? {})[k]))
+  const skipped: NonNullable<ActivateDraftResponse['skipped']> = [
+    ...Object.keys(ids.adsets ?? {}).filter(k => adsetKeys.indexOf(k) < 0).map(k => ({ level: 'adset' as Level, key: k, id: (ids.adsets ?? {})[k] })),
+    ...Object.keys(ids.ads ?? {}).filter(k => adKeys.indexOf(k) < 0).map(k => ({ level: 'ad' as Level, key: k, id: (ids.ads ?? {})[k] })),
+  ]
+  if (skipped.length) console.warn(`[meta-builder] activate_draft ${draft.id}: nicht mehr im Entwurf, bleibt pausiert: ${skipped.map(x => `${x.level}:${x.key}=${x.id}`).join(', ')}`)
+  const adIds = levels.has('ad') ? specAdIds : []
+  const adsetIds = levels.has('adset') ? specAdsetIds : []
   const campaignId = levels.has('campaign') && ids.campaign ? ids.campaign : null
   if (!adIds.length && !adsetIds.length && !campaignId) {
     throw new BuilderError(400, 'invalid_request', 'Nichts zu aktivieren: auf diesen Ebenen hat der Entwurf nichts selbst angelegt.')
@@ -815,7 +959,7 @@ export async function modeActivateDraft(ctx: Ctx, req: ActivateDraftRequest): Pr
     if (v > 0) { addCents += v; budgetIds.push(ids.campaign) }
   }
   if (!budgetIds.length) {
-    for (const id of Object.values(ids.adsets ?? {})) {
+    for (const id of specAdsetIds) {
       const v = await dailyCentsOf(id, 'end_time')
       if (v > 0) { addCents += v; budgetIds.push(id) }
     }
@@ -846,16 +990,15 @@ export async function modeActivateDraft(ctx: Ctx, req: ActivateDraftRequest): Pr
     }
   }
 
-  const allAdsets = uniq(Object.values(ids.adsets ?? {}))
   await readback(ctx.sb, {
-    campaignId: ids.campaign ?? null, campaignCreated: !!ids.campaign, adsetIds: allAdsets, createdAdsetIds: allAdsets,
-    adIds: Object.values(ids.ads ?? {}), draftId: draft.id,
+    campaignId: ids.campaign ?? null, campaignCreated: !!ids.campaign, adsetIds: specAdsetIds, createdAdsetIds: specAdsetIds,
+    adIds: specAdIds, draftId: draft.id,
   })
   if (adIds.length) {
     const { error } = await ctx.sb.from('studio_prepared_ads').update({ released_at: nowIso() }).in('ad_id', adIds).is('released_at', null)
     if (error) console.warn('[meta-builder] Freigabe in studio_prepared_ads:', String(error.message ?? error).slice(0, 200))
   }
-  return { activated, guardrail }
+  return { activated, guardrail, ...(skipped.length ? { skipped } : {}) }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -891,13 +1034,15 @@ export async function modePreview(ctx: Ctx, req: PreviewRequest): Promise<Previe
   for (const ref of adMediaRefs(ad)) {
     if (!isUuid(ref.media_id)) continue
     const row = prep.mediaRows[ref.media_id]
-    const ready = row && ((row.kind === 'image' && !!row.meta_image_hash) || (row.kind === 'video' && !!row.meta_video_id && row.meta_status === 'ready'))
+    const ready = row && ((row.kind === 'image' && !!row.meta_image_hash) || (row.kind === 'video' && !!row.meta_video_id && row.meta_status === 'ready' && !!row.thumbnail_hash))
     if (ready) continue
     const r = await ensureMediaReady(ctx, ref.media_id, draft.id)
     prep.mediaRows[ref.media_id] = r.row
     if (!r.ready) {
       throw new BuilderError(409, 'media_not_ready',
-        r.reason === 'error' ? 'Meta konnte das Video nicht verarbeiten.' : 'Das Video wird bei Meta noch verarbeitet.',
+        r.reason === 'error' ? 'Meta konnte das Video nicht verarbeiten.'
+          : r.reason === 'thumbnail' ? 'Meta liefert für das Video kein Vorschaubild.'
+            : r.row.meta_status === 'ready' ? 'Meta erstellt noch das Vorschaubild des Videos.' : 'Das Video wird bei Meta noch verarbeitet.',
         'In ein bis zwei Minuten erneut versuchen.')
     }
   }

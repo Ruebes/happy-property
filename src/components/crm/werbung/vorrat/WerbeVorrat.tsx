@@ -74,7 +74,7 @@ function Karte({ z, zeigePrognose, onOpen }: { z: VorratEintrag; zeigePrognose: 
 
 export default function WerbeVorrat() {
   const { t } = useTranslation()
-  const { catalog, fetchAll } = useWerbeKontext()
+  const { catalog, fetchAll, loading: seiteLaedt } = useWerbeKontext()
   const { darfEntscheiden, istAdmin } = useVorratRechte()
 
   const [zeilen, setZeilen] = useState<VorratEintrag[]>([])
@@ -105,7 +105,13 @@ export default function WerbeVorrat() {
     setDevModus(prev => (prev === true ? true : d))
   }, [])
 
-  useEffect(() => { void laden(true) }, [laden])
+  // Erst nach den Seitendaten (Katalog, Insights) laden, nie parallel dazu (Micro-Instanz)
+  const gestartet = useRef(false)
+  useEffect(() => {
+    if (seiteLaedt || gestartet.current) return
+    gestartet.current = true
+    void laden(true)
+  }, [seiteLaedt, laden])
 
   const adsets: VorratAdset[] = useMemo(() => {
     const m = new Map<string, VorratAdset>()

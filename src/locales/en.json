@@ -3778,7 +3778,7 @@
       "tgAllPositions": "all positions",
       "tgHousingAge": "Age 18 to 65+, all genders (special ad category housing, cannot be changed)",
       "tgHousingDetailed": "Housing: behaviours, job titles and employers are not allowed. Meta checks interests during review.",
-      "tgHousingGeo": "Housing: no excluded locations, no postcodes, radius around cities at least 15 km.",
+      "tgHousingGeo": "Housing: no excluded locations, no postcodes, radius around cities at least 17 km.",
       "tgHousingLookalike": "Housing: lookalike audiences are not offered.",
       "tgLangDe": "German",
       "tgLangEnAll": "English (all)",
@@ -3797,13 +3797,15 @@
       "tgLockExclusions": "Exclusions",
       "tgLockGender": "Gender",
       "tgLockLookalike": "Lookalike audiences",
-      "tgLockRadius": "Radius at least 15 km",
+      "tgLockRadius": "Radius at least 17 km around cities, 15 km around addresses",
       "tgLookalikeHousing": "Lookalike: not allowed under housing, removed when saving",
       "tgPositionsAuto": "Individual positions can be chosen once you select platforms manually.",
       "tgRadius": "Radius",
       "tgRadiusStandard": "Default (Meta)",
       "tgRemove": "Remove",
-      "preview": "Preview"
+      "preview": "Preview",
+      "limitNurAdmin": "Only an admin can raise the daily limit. Lowering is allowed.",
+      "limitNurSenken": "lower only (only an admin can raise it)"
     },
     "studio": {
       "title": "Ad studio (AI)",
@@ -5175,7 +5177,9 @@
           "werbemittel": "Creative",
           "ziel": "Destination and call to action",
           "zielAnpassen": "Adjust",
-          "zielPasstNicht": "The destination does not match the conversion location of the ad set."
+          "zielPasstNicht": "The destination does not match the conversion location of the ad set.",
+          "angelegt": "This ad has already been created at Meta (ID {{id}}). Texts, media and settings can no longer be changed here.",
+          "funktionenNichtUebernommen": "These Advantage+ features were on in the source and are off here: {{liste}}. Switch them on deliberately under \"Advantage+ Creative\" if needed."
         },
         "baum": {
           "anzeige": "Ad",
@@ -5200,7 +5204,8 @@
           "paarFehlt": "Pairs need the template ad sets \"Kalt · Lang\" and \"Kalt · Kurz\".",
           "paarHilfe": "One ad in Lang and one in Kurz",
           "rot": "Errors",
-          "titel": "Campaign structure"
+          "titel": "Campaign structure",
+          "entfernenGesperrt": "Already created at Meta: cannot be removed from the draft."
         },
         "fehler": {
           "app_dev_mode": "The Meta app is still in development mode. Ads can only be created once it is live.",
@@ -5259,7 +5264,8 @@
           "name": "Ad set name",
           "pixelWarnung": "Note: landing pages and /termin only fire the HP pixel. With this pixel Meta may not learn anything.",
           "roasHilfe": "As a factor, e.g. 1.5",
-          "synchronAn": "Budgets in sync: a change applies to all new ad sets."
+          "synchronAn": "Budgets in sync: a change applies to all new ad sets.",
+          "angelegt": "This ad set has already been created at Meta (ID {{id}}). Its settings can no longer be changed here."
         },
         "importHinweise": "Notes on the import:",
         "kampagne": {
@@ -5270,7 +5276,8 @@
           "limitUndZeit": "Spending limit and schedule",
           "name": "Campaign name",
           "synchron": "Keep ad set budgets in sync",
-          "synchronHilfe": "When the budget of one ad set changes, all new ad sets get the same amount (like Plan B Lang and Kurz)."
+          "synchronHilfe": "When the budget of one ad set changes, all new ad sets get the same amount (like Plan B Lang and Kurz).",
+          "angelegt": "This campaign has already been created at Meta (ID {{id}}). Its settings can no longer be changed here."
         },
         "katalogFehler": "Pages, pixels and forms could not be loaded from Meta ({{fehler}}). IDs can still be entered by hand.",
         "ladeFehler": "The draft could not be loaded: {{fehler}}",
@@ -5337,7 +5344,14 @@
           "ohneFeld": "General",
           "ok": "Checked at {{zeit}}: Meta has no objections.",
           "titel": "Check",
-          "veraltet": "Checked at {{zeit}}, now outdated."
+          "veraltet": "Checked at {{zeit}}, now outdated.",
+          "skip": {
+            "app_dev_mode": "Cannot be checked: the Meta app is in development mode.",
+            "no_proxy_campaign": "Cannot be checked: no paused test campaign with the same objective exists.",
+            "call_cap": "Not checked: maximum number of check calls reached.",
+            "existing": "Already exists at Meta, will not be created again.",
+            "rate_limited": "Not checked: Meta is currently throttling requests."
+          }
         },
         "pruefMitFehlern": "Meta checked the draft and reports errors. Details on the right.",
         "pruefOk": "Meta checked the draft: no errors.",
@@ -5430,6 +5444,15 @@
         "weiter": "Next",
         "zielgruppe": {
           "entfernt": "Automatically adjusted for housing:"
+        },
+        "status": {
+          "draft": "Draft",
+          "validated": "Validated",
+          "creating": "Creating",
+          "partial": "Partially created",
+          "created": "Created (paused)",
+          "failed": "Failed",
+          "discarded": "Discarded"
         }
       },
       "autopilot": {
@@ -5757,7 +5780,7 @@
         },
         "titel": "Cost per appointment equivalent",
         "stand": "As of {{datum}}, target {{ziel}} per AE",
-        "ohneBewertung": "{{n}} held appointments without rating",
+        "ohneBewertung": "{{n}} leads after an appointment without rating",
         "konto": {
           "ausgaben": "Total spend",
           "te": "Total AE",
@@ -6304,7 +6327,7 @@
           "genders": "Under Housing all genders are always reached.",
           "geo": "Under Housing postcodes and small areas (neighbourhoods, districts) are not allowed.",
           "lookalike": "Under Housing lookalike audiences are not allowed; custom audiences only if Meta marks them eligible.",
-          "radius": "Under Housing the radius around places is at least 15 km."
+          "radius": "Under Housing the radius is at least 15 km around addresses and places and at least 17 km around cities."
         },
         "housing_change": {
           "advantage_audience_set": "Advantage+ audience set explicitly.",
@@ -6319,7 +6342,7 @@
           "geo_type_removed": "Postcodes or small areas removed.",
           "individual_setting_removed": "Age and gender suggestions removed.",
           "lookalike_removed": "Lookalike audiences removed.",
-          "radius_raised": "Radius raised to 15 km."
+          "radius_raised": "Radius raised to the minimum (cities 17 km, addresses and places 15 km)."
         },
         "issue": {
           "adset_ref_missing": "Ad set {{key}} does not exist in this draft.",
@@ -6360,7 +6383,7 @@
           "housing_geo_type": "Housing: location type {{type}} is not allowed.",
           "housing_lookalike": "Housing: lookalike audiences are not allowed.",
           "housing_missing": "Real-estate campaigns must run in the Housing special ad category.",
-          "housing_radius": "Housing: radius at least 15 km (set: {{km}} km).",
+          "housing_radius": "Housing: radius around addresses and places at least 15 km (set: {{km}} km).",
           "identity_ig": "The Instagram account is missing.",
           "identity_page": "The Facebook Page is missing.",
           "invalid_option": "Invalid value: {{value}}.",
@@ -6393,7 +6416,9 @@
           "unsupported": "Not supported by the assistant: {{value}}.",
           "url_has_utm": "The URL already contains UTM parameters. The assistant appends the URL parameters itself.",
           "url_invalid": "Invalid website URL.",
-          "video_thumb_missing": "The video thumbnail is still missing."
+          "video_thumb_missing": "The video thumbnail is still missing.",
+          "city_radius": "Radius around cities: Meta allows {{min}} to {{max}} km (set: {{km}} km).",
+          "descriptions_single": "At most one description: Meta does not vary it by placement or option."
         },
         "level": {
           "ad": "Ad",

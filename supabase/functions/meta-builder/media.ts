@@ -21,6 +21,8 @@ import {
 
 const MAX_IMAGE_BYTES = 30 * 1024 * 1024
 const MAX_THUMB_BYTES = 8 * 1024 * 1024
+/** So lange nach „Video fertig“ auf Metas Vorschaubild warten, danach Fehler statt Pause */
+const THUMB_WAIT_MS = 15 * 60_000
 const ASPECTS: readonly MediaAspect[] = ['4:5', '9:16', '1:1', '1.91:1', 'other']
 /** Mindestbreite je Format laut Ads Guide (Feed 600 x 750, Stories 500 breit) */
 const MIN_WIDTH: Partial<Record<MediaAspect, number>> = { '4:5': 600, '1:1': 600, '9:16': 500, '1.91:1': 600 }
@@ -306,7 +308,21 @@ export async function modeMediaStatus(ctx: Ctx, req: MediaStatusRequest): Promis
 
 // ── Medium für create/preview bereit machen ──────────────────────────────────
 
-export interface MediaReadiness { row: MetaMediaRow; ready: boolean; reason?: 'processing' | 'error' | 'missing' }
+export interface MediaReadiness { row: MetaMediaRow; ready: boolean; reason?: 'processing' | 'error' | 'missing' | 'thumbnail' }
+
+/**
+ * Fertige Videos ohne Vorschaubild: Thumbnail nachholen (für validate/preview/create).
+ * Schreibzugriff, deshalb nur bei offenem Schreibweg; best effort, höchstens 4 je Aufruf.
+ * Aktualisiert rows an Ort und Stelle.
+ */
+export async function retryVideoThumbnails(ctx: Ctx, rows: Record<string, MetaMediaRow>, draftId?: string | null): Promise<void> {
+  const todo = Object.keys(rows).map(k => rows[k])
+    .filter(r => r.kind === 'video' && !!r.meta_video_id && r.meta_status === 'ready' && !r.thumbnail_hash).slice(0, 4)
+  if (!todo.length || (await writeGate(ctx)) !== null) return
+  for (const r of todo) {
+    try { rows[r.id] = await ensureVideoThumbnail(ctx, r, draftId) } catch (err) { console.warn('[meta-builder] Vorschaubild:', mediaErrorText(err)) }
+  }
+}
 
 /**
  * Bild ohne Hash -> jetzt hochladen; Video ohne ID -> Upload starten; Video in
@@ -337,6 +353,12 @@ export async function ensureMediaReady(ctx: Ctx, mediaId: string, draftId?: stri
   if (row.meta_status !== 'ready') return { row, ready: false, reason: 'processing' }
   if (!row.thumbnail_hash) {
     try { row = await ensureVideoThumbnail(ctx, row, draftId) } catch (err) { console.warn('[meta-builder] Vorschaubild:', mediaErrorText(err)) }
+    // Ohne Vorschaubild kein Creative (Meta verlangt es): erst warten, nach THUMB_WAIT_MS Fehler
+    if (!row.thumbnail_hash) {
+      const since = Date.parse(str(row.updated_at))
+      const waitedTooLong = Number.isFinite(since) && Date.now() - since > THUMB_WAIT_MS
+      return { row, ready: false, reason: waitedTooLong ? 'thumbnail' : 'processing' }
+    }
   }
   return { row, ready: true }
 }

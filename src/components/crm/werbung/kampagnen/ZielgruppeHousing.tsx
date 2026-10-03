@@ -79,7 +79,7 @@ export default function ZielgruppeHousing({ adset, disabled }: { adset: AdsetDra
       const laut = probe.changes.filter(ch => LAUTE_AENDERUNGEN.indexOf(ch.code) >= 0)
       setEntfernt(laut)
     }
-    e.update(d => setzeAnzeigengruppe(d, node, { targeting, placements }))
+    e.update(d => setzeAnzeigengruppe(d, node, { targeting, placements }, e.metaIds))
   }
 
   const ortTypen = adset.targeting?.geo_locations?.location_types ?? []
@@ -87,7 +87,7 @@ export default function ZielgruppeHousing({ adset, disabled }: { adset: AdsetDra
     const neu = an ? [...ortTypen.filter(x => x !== typ), typ] : ortTypen.filter(x => x !== typ)
     e.update(d => setzeAnzeigengruppe(d, node, {
       targeting: { ...adset.targeting, geo_locations: { ...(adset.targeting?.geo_locations ?? {}), location_types: neu.length ? neu : ['home', 'recent'] } },
-    }))
+    }, e.metaIds))
   }
 
   // Adapter: neue Props des TargetingEditors (housing, onLocks) per Spread

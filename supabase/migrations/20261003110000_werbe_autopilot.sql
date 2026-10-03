@@ -2,6 +2,37 @@
 -- Werbemanager Autopilot: Schema, Leitplanken (Guard-Trigger) und Freigabe-RPCs
 -- (SPEC.md §2 „Owner SQL-B“, PLAN-B §1). Stand 3.10.2026.
 --
+-- ═══ RUNBOOK (Pflicht, Reihenfolge) ══════════════════════════════════════════
+-- Hintergrund: die live meta-ads-sync v18 (deployed/meta-ads-sync-v18/) führt
+-- JEDE ad_actions-Zeile mit status 'bestätigt' sofort aus (04:00-Cron und jeder
+-- Klick auf Aktualisieren/Vormerken), ohne Änderungsfenster, Ablauf, Zustands-
+-- Hash, Modus/Pause, Schutz der letzten aktiven Anzeige und Gruppen-Atomik.
+-- Freigegebene oder autonome Autopilot-Zeilen ('bestätigt') dürfen deshalb nie
+-- existieren, solange v18 läuft.
+--
+-- Deploy:
+--   1. Diese Migration einspielen. autopilot_mode bleibt 'schatten': dort entstehen
+--      keine ausführbaren Autopilot-Zeilen, und werbe_vorschlag_entscheiden lehnt
+--      Freigaben ab (nur in 'vorschlag', 'ein_klick', 'autonom' und ohne Pause).
+--   2. Die NEUE meta-ads-sync (mit _shared/werbeAusfuehren.ts) deployen, BEVOR
+--      autopilot_mode über 'schatten' gestellt wird.
+--   3. Erst danach autopilot_mode hochstellen (nur Admin, Settings-Guard).
+--
+-- Rückbau von meta-ads-sync auf v18 (oder dieser Migration) NUR so:
+--   a) select public.werbe_autopilot_stopp('Rückbau meta-ads-sync v18');
+--   b) warten, bis kein Ausführer-Lauf mehr läuft (claimed_at älter als 10 Minuten):
+--        select count(*) from public.ad_actions
+--         where status = 'bestätigt' and claimed_at > now() - interval '10 minutes';  -- muss 0 sein
+--   c) noch wartende Autopilot-Zeilen ablehnen:
+--        update public.ad_actions
+--           set status = 'abgelehnt', freigabe = 'verworfen', result = 'Rückbau v18'
+--         where origin = 'autopilot' and status = 'bestätigt';
+--   d) prüfen: select count(*) from public.ad_actions
+--               where origin = 'autopilot' and status = 'bestätigt';  -- muss 0 sein
+--   e) erst dann v18 deployen. Den Modus nicht wieder über 'schatten' stellen,
+--      solange v18 läuft.
+-- ═════════════════════════════════════════════════════════════════════════════
+--
 -- Inhalt:
 --   1. Hilfsfunktionen: wer ruft auf (DB-Sitzung, Service-Role, Admin), jsonb-Diff
 --   2. ad_actions erweitert (Vorschläge mit status = NULL, origin, Ebene, payload,
@@ -23,10 +54,12 @@
 --      werbe_pool_entscheiden.
 --
 -- Wer darf was (Svens Regeln, SPEC §3):
---   Hochstellen/Einschalten (Modus, Limits, Freigabestufen, Echtzeit-CAPI,
---   Builder, Budget-Autonomie, automatische Vorrats-Freigabe) nur Admin
+--   Hochstellen/Einschalten/Lockern (Modus, Limits, Freigabestufen, Echtzeit-CAPI,
+--   CAPI-Test-Code, Builder, Budget-Autonomie, automatische Vorrats-Freigabe,
+--   Kostenziel, Schwellen, Änderungstage, Pause aufheben) nur Admin
 --   (profiles.role = 'admin') oder System. Senken und Stoppen jeder mit Recht
---   werbung. Vorschläge freigeben: Admin oder Recht werbung (Sven und Giona).
+--   werbung. Vorschläge freigeben: Admin oder Recht werbung (Sven und Giona),
+--   nur in den Modi vorschlag/ein_klick/autonom und ohne Pause.
 --
 -- Systemaufrufer: Service-Role (JWT-Rolle service_role, Edge Functions) oder eine
 -- direkte DB-Sitzung ohne JWT (pg_cron, SQL-Editor, Migration). Erkannt über
@@ -388,9 +421,11 @@ create table if not exists public.ad_creative_pool (
   aktiv_seit          timestamptz,
   beendet_at          timestamptz,
   ersetzt_kennung     text,
+  claimed_at          timestamptz,   -- Lease beim Hochladen (werbe-ausfuehren, bedingtes Update)
   created_at          timestamptz not null default now(),
   updated_at          timestamptz not null default now()
 );
+alter table public.ad_creative_pool add column if not exists claimed_at timestamptz;
 create index if not exists ad_creative_pool_status_idx on public.ad_creative_pool (status);
 
 -- ── RLS ─────────────────────────────────────────────────────────────────────
@@ -503,7 +538,7 @@ on conflict (rule_key) do nothing;
 
 -- ── 5. Guard-Trigger ────────────────────────────────────────────────────────
 
--- 5a. Log nur anhängen (auch für System; Rückbau löscht die ganze Tabelle).
+-- 5a. Log nur anhängen (auch für System; Rückbau benennt die Tabelle in ein Archiv um).
 create or replace function public.werbe_log_append_only()
 returns trigger
 language plpgsql
@@ -564,9 +599,13 @@ begin
     return new;
   end if;
 
-  -- UPDATE: Status nur vorwärts (für alle Aufrufer).
+  -- UPDATE: Status nur vorwärts (für alle Aufrufer). Einzige Ausnahme: das System
+  -- nimmt bei einem Gruppenfehler bereits ausgeführte Mitglieder bei Meta zurück und
+  -- vermerkt das als ausgeführt -> fehlgeschlagen mit result 'zurückgenommen: ...'.
   if new.status is distinct from old.status then
-    if old.status = any (v_final) then
+    if old.status = any (v_final)
+       and not (v_system and old.status = 'ausgeführt' and new.status = 'fehlgeschlagen'
+                and lower(coalesce(new.result, '')) like 'zurückgenommen:%') then
       raise exception 'Status % ist endgültig', old.status using errcode = '23514';
     end if;
     if new.status is null then
@@ -600,8 +639,11 @@ create trigger werbe_actions_guard
   before insert or update on public.ad_actions
   for each row execute function public.werbe_actions_guard();
 
--- 5c. ad_settings: Hochstellen/Einschalten nur Admin oder System, Senken für alle
---     mit Recht werbung (RLS ad_settings UPDATE = werbung). Jede Änderung ins Log.
+-- 5c. ad_settings: Hochstellen/Einschalten/Lockern nur Admin oder System, Senken für
+--     alle mit Recht werbung (RLS ad_settings UPDATE = werbung). Lockern: Kostenziel
+--     hoch, Freigabe-Schwelle oder Kapitalbasis-Boden runter, mehr Änderungstage,
+--     laufende Pause verkürzen/aufheben, CAPI-Test-Code setzen. Die ID 'default' ist
+--     für niemanden änderbar. Jede Änderung ins Log.
 create or replace function public.werbe_settings_guard()
 returns trigger
 language plpgsql
@@ -616,6 +658,11 @@ declare
   v_vorher  jsonb;
   v_nachher jsonb;
 begin
+  -- Die Einstellungszeile heißt immer 'default' (alle Leser filtern darauf).
+  if new.id is distinct from old.id then
+    raise exception 'Die ID der Einstellungen ist nicht änderbar' using errcode = '42501';
+  end if;
+
   if coalesce(array_position(v_modi, new.autopilot_mode), 0) > coalesce(array_position(v_modi, old.autopilot_mode), 0) then
     v_hoch := v_hoch || 'autopilot_mode'::text;
   end if;
@@ -647,6 +694,33 @@ begin
   if new.budget_autonomie_von is not null
      and new.budget_autonomie_von is distinct from old.budget_autonomie_von then
     v_hoch := v_hoch || 'budget_autonomie_von'::text;
+  end if;
+  -- Lockern zählt wie Hochstellen: höheres Kostenziel, niedrigere Freigabe-Schwelle,
+  -- niedrigerer Kapitalbasis-Boden, mehr Änderungstage, laufende Pause verkürzen.
+  if (new.target_cpte_eur is null and old.target_cpte_eur is not null)
+     or new.target_cpte_eur > old.target_cpte_eur then
+    v_hoch := v_hoch || 'target_cpte_eur'::text;
+  end if;
+  if (new.pool_auto_release_threshold is null and old.pool_auto_release_threshold is not null)
+     or new.pool_auto_release_threshold < old.pool_auto_release_threshold then
+    v_hoch := v_hoch || 'pool_auto_release_threshold'::text;
+  end if;
+  if (new.kap_floor is null and old.kap_floor is not null)
+     or new.kap_floor < old.kap_floor then
+    v_hoch := v_hoch || 'kap_floor'::text;
+  end if;
+  if (new.change_window_dows is null and old.change_window_dows is not null)
+     or not coalesce(new.change_window_dows <@ old.change_window_dows, true) then
+    v_hoch := v_hoch || 'change_window_dows'::text;
+  end if;
+  if old.autopilot_paused_until is not null and old.autopilot_paused_until > now()
+     and (new.autopilot_paused_until is null or new.autopilot_paused_until < old.autopilot_paused_until) then
+    v_hoch := v_hoch || 'autopilot_paused_until'::text;
+  end if;
+  -- Test-Code für CAPI setzen oder ändern nur Admin (Leeren darf jeder mit Recht werbung).
+  if nullif(btrim(coalesce(new.capi_test_event_code, '')), '') is not null
+     and new.capi_test_event_code is distinct from old.capi_test_event_code then
+    v_hoch := v_hoch || 'capi_test_event_code'::text;
   end if;
 
   if coalesce(array_length(v_hoch, 1), 0) > 0 and not (v_system or v_admin) then
@@ -750,11 +824,12 @@ create trigger werbe_rules_guard
   before insert or update on public.ad_autopilot_rules
   for each row execute function public.werbe_rules_guard();
 
--- 5e. ad_creative_pool: Statusübergänge, Freigabe/Ablehnung mit Stempel und
---     Merkmalen (Lernen aus Svens/Gionas Entscheidungen), Systemfelder nur vom
---     System, Inhalte nur vor der Freigabe, nie zurück auf Entwurf nach dem
---     Hochladen, automatische Freigabe nur nach pool_auto_release_level und nie
---     bei fakten_pruefung.
+-- 5e. ad_creative_pool: Statusübergänge (Menschen und Service-Role je mit eigener
+--     Liste), Freigabe/Ablehnung mit Stempel und Merkmalen (Lernen aus Svens/Gionas
+--     Entscheidungen), Systemfelder (inkl. Upload-Lease claimed_at) nur vom System,
+--     Inhalte nur vor der Freigabe, nie zurück auf Entwurf nach dem Hochladen,
+--     automatische Freigabe nur nach pool_auto_release_level und nie bei
+--     fakten_pruefung.
 create or replace function public.werbe_pool_guard()
 returns trigger
 language plpgsql
@@ -771,6 +846,17 @@ declare
     'entwurf>verworfen', 'geprueft>freigegeben', 'geprueft>verworfen', 'geprueft>entwurf',
     'freigegeben>verworfen', 'freigegeben>geprueft', 'verworfen>entwurf',
     'hochgeladen>verworfen', 'pausiert>verworfen'];
+  -- Übergänge der Service-Role (Edge Functions): Prüfung, Freigabe/Ablehnung per RPC,
+  -- Hochladen nur aus 'freigegeben', danach der Lebenszyklus bei Meta. Nichts aus
+  -- 'verworfen' heraus (ein abgelehntes Werbemittel wird nie hochgeladen oder aktiv).
+  -- Direkte DB-Sitzungen (SQL-Editor, Migration) bleiben frei.
+  v_dienst   constant text[] := array[
+    'entwurf>geprueft', 'entwurf>verworfen', 'geprueft>entwurf', 'geprueft>freigegeben', 'geprueft>verworfen',
+    'freigegeben>geprueft', 'freigegeben>verworfen', 'freigegeben>hochgeladen',
+    'hochgeladen>aktiv', 'hochgeladen>pausiert', 'hochgeladen>gekillt', 'hochgeladen>verworfen',
+    'aktiv>ermuedet', 'aktiv>gekillt', 'aktiv>pausiert',
+    'ermuedet>aktiv', 'ermuedet>gekillt', 'ermuedet>pausiert',
+    'pausiert>aktiv', 'pausiert>gekillt', 'pausiert>verworfen'];
   v_inhalt_alt jsonb;
   v_inhalt_neu jsonb;
   v_level    smallint;
@@ -830,7 +916,7 @@ begin
          'hochgeladen_at', new.hochgeladen_at, 'aktiv_seit', new.aktiv_seit, 'beendet_at', new.beendet_at,
          'released_by', new.released_by, 'released_at', new.released_at, 'entscheidung', new.entscheidung,
          'entschieden_von', new.entschieden_von, 'entschieden_at', new.entschieden_at, 'ersetzt_kennung', new.ersetzt_kennung,
-         'created_at', new.created_at)
+         'claimed_at', new.claimed_at, 'created_at', new.created_at)
        is distinct from jsonb_build_object(
          'qa', old.qa, 'review_score', old.review_score, 'housing_ok', old.housing_ok, 'prognose', old.prognose,
          'merkmale', old.merkmale, 'quelle', old.quelle, 'kosten_credits', old.kosten_credits,
@@ -838,7 +924,7 @@ begin
          'hochgeladen_at', old.hochgeladen_at, 'aktiv_seit', old.aktiv_seit, 'beendet_at', old.beendet_at,
          'released_by', old.released_by, 'released_at', old.released_at, 'entscheidung', old.entscheidung,
          'entschieden_von', old.entschieden_von, 'entschieden_at', old.entschieden_at, 'ersetzt_kennung', old.ersetzt_kennung,
-         'created_at', old.created_at) then
+         'claimed_at', old.claimed_at, 'created_at', old.created_at) then
       raise exception 'Diese Felder setzt nur das System (QA, Prognose, Meta-IDs, Freigabe-Stempel)' using errcode = '42501';
     end if;
     if old.fakten_pruefung and not new.fakten_pruefung and not v_admin then
@@ -858,24 +944,34 @@ begin
        and not ((old.status || '>' || new.status) = any (v_mensch)) then
       raise exception 'Statuswechsel % -> % macht nur das System', old.status, new.status using errcode = '42501';
     end if;
-  elsif v_service and new.status = 'freigegeben' and old.status is distinct from 'freigegeben' then
-    -- Automatische Freigabe (Edge Function). Direkte DB-Sitzung (SQL-Editor) bleibt frei.
-    if new.fakten_pruefung then
-      raise exception 'Werbemittel mit Fakten, Preisen oder Fotos gibt nur ein Mensch frei' using errcode = '42501';
+  elsif v_service then
+    -- Statuswechsel der Service-Role nur entlang des Lebenszyklus. Schützt z. B. vor
+    -- einem Hochladen, das eine zwischenzeitliche Ablehnung (freigegeben -> verworfen)
+    -- oder Rücknahme (freigegeben -> geprueft) mit 'hochgeladen' überschreibt.
+    if new.status is distinct from old.status
+       and not ((old.status || '>' || new.status) = any (v_dienst)) then
+      raise exception 'Statuswechsel % -> % ist für das System nicht erlaubt', old.status, new.status
+        using errcode = '23514';
     end if;
-    select s.pool_auto_release_level, s.pool_auto_release_threshold
-      into v_level, v_schwelle
-      from public.ad_settings s where s.id = 'default';
-    if coalesce(v_level, 0) < 2 then
-      raise exception 'Automatische Freigabe ist aus (pool_auto_release_level < 2)' using errcode = '42501';
-    end if;
-    if v_level = 2 then
-      if new.prognose is null or new.prognose < coalesce(v_schwelle, 0.9) then
-        raise exception 'Prognose unter der Schwelle für automatische Freigabe' using errcode = '42501';
+    if new.status = 'freigegeben' and old.status is distinct from 'freigegeben' then
+      -- Automatische Freigabe (Edge Function). Direkte DB-Sitzung (SQL-Editor) bleibt frei.
+      if new.fakten_pruefung then
+        raise exception 'Werbemittel mit Fakten, Preisen oder Fotos gibt nur ein Mensch frei' using errcode = '42501';
       end if;
-      select count(*) into v_anzahl from public.ad_creative_pool p where p.entschieden_von is not null;
-      if v_anzahl < 30 then
-        raise exception 'Automatische Freigabe erst nach 30 menschlichen Entscheidungen (bisher %)', v_anzahl using errcode = '42501';
+      select s.pool_auto_release_level, s.pool_auto_release_threshold
+        into v_level, v_schwelle
+        from public.ad_settings s where s.id = 'default';
+      if coalesce(v_level, 0) < 2 then
+        raise exception 'Automatische Freigabe ist aus (pool_auto_release_level < 2)' using errcode = '42501';
+      end if;
+      if v_level = 2 then
+        if new.prognose is null or new.prognose < coalesce(v_schwelle, 0.9) then
+          raise exception 'Prognose unter der Schwelle für automatische Freigabe' using errcode = '42501';
+        end if;
+        select count(*) into v_anzahl from public.ad_creative_pool p where p.entschieden_von is not null;
+        if v_anzahl < 30 then
+          raise exception 'Automatische Freigabe erst nach 30 menschlichen Entscheidungen (bisher %)', v_anzahl using errcode = '42501';
+        end if;
       end if;
     end if;
   end if;
@@ -944,7 +1040,11 @@ create trigger werbe_pool_guard
 -- Vorschlagsgruppe freigeben oder verwerfen (Admin oder Recht werbung; Regeln mit
 -- freigabe_rolle 'admin' nur Admin). Gruppen gelten gemeinsam: ist ein Mitglied
 -- abgelaufen, läuft die ganze Gruppe ab (Plan-B-Paare bleiben symmetrisch).
--- Freigeben ist gesperrt, solange der Autopilot gestoppt/pausiert ist.
+-- Freigeben geht nur in den Modi 'vorschlag', 'ein_klick' und 'autonom' und ohne
+-- laufende Pause. In 'aus' und 'schatten' (und ohne Einstellungszeile) gesperrt:
+-- dort führt der neue Ausführer Autopilot-Zeilen nicht aus, und eine wartende
+-- 'bestätigt'-Zeile würde die alte meta-ads-sync v18 sofort ausführen (RUNBOOK oben).
+-- Das gilt auch für Rücknahmen (rueckgaengig.ts nutzt diese RPC).
 create or replace function public.werbe_vorschlag_entscheiden(
   p_gruppe       uuid,
   p_entscheidung text,
@@ -1027,8 +1127,12 @@ begin
   if v_ja then
     select s.autopilot_mode, s.autopilot_paused_until into v_mode, v_pause
       from public.ad_settings s where s.id = 'default';
-    if v_mode = 'aus' or (v_pause is not null and v_pause > now()) then
-      raise exception 'Der Autopilot ist gestoppt, Freigaben sind gesperrt' using errcode = '55000';
+    if v_mode is null or v_mode not in ('vorschlag', 'ein_klick', 'autonom') then
+      raise exception 'Der Autopilot ist aus oder im Schattenmodus (%), Freigaben sind gesperrt', coalesce(v_mode, 'unbekannt')
+        using errcode = '55000';
+    end if;
+    if v_pause is not null and v_pause > now() then
+      raise exception 'Der Autopilot ist pausiert, Freigaben sind gesperrt' using errcode = '55000';
     end if;
 
     with upd as (

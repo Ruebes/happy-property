@@ -6,10 +6,17 @@
 //
 // Aktionen (Body { aktion: ... }):
 //   { aktion: 'nacht' }        von meta-ads-sync nach erfolgreichem Sync (kette):
-//                              qualitaet -> regeln -> (nur Modus autonom) werbe-ausfuehren
-//                              { modus: 'fenster' } anstoßen
+//                              qualitaet -> regeln -> fenster -> vorrat_pruefen
+//                              fenster: bestätigte Autopilot-Zeilen mit abgelaufenem expires_at
+//                              schließen (abgelehnt/abgelaufen), dann werbe-ausfuehren
+//                              { modus: 'fenster' } anstoßen: im Modus autonom täglich, in den
+//                              Modi vorschlag/ein_klick an Fenstertagen (change_window_dows), damit
+//                              außerhalb des Fensters freigegebene Vorschläge im nächsten Fenster
+//                              laufen; nie bei Pause (autopilot_paused_until) oder Modus aus/schatten
+//                              vorrat_pruefen: QA-Gate entwurf -> geprueft jede Nacht, auch wenn
+//                              ein früherer Schritt scheitert; Fehler brechen nichts ab (kein Ledger)
 //   { aktion: 'nachholen' }    Cron 04:50 UTC: holt Schritte nach, deren Vorgänger heute
-//                              fertig ist (sync -> qualitaet -> regeln), Lease 30 Min.
+//                              fertig ist (sync -> qualitaet -> regeln -> fenster), Lease 30 Min.
 //                              { erzwingen: true } ignoriert die Vorgänger-Prüfung
 //   { aktion: 'woche' }        Cron Mo 05:20 UTC: werbe_ev_kalibrieren, EMQ, Vorrat-Bestand,
 //                              Thompson-Briefs (Vorrat-Einträge 'entwurf'), Prognosen auffrischen
@@ -22,7 +29,7 @@
 //   wartet die Antwort auf das Ergebnis.
 //
 // Ledger: ad_autopilot_runs (eindeutig lauf_datum + schritt, Lauftag = Berlin),
-// Schritte qualitaet, regeln, kalibrieren, woche. 'laeuft' älter als 30 Min. wird
+// Schritte qualitaet, regeln, fenster, kalibrieren, woche. 'laeuft' älter als 30 Min. wird
 // übernommen, 'fertig' nie wiederholt, 'fehler'/'uebersprungen' beim Nachholen erneut.
 //
 // Regeln -> Ausgabe je wirksamer Freigabestufe (werbeRegeln.bewerteRegeln):
@@ -51,7 +58,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { gateCaller } from '../_shared/callerGate.ts'
 import { MetaApiError, graphGet, metaEnv } from '../_shared/metaGraph.ts'
 import { autopilotStoppen, preStateHash } from '../_shared/werbeAusfuehren.ts'
-import { bewerteRegeln, naechsterFenstertag, type AutopilotModus, type Vorschlag } from '../_shared/werbeRegeln.ts'
+import { bewerteRegeln, istFenstertag, naechsterFenstertag, type AutopilotModus, type Vorschlag } from '../_shared/werbeRegeln.ts'
 import { datumPlus } from '../_shared/werbeMathe.ts'
 import {
   CORS, type Sb, berlinHeute, berlinTagesende, dbCode, dbFehler, errMsg, fehler, funktionAufrufen, imHintergrund, json,
@@ -66,7 +73,7 @@ const FN = 'werbe-autopilot'
 const LEASE_MS = 30 * 60_000
 const AKTIONEN = ['nacht', 'nachholen', 'woche', 'vorrat_pruefen', 'zuordnung_nachtragen', 'replay'] as const
 type Aktion = typeof AKTIONEN[number]
-type Schritt = 'qualitaet' | 'regeln' | 'kalibrieren' | 'woche'
+type Schritt = 'qualitaet' | 'regeln' | 'fenster' | 'kalibrieren' | 'woche'
 
 /** Aktionen, die nur in Änderungsfenstern ausgeführt werden (expires_at muss das nächste Fenster erreichen). */
 const FENSTER_AKTIONEN = new Set(['activate', 'ersatz_aktivieren', 'budget_set'])
@@ -362,21 +369,6 @@ async function schrittRegeln(sb: Sb, lauf: Lauf, now: Date) {
     stopp = { codes, neu, modus_vorher: modus, modus_nachher: modusNachher, mail: gesendet, mail_gedrosselt: !mail }
   }
 
-  // Modus autonom: Ausführer für das Änderungsfenster anstoßen (Zeilen 'bestätigt')
-  // Der Aufruf wird nie vorzeitig abgebrochen (ein abgebrochener Ausführer könnte eine
-  // Plan-B-Gruppe halb ändern): nach 20 s läuft er im Hintergrund weiter.
-  let kick: Record<string, unknown> | null = null
-  if (modusNachher === 'autonom' && !pausiert) {
-    const aufruf = funktionAufrufen('werbe-ausfuehren', { modus: 'fenster' }, 300_000)
-    const frueh = await Promise.race([aufruf, new Promise<null>(res => setTimeout(() => res(null), 20_000))])
-    if (frueh) {
-      kick = { ok: frueh.ok, status: frueh.status, ...(frueh.fehler ? { fehler: frueh.fehler } : {}), antwort: frueh.json }
-    } else {
-      await imHintergrund(aufruf.then(r => { console.log(`[${FN}] werbe-ausfuehren fenster:`, r.status, JSON.stringify(r.json).slice(0, 500)) }))
-      kick = { angestossen: true, hinweis: 'werbe-ausfuehren läuft weiter, Ergebnis in ad_autopilot_log' }
-    }
-  }
-
   const hinweisCodes: Record<string, number> = {}
   for (const h of erg.hinweise) hinweisCodes[h.code] = (hinweisCodes[h.code] ?? 0) + 1
   return {
@@ -388,33 +380,135 @@ async function schrittRegeln(sb: Sb, lauf: Lauf, now: Date) {
       ersetzt,
       fehler_liste: fehlerListe.slice(0, 20),
       stopp,
-      kick,
       hinweise_codes: hinweisCodes,
       hinweise: erg.hinweise.slice(0, 40).map(h => ({ code: h.code, rule_key: h.rule_key ?? null, entity_id: h.entity_id ?? null, text: h.text })),
     },
   }
 }
 
+// ── Schritt fenster ─────────────────────────────────────────────────────────
+
+/** Lease von werbe_aktionen_claimen (10 Min.): frisch beanspruchte Zeilen nicht anfassen. */
+const CLAIM_LEASE_MS = 10 * 60_000
+const ABLAUF_SPALTEN = 'id, gruppe_id, rule_key, rule_version, approval_level, entity_level, entity_id, ad_name, action, before, after, evidence, idempotency_key'
+
+/**
+ * Bestätigte Autopilot-Zeilen (freigegeben oder autonom) mit abgelaufenem expires_at
+ * gruppenweise schließen: status 'abgelehnt', freigabe 'abgelaufen' (wie der Ausführer).
+ * Gruppen, an denen der Ausführer gerade arbeitet (frischer Claim), bleiben unberührt.
+ */
+async function bestaetigteAbgelaufenSchliessen(sb: Sb, now: Date, laufId: string): Promise<number> {
+  const { data, error } = await sb.from('ad_actions').select('id, gruppe_id')
+    .eq('origin', 'autopilot').eq('status', 'bestätigt').lt('expires_at', now.toISOString()).limit(200)
+  if (error) { console.warn(`[${FN}] Ablauf bestätigt:`, dbFehler(error)); return 0 }
+  const gruppen = new Set<string>()
+  const einzeln: string[] = []
+  for (const r of (data ?? []) as Array<{ id: string; gruppe_id?: string | null }>) {
+    if (r.gruppe_id) gruppen.add(r.gruppe_id)
+    else einzeln.push(r.id)
+  }
+  const leaseIso = new Date(now.getTime() - CLAIM_LEASE_MS).toISOString()
+  let n = 0
+  const schliessen = async (feld: 'gruppe_id' | 'id', wert: string): Promise<void> => {
+    if (feld === 'gruppe_id') {
+      const { data: frisch, error: fErr } = await sb.from('ad_actions').select('id')
+        .eq('gruppe_id', wert).eq('status', 'bestätigt').gte('claimed_at', leaseIso).limit(1)
+      if (fErr) { console.warn(`[${FN}] Ablauf bestätigt:`, dbFehler(fErr)); return }
+      if (Array.isArray(frisch) && frisch.length) return
+    }
+    const { data: zu, error: uErr } = await sb.from('ad_actions')
+      .update({ status: 'abgelehnt', freigabe: 'abgelaufen', result: 'Freigabe abgelaufen' })
+      .eq(feld, wert).eq('origin', 'autopilot').eq('status', 'bestätigt')
+      .or(`claimed_at.is.null,claimed_at.lt."${leaseIso}"`)
+      .select(ABLAUF_SPALTEN)
+    if (uErr) { console.warn(`[${FN}] Ablauf bestätigt:`, dbFehler(uErr)); return }
+    const rows = (zu ?? []) as Array<Record<string, unknown>>
+    await logEinfuegen(sb, rows.map(r => ablehnungsLog(r, 'abgelaufen', laufId)))
+    n += rows.length
+  }
+  for (const g of gruppen) await schliessen('gruppe_id', g)
+  for (const id of einzeln) await schliessen('id', id)
+  return n
+}
+
+/**
+ * Abgelaufene Freigaben schließen, dann werbe-ausfuehren { modus: 'fenster' } anstoßen:
+ * Modus autonom täglich (autonome K-Pausen laufen sofort), Modi vorschlag/ein_klick an
+ * Fenstertagen (außerhalb des Fensters freigegebene Fenster-Aktionen). Nie bei Pause
+ * oder Modus aus/schatten, erst nach der heutigen Regelprüfung (Stopps sind bewertet).
+ */
+async function schrittFenster(sb: Sb, lauf: Lauf, now: Date, opts: { erzwingen: boolean }) {
+  const abgelaufen = await bestaetigteAbgelaufenSchliessen(sb, now, lauf.id)
+  const { settings, modus } = await ladeEinstellungen(sb)
+  const fenstertag = istFenstertag(berlinHeute(now).wochentag, settings.change_window_dows)
+  const pauseBis = settings.autopilot_paused_until ? Date.parse(settings.autopilot_paused_until) : Number.NaN
+  const pausiert = Number.isFinite(pauseBis) && pauseBis > now.getTime()
+  const summary: Record<string, unknown> = { modus, fenstertag, pausiert, abgelaufen_bestaetigt: abgelaufen }
+  const anstossen = !pausiert && (modus === 'autonom' || (fenstertag && (modus === 'vorschlag' || modus === 'ein_klick')))
+  if (!anstossen) {
+    const grund = pausiert ? 'Autopilot pausiert' : (modus === 'aus' || modus === 'schatten') ? `Modus ${modus}` : 'Kein Fenstertag'
+    return { status: 'fertig' as const, summary: { ...summary, kick: null, grund } }
+  }
+  const regelnStatus = await schrittStatus(sb, lauf.datum, 'regeln')
+  if (regelnStatus !== 'fertig' && !opts.erzwingen) {
+    return { status: 'uebersprungen' as const, summary: { ...summary, kick: null, grund: `Regeln heute nicht fertig (${regelnStatus ?? 'kein Eintrag'})` } }
+  }
+  // Der Aufruf wird nie vorzeitig abgebrochen (ein abgebrochener Ausführer könnte eine
+  // Plan-B-Gruppe halb ändern): nach 20 s läuft er im Hintergrund weiter.
+  const aufruf = funktionAufrufen('werbe-ausfuehren', { modus: 'fenster' }, 300_000)
+  const frueh = await Promise.race([aufruf, new Promise<null>(res => setTimeout(() => res(null), 20_000))])
+  if (!frueh) {
+    await imHintergrund(aufruf.then(r => { console.log(`[${FN}] werbe-ausfuehren fenster:`, r.status, JSON.stringify(r.json).slice(0, 500)) }))
+    return { status: 'fertig' as const, summary: { ...summary, kick: { angestossen: true, hinweis: 'werbe-ausfuehren läuft weiter, Ergebnis in ad_autopilot_log' } } }
+  }
+  const kick = { ok: frueh.ok, status: frueh.status, ...(frueh.fehler ? { fehler: frueh.fehler } : {}), antwort: frueh.json }
+  if (!frueh.ok) {
+    return { status: 'fehler' as const, summary: { ...summary, kick }, fehler: `werbe-ausfuehren fenster: ${frueh.fehler ?? `HTTP ${frueh.status}`}`.slice(0, 300) }
+  }
+  return { status: 'fertig' as const, summary: { ...summary, kick } }
+}
+
+// ── Vorrat-Prüfung (ohne Ledger) ────────────────────────────────────────────
+
+/** QA-Gate des Vorrats (entwurf -> geprueft, Prognose, Auto-Freigabe nach Stufe). Wirft nie. */
+async function schrittVorrat(sb: Sb, now: Date): Promise<Record<string, unknown>> {
+  try {
+    const r = await vorratPruefen(sb, { now })
+    return {
+      schritt: 'vorrat_pruefen', status: 'fertig',
+      summary: { geprueft: r.geprueft, bleibt_entwurf: r.bleibt_entwurf, auto_freigegeben: r.auto_freigegeben, prognosen: r.prognosen, fehler: r.fehler.slice(0, 10) },
+    }
+  } catch (err) {
+    const text = errMsg(err).slice(0, 300)
+    console.error(`[${FN}] vorrat_pruefen:`, text)
+    return { schritt: 'vorrat_pruefen', status: 'fehler', fehler: text }
+  }
+}
+
 // ── Kette ───────────────────────────────────────────────────────────────────
 
-async function kette(sb: Sb, now: Date, opts: { pruefeSync: boolean; erzwingen: boolean }): Promise<Record<string, unknown>> {
+/** sync -> qualitaet -> regeln -> fenster; gibt den Abbruchgrund zurück (null = durchgelaufen). */
+async function ketteSchritte(sb: Sb, now: Date, opts: { pruefeSync: boolean; erzwingen: boolean }, schritte: Record<string, unknown>[]): Promise<string | null> {
   const { heute, gestern } = berlinHeute(now)
-  const schritte: Record<string, unknown>[] = []
   if (opts.pruefeSync && !opts.erzwingen) {
     const sync = await schrittStatus(sb, heute, 'sync')
-    if (sync !== 'fertig') {
-      return { lauf_datum: heute, schritte, grund: `Sync heute nicht fertig (${sync ?? 'kein Eintrag'})` }
-    }
+    if (sync !== 'fertig') return `Sync heute nicht fertig (${sync ?? 'kein Eintrag'})`
   }
-  const q = await mitLedger(sb, heute, 'qualitaet', now, () => schrittQualitaet(sb, gestern))
-  schritte.push(q)
+  schritte.push(await mitLedger(sb, heute, 'qualitaet', now, () => schrittQualitaet(sb, gestern)))
   const qStatus = await schrittStatus(sb, heute, 'qualitaet')
-  if (qStatus !== 'fertig' && !opts.erzwingen) {
-    return { lauf_datum: heute, schritte, grund: `Qualität nicht fertig (${qStatus ?? 'kein Eintrag'})` }
-  }
-  const r = await mitLedger(sb, heute, 'regeln', now, lauf => schrittRegeln(sb, lauf, now))
-  schritte.push(r)
-  return { lauf_datum: heute, schritte }
+  if (qStatus !== 'fertig' && !opts.erzwingen) return `Qualität nicht fertig (${qStatus ?? 'kein Eintrag'})`
+  schritte.push(await mitLedger(sb, heute, 'regeln', now, lauf => schrittRegeln(sb, lauf, now)))
+  schritte.push(await mitLedger(sb, heute, 'fenster', now, lauf => schrittFenster(sb, lauf, now, { erzwingen: opts.erzwingen })))
+  return null
+}
+
+async function kette(sb: Sb, now: Date, opts: { pruefeSync: boolean; erzwingen: boolean }): Promise<Record<string, unknown>> {
+  const { heute } = berlinHeute(now)
+  const schritte: Record<string, unknown>[] = []
+  const grund = await ketteSchritte(sb, now, opts, schritte)
+  // Vorrat jede Nacht prüfen, auch wenn ein Schritt davor scheitert (unabhängig von Meta-Daten)
+  schritte.push(await schrittVorrat(sb, now))
+  return { lauf_datum: heute, schritte, ...(grund ? { grund } : {}) }
 }
 
 // ── Woche ───────────────────────────────────────────────────────────────────

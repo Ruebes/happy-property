@@ -792,11 +792,31 @@ const checkWerbungDaten: Check = {
         const amTag = rows.filter(r => String(r.lauf_datum) === soll)
         const offen = KETTE.filter(([s]) => !['fertig', 'uebersprungen'].includes(String(amTag.find(r => r.schritt === s)?.status ?? '')))
         if (offen.length) {
-          const fehler = amTag.map(r => r.fehler).find(f => typeof f === 'string' && f.trim())
+          // Fehlertext nur aus den gemeldeten (offenen) Schritten, nicht aus fenster/woche
+          const mitFehler = offen.map(([s, l]) => ({ l, f: amTag.find(r => r.schritt === s)?.fehler }))
+            .find(x => typeof x.f === 'string' && x.f.trim())
           fund('werbe_kette', 'hoch',
-            `Die nächtliche Werbe-Auswertung vom ${soll} ist nicht fertig geworden (offen: ${offen.map(([, l]) => l).join(', ')}).${fehler ? ` Letzter Fehler: ${kurz(fehler, 160)}` : ''} Bis dahin gibt es keine neuen Vorschläge.`,
+            `Die nächtliche Werbe-Auswertung vom ${soll} ist nicht fertig geworden (offen: ${offen.map(([, l]) => l).join(', ')}).${mitFehler ? ` Letzter Fehler (${mitFehler.l}): ${kurz(mitFehler.f, 160)}` : ''} Bis dahin gibt es keine neuen Vorschläge.`,
             'Läuft der Nachholer (04:50 UTC) auch nicht durch, Claude den Fehler aus dieser Mail geben.')
         }
+      }
+      // 2b. Schritte nach der Kette: 'fenster' (Freigaben ausführen) und 'woche' (Mo) mit
+      //     Status 'fehler' am heutigen oder gestrigen Lauftag (lauf_datum = Berliner Tag).
+      const tage = [berlinDatum(jetzt), berlinDatum(new Date(jetzt.getTime() - 864e5))]
+      const NACHLAUF: Array<[string, string, Finding['severity'], string, string]> = [
+        ['fenster', 'Ausführen der Freigaben (Änderungsfenster)', 'hoch',
+          'Freigegebene Vorschläge des Autopiloten sind deshalb nicht bei Meta umgesetzt worden.',
+          `Im Werbemanager (${AUTOPILOT_LINK}) die freigegebenen Vorschläge prüfen. Kommt der Fehler wieder, Claude den Fehlertext aus dieser Mail geben.`],
+        ['woche', 'Wochenlauf (Vorrat, Briefings, Prognosen)', 'mittel',
+          'Vorrat-Bestand, neue Briefings und Prognosen sind diese Woche nicht aufgefrischt worden.',
+          'Claude den Fehlertext aus dieser Mail geben, damit der Wochenlauf nachgeholt wird.'],
+      ]
+      for (const [schritt, label, sev, folge, fix] of NACHLAUF) {
+        const z = rows.filter(r => r.schritt === schritt && r.status === 'fehler' && tage.includes(String(r.lauf_datum)))
+          .sort((a, b) => String(b.lauf_datum).localeCompare(String(a.lauf_datum)))[0]
+        if (!z) continue
+        const f = typeof z.fehler === 'string' && z.fehler.trim() ? ` Fehler: ${kurz(z.fehler, 160)}` : ''
+        fund(`werbe_${schritt}`, sev, `Der Werbe-Schritt "${label}" vom ${String(z.lauf_datum)} ist gescheitert.${f} ${folge}`, fix)
       }
     } catch { /* Tabelle fehlt */ }
 
@@ -991,9 +1011,9 @@ const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
 function buildReport(fixed: Finding[], open: Finding[], datum: string, dryRun: boolean, werbe: WerbeZeile[] = []): { subject: string; html: string } {
   const li = (f: Finding) => `
     <tr><td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#374151;">
-      <strong style="color:#111827;">${f.entity_label || ''}</strong><br>
-      ${f.what_plain}
-      ${f.fix_plain ? `<br><span style="color:#6b7280;">→ ${f.fix_plain}</span>` : ''}
+      <strong style="color:#111827;">${esc(String(f.entity_label || ''))}</strong><br>
+      ${esc(String(f.what_plain ?? ''))}
+      ${f.fix_plain ? `<br><span style="color:#6b7280;">→ ${esc(String(f.fix_plain))}</span>` : ''}
     </td></tr>`
   const total = fixed.length + open.length
   const subject = dryRun

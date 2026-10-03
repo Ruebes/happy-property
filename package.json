@@ -12,7 +12,9 @@
     "check:functions": "tsc -p supabase/functions/tsconfig.shared.json && tsc -p supabase/functions/tsconfig.guards.json",
     "verify:gate": "node scripts/verify-deck-gate.mjs",
     "verify:nav": "node scripts/verify-nav.mjs",
-    "verify:links": "node scripts/verify-entity-links.mjs"
+    "verify:links": "node scripts/verify-entity-links.mjs",
+    "verify:meta": "node scripts/verify-meta-spec.mjs",
+    "verify:werbe": "node scripts/verify-werbe-mathe.mjs && node scripts/verify-werbe-regeln.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.43.4",

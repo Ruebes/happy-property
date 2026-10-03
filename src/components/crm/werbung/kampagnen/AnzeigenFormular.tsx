@@ -18,7 +18,7 @@ import { Abschnitt, AuswahlFeld, FeldRahmen, Schalter, TextFeld, feldId, feldLab
 import MedienSlot, { refAus, storagePfadAus } from './MedienSlot'
 import WerbemittelWahl, { type WerbemittelAuswahl } from './WerbemittelWahl'
 import { builderCall, fehlerText } from './builderApi'
-import { paarPartner, setzeAnzeige, useAssistent } from './useEntwurf'
+import { anzeigeAngelegt, paarPartner, setzeAnzeige, useAssistent } from './useEntwurf'
 import { useWerbeKontext } from '../useWerbeDaten'
 
 // ── Werbeanzeige (Reihenfolge wie bei Meta) ──────────────────────────────────
@@ -111,8 +111,10 @@ export default function AnzeigenFormular({ adKey }: { adKey: string }) {
   const ad = spec.ads.find(x => x.key === adKey)
   if (!ad) return null
   const node = ad.key
-  const gesperrt = nurLesen
-  const set = (patch: Partial<AdDraft>) => e.update(d => setzeAnzeige(d, node, patch, gepaart))
+  // Von diesem Entwurf schon bei Meta angelegt (Anzeige oder Werbemittel): Fortsetzen übernimmt keine Änderungen mehr
+  const angelegt = !ad.existing_id && anzeigeAngelegt(e.metaIds, node)
+  const gesperrt = nurLesen || angelegt
+  const set = (patch: Partial<AdDraft>) => e.update(d => setzeAnzeige(d, node, patch, gepaart, e.metaIds))
   const adset = spec.adsets.find(a => a.key === ad.adset_key)
   const partner = gepaart ? paarPartner(spec, node) : undefined
 
@@ -135,7 +137,7 @@ export default function AnzeigenFormular({ adKey }: { adKey: string }) {
   // Medien immer vom aktuellen Stand aus ändern (Uploads dauern, inzwischen kann sich anderes geändert haben)
   const aendereMedien = (fn: (m: AdDraft['media']) => AdDraft['media']) => e.update(d => {
     const cur = d.ads.find(x => x.key === node)
-    return cur ? setzeAnzeige(d, node, { media: fn({ ...(cur.media ?? {}) }) }, gepaart) : d
+    return cur ? setzeAnzeige(d, node, { media: fn({ ...(cur.media ?? {}) }) }, gepaart, e.metaIds) : d
   })
   const setMedia = (slot: 'feed_4x5' | 'story_9x16' | 'square_1x1', ref: MediaRef | undefined) => aendereMedien(m => {
     if (ref) m[slot] = ref
@@ -178,12 +180,17 @@ export default function AnzeigenFormular({ adKey }: { adKey: string }) {
             headlines: (src.headlines ?? []).slice(0, LIMITS.textsPerKind),
             descriptions: (src.descriptions ?? []).slice(0, LIMITS.textsPerKind),
             media: src.media ?? {},
-            creative_features: src.creative_features ?? {},
+            // Advantage+ Creative nie mitnehmen: bei HP alles aus, bis jemand bewusst einschaltet
+            creative_features: {},
             source: { catalog_ad_id: w.adId },
           }
           if (ctaFor(kind).indexOf(src.cta_type) >= 0) patch.cta_type = src.cta_type
           set(patch)
           toast.success(t('crm.werbung.builder.anzeige.uebernommen', 'Werbemittel übernommen'))
+          const quelleAn = CREATIVE_FEATURE_OPTIONS.filter(o => src.creative_features?.[o.value] === 'OPT_IN').map(o => t(o.labelKey, o.value))
+          if (quelleAn.length) {
+            toast.info(t('crm.werbung.builder.anzeige.funktionenNichtUebernommen', 'In der Vorlage waren diese Advantage+ Funktionen an und sind hier aus: {{liste}}. Bei Bedarf unter „Advantage+ Creative“ bewusst einschalten.', { liste: quelleAn.join(', ') }))
+          }
           if (res.warnings?.length) toast.info(res.warnings.join(' '))
         } catch (err) {
           set({ source: { catalog_ad_id: w.adId } })
@@ -261,6 +268,11 @@ export default function AnzeigenFormular({ adKey }: { adKey: string }) {
 
   return (
     <div className="space-y-4">
+      {angelegt && (
+        <div role="note" className="rounded-lg border border-hp-navy/15 bg-hp-navy/5 px-3 py-2 text-xs text-hp-navy">
+          {t('crm.werbung.builder.anzeige.angelegt', 'Diese Werbeanzeige ist schon bei Meta angelegt (ID {{id}}). Texte, Medien und Einstellungen lassen sich hier nicht mehr ändern.', { id: e.metaIds.ads?.[node] ?? e.metaIds.creatives?.[node] })}
+        </div>
+      )}
       {partner && (
         <div role="note" className="rounded-lg border border-hp-navy/15 bg-hp-cream px-3 py-2 text-xs text-hp-navy">
           {t('crm.werbung.builder.anzeige.paar', 'Gekoppelt mit „{{partner}}“: Texte, Medien und Format gelten für beide. Nur die Landingpage unterscheidet sich.', { partner: partner.name || partner.key })}

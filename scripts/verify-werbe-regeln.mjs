@@ -9,7 +9,7 @@
 //   node scripts/verify-werbe-regeln.mjs
 
 import { execSync } from 'child_process'
-import { mkdtempSync } from 'fs'
+import { mkdtempSync, readFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
@@ -657,12 +657,219 @@ test('R2: nach Kills unter min_active_ads Ersatz, Upload für Plan-B-Paar', () =
   setSnap(c2, 'campaign', 'C1', { special_ad_categories: [] })
   const e2 = lauf(c2)
   check(vs(e2, { rule_key: 'POOL_UPLOAD' }).length === 0 && hs(e2, 'kein_housing').length >= 1, 'ohne HOUSING kein Upload')
+  // Kampagnen-Assistent aus: kein Upload-Vorschlag, nur Hinweis; Kills/R2 laufen weiter
+  const c3 = basis({ kennung: { 1: { spend_eur: 160, leads_kap_ja: 0, te_capped: 0.3 }, 2: { spend_eur: 170, leads_kap_ja: 0, te_capped: 0.3 } } })
+  c3.settings.builder_enabled = false
+  const e3 = lauf(c3)
+  check(vs(e3, { rule_key: 'POOL_UPLOAD' }).length === 0 && hs(e3, 'assistent_aus').length >= 1 && hs(e3, 'assistent_aus').every(h => h.rule_key === 'POOL_UPLOAD'), 'builder_enabled false: kein Upload, Hinweis assistent_aus')
+  check(ids(vs(e3, { aktion: 'pause' })) === 'A1,A2,B1,B2' && ids(vs(e3, { rule_key: 'R2' })) === 'N1A,N1B', 'builder_enabled false: Kills und R2 unverändert')
+  const c4 = basis({ kennung: { 1: { spend_eur: 160, leads_kap_ja: 0, te_capped: 0.3 }, 2: { spend_eur: 170, leads_kap_ja: 0, te_capped: 0.3 } } })
+  c4.settings.builder_enabled = true
+  check(ids(vs(lauf(c4), { rule_key: 'POOL_UPLOAD' })) === 'AS_A,AS_B', 'builder_enabled true: Upload wie bisher')
 })
 test('Nicht verwaltete Kampagnen bleiben unberührt', () => {
   const c = basis({ kennung: { 1: { spend_eur: 160, leads_kap_ja: 0, te_capped: 0.3 } } })
   c.verwaltete_kampagnen = ['ANDERE']
   check(lauf(c).vorschlaege.length === 0, 'Agentur-Altbestand darf nicht angefasst werden')
 })
+// ── Kennung wie SQL (btrim, Suffix ohne Groß-/Kleinschreibung, Rückfall Anzeigen-ID) ──
+test('Kennung: _Kurz, Leerzeichen am Ende und leerer Name finden die SQL-Kennung', () => {
+  const c = basis({ kennung: { 1: { spend_eur: 160, leads_kap_ja: 0, te_capped: 0.3 } } })
+  setSnap(c, 'ad', 'A1', { name: 'a1_LANG' })
+  setSnap(c, 'ad', 'B1', { name: 'a1_Kurz ' })
+  const v = vs(lauf(c), { rule_key: 'K1' })
+  check(ids(v) === 'A1,B1', `K1 über a1_LANG / 'a1_Kurz ' gepoolt: ${ids(v)}`)
+  // leerer Name: SQL-Kennung = campaign_id:ad_id
+  const c2 = basis()
+  setSnap(c2, 'ad', 'A2', { name: '' })
+  setQ(c2, 'kennung', 0, 'C1:A2', { spend_eur: 160, leads_kap_ja: 0, te_capped: 0.3, booked: 0 })
+  const v2 = vs(lauf(c2), { rule_key: 'K1' })
+  check(ids(v2) === 'A2', `K1 für leeren Namen über C1:A2: ${ids(v2)}`)
+  // ermüdete Anzeige mit _Kurz + Leerzeichen: ersatz_aktivieren trägt pool_id und ersetzt_kennung (Basisname)
+  const c3 = basis()
+  setSnap(c3, 'ad', 'A2', { name: 'a2_Kurz ', frequency_7d: 3.4 })
+  const r = vs(lauf(c3), { aktion: 'ersatz_aktivieren' })
+  check(r.length === 1 && r[0].payload.pool_id === 'P1' && r[0].payload.ersetzt_kennung === 'a2' && r[0].payload.ersetzt_ad_id === 'A2', `ersatz_aktivieren Payload ${JSON.stringify(r.map(x => x.payload))}`)
+})
+
+test('R1b nutzt ersetzt_kennung aus dem Vorrat (normalisiert), nur bei eingeschaltetem Ersatz', () => {
+  const schwach = { spend_eur: 100, leads_kap_ja: 1, te_capped: 0.2, booked: 0 }
+  const mk = (ersetzt, altName) => {
+    const c = basis({ kennung: { 1: schwach } })
+    if (altName != null) setSnap(c, 'ad', 'A1', { name: altName })
+    c.vorrat[0] = { id: 'P1', kennung: 'neu1', status: 'aktiv', winkel: 'miete', ersetzt_kennung: ersetzt, aktiv_seit: vor(30), meta_ad_ids: { AS_A: 'N1A' } }
+    setSnap(c, 'ad', 'N1A', { status: 'ACTIVE', effective_status: 'ACTIVE' })
+    return c
+  }
+  check(ids(vs(lauf(mk('a1', 'a1_LANG ')), { rule_key: 'R1b' })) === 'A1', 'R1b muss a1_LANG über ersetzt_kennung a1 finden')
+  check(vs(lauf(mk('a9', null)), { rule_key: 'R1b' }).length === 0, 'andere ersetzt_kennung: kein R1b')
+  check(vs(lauf(mk(null, null)), { rule_key: 'R1b' }).length === 0, 'ohne ersetzt_kennung: kein R1b')
+  // Plan B: Ersatz nur in AS_A eingeschaltet -> müde B2 in AS_B bekommt trotzdem einen Ersatz (R1)
+  const c = basis()
+  c.vorrat[0] = { id: 'P1', kennung: 'neu1', status: 'aktiv', winkel: 'miete', ersetzt_kennung: 'a2', aktiv_seit: vor(30), meta_ad_ids: { AS_A: 'N1A', AS_B: 'N1B' } }
+  setSnap(c, 'ad', 'N1A', { status: 'ACTIVE', effective_status: 'ACTIVE' })
+  setSnap(c, 'ad', 'B2', { frequency_7d: 3.4 })
+  c.snapshots.push(...snapTage({ entity_level: 'ad', entity_id: 'N5B', parent_id: 'AS_B', campaign_id: 'C1', name: 'N5B', status: 'PAUSED', effective_status: 'PAUSED', created_time: '2026-10-01T10:00:00Z', updated_time: '2026-10-01T10:00:00Z' }))
+  c.vorrat.push({ id: 'P5', kennung: 'neu5', status: 'hochgeladen', winkel: 'x', released_at: '2026-09-30T10:00:00Z', meta_ad_ids: { AS_B: 'N5B' } })
+  const r = vs(lauf(c), { aktion: 'ersatz_aktivieren' })
+  check(ids(r) === 'N5B' && r[0].payload.pool_id === 'P5' && r[0].payload.ersetzt_kennung === 'a2', `R1 in AS_B trotz laufendem Ersatz in AS_A: ${JSON.stringify(r.map(x => [x.entity_id, x.payload.pool_id]))}`)
+})
+
+// ── Startwerte der Migration: deutsche Parameternamen wirken ────────────────
+const SEED = (() => {
+  const sql = readFileSync(join(root, 'supabase/migrations/20261003110000_werbe_autopilot.sql'), 'utf8')
+  const block = sql.slice(sql.indexOf('insert into public.ad_autopilot_rules'), sql.indexOf('on conflict (rule_key) do nothing'))
+  const re = /\(\s*'([A-Za-z0-9_]+)',\s*'[^']*',\s*'[a-z_]+',\s*(?:true|false),\s*\d+,\s*\d+,\s*'[a-z_]+',\s*'(\{[^']*\})'::jsonb\)/g
+  const out = {}
+  let m
+  while ((m = re.exec(block))) out[m[1]] = JSON.parse(m[2])
+  return out
+})()
+const seedRules = (extra = {}) => [
+  { rule_key: 'SCHUTZ', aktion: 'meldung', enabled: true, approval_level: 1, max_level: 1, params: SEED.SCHUTZ },
+  { rule_key: 'STOPP', aktion: 'meldung', enabled: true, approval_level: 1, max_level: 1, params: SEED.STOPP },
+  ...RULES().map(r => ({ ...r, params: { ...(SEED[r.rule_key] ?? {}), ...(r.params?.budget_gruppen ? { budget_gruppen: r.params.budget_gruppen } : {}), ...(extra[r.rule_key] ?? {}) } })),
+]
+test('Startwerte: jeder Parameter der Migration hat einen Leser', () => {
+  check(Object.keys(SEED).length === 20, `20 Regeln erwartet, gelesen ${Object.keys(SEED).length}`)
+  const anderswo = new Set(['budget_gruppen', 'kap_floor', 'min_pool_ready', 'nur_im_fenster'])
+  for (const [key, params] of Object.entries(SEED)) {
+    for (const p of Object.keys(params)) {
+      const ziel = R.PARAM_ALIAS[key]?.[p]
+      if (ziel) check(ziel in R.REGEL_STANDARD, `${key}.${p} -> ${ziel} fehlt in REGEL_STANDARD`)
+      else check(p in R.REGEL_STANDARD || anderswo.has(p), `${key}.${p} wird von keiner Stelle gelesen`)
+    }
+  }
+  const n = R.paramsMitAlias('D1', SEED.D1)
+  check(n.d1_step === 0.2 && n.min_days_between_sig_edits === 3 && n.d1_p === 0.8, `D1-Alias ${JSON.stringify(n)}`)
+  check(R.paramsMitAlias('F5', SEED.F5).f5_min_age_days === 10 && R.paramsMitAlias('F1', SEED.F1).fatigue_min_age_days === 10, 'F-Alias min_alter_tage')
+  // Grundfall mit allen Startwerten: nichts, kein Stopp; K1 greift mit spend_eur 150
+  const c = basis()
+  c.rules = seedRules()
+  const e = lauf(c)
+  check(e.vorschlaege.length === 0 && e.stopps.length === 0, `Startwerte Grundfall: ${e.vorschlaege.map(v => v.rule_key)} / ${e.stopps.map(s => s.code)}`)
+  const c2 = basis({ kennung: { 1: { spend_eur: 160, leads_kap_ja: 0, te_capped: 0.3 } } })
+  c2.rules = seedRules()
+  check(ids(vs(lauf(c2), { rule_key: 'K1' })) === 'A1,B1', 'K1 mit Startwerten')
+})
+test('Startwerte: F min_alter_tage und min_impressions je Regel, F5 ab Tag 10', () => {
+  // A3 lebt seit 2026-09-15 (20 Tage): CTR fällt (F2), Kosten/TE der letzten 14 Tage 3 x der ersten 14 (F5)
+  const mk = (extra = {}) => {
+    const c = basis()
+    c.rules = seedRules(extra)
+    c.insights_ab = '2026-09-10'
+    for (let d = Date.parse('2026-09-15T00:00:00Z'); d <= Date.parse('2026-10-04T00:00:00Z'); d += 86400000) {
+      const day = new Date(d).toISOString().slice(0, 10)
+      c.insights.push({ day, ad_id: 'A3', spend_eur: 10, impressions: 1000, link_clicks: day >= '2026-09-28' ? 8 : 15 })
+    }
+    setQ(c, 'ad', 14, 'A3', { spend_eur: 300, te_capped: 2 })
+    c.fruehphase = { A3: { spend_eur: 100, te: 2 } }
+    return c
+  }
+  const v = vs(lauf(mk()), { aktion: 'ersatz_aktivieren' })
+  check(v.length === 1 && v[0].evidence.regeln.join() === 'F2,F5' && v[0].payload.ersetzt_kennung === 'a3', `Startwert F5 min_alter_tage 10: ${JSON.stringify(v.map(x => x.evidence.regeln))}`)
+  check(vs(lauf(mk({ F5: { min_alter_tage: 28 } })), { aktion: 'ersatz_aktivieren' }).length === 0, 'F5 min_alter_tage 28: nur F2, nicht müde')
+  check(vs(lauf(mk({ F2: { min_impressions: 8000 } })), { aktion: 'ersatz_aktivieren' }).length === 0, 'F2 min_impressions 8000: F2 greift nicht')
+  check(vs(lauf(mk({ F2: { min_alter_tage: 21 } })), { aktion: 'ersatz_aktivieren' }).length === 0, 'F2 min_alter_tage 21: F2 greift nicht')
+  // F1: min_alter_tage und min_impressions (7-Tage-Impressionen aus dem Schnappschuss)
+  const f1 = (extra, impr) => {
+    const c = basis()
+    c.rules = seedRules(extra)
+    setSnap(c, 'ad', 'A2', { frequency_7d: 3.4, ...(impr != null ? { impressions_7d: impr } : {}) })
+    return vs(lauf(c), { aktion: 'ersatz_aktivieren' }).length
+  }
+  check(f1({}, 5000) === 1 && f1({}, 2000) === 0 && f1({ F1: { min_impressions: 1000 } }, 2000) === 1, 'F1 min_impressions')
+  check(f1({ F1: { min_alter_tage: 90 } }, 5000) === 0, 'F1 min_alter_tage 90')
+})
+test('Startwerte: S1 min_tage_seit_aenderung, kap_floor, K3 prior_strength_te, R2, D3', () => {
+  // Budgetsprung im Schnappschuss vor 1 Tag: Standard 3 Tage sperrt, S1-Startwert 1 erlaubt
+  const sprung = extra => {
+    const c = basis()
+    c.rules = seedRules(extra)
+    s1Gut(c)
+    for (const z of c.snapshots) if ((z.entity_id === 'AS_A' || z.entity_id === 'AS_B') && z.snap_date < '2026-10-04') z.daily_budget_cents = 5000
+    return lauf(c)
+  }
+  let e = sprung({})
+  check(vs(e, { rule_key: 'S1' }).length === 0 && hs(e, 'budget_abstand').length === 1, 'S1 min_tage_seit_aenderung 3 sperrt')
+  e = sprung({ S1: { min_tage_seit_aenderung: 1 } })
+  check(vs(e, { rule_key: 'S1' }).length === 2, `S1 min_tage_seit_aenderung 1 erlaubt: ${JSON.stringify(e.hinweise.map(h => h.code))}`)
+  // kap_floor: der strengere Wert aus ad_settings und S1 gilt
+  const kap = (setting, regelWert) => {
+    const c = basis()
+    c.rules = seedRules({ S1: { kap_floor: regelWert } })
+    c.settings.kap_floor = setting
+    for (const id of ['AS_A', 'AS_B']) setQ(c, 'adset', 14, id, { spend_eur: 150, te_capped: 3, booked: 2, booked_kap_ja: 1 })
+    return vs(lauf(c), { rule_key: 'S1' }).length
+  }
+  check(kap(0.4, 0.4) === 2 && kap(0.6, 0.4) === 0 && kap(0.4, 0.6) === 0, `kap_floor max(Einstellung, S1): ${kap(0.4, 0.4)} ${kap(0.6, 0.4)} ${kap(0.4, 0.6)}`)
+  // K3 prior_strength_te (wie die SQL-Qualitätsrechnung): starker Prior verhindert den Kill
+  const k3 = extra => {
+    const c = basis({ kennung: { 3: { spend_eur: 900, booked: 1, leads_kap_ja: 2, te_capped: 0.5 } } })
+    c.rules = seedRules(extra)
+    setQ(c, 'campaign', 30, 'C1', { cpte_hat: 400 })
+    return vs(lauf(c), { rule_key: 'K3' }).length
+  }
+  check(k3({}) === 2 && k3({ K3: { prior_strength_te: 50 } }) === 0, 'K3 prior_strength_te wirkt')
+  // R2 max_new_ads_per_window aus der Regel
+  const r2 = extra => {
+    const c = basis({ kennung: { 1: { spend_eur: 160, leads_kap_ja: 0, te_capped: 0.3 }, 2: { spend_eur: 170, leads_kap_ja: 0, te_capped: 0.3 } } })
+    c.rules = seedRules(extra)
+    return lauf(c)
+  }
+  check(vs(r2({}), { rule_key: 'R2' }).length === 2, 'R2 mit Startwert 2')
+  e = r2({ R2: { max_new_ads_per_window: 0 } })
+  check(vs(e, { rule_key: 'R2' }).length === 0 && hs(e, 'max_neu').some(h => h.rule_key === 'R2' && /schon 0 neue/.test(h.text)), 'R2 max_new_ads_per_window 0')
+  // D3 min_free_slots_7d
+  const d3 = (extra, slots) => {
+    const c = basis()
+    c.rules = seedRules(extra)
+    c.freie_slots_7d = slots
+    return hs(lauf(c), 'D3').length
+  }
+  check(d3({}, 0) === 1 && d3({}, 3) === 0 && d3({ D3: { min_free_slots_7d: 5 } }, 3) === 1, 'D3 min_free_slots_7d')
+  // gleiche Lesart wie S1: slots < min_free_slots_7d ist „zu wenig“ (genau der Wert ist genug)
+  check(d3({ D3: { min_free_slots_7d: 5 } }, 5) === 0 && d3({ D3: { min_free_slots_7d: 5 } }, 4) === 1, 'D3: slots == Wert meldet nicht, slots < Wert meldet')
+  const s1SlotSperre = slots => {
+    const c = basis(); s1Gut(c); c.freie_slots_7d = slots
+    return lauf(c).hinweise.some(h => h.rule_key === 'S1' && (h.details?.sperren ?? []).includes('slots'))
+  }
+  check(!s1SlotSperre(10) && s1SlotSperre(9), 'S1: slots == min_free_slots_7d (10) sperrt nicht, 9 sperrt')
+})
+test('Startwerte: STOPP/SCHUTZ global (Rückfallkurs, Tracking-Wächter, Kampagnentag)', () => {
+  // kurs_fallback_usd_je_eur aus der STOPP-Zeile bzw. aus RegelKontext.parameter
+  const c = basis()
+  c.rules = seedRules()
+  c.rules.find(r => r.rule_key === 'STOPP').params = { ...SEED.STOPP, kurs_fallback_usd_je_eur: 1.25 }
+  c.fx = { usd_per_eur: null, mittel_7d: null }
+  let e = lauf(c)
+  check(e.info.usd_per_eur === 1.25 && e.stopps.some(s => s.code === 'kurs_fehlt'), `Rückfallkurs ${e.info.usd_per_eur}`)
+  const c1 = basis()
+  c1.fx = { usd_per_eur: null, mittel_7d: null }
+  c1.parameter = { kurs_fallback_usd_je_eur: 1.2 }
+  check(lauf(c1).info.usd_per_eur === 1.2, 'Rückfallkurs über parameter')
+  // Tracking-Wächter: Hinweis, nie Stopp
+  const tr = (stundenSeit, param) => {
+    const x = basis()
+    x.rules = seedRules()
+    if (param != null) x.rules.find(r => r.rule_key === 'STOPP').params = { ...SEED.STOPP, tracking_stunden_ohne_termin: param }
+    x.tracking = { letzter_meta_termin: stundenSeit == null ? null : vor(stundenSeit), geprueft_ab: vor(14 * 24) }
+    return lauf(x)
+  }
+  e = tr(50)
+  check(hs(e, 'tracking_luecke').length === 1 && e.stopps.length === 0, 'Tracking 50 h > 48 h: Hinweis, kein Stopp')
+  check(hs(tr(50, 72), 'tracking_luecke').length === 0, 'tracking_stunden_ohne_termin 72 wirkt')
+  check(hs(tr(10), 'tracking_luecke').length === 0 && hs(tr(null), 'tracking_luecke').length === 1, 'Tracking frisch / ohne Termin')
+  check(hs(lauf(basis()), 'tracking_luecke').length === 0, 'ohne Tracking-Eingabe keine Prüfung')
+  // SCHUTZ neue_anzeigen_ab_kampagnentag über parameter (deutscher Name)
+  const k = basis()
+  setSnap(k, 'ad', 'A2', { frequency_7d: 3.4 })
+  setSnap(k, 'campaign', 'C1', { created_time: vor(5 * 24) })
+  check(vs(lauf(k), { aktion: 'ersatz_aktivieren' }).length === 0, 'Kampagne Tag 6 < 8: kein Ersatz')
+  k.parameter = { neue_anzeigen_ab_kampagnentag: 5 }
+  check(vs(lauf(k), { aktion: 'ersatz_aktivieren' }).length === 1, 'neue_anzeigen_ab_kampagnentag 5 wirkt')
+})
+
 test('now wird nie aus der Uhr genommen', () => {
   const c = basis()
   delete c.now

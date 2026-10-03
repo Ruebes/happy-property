@@ -43,7 +43,16 @@ export const PLAN_B_LP_KURZ = 'https://steuervorteil-zypern-immobilien.com/vermo
 
 export const HOUSING_AGE_MIN = 18
 export const HOUSING_AGE_MAX = 65
+/** Wohnen (EU): Mindestradius um Adressen/Pins (custom_locations, places). */
 export const HOUSING_MIN_RADIUS_KM = 15
+/**
+ * Städte: Meta erlaubt einen Radius nur von 10 bis 50 Meilen bzw. 17 bis 80 km
+ * (gilt immer, nicht nur unter Wohnen). Unter Wohnen also bei Städten mindestens 17 km.
+ */
+export const CITY_MIN_RADIUS_KM = 17
+export const CITY_MAX_RADIUS_KM = 80
+export const CITY_MIN_RADIUS_MI = 10
+export const CITY_MAX_RADIUS_MI = 50
 
 export const LIMITS = {
   nameMax: 400,
@@ -175,8 +184,12 @@ export const DESTINATION_OPTIONS: readonly EnumOption<Destination>[] = [
   opt('destination', 'ON_EVENT', { unsupported: true }),
   opt('destination', 'UNDEFINED'),
 ]
-/** Ziele, für die der Assistent Anzeigen (Creatives) bauen kann. */
-export const AD_SUPPORTED_DESTINATIONS: readonly Destination[] = ['WEBSITE', 'ON_AD', 'UNDEFINED', 'ON_POST', 'ON_VIDEO']
+/**
+ * Ziele, für die der Assistent Anzeigen (Creatives) bauen kann.
+ * WEBSITE_AND_PHONE_CALL: nur neue Website-Anzeigen in BESTEHENDEN Anzeigengruppen
+ * (laufendes Plan B); neue Anzeigengruppen mit diesem Ziel bleiben „unsupported“.
+ */
+export const AD_SUPPORTED_DESTINATIONS: readonly Destination[] = ['WEBSITE', 'ON_AD', 'UNDEFINED', 'ON_POST', 'ON_VIDEO', 'WEBSITE_AND_PHONE_CALL']
 
 // ── Leistungsziel (optimization_goal) ──────────────────────────────────────
 /** Vollständiges Enum laut Referenz (für Import) + TWO_SECOND_CONTINUOUS_VIDEO_VIEWS aus der ODAX-Tabelle. */
@@ -1121,12 +1134,12 @@ export const ISSUE_CODES = [
   'bid_amount_required', 'roas_needs_value', 'roas_floor_required', 'cost_cap_billing', 'cbo_same_goal',
   'time_order', 'no_adsets', 'too_many_adsets', 'too_many_ads', 'adset_ref_missing',
   'promoted_missing', 'pixel_needs_event', 'pixel_mismatch', 'attribution_invalid',
-  'geo_missing', 'age_range', 'advantage_age',
+  'geo_missing', 'age_range', 'advantage_age', 'city_radius',
   'housing_age', 'housing_gender', 'housing_geo_type', 'housing_exclusion', 'housing_radius',
   'housing_detailed', 'housing_lookalike', 'housing_advantage_audience',
   'dsa_missing', 'placements_empty', 'an_alone', 'threads_needs_ig', 'position_removed',
   'position_platform', 'fb_story_needs_feed', 'fb_feed_required', 'lead_ig_desktop',
-  'identity_page', 'identity_ig', 'text_missing', 'too_many_texts', 'texts_dropped',
+  'identity_page', 'identity_ig', 'text_missing', 'too_many_texts', 'texts_dropped', 'descriptions_single',
   'carousel_multi_text', 'cta_invalid', 'cta_lead_form', 'url_invalid', 'url_has_utm', 'form_missing',
   'destination_mismatch', 'destination_unsupported', 'media_missing', 'video_thumb_missing',
   'cards_count', 'feature_unknown',
@@ -1162,6 +1175,19 @@ const GEO_SELECT_KEYS = ['countries', 'country_groups', 'regions', 'cities', 'zi
 
 const radiusKm = (radius: number | undefined, unit: string | undefined): number | null =>
   typeof radius === 'number' ? (unit === 'mile' ? radius * 1.609344 : radius) : null
+/** Stadt-Radius außerhalb 17-80 km bzw. 10-50 Meilen (Metas Grenzen, in der Einheit des Eintrags). */
+const cityRadiusOutOfRange = (radius: number | undefined, unit: string | undefined): boolean =>
+  typeof radius === 'number' && (unit === 'mile'
+    ? (radius < CITY_MIN_RADIUS_MI || radius > CITY_MAX_RADIUS_MI)
+    : (radius < CITY_MIN_RADIUS_KM || radius > CITY_MAX_RADIUS_KM))
+
+/**
+ * Wirksamer Wert von targeting_automation.advantage_audience: fehlt = 1 (so sendet
+ * buildTargeting), 0 / false / '0' = aus. Für Prüfung, Payload und Anzeige im UI.
+ */
+export function effectiveAdvantageAudience(v: unknown): 0 | 1 {
+  return v === 0 || v === false || v === '0' ? 0 : 1
+}
 const nonEmpty = (v: unknown): boolean => Array.isArray(v) ? v.length > 0 : (v !== undefined && v !== null && v !== '')
 const isLookalike = (a: AudienceRef): boolean => (a.subtype ?? '').toUpperCase() === 'LOOKALIKE'
 const URL_RE = /^https?:\/\/[^\s/?#]+\.[^\s/?#]+[^\s]*$/i
@@ -1210,7 +1236,14 @@ function validateTargeting(t: TargetingSpec | undefined, hec: boolean, add: (fie
   const aMax = t.age_max ?? HOUSING_AGE_MAX
   if (aMin < 18 || aMax > 65 || aMin > aMax) add('adset.targeting.age', 'age_range', 'error', { min: aMin, max: aMax })
   const adv = t.targeting_automation?.advantage_audience
-  if (adv === 1 && aMin > 25) add('adset.targeting.age', 'advantage_age', 'error', { min: aMin })
+  if (effectiveAdvantageAudience(adv) === 1 && aMin > 25) add('adset.targeting.age', 'advantage_age', 'error', { min: aMin })
+  for (const it of g.cities ?? []) {
+    if (cityRadiusOutOfRange(it.radius, it.distance_unit)) {
+      const km = radiusKm(it.radius, it.distance_unit) ?? 0
+      add('adset.targeting.geo_locations', 'city_radius', 'error', { km: Math.round(km), min: CITY_MIN_RADIUS_KM, max: CITY_MAX_RADIUS_KM })
+      break
+    }
+  }
   if (!hec) return
   if (aMin !== HOUSING_AGE_MIN || aMax !== HOUSING_AGE_MAX) add('adset.targeting.age', 'housing_age')
   if ((t.genders ?? []).some(x => x !== 0)) add('adset.targeting.genders', 'housing_gender')
@@ -1218,7 +1251,8 @@ function validateTargeting(t: TargetingSpec | undefined, hec: boolean, add: (fie
   const ex = t.excluded_geo_locations
   if (ex && Object.keys(ex).some(k => nonEmpty(ex[k]))) add('adset.targeting.excluded_geo_locations', 'housing_exclusion')
   if (t.exclusions && Object.keys(t.exclusions).length) add('adset.targeting.detailed', 'housing_exclusion')
-  const radiusItems: Array<{ radius?: number; distance_unit?: string }> = [...(g.cities ?? []), ...(g.custom_locations ?? []), ...(g.places ?? [])]
+  // Städte prüft city_radius (17 km); hier Adressen/Pins und Orte gegen 15 km
+  const radiusItems: Array<{ radius?: number; distance_unit?: string }> = [...(g.custom_locations ?? []), ...(g.places ?? [])]
   for (const it of radiusItems) {
     const km = radiusKm(it.radius, it.distance_unit)
     if (km !== null && km < HOUSING_MIN_RADIUS_KM - 0.01) { add('adset.targeting.geo_locations', 'housing_radius', 'error', { km: Math.round(km) }); break }
@@ -1232,8 +1266,21 @@ function validateTargeting(t: TargetingSpec | undefined, hec: boolean, add: (fie
   if (adv !== 0 && adv !== 1) add('adset.targeting.advantage_audience', 'housing_advantage_audience')
 }
 
+export interface ValidateDraftOptions {
+  /**
+   * Immobilien-Entwurf (Standard true, HP wirbt nur für Immobilien): neue Anzeigengruppen
+   * oder Anzeigen in einer bestehenden Kampagne ohne HOUSING sind dann ein Fehler.
+   */
+  realEstate?: boolean
+  /**
+   * Serverseitige Prüfung (meta-builder). Im Browser ist ein Video ohne Vorschaubild nur
+   * eine Warnung, weil der Server das Vorschaubild beim Anlegen selbst nachholt.
+   */
+  server?: boolean
+}
+
 /** Lokale Prüfung des ganzen Entwurfs (sofort im UI, serverseitig vor validate/create erneut). */
-export function validateDraft(d: DraftSpec): DraftIssue[] {
+export function validateDraft(d: DraftSpec, opts: ValidateDraftOptions = {}): DraftIssue[] {
   const out: DraftIssue[] = []
   const push = (level: Level, node: string, field: string, code: IssueCode, severity: IssueSeverity = 'error', params?: Record<string, string | number>) =>
     out.push({ level, node, field, severity, code, messageKey: issueMessageKey(code), ...(params ? { params } : {}) })
@@ -1261,7 +1308,14 @@ export function validateDraft(d: DraftSpec): DraftIssue[] {
     else if (isNew && SAC_OPTIONS.some(o => o.value === cat && o.unsupported)) cAdd('campaign.special_ad_categories', 'unsupported', 'error', { value: cat })
   }
   if (cats.indexOf('NONE') >= 0 && cats.length > 1) cAdd('campaign.special_ad_categories', 'invalid_option', 'error', { value: 'NONE' })
-  if (cats.indexOf('HOUSING') < 0) cAdd('campaign.special_ad_categories', isNew ? 'housing_missing' : 'housing_existing', isNew ? 'error' : 'warn')
+  if (cats.indexOf('HOUSING') < 0) {
+    if (isNew) cAdd('campaign.special_ad_categories', 'housing_missing')
+    else {
+      // Neues in einer bestehenden Kampagne ohne Wohnen: Fehler (SPEC §3), reines Lesen/Ändern: Hinweis
+      const createsNew = adsets.some(a => !a.existing_id) || ads.some(a => !a.existing_id)
+      cAdd('campaign.special_ad_categories', 'housing_existing', createsNew && opts.realEstate !== false ? 'error' : 'warn')
+    }
+  }
   const realCats = cats.filter(x => x !== 'NONE')
   if (realCats.length) {
     const cc = Array.isArray(c.special_ad_category_country) ? c.special_ad_category_country : []
@@ -1403,7 +1457,9 @@ export function validateDraft(d: DraftSpec): DraftIssue[] {
       if (arr.some(s => !(s ?? '').trim()) && arr.length > 1) add(field, 'text_missing', 'warn')
       if (arr.length > LIMITS.textsPerKind) add(field, 'too_many_texts', 'error', { max: LIMITS.textsPerKind })
       arr.forEach((s, i) => { if ((s ?? '').length > max) add(field, 'too_long', 'error', { max, index: i + 1 }) })
-      if (cleanTexts(arr).length > 1) multi = true
+      // Beschreibung: Meta kann sie nicht je Platzierung/Variante wechseln -> höchstens eine
+      if (field === 'ad.descriptions') { if (ad.format !== 'carousel' && cleanTexts(arr).length > 1) add(field, 'descriptions_single') }
+      else if (cleanTexts(arr).length > 1) multi = true
     }
     if (ad.format === 'carousel' && multi) add('ad.primary_texts', 'carousel_multi_text')
     else if (multi && a && placementRulesFor(a.placements, ad.format === 'single_video').length < 2) add('ad.primary_texts', 'texts_dropped', 'warn')
@@ -1435,7 +1491,7 @@ export function validateDraft(d: DraftSpec): DraftIssue[] {
     } else {
       const slots = [m.feed_4x5, m.story_9x16, m.square_1x1].filter((x): x is MediaRef => !!x && !!x.media_id)
       if (!slots.length) add('ad.media.feed_4x5', 'media_missing')
-      if (ad.format === 'single_video') for (const s of slots) if (s.video_id && !s.thumbnail_hash) { add('ad.media.feed_4x5', 'video_thumb_missing', 'warn'); break }
+      if (ad.format === 'single_video') for (const s of slots) if (s.video_id && !s.thumbnail_hash) { add('ad.media.feed_4x5', 'video_thumb_missing', opts.server ? 'error' : 'warn'); break }
     }
     for (const k of Object.keys(ad.creative_features ?? {})) {
       if (!isIn(CREATIVE_FEATURES, k)) add('ad.creative_features', 'feature_unknown', 'warn', { value: k })
@@ -1469,7 +1525,7 @@ const clone = <T>(x: T): T => JSON.parse(JSON.stringify(x)) as T
 /**
  * Erzwingt Metas Regeln für Wohnen/Beschäftigung/Finanzen auf dem Entwurf
  * (Alter 18-65+, alle Geschlechter, keine PLZ/Unterstadt-Orte, keine Ortsausschlüsse,
- * Radius >= 15 km, kein Verhaltens-/Demografie-Targeting, keine Lookalikes,
+ * Radius >= 15 km, bei Städten >= 17 km, kein Verhaltens-/Demografie-Targeting, keine Lookalikes,
  * advantage_audience explizit 0/1). Idempotent. Neue Kampagnen bekommen HOUSING
  * (HP: jede Immobilienkampagne), bestehende behalten ihre Kategorien.
  */
@@ -1523,18 +1579,19 @@ export function applyHousing(d: DraftSpec, opts: { forceCategory?: boolean } = {
     for (const k of HOUSING_FORBIDDEN_GEO_KEYS) {
       if (g[k] !== undefined) { const before = g[k]; delete g[k]; ch(node, 'adset.targeting.geo_locations', 'geo_type_removed', before) }
     }
-    const raise = (it: { radius?: number; distance_unit?: 'kilometer' | 'mile' }, setIfMissing: boolean) => {
+    const raise = (it: { radius?: number; distance_unit?: 'kilometer' | 'mile' }, setIfMissing: boolean, minKm: number) => {
       const km = radiusKm(it.radius, it.distance_unit)
-      if ((km !== null && km < HOUSING_MIN_RADIUS_KM - 0.01) || (km === null && setIfMissing)) {
+      if ((km !== null && km < minKm - 0.01) || (km === null && setIfMissing)) {
         const before = { radius: it.radius, distance_unit: it.distance_unit }
-        it.radius = HOUSING_MIN_RADIUS_KM
+        it.radius = minKm
         it.distance_unit = 'kilometer'
         ch(node, 'adset.targeting.geo_locations', 'radius_raised', before)
       }
     }
-    for (const it of g.cities ?? []) raise(it, false)
-    for (const it of g.places ?? []) raise(it, false)
-    for (const it of g.custom_locations ?? []) raise(it, true)
+    // Städte: Metas Stadt-Minimum 17 km liegt über dem Wohnen-Minimum 15 km
+    for (const it of g.cities ?? []) raise(it, false, Math.max(CITY_MIN_RADIUS_KM, HOUSING_MIN_RADIUS_KM))
+    for (const it of g.places ?? []) raise(it, false, HOUSING_MIN_RADIUS_KM)
+    for (const it of g.custom_locations ?? []) raise(it, true, HOUSING_MIN_RADIUS_KM)
     if (t.excluded_geo_locations !== undefined) {
       const before = t.excluded_geo_locations
       delete t.excluded_geo_locations
@@ -1586,7 +1643,7 @@ export function applyHousing(d: DraftSpec, opts: { forceCategory?: boolean } = {
     if (ta.advantage_audience !== 0 && ta.advantage_audience !== 1) {
       // fehlt = 1 (HP-Standard wie Plan B); false/'0' aus Altdaten = 0
       const before: unknown = ta.advantage_audience
-      ta.advantage_audience = before === false || before === '0' ? 0 : 1
+      ta.advantage_audience = effectiveAdvantageAudience(before)
       ch(node, 'adset.targeting.advantage_audience', 'advantage_audience_set', before)
     }
   }
@@ -1672,7 +1729,7 @@ export function buildTargeting(a: AdsetDraft, c: CampaignDraft): GraphParams {
   }
   if ((a.excluded_publisher_categories ?? []).length) t.excluded_publisher_categories = (a.excluded_publisher_categories ?? []).slice()
   const ta = (t.targeting_automation && typeof t.targeting_automation === 'object' ? t.targeting_automation : {}) as Record<string, unknown>
-  if (ta.advantage_audience !== 0 && ta.advantage_audience !== 1) ta.advantage_audience = 1
+  ta.advantage_audience = effectiveAdvantageAudience(ta.advantage_audience)
   if (isHec(c.special_ad_categories)) delete ta.individual_setting
   t.targeting_automation = ta
   return t
@@ -1765,7 +1822,8 @@ const storyRef = (ad: AdDraft): MediaRef | undefined => ad.media?.story_9x16
 export function creativeMode(ad: AdDraft, placements?: Placements): CreativeMode {
   if (ad.format === 'carousel') return 'carousel'
   const isVideo = ad.format === 'single_video'
-  const n = Math.max(cleanTexts(ad.primary_texts).length, cleanTexts(ad.headlines).length, cleanTexts(ad.descriptions).length)
+  // Beschreibungen zählen nicht: es gibt immer nur eine (descriptions_single)
+  const n = Math.max(cleanTexts(ad.primary_texts).length, cleanTexts(ad.headlines).length)
   const f = feedRef(ad), s = storyRef(ad)
   const both = !!f && !!s && f.media_id !== s.media_id
   if ((n > 1 || both) && placementRulesFor(placements, isVideo).length >= 2) return 'asset_feed'
@@ -1864,7 +1922,9 @@ export function buildCreativePayload(ad: AdDraft, ctx: { placements?: Placements
       })),
     }
     feed[isVideo ? 'videos' : 'images'] = assets
-    if (descs.length) feed.descriptions = descs.map(text => ({ text }))
+    // Platzierungs-Creatives: genau eine Beschreibung (Meta-PAC-Guide). Leer = ein Leerzeichen,
+    // sonst holt Meta ungeprüften Text von der Landingpage.
+    feed.descriptions = [{ text: descs[0] ?? ' ' }]
     // Sofortformular im Asset-Feed: call_to_actions (nur Sonderkategorien sichtbar) - per validate_only prüfen
     if (isLead) feed.call_to_actions = [{ type: ad.cta_type, value: ctaValue }]
     payload.asset_feed_spec = feed
@@ -1978,6 +2038,8 @@ export interface DraftTemplate {
   key: TemplateKey
   labelKey: string
   descriptionKey: string
+  /** Immobilien-Werbung: muss in einer Kampagne mit Sonderkategorie Wohnen laufen */
+  realEstate: boolean
   build(ctx: TemplateCtx): DraftSpec
 }
 
@@ -2030,6 +2092,7 @@ export const TEMPLATES: { plan_b: DraftTemplate & { pair: (input: PlanBPairInput
     key: 'plan_b',
     labelKey: `${K}.template.plan_b.name`,
     descriptionKey: `${K}.template.plan_b.description`,
+    realEstate: true,
     build: (ctx: TemplateCtx): DraftSpec => ({
       v: 1,
       campaign: {
@@ -2047,6 +2110,15 @@ export const TEMPLATES: { plan_b: DraftTemplate & { pair: (input: PlanBPairInput
     }),
     pair: planBPair,
   },
+}
+
+/**
+ * Immobilien-Entwurf? Vorlage entscheidet (realEstate); ohne oder mit unbekannter
+ * Vorlage gilt true, weil HP nur für Immobilien wirbt (SPEC §3: immer Wohnen).
+ */
+export function isRealEstateDraft(templateKey: string | null | undefined): boolean {
+  const t = templateKey ? (TEMPLATES as Record<string, DraftTemplate | undefined>)[templateKey] : undefined
+  return t ? t.realEstate !== false : true
 }
 
 /** Leere Anzeige mit HP-Standards (für „Anzeige hinzufügen"). */
@@ -2083,6 +2155,12 @@ export interface DraftMetaIds {
   creatives?: Record<string, string>
   ads?: Record<string, string>
   media?: Record<string, { image_hash?: string; video_id?: string; thumbnail_hash?: string }>
+  /**
+   * Fingerabdruck je angelegtem Knoten beim POST ('campaign', 'adset:<key>',
+   * 'creative:<key>', 'ad:<key>'). resume lehnt ab, wenn sich ein schon angelegter
+   * Knoten im Entwurf seitdem geändert hat.
+   */
+  hashes?: Record<string, string>
 }
 export interface DraftLastError { step: string; key?: string; code?: number | string; subcode?: number; user_msg?: string }
 
@@ -2218,7 +2296,7 @@ export const BUILDER_WRITE_MODES: readonly BuilderMode[] = ['preview', 'media_up
 export const BUILDER_ERROR_CODES = [
   'builder_disabled', 'writes_disabled', 'forbidden', 'not_found', 'invalid_request', 'validation_failed',
   'lint_blocked', 'guardrail_exceeded', 'app_dev_mode', 'rate_limited', 'meta_error', 'stale_validation',
-  'lease_busy', 'unsupported', 'media_not_ready',
+  'lease_busy', 'unsupported', 'media_not_ready', 'housing_required', 'created_changed',
 ] as const
 export type BuilderErrorCode = typeof BUILDER_ERROR_CODES[number]
 export interface BuilderErrorBody { error: string; hint?: string; code?: BuilderErrorCode | string; data?: unknown }
@@ -2301,7 +2379,12 @@ export interface MediaUploadRequest {
 export interface MediaUploadResponse { media: MetaMediaRow; deduplicated?: boolean }
 export interface MediaStatusRequest { id: string }
 export interface MediaStatusResponse { media: MetaMediaRow }
-export interface CreateRequest { draft_id: string; force_lint_reason?: string }
+export interface CreateRequest {
+  draft_id: string
+  force_lint_reason?: string
+  /** Nur Admin, mindestens 10 Zeichen: Neues bewusst in einer Kampagne ohne Sonderkategorie Wohnen anlegen */
+  housing_override_reason?: string
+}
 export interface CreateResponse {
   status: DraftStatus
   done_steps: string[]
@@ -2313,7 +2396,12 @@ export interface CreateResponse {
 export type ResumeRequest = CreateRequest
 export type ResumeResponse = CreateResponse
 export interface ActivateDraftRequest { draft_id: string; levels: Level[]; confirm: true }
-export interface ActivateDraftResponse { activated: Array<{ level: Level; id: string }>; guardrail: GuardrailInfo }
+export interface ActivateDraftResponse {
+  activated: Array<{ level: Level; id: string }>
+  guardrail: GuardrailInfo
+  /** Von diesem Entwurf angelegt, aber nicht mehr im Entwurf: bleibt pausiert */
+  skipped?: Array<{ level: Level; key: string; id: string }>
+}
 export interface DuplicateRequest { level: Level; id: string; target_adset_id?: string; deep?: boolean; rename_suffix?: string }
 export interface DuplicateResponse { copied_id: string; level: Level }
 export interface LeadformCreateRequest { page_id?: string; spec: LeadFormSpec }

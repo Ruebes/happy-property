@@ -214,6 +214,38 @@ function hfStoreFrom(sb: SupabaseClient): HfStore {
   }
 }
 
+// SSRF-Schutz: Bild-URLs aus dem Request (draft.image_url, bg_url, base_image,
+// cards[].image_url) nur laden, wenn sie https-Dateien aus dem öffentlichen
+// Storage DIESES Projekts sind. Alles, was das Studio selbst erzeugt
+// (storeImage), Projektfotos und SVEN_PHOTO/LOTTE_PHOTO liegen dort.
+const MAX_BILD_BYTES = 30 * 1024 * 1024
+const BILD_TIMEOUT_MS = 30_000
+function eigeneBildUrl(url: unknown): string | null {
+  if (typeof url !== 'string' || !url) return null
+  try {
+    const basis = new URL(Deno.env.get('SUPABASE_URL') ?? 'https://invalid.local')
+    const u = new URL(url)
+    if (u.protocol !== 'https:' || u.host !== basis.host || u.username || u.password) return null
+    if (!u.pathname.startsWith('/storage/v1/object/public/')) return null
+    return u.toString()
+  } catch {
+    return null
+  }
+}
+
+// Eigenes Bild laden: kein Redirect, Zeitlimit, Größendeckel. `variante` darf
+// die geprüfte URL nur innerhalb des eigenen Storage umschreiben (hfShrinkUrl).
+async function ladeEigenesBild(url: unknown, was: string, variante?: (u: string) => string): Promise<{ bytes: Uint8Array; type: string | null }> {
+  const geprueft = eigeneBildUrl(url)
+  if (!geprueft) throw new Error(`${was}: nur Bilder aus dem eigenen Speicher erlaubt`)
+  const r = await fetch(variante ? variante(geprueft) : geprueft, { redirect: 'error', signal: AbortSignal.timeout(BILD_TIMEOUT_MS) })
+  if (!r.ok) throw new Error(`${was} ${r.status}`)
+  if (Number(r.headers.get('content-length') ?? '0') > MAX_BILD_BYTES) throw new Error(`${was}: größer als 30 MB`)
+  const bytes = new Uint8Array(await r.arrayBuffer())
+  if (bytes.byteLength > MAX_BILD_BYTES) throw new Error(`${was}: größer als 30 MB`)
+  return { bytes, type: r.headers.get('content-type') }
+}
+
 // Higgsfield: Basisbild(er) + Prompt → PNG-Bytes. 1 Referenz = flux_kontext
 // (bearbeitet die Vorlage, behält sie), mehrere Referenzen (z.B. eigenes Bild
 // + Sven + Lotte) = nano_banana (Gemini, max 3 Refs). NUR Higgsfield.
@@ -222,10 +254,8 @@ async function generateImage(store: HfStore, bases: string[], prompt: string, as
   for (const url of bases.slice(0, 3)) {
     // Verkleinerte Fassung holen (Bildtransformation) — das Original ist bis zu
     // 21 Megapixel gross und killt die Edge-Instanz beim Dekodieren.
-    const r = await fetch(hfShrinkUrl(url))
-    if (!r.ok) throw new Error(`Basisbild ${r.status}`)
-    const bytes = new Uint8Array(await r.arrayBuffer())
-    refs.push({ id: await hfUploadImage(store, bytes, r.headers.get('content-type') || 'image/jpeg') })
+    const { bytes, type } = await ladeEigenesBild(url, 'Basisbild', hfShrinkUrl)
+    refs.push({ id: await hfUploadImage(store, bytes, type || 'image/jpeg') })
   }
   if (!refs.length) throw new Error('Kein Basisbild')
   const jobType = refs.length > 1 ? 'nano_banana' : 'flux_kontext'
@@ -669,9 +699,11 @@ Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für 
         updated.overlay = hasOverlayText(ovNew) ? ovNew : null
         const bg = draft.bg_url ?? draft.image_url
         if (bg) {
-          const res = await fetch(bg)
-          if (res.ok) {
-            const photo = new Uint8Array(await res.arrayBuffer())
+          if (!eigeneBildUrl(bg)) throw new Error('Hintergrundbild: nur Bilder aus dem eigenen Speicher erlaubt')
+          // Ladefehler wie bisher still übergehen (Overlay ändert sich, Bild bleibt)
+          const photo = await ladeEigenesBild(bg, 'Hintergrundbild').then(b => b.bytes)
+            .catch((e) => { console.warn('[studio] Hintergrundbild:', e); return null })
+          if (photo) {
             updated.image_url = hasOverlayText(updated.overlay)
               ? await storeImage(await composeCreative(photo, updated.overlay, aspect), 'jpg')
               : (draft.bg_url ?? draft.image_url)
@@ -688,6 +720,8 @@ Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für 
         // Mit eigener Vorlage IMMER wieder von der Vorlage ausgehen — sonst
         // driftet das Bild mit jeder Runde weiter von Svens Foto weg (26.8.26).
         const editBase = draft.base_image ?? draft.bg_url ?? draft.image_url ?? SVEN_PHOTO
+        // Gleiche Prüfung wie bei generate: kein Fremd-Fetch über den Entwurf
+        if (!eigeneBildUrl(editBase)) throw new Error('Bildvorlage: nur Bilder aus dem eigenen Speicher erlaubt')
         const jobId = await startImageJob(
           [editBase],
           `Edit the reference image: ${decision.image_prompt ?? instruction}. Keep everything else intact. ${framingFor(aspect)}`,
@@ -819,10 +853,8 @@ Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für 
 
       // Bilder in die Bildbibliothek des Werbekontos (echter Content-Type)
       const uploadToMeta = async (url: string): Promise<string> => {
-        const imgRes = await fetch(url)
-        if (!imgRes.ok) throw new Error(`Bild laden ${imgRes.status}`)
-        const bytes = new Uint8Array(await imgRes.arrayBuffer())
-        const contentType = bildTyp(bytes, imgRes.headers.get('content-type'))
+        const { bytes, type } = await ladeEigenesBild(url, 'Bild laden')
+        const contentType = bildTyp(bytes, type)
         const name = `studio-${Date.now()}`
         const path = `act_${env.account}/adimages`
         const request = { name, content_type: contentType, bytes: bytes.length, source: url.slice(0, 300) }

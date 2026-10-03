@@ -4,13 +4,15 @@ import { CustomSelect } from '../../../CustomSelect'
 import Badge, { type BadgeTone } from '../../../ui/Badge'
 import type { DraftIssue, DraftSpec } from '../../../../lib/metaSpec'
 import type { LintIssue } from '../../../../lib/metaLint'
-import { useAssistent } from './useEntwurf'
+import { anzeigeAngelegt, gruppeAngelegt, paarPartner, useAssistent } from './useEntwurf'
 
 // ── Struktur des Entwurfs: Kampagne > Anzeigengruppen > Anzeigen ─────────────
 // Links im Assistenten (ab lg), auf dem Telefon als Auswahlliste. Punkt je
 // Knoten: rot = Fehler oder Compliance-Blocker, gelb = Hinweis oder
 // Bestätigung offen, grün = in Ordnung. Hinzufügen, Duplizieren, Entfernen
 // (bestehende Meta-Objekte werden nie gelöscht, nur aus dem Entwurf genommen).
+// Was schon bei Meta liegt (bestehend oder von diesem Entwurf angelegt), lässt
+// sich nicht entfernen.
 
 export type Ampel = 'rot' | 'gelb' | 'gruen'
 
@@ -72,7 +74,14 @@ export default function EntwurfBaum({ sel, onSelect, onNeueGruppe, onNeueAnzeige
   const { spec, issues, lint, nurLesen, metaIds } = e
   const knoten = knotenListe(spec, t)
   const beiMeta = (k: Knoten): boolean =>
-    k.bestehend || (k.ebene === 0 ? !!metaIds.campaign : k.ebene === 1 ? !!metaIds.adsets?.[k.node] : !!metaIds.ads?.[k.node])
+    k.bestehend || (k.ebene === 0 ? !!metaIds.campaign : k.ebene === 1 ? gruppeAngelegt(metaIds, k.node) : anzeigeAngelegt(metaIds, k.node))
+  // Entfernen nimmt bei Gruppen die Anzeigen und bei Plan B den Partner mit
+  const entfernbar = (k: Knoten): boolean => {
+    if (beiMeta(k)) return false
+    if (k.ebene === 1) return !spec.ads.some(x => x.adset_key === k.node && anzeigeAngelegt(metaIds, x.key))
+    const partner = gepaart ? paarPartner(spec, k.node) : undefined
+    return !partner || !anzeigeAngelegt(metaIds, partner.key)
+  }
 
   const ebeneLabel = (k: Knoten) => (k.ebene === 0
     ? t('crm.werbung.meta.level.campaign', 'Kampagne')
@@ -136,7 +145,7 @@ export default function EntwurfBaum({ sel, onSelect, onNeueGruppe, onNeueAnzeige
                     <span className={`flex shrink-0 pr-1 ${aktiv ? '' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'}`}>
                       <button type="button" onClick={() => onDuplizieren(k.node)} className={`${knopf} ${aktiv ? 'text-white/80 hover:bg-white/10 hover:text-white' : ''}`}
                         aria-label={t('crm.werbung.builder.baum.duplizieren', '{{name}} duplizieren', { name: k.name })} title={t('crm.werbung.builder.baum.duplizierenKurz', 'Duplizieren')}>⧉</button>
-                      {!k.bestehend && (
+                      {entfernbar(k) && (
                         <button type="button" onClick={() => onEntfernen(k.node)} className={`${knopf} ${aktiv ? 'text-white/80 hover:bg-white/10 hover:text-white' : ''}`}
                           aria-label={t('crm.werbung.builder.baum.entfernen', '{{name}} entfernen', { name: k.name })} title={t('crm.werbung.builder.baum.entfernenKurz', 'Entfernen')}>✕</button>
                       )}

@@ -7,8 +7,8 @@
 // Quellen je Feld (CONTRACTS.md, werbeRegeln):
 //   settings          ad_settings (id 'default')
 //   rules/parameter   ad_autopilot_rules; Parameter der Startwerte (deutsche Namen)
-//                     werden zusätzlich unter den Engine-Namen abgelegt (PARAM_ALIAS),
-//                     SCHUTZ/STOPP wirken global (ctx.parameter)
+//                     werden zusätzlich unter den Engine-Namen abgelegt (werbeRegeln.PARAM_ALIAS,
+//                     die Engine bildet sie selbst noch einmal ab), SCHUTZ/STOPP wirken global
 //   qualitaet         ad_quality_daily, jüngster Stichtag, alle Fenster/Ebenen
 //   snapshots         ad_entity_snapshot heute + 3 Tage zurück, created_time/start_time
 //                     aus meta_campaigns, meta_adsets, ad_catalog
@@ -21,15 +21,19 @@
 //   meta_fehler       meta_write_log ok = false (26 h; auth/rate_limit von allen, permission/dev_mode
 //                     nur aus Autopilot-Schreibzugriffen) + strukturierte Fehler aus dem Sync-Ledger
 //   capi_laeufe       Sync-Ledger summary.capi_error / capi_sent
-//   konto, fx         ad_insights_daily (Meta) Monat + 7 Tage, Kurs = spend / spend_eur
+//   konto, fx         ad_insights_daily (Meta) Monat + 7 Tage, Tageskurs = spend / spend_eur;
+//                     7-Tage-Kurs wie werbe-ausfuehren über metaGraph.wechselkurs (gleiche Untergrenzen)
+//   tracking          crm_appointments (Kundentermine, 14 Tage) von Meta-Leads: jüngster Termin
 //   freie_slots_7d    funnel-api {action:'slots'} (Google-Kalender + CRM-Sperren), sonst null
 //   sync              ad_autopilot_runs schritt 'sync' status 'fertig'
 
 import {
   type AktionZeile, type AutopilotModus, type InsightTag, type LogZeile, type PoolEintrag, type QualitaetZeile,
-  type RegelDef, type RegelKontext, type RegelSettings, type SnapshotZeile,
+  type RegelDef, type RegelKontext, type RegelSettings, type SnapshotZeile, paramsMitAlias,
 } from '../_shared/werbeRegeln.ts'
 import { datumPlus } from '../_shared/werbeMathe.ts'
+import { istMetaLead } from '../_shared/werbeCapi.ts'
+import { wechselkurs } from '../_shared/metaGraph.ts'
 import {
   type Sb, alleZeilen, berlinHeute, dbFehler, funktionAufrufen, spalteFehlt, stuecke, tabelleFehlt, toNum, toStr,
 } from './gemeinsam.ts'
@@ -38,37 +42,6 @@ const MODI: AutopilotModus[] = ['aus', 'schatten', 'vorschlag', 'ein_klick', 'au
 
 /** Bekanntes Plan-B-Paar (Kalt · Kurz / Kalt · Lang): Budgets immer gleich (HP-Regel 4). */
 export const PLAN_B_GRUPPE = ['120249505116660314', '120248678452700314']
-
-/**
- * Startwerte in ad_autopilot_rules.params nutzen deutsche Namen, die Engine liest
- * REGEL_STANDARD-Namen. Hier wird je Regel der Engine-Name ergänzt (nur wenn er
- * nicht schon gesetzt ist), damit Svens Änderungen im Regel-Editor wirken.
- */
-const PARAM_ALIAS: Record<string, Record<string, string>> = {
-  SCHUTZ: {
-    neue_anzeigen_ab_kampagnentag: 'neue_anzeigen_ab_tag',
-    manuell_sperre_stunden: 'manuell_sperre_h',
-    eur_je_aktiver_anzeige: 'eur_pro_aktive_anzeige',
-  },
-  STOPP: {
-    sync_max_stunden: 'sync_max_hours',
-    capi_fehler_laeufe: 'capi_fail_runs',
-    woche_faktor: 'spend_week_factor',
-    tag_faktor: 'spend_day_factor',
-    kurs_abweichung_max: 'fx_max_deviation',
-  },
-  K1: { spend_eur: 'k1_spend' },
-  K2: { spend_eur: 'k2_spend' },
-  K3: { min_spend_faktor: 'k3_min_spend_factor' },
-  K4: { min_alter_tage: 'k4_min_age_days', min_spend_faktor: 'k4_spend_factor', rel_faktor: 'k4_rel_factor', p_kill: 'k4_p' },
-  F5: { min_te: 'f5_min_te' },
-  R1b: { min_ersatz_aktiv_stunden: 'r1b_min_hours_active' },
-  S1: { schritt: 's1_step', min_booked_14d: 's1_min_booked', freq_max_7d: 's1_freq_max' },
-  D1: { schritt: 'd1_step', min_spend_faktor: 'd1_spend_factor', faktor: 'd1_factor', p: 'd1_p' },
-  D2: { min_spend_faktor: 'd2_spend_factor', faktor: 'd2_factor', p: 'd2_p' },
-}
-/** Schrittweiten sind in der Engine positiv (D1 -20 % = d1_step 0.2). */
-const BETRAG_PARAM = new Set(['d1_step', 's1_step'])
 
 export interface EinstellungenRoh {
   [k: string]: unknown
@@ -111,20 +84,10 @@ export async function ladeEinstellungen(sb: Sb): Promise<{ settings: RegelSettin
     kap_floor: toNum(r.kap_floor) ?? 0.4,
     change_window_dows: dows,
     budget_autonomie_freigegeben_at: toStr(r.budget_autonomie_freigegeben_at),
+    // vor der Migration fehlt die Spalte: dann ist der Assistent aus (wie hochladen.ts)
+    builder_enabled: r.builder_enabled === true,
   }
   return { settings, roh: r, modus }
-}
-
-function paramsMitAlias(ruleKey: string, params: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...params }
-  const alias = PARAM_ALIAS[ruleKey] ?? {}
-  for (const [von, nach] of Object.entries(alias)) {
-    if (out[nach] !== undefined || params[von] === undefined) continue
-    const n = toNum(params[von])
-    if (n === null) continue
-    out[nach] = BETRAG_PARAM.has(nach) ? Math.abs(n) : n
-  }
-  return out
 }
 
 export async function ladeRegeln(sb: Sb): Promise<{
@@ -602,6 +565,41 @@ export async function ladeFreieSlots(now: Date): Promise<{ anzahl: number | null
   return { anzahl, quelle: 'funnel-api' }
 }
 
+/**
+ * Tracking-Wächter: jüngster Kundentermin (crm_appointments, nicht intern, kind appointment)
+ * eines Meta-Leads in den letzten 14 Tagen. null bei Lesefehler (dann prüft die Engine nicht).
+ */
+export async function ladeTracking(sb: Sb, now: Date): Promise<RegelKontext['tracking']> {
+  const geprueftAb = new Date(now.getTime() - 14 * 86400000).toISOString()
+  try {
+    const { data, error } = await sb.from('crm_appointments').select('lead_id, created_at')
+      .eq('internal', false).eq('kind', 'appointment').not('lead_id', 'is', null)
+      .gte('created_at', geprueftAb).order('created_at', { ascending: false }).limit(200)
+    if (error) throw new Error(`crm_appointments: ${dbFehler(error)}`)
+    const termine = (data ?? []) as Array<{ lead_id?: string | null; created_at?: string | null }>
+    const ids = [...new Set(termine.map(t => toStr(t.lead_id)).filter((x): x is string => !!x))]
+    const meta = new Set<string>()
+    let spalten = 'id, utm_source, source, fbc, meta_leadgen_id, meta_ad_id'
+    for (const teil of stuecke(ids)) {
+      let r = await sb.from('leads').select(spalten).in('id', teil)
+      if (r.error && spalteFehlt(r.error) && spalten.includes('meta_')) {
+        spalten = 'id, utm_source, source, fbc'
+        r = await sb.from('leads').select(spalten).in('id', teil)
+      }
+      if (r.error) throw new Error(`leads: ${dbFehler(r.error)}`)
+      for (const l of (r.data ?? []) as unknown as Array<Record<string, unknown>>) {
+        const merkmale = { utm_source: toStr(l.utm_source), source: toStr(l.source), fbc: toStr(l.fbc), meta_leadgen_id: toStr(l.meta_leadgen_id) }
+        if (istMetaLead(merkmale) || l.meta_ad_id != null) meta.add(String(l.id))
+      }
+    }
+    const letzter = termine.find(t => t.lead_id && meta.has(t.lead_id))
+    return { letzter_meta_termin: toStr(letzter?.created_at) ?? null, geprueft_ab: geprueftAb }
+  } catch (err) {
+    console.warn('[werbe-autopilot] Tracking-Wächter:', (err as Error).message)
+    return null
+  }
+}
+
 // ── Gesamt ──────────────────────────────────────────────────────────────────
 
 /** Lebensbeginn je Anzeige aus den Tageswerten (erster Tag mit Impressionen nach Datenbeginn). */
@@ -656,6 +654,12 @@ export async function ladeKontext(sb: Sb, now: Date): Promise<{ ctx: RegelKontex
   const vorrat = await ladeVorrat(sb)
   zaehler.vorrat = vorrat.length
   const kt = await ladeKonto(sb, heute)
+  // 7-Tage-Kurs wie im Ausführer (metaGraph.wechselkurs), damit Untergrenzen übereinstimmen;
+  // ohne Daten bleibt mittel_7d leer (Stopp kurs_fehlt / Rückfallkurs der Engine)
+  const kurs = await wechselkurs(sb)
+  const fx: RegelKontext['fx'] = kurs.quelle === 'insights_7d' ? { ...kt.fx, mittel_7d: kurs.usdPerEur } : kt.fx
+  const tracking = await ladeTracking(sb, now)
+  if (!tracking) warnungen.push('Tracking-Wächter: Termine nicht lesbar, keine Prüfung.')
   const sync = await ladeSyncLedger(sb, datumPlus(heute, -5))
   if (!sync.letzter_erfolg) warnungen.push('Kein erfolgreicher Sync im Ledger (ad_autopilot_runs schritt sync).')
   const slots = await ladeFreieSlots(now)
@@ -675,13 +679,14 @@ export async function ladeKontext(sb: Sb, now: Date): Promise<{ ctx: RegelKontex
     eigene_writes: wl.eigene,
     vorrat,
     freie_slots_7d: slots.anzahl,
-    fx: kt.fx,
+    fx,
     konto: kt.konto,
     sync: { letzter_erfolg: sync.letzter_erfolg },
     meta_fehler: [...wl.fehler, ...sync.fehler],
     capi_laeufe: sync.capi,
     verwaltete_kampagnen: verwaltet,
     parameter,
+    tracking,
   }
   const meta: KontextMeta = {
     heute, gestern, modus, settingsRoh: roh, stichtag: qual.stichtag, snapAktuell,

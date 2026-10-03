@@ -201,7 +201,9 @@ export default function KampagnenFormular() {
   const { spec, nurLesen, housing } = e
   const c = spec.campaign
   const bestehend = !!c.existing_id
-  const gesperrt = nurLesen
+  // Von diesem Entwurf schon bei Meta angelegt: Fortsetzen übernimmt keine Änderungen mehr
+  const angelegt = !bestehend && !!e.metaIds.campaign
+  const gesperrt = nurLesen || angelegt
   const node = 'campaign'
   const set = (fn: (d: DraftSpec) => DraftSpec) => e.update(fn)
   const setC = (patch: Partial<DraftSpec['campaign']>) => set(d => ({ ...d, campaign: { ...d.campaign, ...patch } }))
@@ -253,6 +255,11 @@ export default function KampagnenFormular() {
       {bestehend && (
         <div role="note" className="rounded-lg border border-hp-navy/15 bg-hp-navy/5 px-3 py-2 text-xs text-hp-navy">
           {t('crm.werbung.builder.kampagne.bestehend', 'Diese Kampagne besteht schon bei Meta (ID {{id}}). Der Assistent legt nur neue Anzeigengruppen und Anzeigen darin an, die Kampagne selbst bleibt unverändert.', { id: c.existing_id })}
+        </div>
+      )}
+      {angelegt && (
+        <div role="note" className="rounded-lg border border-hp-navy/15 bg-hp-navy/5 px-3 py-2 text-xs text-hp-navy">
+          {t('crm.werbung.builder.kampagne.angelegt', 'Diese Kampagne ist schon bei Meta angelegt (ID {{id}}). Ihre Einstellungen lassen sich hier nicht mehr ändern.', { id: e.metaIds.campaign })}
         </div>
       )}
 

@@ -21,6 +21,8 @@ drop function if exists public.werbe_ist_intern_kontakt(text, text, text);
 drop function if exists public.werbe_ist_meta_lead(text, text, text, text, text);
 drop function if exists public.werbe_gamma_p(float8, float8);
 drop function if exists public.werbe_lgamma(float8);
+drop function if exists public.werbe_kennung(text, text, text);
+drop function if exists public.werbe_kennung_basis(text, text);
 
 notify pgrst, 'reload schema';
 

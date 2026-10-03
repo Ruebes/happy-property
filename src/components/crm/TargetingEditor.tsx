@@ -14,7 +14,7 @@
  * Zusätze für den Kampagnen-Assistenten (alle optional, ohne sie bleibt alles
  * wie bisher):
  *   housing        Sonderkategorie Wohnen: Alter fest 18 bis 65+, kein Geschlecht,
- *                  keine Ortsausschlüsse, Umkreis um Städte mindestens 15 km, kein
+ *                  keine Ortsausschlüsse, Umkreis um Städte mindestens 17 km, kein
  *                  Verhalten/Jobtitel/Arbeitgeber, keine Ausschlüsse, keine
  *                  Lookalikes, Advantage+ Zielgruppe als ausdrücklicher Schalter.
  *                  Jede Änderung wird dabei bereinigt (gleiche Regeln wie
@@ -72,8 +72,14 @@ const PLATFORM_LABEL: Record<PublisherPlatform, string> = {
 }
 const PLATFORMS_ALLE = PUBLISHER_PLATFORMS.map(p => ({ key: p as string, label: PLATFORM_LABEL[p] }))
 
-/** Umkreis-Stufen um Städte (km); unter Wohnen beginnt die Liste bei 15 km */
-const RADIUS_KM = [15, 20, 25, 30, 40, 50, 80]
+/**
+ * Kleinster Umkreis um eine Stadt laut Meta: 17 km (10 Meilen), Bereich 17 bis 80 km.
+ * Das Wohnen-Minimum von 15 km gilt zusätzlich und nur für Adressen und Pins.
+ */
+const STADT_MIN_RADIUS_KM = 17
+
+/** Umkreis-Stufen um Städte (km); die Liste beginnt bei Metas Städte-Minimum von 17 km */
+const RADIUS_KM = [17, 20, 25, 30, 40, 50, 80]
 
 /** Sprachen als Meta-adlocale-Schlüssel (Deutsch = 5 laut Meta-Doku). Weitere per ID. */
 const SPRACHEN: ReadonlyArray<{ id: number; key: string; fallback: string }> = [
@@ -95,7 +101,7 @@ const istObjekt = (v: unknown): v is Record<string, unknown> => !!v && typeof v 
  * Wohnen-Regeln auf ein targeting-Objekt anwenden (Spiegel von applyHousing für
  * eine einzelne Anzeigengruppe): Alter 18-65, ohne Geschlecht, Ortsausschlüsse,
  * Ausschlüsse, verbotenes Detail-Targeting, kleinräumige Orte und Lookalikes;
- * Umkreis mindestens 15 km; Advantage+ Zielgruppe ausdrücklich 0 oder 1.
+ * Umkreis mindestens 15 km (Städte 17 km); Advantage+ Zielgruppe ausdrücklich 0 oder 1.
  */
 function wohnenBereinigen(t: TargetingSpec, istLookalike: (a: NamedId) => boolean): TargetingSpec {
   const n: TargetingSpec = { ...t, age_min: HOUSING_AGE_MIN, age_max: HOUSING_AGE_MAX }
@@ -110,9 +116,10 @@ function wohnenBereinigen(t: TargetingSpec, istLookalike: (a: NamedId) => boolea
       g[k] = list.map(it => {
         if (!istObjekt(it)) return it
         const km = radiusKm(it.radius, it.distance_unit)
-        const zuKlein = km !== null && km < HOUSING_MIN_RADIUS_KM - 0.01
+        const min = k === 'cities' ? Math.max(STADT_MIN_RADIUS_KM, HOUSING_MIN_RADIUS_KM) : HOUSING_MIN_RADIUS_KM
+        const zuKlein = km !== null && km < min - 0.01
         return zuKlein || (km === null && k === 'custom_locations')
-          ? { ...it, radius: HOUSING_MIN_RADIUS_KM, distance_unit: 'kilometer' }
+          ? { ...it, radius: min, distance_unit: 'kilometer' }
           : it
       })
     }
@@ -282,7 +289,7 @@ export default function TargetingEditor({ value, onChange, disabled, housing = f
       t('crm.ads.tgLockAge', 'Alter 18 bis 65+'),
       t('crm.ads.tgLockGender', 'Geschlecht'),
       t('crm.ads.tgLockExcludedGeo', 'Ortsausschlüsse'),
-      t('crm.ads.tgLockRadius', 'Umkreis mindestens 15 km'),
+      t('crm.ads.tgLockRadius', 'Umkreis um Städte mindestens 17 km, um Adressen 15 km'),
       t('crm.ads.tgLockDetailed', 'Verhalten, Jobtitel, Arbeitgeber'),
       t('crm.ads.tgLockExclusions', 'Ausschlüsse'),
       t('crm.ads.tgLockLookalike', 'Lookalike-Zielgruppen'),
@@ -326,9 +333,9 @@ export default function TargetingEditor({ value, onChange, disabled, housing = f
       if (!cur.some(r => r.key === hit.id)) setGeo({ ...geo, regions: [...cur, { key: hit.id, name: hit.name }] })
     } else if (hit.type === 'city') {
       const cur = geo.cities ?? []
-      // Wohnen: Städte immer mit Umkreis, mindestens 15 km
+      // Wohnen: Städte immer mit Umkreis, mindestens 17 km (Metas Städte-Minimum)
       const city: GeoEntry = housing
-        ? { key: hit.id, name: hit.name, radius: HOUSING_MIN_RADIUS_KM, distance_unit: 'kilometer' }
+        ? { key: hit.id, name: hit.name, radius: Math.max(STADT_MIN_RADIUS_KM, HOUSING_MIN_RADIUS_KM), distance_unit: 'kilometer' }
         : { key: hit.id, name: hit.name }
       if (!cur.some(c => c.key === hit.id)) setGeo({ ...geo, cities: [...cur, city] })
     }
@@ -487,7 +494,7 @@ export default function TargetingEditor({ value, onChange, disabled, housing = f
                   >
                     <option value="">{t('crm.ads.tgRadiusStandard', 'Standard (Meta)')}</option>
                     {radiusOptionen(km).map(r => (
-                      <option key={r} value={String(r)} disabled={r < HOUSING_MIN_RADIUS_KM}>+{r} km</option>
+                      <option key={r} value={String(r)} disabled={r < STADT_MIN_RADIUS_KM}>+{r} km</option>
                     ))}
                   </select>
                 )}
@@ -510,7 +517,7 @@ export default function TargetingEditor({ value, onChange, disabled, housing = f
         )}
         {housing && (
           <p className={hinweisWohnen}>
-            {t('crm.ads.tgHousingGeo', 'Wohnen: keine Ortsausschlüsse, keine PLZ, Umkreis um Städte mindestens 15 km.')}
+            {t('crm.ads.tgHousingGeo', 'Wohnen: keine Ortsausschlüsse, keine PLZ, Umkreis um Städte mindestens 17 km.')}
           </p>
         )}
       </div>

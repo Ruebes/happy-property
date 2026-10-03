@@ -8,6 +8,11 @@
 --                                      P(a, x) (Reihe bzw. Kettenbruch).
 --                                      P(CPTE > T) = werbe_gamma_p(alpha, beta / T)
 --                                      p_good      = 1 - werbe_gamma_p(alpha, beta / Ziel)
+--   werbe_kennung_basis(name, ad)      Basisname: Anzeigenname getrimmt ohne
+--                                      _lang/_kurz (Groß/klein egal), leer -> ad_id
+--   werbe_kennung(kampagne, name, ad)  Kennungs-ID = campaign_id || ':' || Basisname
+--                                      (EINZIGE SQL-Quelle; TS-Spiegel
+--                                      werbeMathe.kennungBasis/kennungId)
 --   werbe_ist_meta_lead(...)           Meta-Herkunft (wie META_SOURCES im
 --                                      AdsManager plus source meta/meta_lead_form,
 --                                      fbc, fbp, Meta-Lead-ID). Für CAPI.
@@ -179,6 +184,31 @@ end
 $fn$;
 
 -- ── Lead-Merkmale ───────────────────────────────────────────────────────────
+-- Kennung (Werbemittel-Ebene). Basisname = Anzeigenname getrimmt, Suffix
+-- _lang/_kurz (Groß/klein egal) entfernt; leer -> ad_id (werbeMathe.kennungBasis).
+-- Kennungs-ID = campaign_id || ':' || Basisname (werbeMathe.kennungId); Kampagne
+-- NULL ergibt NULL (Aufrufer setzen dann 'unbekannt' ein). Jede Kennung in SQL
+-- kommt aus diesen beiden Funktionen.
+create or replace function public.werbe_kennung_basis(p_ad_name text, p_ad_id text)
+returns text
+language sql
+immutable
+parallel safe
+set search_path = public, pg_temp
+as $$
+  select coalesce(nullif(regexp_replace(btrim(coalesce(p_ad_name, '')), '_(lang|kurz)$', '', 'i'), ''), p_ad_id)
+$$;
+
+create or replace function public.werbe_kennung(p_campaign_id text, p_ad_name text, p_ad_id text)
+returns text
+language sql
+immutable
+parallel safe
+set search_path = public, pg_temp
+as $$
+  select p_campaign_id || ':' || public.werbe_kennung_basis(p_ad_name, p_ad_id)
+$$;
+
 -- Meta-Herkunft. Quellenliste wie META_SOURCES (AdsManager.tsx) und
 -- ads_crm_attribution, plus source meta/meta_lead_form (Sofortformular ohne UTM),
 -- fbc/fbp und Meta-Lead-ID (SPEC §3 CAPI-Filter).
@@ -418,12 +448,12 @@ begin
     kennung       text
   ) on commit drop;
   insert into _wq_kat (ad_id, adset_id, campaign_id, ad_name, adset_name, campaign_name, kennung_name, kennung)
-  select k.ad_id, k.adset_id, k.campaign_id, k.ad_name, k.adset_name, k.campaign_name, k.kennung_name,
-         k.campaign_id || ':' || k.kennung_name
+  select k.ad_id, k.adset_id, k.campaign_id, k.ad_name, k.adset_name, k.campaign_name,
+         public.werbe_kennung_basis(k.ad_name, k.ad_id),
+         public.werbe_kennung(k.campaign_id, k.ad_name, k.ad_id)
     from (
       select distinct on (c.ad_id)
-             c.ad_id, c.adset_id, c.campaign_id, c.ad_name, c.adset_name, c.campaign_name,
-             coalesce(nullif(regexp_replace(btrim(coalesce(c.ad_name, '')), '_(lang|kurz)$', '', 'i'), ''), c.ad_id) as kennung_name
+             c.ad_id, c.adset_id, c.campaign_id, c.ad_name, c.adset_name, c.campaign_name
         from public.ad_catalog c
        where c.platform = 'meta'
        order by c.ad_id, c.updated_at desc nulls last
@@ -549,7 +579,7 @@ begin
     from (select adset_id, min(campaign_id) as campaign_id from _wq_kat where adset_id is not null group by adset_id) k
    where w.campaign_id is null and w.adset_id is not null and k.adset_id = w.adset_id;
   update _wq_leads
-     set kennung = coalesce(campaign_id, 'unbekannt') || ':' || ad_id
+     set kennung = public.werbe_kennung(coalesce(campaign_id, 'unbekannt'), null, ad_id)
    where ad_id is not null and kennung is null;
 
   -- ── Kapitalbasis (letzte Antwort je Lead) ─────────────────────────────────
@@ -627,7 +657,7 @@ begin
          d.ad_id,
          coalesce(nullif(d.adset_id::text, ''), k.adset_id),
          coalesce(nullif(d.campaign_id::text, ''), k.campaign_id),
-         coalesce(k.kennung, coalesce(nullif(d.campaign_id::text, ''), 'unbekannt') || ':' || d.ad_id),
+         coalesce(k.kennung, public.werbe_kennung(coalesce(nullif(d.campaign_id::text, ''), 'unbekannt'), null, d.ad_id)),
          coalesce(d.spend_eur, 0),
          coalesce(d.impressions, 0),
          coalesce(d.link_clicks, 0),
@@ -1215,6 +1245,10 @@ $fn$;
 
 -- ── Rechte ──────────────────────────────────────────────────────────────────
 -- Reine Mathematik/Merkmale: lesbar für Eingeloggte (TS-Spiegel-Abgleich).
+revoke execute on function public.werbe_kennung_basis(text, text)             from public, anon;
+revoke execute on function public.werbe_kennung(text, text, text)             from public, anon;
+grant  execute on function public.werbe_kennung_basis(text, text)             to authenticated, service_role;
+grant  execute on function public.werbe_kennung(text, text, text)             to authenticated, service_role;
 revoke execute on function public.werbe_lgamma(float8)                         from public, anon;
 revoke execute on function public.werbe_gamma_p(float8, float8)                from public, anon;
 revoke execute on function public.werbe_ist_meta_lead(text, text, text, text, text) from public, anon;

@@ -3,14 +3,26 @@
 --
 -- Reihenfolge Rückbau: 119000 -> 113000 -> 112000 -> 111000 -> 110000 (diese Datei),
 -- danach erst die Rückbauten von SQL-A (20261003101000, 20261003100000).
+-- Vorher das RUNBOOK oben in 20261003110000_werbe_autopilot.sql lesen.
 --
--- Entfernt RPCs, Guard-Trigger (inkl. werbe_settings_guard auf ad_settings), die
--- Autopilot-Tabellen samt Inhalt (Log, Regeln, Wertleiter, Qualität, Snapshots,
--- Ablauf, Vorrat) und die neuen ad_actions-Spalten. Vorher bei Bedarf sichern:
---   copy (select * from public.ad_autopilot_log) to ... bzw. CSV-Export im Dashboard.
--- Offene Vorschläge (status NULL) werden auf 'abgelehnt' gesetzt, damit
--- status wieder NOT NULL sein kann. Zeilen ohne ad_id (Anzeigengruppen-Ebene)
--- blockieren den Rückbau (nicht stillschweigend löschen).
+-- Ablauf:
+--   1. Prüfungen: Rückbauten 119000/112000/111000 gelaufen, keine Aktionen ohne
+--      ad_id, kein Ausführer-Lauf aktiv (bestätigte Zeile mit claimed_at jünger
+--      als 10 Minuten), sonst Abbruch ohne Änderung.
+--   2. Autopilot stoppen (werbe_autopilot_stopp: Modus aus, Eintrag im Log) und
+--      ALLE noch wartenden Autopilot-Zeilen (status 'bestätigt') ablehnen. Ohne
+--      origin/freigabe/expires_at sähen sie sonst wie manuelle Zeilen aus und
+--      würden von meta-ads-sync (v18 oder neu) sofort ausgeführt.
+--   3. ad_autopilot_log (Audit) und ad_creative_pool (Svens/Gionas Entscheidungen
+--      mit Gründen) werden NICHT gelöscht, sondern in
+--      <name>_archiv_<JJJJMMTT_HHMMSS> umbenannt (Trigger und Schreib-Policies weg,
+--      RLS bleibt an, Lesen wie vorher). Indizes und Sequenzen bekommen dasselbe
+--      Suffix, damit ein erneutes Einspielen von 110000 frische Objekte anlegt.
+--   4. RPCs, Guard-Trigger (inkl. werbe_settings_guard auf ad_settings), die übrigen
+--      Autopilot-Tabellen (Regeln, Wertleiter, Qualität, Snapshots, Ablauf) und die
+--      neuen ad_actions-Spalten entfernen. Offene Vorschläge (status NULL) werden
+--      'abgelehnt', damit status wieder NOT NULL sein kann. Zeilen ohne ad_id
+--      (Anzeigengruppen-Ebene) blockieren den Rückbau (nicht stillschweigend löschen).
 
 begin;
 
@@ -36,8 +48,33 @@ begin
   if v_n > 0 then
     raise exception 'Es gibt % Aktionen ohne ad_id (Anzeigengruppen-Ebene). Erst klären, nicht löschen.', v_n;
   end if;
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'ad_actions' and column_name = 'claimed_at') then
+    execute $q$select count(*) from public.ad_actions
+                where status = 'bestätigt' and claimed_at > now() - interval '10 minutes'$q$
+       into v_n;
+    if v_n > 0 then
+      raise exception 'Der Ausführer arbeitet gerade (% beanspruchte Aktionen). 10 Minuten warten, dann erneut ausführen.', v_n;
+    end if;
+  end if;
 end
 $chk$;
+
+-- Autopilot stoppen und wartende Autopilot-Zeilen ablehnen (Guard-Trigger ist noch
+-- aktiv; diese Sitzung zählt als System).
+do $stopp$
+begin
+  if to_regprocedure('public.werbe_autopilot_stopp(text)') is not null then
+    perform public.werbe_autopilot_stopp('Rückbau 20261003110000');
+  end if;
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'ad_actions' and column_name = 'origin') then
+    execute $q$update public.ad_actions
+                  set status = 'abgelehnt', freigabe = 'verworfen', result = 'Rückbau Autopilot'
+                where origin = 'autopilot' and status = 'bestätigt'$q$;
+  end if;
+end
+$stopp$;
 
 -- RPCs
 drop function if exists public.werbe_pool_entscheiden(uuid, text, text);
@@ -49,9 +86,51 @@ drop function if exists public.werbe_vorschlag_entscheiden(uuid, text, text);
 -- Guard-Trigger
 drop trigger if exists werbe_settings_guard on public.ad_settings;
 drop trigger if exists werbe_actions_guard  on public.ad_actions;
-drop table   if exists public.ad_creative_pool;      -- nimmt werbe_pool_guard mit
+
+-- Log und Vorrat archivieren statt löschen
+do $archiv$
+declare
+  v_basis  text := '_archiv_' || to_char(clock_timestamp(), 'YYYYMMDD_HH24MISS');
+  v_suffix text := v_basis;
+  v_nr     int  := 1;
+  v_tab    text;
+  r        record;
+begin
+  while to_regclass('public.ad_autopilot_log' || v_suffix) is not null
+     or to_regclass('public.ad_creative_pool' || v_suffix) is not null loop
+    v_nr := v_nr + 1;
+    v_suffix := v_basis || '_' || v_nr;
+  end loop;
+  foreach v_tab in array array['ad_autopilot_log', 'ad_creative_pool'] loop
+    if to_regclass('public.' || v_tab) is null then
+      continue;
+    end if;
+    for r in select t.tgname from pg_trigger t
+              where t.tgrelid = ('public.' || v_tab)::regclass and not t.tgisinternal loop
+      execute format('drop trigger %I on public.%I', r.tgname, v_tab);
+    end loop;
+    for r in select p.polname from pg_policy p
+              where p.polrelid = ('public.' || v_tab)::regclass and p.polcmd <> 'r' loop
+      execute format('drop policy %I on public.%I', r.polname, v_tab);
+    end loop;
+    for r in select c.relname from pg_index i join pg_class c on c.oid = i.indexrelid
+              where i.indrelid = ('public.' || v_tab)::regclass loop
+      execute format('alter index public.%I rename to %I', r.relname, left(r.relname, 63 - length(v_suffix)) || v_suffix);
+    end loop;
+    for r in select s.relname from pg_depend d join pg_class s on s.oid = d.objid and s.relkind = 'S'
+              where d.refobjid = ('public.' || v_tab)::regclass and d.classid = 'pg_class'::regclass
+                and d.deptype in ('a', 'i') loop
+      execute format('alter sequence public.%I rename to %I', r.relname, left(r.relname, 63 - length(v_suffix)) || v_suffix);
+    end loop;
+    execute format('alter table public.%I rename to %I', v_tab, v_tab || v_suffix);
+    execute format('comment on table public.%I is %L', v_tab || v_suffix,
+                   'Archiv aus Rückbau 20261003110000 (' || to_char(clock_timestamp(), 'DD.MM.YYYY HH24:MI') || '), nur lesen');
+    raise notice 'Archiviert: public.% -> public.%', v_tab, v_tab || v_suffix;
+  end loop;
+end
+$archiv$;
+
 drop table   if exists public.ad_autopilot_runs;
-drop table   if exists public.ad_autopilot_log;      -- nimmt die Append-only-Trigger mit
 drop table   if exists public.ad_autopilot_rules;    -- nimmt werbe_rules_guard mit
 drop table   if exists public.ad_ev_weights;
 drop table   if exists public.ad_quality_daily;
@@ -64,7 +143,7 @@ drop function if exists public.werbe_actions_guard();
 drop function if exists public.werbe_log_append_only();
 
 -- ad_actions zurück auf den Stand vor 110000
-update public.ad_actions set status = 'abgelehnt' where status is null;
+update public.ad_actions set status = 'abgelehnt', result = coalesce(result, 'Rückbau Autopilot') where status is null;
 
 drop index if exists public.ad_actions_gruppe_idx;
 drop index if exists public.ad_actions_vorschlag_idx;

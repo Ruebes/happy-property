@@ -57,6 +57,11 @@ export interface RegelSettings {
   /** Wochentage der Änderungsfenster (0/7 = Sonntag, 1 = Montag ... 4 = Donnerstag) */
   change_window_dows: number[]
   budget_autonomie_freigegeben_at?: string | null
+  /**
+   * Schalter „Kampagnen-Assistent“ (ad_settings.builder_enabled). Genau false: keine
+   * POOL_UPLOAD-Vorschläge (werbe-ausfuehren würde sie nur halten), stattdessen ein Hinweis.
+   */
+  builder_enabled?: boolean | null
 }
 
 export interface RegelDef {
@@ -221,8 +226,13 @@ export interface RegelKontext {
   capi_laeufe?: { ts: string; ok: boolean }[]
   /** Nur diese Kampagnen steuert der Autopilot (null/leer = alle) */
   verwaltete_kampagnen?: string[] | null
-  /** Globale Parameter-Überschreibungen (Regel-Parameter haben Vorrang) */
+  /** Globale Parameter-Überschreibungen (Regel-Parameter haben Vorrang); deutsche Startnamen erlaubt (PARAM_ALIAS) */
   parameter?: Record<string, unknown> | null
+  /**
+   * Tracking-Wächter (STOPP tracking_stunden_ohne_termin): jüngster Kundentermin eines
+   * Meta-Leads und Beginn des geprüften Zeitraums. null/fehlend = unbekannt, keine Prüfung.
+   */
+  tracking?: { letzter_meta_termin: string | null; geprueft_ab: string } | null
 }
 
 // ── Typen: Ausgabe ──────────────────────────────────────────────────────────
@@ -395,6 +405,69 @@ export const REGEL_STANDARD: Record<string, number | boolean> = {
   spend_week_factor: 1.1,
   spend_day_factor: 1.75,
   fx_max_deviation: 0.05,
+  /** USD je EUR, wenn kein Kurs aus ad_insights_daily vorliegt (wie metaGraph.USD_PER_EUR_FALLBACK) */
+  fx_fallback: USD_PRO_EUR_FALLBACK,
+  /** Tracking-Wächter: Stunden ohne Termin eines Meta-Leads bei laufendem Spend (Hinweis) */
+  tracking_max_hours: 48,
+}
+
+/**
+ * Startwerte in ad_autopilot_rules.params (Migration 20261003110000) nutzen deutsche
+ * Namen, die Engine liest REGEL_STANDARD-Namen. paramsMitAlias ergänzt je Regel den
+ * Engine-Namen (nur wenn er nicht schon gesetzt ist), damit jeder Startwert und jede
+ * Änderung im Regel-Editor wirkt. Gleichnamige Startwerte (z.B. freq_max_7d, kill_factor,
+ * p_kill bei K3, prior_strength_te, min_impressions, p_scale, min_free_slots_7d bei S1 und D3,
+ * adset_min_daily_eur, min_active_ads, max_new_ads_per_window) liest die Engine direkt.
+ * SCHUTZ und STOPP gelten global (auch über RegelKontext.parameter).
+ */
+export const PARAM_ALIAS: Record<string, Record<string, string>> = {
+  SCHUTZ: {
+    neue_anzeigen_ab_kampagnentag: 'neue_anzeigen_ab_tag',
+    manuell_sperre_stunden: 'manuell_sperre_h',
+    eur_je_aktiver_anzeige: 'eur_pro_aktive_anzeige',
+  },
+  STOPP: {
+    sync_max_stunden: 'sync_max_hours',
+    capi_fehler_laeufe: 'capi_fail_runs',
+    woche_faktor: 'spend_week_factor',
+    tag_faktor: 'spend_day_factor',
+    kurs_abweichung_max: 'fx_max_deviation',
+    kurs_fallback_usd_je_eur: 'fx_fallback',
+    tracking_stunden_ohne_termin: 'tracking_max_hours',
+  },
+  K1: { spend_eur: 'k1_spend' },
+  K2: { spend_eur: 'k2_spend' },
+  K3: { min_spend_faktor: 'k3_min_spend_factor' },
+  K4: { min_alter_tage: 'k4_min_age_days', min_spend_faktor: 'k4_spend_factor', rel_faktor: 'k4_rel_factor', p_kill: 'k4_p' },
+  F1: { min_alter_tage: 'fatigue_min_age_days' },
+  F2: { min_alter_tage: 'fatigue_min_age_days' },
+  F3: { min_alter_tage: 'fatigue_min_age_days' },
+  F4: { min_alter_tage: 'fatigue_min_age_days' },
+  F5: { min_te: 'f5_min_te', min_alter_tage: 'f5_min_age_days' },
+  R1b: { min_ersatz_aktiv_stunden: 'r1b_min_hours_active' },
+  S1: { schritt: 's1_step', min_booked_14d: 's1_min_booked', freq_max_7d: 's1_freq_max', min_tage_seit_aenderung: 'min_days_between_sig_edits' },
+  D1: { schritt: 'd1_step', min_spend_faktor: 'd1_spend_factor', faktor: 'd1_factor', p: 'd1_p', min_tage_seit_aenderung: 'min_days_between_sig_edits' },
+  D2: { min_spend_faktor: 'd2_spend_factor', faktor: 'd2_factor', p: 'd2_p' },
+}
+/** Schrittweiten sind in der Engine positiv (D1 -20 % = d1_step 0.2). */
+const BETRAG_PARAM = new Set(['d1_step', 's1_step'])
+
+function alsZahl(v: unknown): number | null {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v) : Number.NaN
+  return Number.isFinite(n) ? n : null
+}
+
+/** Regel-Parameter um die Engine-Namen der deutschen Startnamen ergänzen (idempotent). */
+export function paramsMitAlias(ruleKey: string, params: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  const quelle = params && typeof params === 'object' && !Array.isArray(params) ? params : {}
+  const out: Record<string, unknown> = { ...quelle }
+  for (const [von, nach] of Object.entries(PARAM_ALIAS[ruleKey] ?? {})) {
+    if (out[nach] !== undefined || quelle[von] === undefined) continue
+    const n = alsZahl(quelle[von])
+    if (n === null) continue
+    out[nach] = BETRAG_PARAM.has(nach) ? Math.abs(n) : n
+  }
+  return out
 }
 
 /** Regeln, deren Vorschläge standardmäßig nur in Änderungsfenstern entstehen (Param nur_im_fenster). */
@@ -554,21 +627,28 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
     return { vorschlaege, stopps, hinweise, info }
   }
 
+  // Parameter mit deutschen Startnamen (PARAM_ALIAS) auf die Engine-Namen abbilden
   const regeln = new Map<string, RegelDef>()
-  for (const r of ctx.rules ?? []) regeln.set(r.rule_key, r)
+  for (const r of ctx.rules ?? []) regeln.set(r.rule_key, { ...r, params: paramsMitAlias(r.rule_key, r.params) })
   const regel = (key: string): RegelDef | undefined => {
     const r = regeln.get(key)
     return r && r.enabled ? r : undefined
   }
+  // Globale Parameter: SCHUTZ/STOPP-Zeilen, darüber RegelKontext.parameter (Vorrang)
+  const global: Record<string, unknown> = {
+    ...(regeln.get('SCHUTZ')?.params ?? {}),
+    ...(regeln.get('STOPP')?.params ?? {}),
+    ...paramsMitAlias('SCHUTZ', paramsMitAlias('STOPP', ctx.parameter)),
+  }
   const P = (key: string, rule?: RegelDef): number => {
-    const v = rule?.params?.[key] ?? ctx.parameter?.[key] ?? REGEL_STANDARD[key]
+    const v = rule?.params?.[key] ?? global[key] ?? REGEL_STANDARD[key]
     const n = typeof v === 'string' ? Number(v) : v
     if (typeof n === 'number' && Number.isFinite(n)) return n
     const d = REGEL_STANDARD[key]
     return typeof d === 'number' ? d : 0
   }
   const nurImFenster = (rule: RegelDef): boolean => {
-    const v = rule.params?.nur_im_fenster ?? ctx.parameter?.nur_im_fenster
+    const v = rule.params?.nur_im_fenster ?? global.nur_im_fenster
     if (typeof v === 'boolean') return v
     return FENSTER_STANDARD[rule.rule_key] ?? false
   }
@@ -577,7 +657,9 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
   // ── Kurs ──────────────────────────────────────────────────────────────────
   const fxCur = ctx.fx?.usd_per_eur != null && ctx.fx.usd_per_eur > 0 ? ctx.fx.usd_per_eur : null
   const fxMit = ctx.fx?.mittel_7d != null && ctx.fx.mittel_7d > 0 ? ctx.fx.mittel_7d : null
-  const fx = fxMit ?? fxCur ?? USD_PRO_EUR_FALLBACK
+  // Rückfallkurs aus STOPP kurs_fallback_usd_je_eur (nur plausible Werte 0,9 bis 1,6)
+  const fxRueckfall = P('fx_fallback') >= 0.9 && P('fx_fallback') <= 1.6 ? P('fx_fallback') : USD_PRO_EUR_FALLBACK
+  const fx = fxMit ?? fxCur ?? fxRueckfall
   info.usd_per_eur = fx
   if (fxMit == null) hin({ code: 'kurs_fallback', text: `Kein 7-Tage-Kurs, rechne mit ${rund(fx, 4)} USD je EUR.` })
 
@@ -652,6 +734,8 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
     hin({ code: 'coverage_niedrig', text: `Zuordnungsquote ${coverage == null ? 'unbekannt' : Math.round(coverage * 100) + ' %'}: Kill-Regeln nur als Vorschlag.`, details: { coverage } })
   }
 
+  // Prior-Stärke wie werbe_qualitaet_berechnen: Parameter der Regel K3 (auch wenn K3 aus ist)
+  const priorStaerke = P('prior_strength_te', regeln.get('K3'))
   const statAus = (z: QualitaetZeile | undefined, priorFallback: number): Stat | null => {
     if (!z) return null
     const te = zahl(z.te_capped)
@@ -659,7 +743,7 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
     let alpha = zahl(z.alpha)
     let beta = zahl(z.beta)
     if (!(alpha > 0) || !(beta > 0)) {
-      const p = posterior(te, spend, z.prior_cpte != null && z.prior_cpte > 0 ? z.prior_cpte : priorFallback, P('prior_strength_te'))
+      const p = posterior(te, spend, z.prior_cpte != null && z.prior_cpte > 0 ? z.prior_cpte : priorFallback, priorStaerke)
       alpha = p.alpha
       beta = p.beta
     }
@@ -803,6 +887,24 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
     }
     if (heuteAutonom > info.max_aktionen) {
       stopp({ code: 'zu_viele_aktionen', sperrt: 'autonom', text: `${heuteAutonom} autonome Aktionen heute (Grenze ${info.max_aktionen}).` })
+    }
+  }
+  // Tracking-Wächter (STOPP tracking_stunden_ohne_termin): nur Hinweis, kein Stopp. Bei rund
+  // 10 Meta-Terminen im Monat liegen 48 h ohne Termin oft im Normalbereich; ein Stopp würde
+  // den Modus ständig absenken. Unbekannte Eingabe = keine Prüfung.
+  if (ctx.tracking) {
+    const grenzeH = P('tracking_max_hours')
+    const letzter = zeit(ctx.tracking.letzter_meta_termin)
+    const seit = Number.isFinite(letzter) ? letzter : zeit(ctx.tracking.geprueft_ab)
+    const spendGestern = zahl(ctx.konto?.spend_gestern_eur)
+    if (grenzeH > 0 && spendGestern > 0 && Number.isFinite(seit) && nowMs - seit > grenzeH * STUNDE) {
+      hin({
+        code: 'tracking_luecke',
+        text: Number.isFinite(letzter)
+          ? `Seit ${Math.round((nowMs - letzter) / STUNDE)} h kein neuer Termin eines Meta-Leads (Grenze ${grenzeH} h), gestern ${Math.round(spendGestern)} € Spend: Tracking prüfen.`
+          : `Seit ${new Date(seit).toISOString().slice(0, 10)} kein Termin eines Meta-Leads (Grenze ${grenzeH} h), gestern ${Math.round(spendGestern)} € Spend: Tracking prüfen.`,
+        details: { letzter_meta_termin: ctx.tracking.letzter_meta_termin, geprueft_ab: ctx.tracking.geprueft_ab, grenze_h: grenzeH, spend_gestern_eur: spendGestern },
+      })
     }
   }
   const sperrtAlles = stopps.some(g => g.sperrt === 'alles')
@@ -974,7 +1076,7 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
 
   const kennungAds = new Map<string, SnapshotZeile[]>()
   for (const ad of ads) {
-    const k = kennungId(ad.campaign_id, ad.name)
+    const k = kennungId(ad.campaign_id, ad.name, ad.entity_id)
     const l = kennungAds.get(k) ?? []
     l.push(ad)
     kennungAds.set(k, l)
@@ -1064,40 +1166,50 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
         laufzeitBedarf.add(adsetVonAd(ad))
         hin({ code: 'laufzeit_lang', entity_level: 'ad', entity_id: ad.entity_id, entity_name: ad.name ?? ad.entity_id, text: `${ad.name ?? ad.entity_id} läuft seit ${alter} Tagen: Ersatz vorbereiten.` })
       }
-      if (!fRegeln.length || alter < P('fatigue_min_age_days')) continue
+      // Mindest-Lebensalter je Regel (Startwert min_alter_tage; F5 hat einen eigenen Schlüssel)
+      const altOk = (r: RegelDef | undefined): r is RegelDef =>
+        !!r && alter >= P(r.rule_key === 'F5' ? 'f5_min_age_days' : 'fatigue_min_age_days', r)
+      if (!fRegeln.some(r => altOk(r))) continue
       const fired: string[] = []
       const ev: Partial<Evidenz> = {}
       const F1 = regel('F1'), F2 = regel('F2'), F3 = regel('F3'), F4 = regel('F4'), F5 = regel('F5'), F6 = regel('F6')
       const freq = ad.frequency_7d != null ? zahl(ad.frequency_7d) : null
       if (freq != null) ev.frequency_7d = rund(freq, 3)
-      if (F1 && freq != null && freq > P('freq_max_7d', F1)) fired.push('F1')
+      if (altOk(F1) && freq != null && freq > P('freq_max_7d', F1)) {
+        // Startwert min_impressions: 7-Tage-Impressionen aus dem Schnappschuss (unbekannt = keine Sperre)
+        const impr7 = ad.impressions_7d != null ? zahl(ad.impressions_7d) : null
+        if (impr7 == null || impr7 >= P('min_impressions', F1)) fired.push('F1')
+      }
       // Baseline = Lebenstage 2-8, Vergleich = letzte 7 Tage
       if ((F2 || F3 || F4) && lb.sicher && letzterTag) {
         const bVon = datumPlus(lb.tag, 1), bBis = datumPlus(lb.tag, 7)
         const vVon = datumPlus(letzterTag, -6), vBis = letzterTag
         const b = summe(ad.entity_id, bVon, bBis)
         const v = summe(ad.entity_id, vVon, vBis)
-        const minImpr = P('min_impressions')
-        if (b.impr >= minImpr && v.impr >= minImpr) {
+        // je Regel: Mindestalter und Mindest-Impressionen in beiden Zeiträumen
+        const genug = (r: RegelDef | undefined): boolean =>
+          altOk(r) && b.impr > 0 && v.impr > 0 && b.impr >= P('min_impressions', r) && v.impr >= P('min_impressions', r)
+        const g2 = genug(F2), g3 = genug(F3), g4 = genug(F4)
+        if (g2 || g3 || g4) {
           const ctrB = b.klicks / b.impr, ctrV = v.klicks / v.impr
           if (ctrB > 0) {
             ev.ctr_ratio = rund(ctrV / ctrB, 4)
-            if (F2 && ctrV < P('ctr_decay', F2) * ctrB) fired.push('F2')
+            if (g2 && ctrV < P('ctr_decay', F2) * ctrB) fired.push('F2')
           }
           const mB = cpmMedian(bVon, bBis), mV = cpmMedian(vVon, vBis)
           if (mB && mV && b.spend > 0 && v.spend > 0) {
             const rB = ((b.spend / b.impr) * 1000) / mB, rV = ((v.spend / v.impr) * 1000) / mV
             ev.cpm_ratio = rund(rV / rB, 4)
-            if (F3 && rV > P('cpm_rise', F3) * rB) fired.push('F3')
+            if (g3 && rV > P('cpm_rise', F3) * rB) fired.push('F3')
           }
           if (b.v3 > 0) {
             const hB = b.v3 / b.impr, hV = v.v3 / v.impr
             ev.hook_ratio = rund(hV / hB, 4)
-            if (F4 && (hV < P('hook_decay', F4) * hB || hV < P('hook_min', F4))) fired.push('F4')
+            if (g4 && (hV < P('hook_decay', F4) * hB || hV < P('hook_min', F4))) fired.push('F4')
           }
         }
       }
-      if (F5 && alter >= P('f5_min_age_days', F5)) {
+      if (altOk(F5)) {
         const jetzt = q('ad', 14, ad.entity_id)
         const frueh = ctx.fruehphase?.[ad.entity_id]
         const minTe = P('f5_min_te', F5)
@@ -1106,7 +1218,7 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
           if (cF > 0 && cJ > P('cpte_rise', F5) * cF) fired.push('F5')
         }
       }
-      if (F6 && (ad.kreativ_ermuedet === true || enthaeltFatigue(ad.issues_info) || enthaeltFatigue(ad.ad_review_feedback))) fired.push('F6')
+      if (altOk(F6) && (ad.kreativ_ermuedet === true || enthaeltFatigue(ad.issues_info) || enthaeltFatigue(ad.ad_review_feedback))) fired.push('F6')
       const zwei = fired.filter(f => f === 'F2' || f === 'F3' || f === 'F4' || f === 'F5')
       const istMuede = fired.includes('F1') || fired.includes('F6') || zwei.length >= 2
       if (!istMuede) continue
@@ -1187,11 +1299,14 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
     max_aktiv: 'Höchstzahl aktiver Anzeigen erreicht',
     unbekannte_gruppe: 'Anzeigengruppe nicht im Schnappschuss',
   }
+  /** Sperrtext mit dem Parameter der Regel (R2 hat eigenes max_new_ads_per_window). */
+  const sperrText = (code: string, rule?: RegelDef): string =>
+    code === 'max_neu' ? `schon ${P('max_new_ads_per_window', rule)} neue Anzeigen in diesem Fenster` : SPERRTEXT[code] ?? code
   const uploadBedarf = new Map<string, number>()
   const aktivierung = (adsetId: string, rule: RegelDef, ev: Evidenz, grund: string, winkel: string | null, ersetzt: SnapshotZeile | null, overlap: number): 'ok' | 'kein_ersatz' | string => {
     const sperre = neuSperre(adsetId, rule)
     const schon = (neueImFenster.get(adsetId) ?? 0) + (geplanteAktivierung.get(adsetId) ?? 0)
-    if (!sperre && schon >= P('max_new_ads_per_window')) return 'max_neu'
+    if (!sperre && schon >= P('max_new_ads_per_window', rule)) return 'max_neu'
     if (!sperre && lieferndeNach(adsetId) + (geplanteAktivierung.get(adsetId) ?? 0) - overlap >= maxAktiv(adsetId)) return 'max_aktiv'
     const e = ersatzFuer(adsetId, winkel)
     if (!e) return 'kein_ersatz'
@@ -1203,7 +1318,7 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
       gruppe: `${rule.rule_key}:${adsetId}:${heute.datum}`,
       payload: {
         status: 'ACTIVE', pool_id: e.pool.id, kennung: e.pool.kennung, adset_id: adsetId, campaign_id: e.ad.campaign_id ?? null,
-        ersetzt_ad_id: ersetzt?.entity_id ?? null, ersetzt_kennung: ersetzt ? kennungBasis(ersetzt.name) : null,
+        ersetzt_ad_id: ersetzt?.entity_id ?? null, ersetzt_kennung: ersetzt ? kennungBasis(ersetzt.name, ersetzt.entity_id) : null,
       },
       before: { status: e.ad.status ?? null, effective_status: e.ad.effective_status ?? null },
       after: { status: 'ACTIVE' },
@@ -1214,19 +1329,24 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
 
   // R1: ermüdete Anzeige -> Ersatz im Fenster; R1b: alte Anzeige nach 24 h ACTIVE des Ersatzes pausieren
   const ersatzLaeuft = new Set<string>() // `${adset}|${kennungBasis}`
+  // Vorrat 'aktiv' + ersetzt_kennung setzt werbe-ausfuehren nach einem ausgeführten ersatz_aktivieren
+  // (payload.pool_id, payload.ersetzt_kennung). Nur Gruppen zählen, in denen der Ersatz eingeschaltet
+  // ist (bei Plan B kann nur eine Seite aktiviert worden sein).
   for (const p of vorrat) {
     if (p.status !== 'aktiv' || !p.ersetzt_kennung) continue
-    for (const adsetId of Object.keys(p.meta_ad_ids ?? {})) ersatzLaeuft.add(`${adsetId}|${p.ersetzt_kennung}`)
+    for (const [adsetId, adId] of Object.entries(p.meta_ad_ids ?? {})) {
+      if (snap('ad', adId)?.status === 'ACTIVE') ersatzLaeuft.add(`${adsetId}|${p.ersetzt_kennung}`)
+    }
   }
   // Überlappung: ermüdete Anzeigen einer Gruppe gehen nach dem Ersatz, zählen also nicht gegen max_active_ads
   const muedeJeAdset = new Map<string, number>()
   for (const m of ermuedet) {
     const as = adsetVonAd(m.ad)
-    if (!ersatzLaeuft.has(`${as}|${kennungBasis(m.ad.name)}`)) muedeJeAdset.set(as, (muedeJeAdset.get(as) ?? 0) + 1)
+    if (!ersatzLaeuft.has(`${as}|${kennungBasis(m.ad.name, m.ad.entity_id)}`)) muedeJeAdset.set(as, (muedeJeAdset.get(as) ?? 0) + 1)
   }
   for (const m of ermuedet) {
     const adsetId = adsetVonAd(m.ad)
-    const basis = kennungBasis(m.ad.name)
+    const basis = kennungBasis(m.ad.name, m.ad.entity_id)
     if (ersatzLaeuft.has(`${adsetId}|${basis}`)) continue // R1b übernimmt
     const winkel = poolJeKennung.get(basis)?.winkel ?? null
     const r = aktivierung(adsetId, m.rule, m.ev, `${m.grund} Ersatz aus dem freigegebenen Vorrat.`, winkel, m.ad, muedeJeAdset.get(adsetId) ?? 1)
@@ -1235,7 +1355,7 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
       uploadBedarf.set(adsetId, (uploadBedarf.get(adsetId) ?? 0) + 1)
       hin({ code: 'kein_ersatz', rule_key: m.rule.rule_key, entity_level: 'ad', entity_id: m.ad.entity_id, entity_name: m.ad.name ?? m.ad.entity_id, text: `${m.grund} Kein geprüfter Ersatz hochgeladen.` })
     } else {
-      hin({ code: r, rule_key: m.rule.rule_key, entity_level: 'ad', entity_id: m.ad.entity_id, entity_name: m.ad.name ?? m.ad.entity_id, text: `${m.grund} Ersatz ${SPERRTEXT[r] ?? r}.` })
+      hin({ code: r, rule_key: m.rule.rule_key, entity_level: 'ad', entity_id: m.ad.entity_id, entity_name: m.ad.name ?? m.ad.entity_id, text: `${m.grund} Ersatz ${sperrText(r, m.rule)}.` })
     }
   }
 
@@ -1249,9 +1369,9 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
         const neu = snap('ad', neuId)
         if (!neu || neu.effective_status !== 'ACTIVE') continue
         for (const alt of adsJeAdset.get(adsetId) ?? []) {
-          if (alt.entity_id === neuId || !adKandidat(alt) || kennungBasis(alt.name) !== p.ersetzt_kennung) continue
+          if (alt.entity_id === neuId || !adKandidat(alt) || kennungBasis(alt.name, alt.entity_id) !== p.ersetzt_kennung) continue
           if (geplantePause.has(alt.entity_id)) continue
-          const kz = q('kennung', P('k_fenster'), kennungId(alt.campaign_id, alt.name))
+          const kz = q('kennung', P('k_fenster'), kennungId(alt.campaign_id, alt.name, alt.entity_id))
           const kst = statAus(kz, target)
           const pGood = kst ? pCpteLess(kst.alpha, kst.beta, target) : 0
           if (kst && pGood >= P('gewinner_p', R1b)) {
@@ -1295,7 +1415,7 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
           `Weniger als ${P('min_active_ads', R2)} aktive Anzeigen nach Kill/Ablehnung, Ersatz aus dem Vorrat.`, null, null, 0)
         if (r === 'ok') { fehlt--; continue }
         if (r === 'kein_ersatz') uploadBedarf.set(adsetId, (uploadBedarf.get(adsetId) ?? 0) + fehlt)
-        else hin({ code: r, rule_key: 'R2', entity_level: 'adset', entity_id: adsetId, entity_name: as.name ?? adsetId, text: `R2: Ersatz ${SPERRTEXT[r] ?? r}.` })
+        else hin({ code: r, rule_key: 'R2', entity_level: 'adset', entity_id: adsetId, entity_name: as.name ?? adsetId, text: `R2: Ersatz ${sperrText(r, R2)}.` })
         break
       }
     }
@@ -1306,7 +1426,7 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
     if (!(uploadBedarf.get(adsetId) ?? 0) && !ersatzFuer(adsetId, null)) uploadBedarf.set(adsetId, 1)
   }
   const UP = regel('POOL_UPLOAD')
-  const budgetGruppen = gruppenLesen([regeln.get('S1')?.params?.budget_gruppen, regeln.get('D1')?.params?.budget_gruppen, ctx.parameter?.budget_gruppen])
+  const budgetGruppen = gruppenLesen([regeln.get('S1')?.params?.budget_gruppen, regeln.get('D1')?.params?.budget_gruppen, global.budget_gruppen])
   const gruppeVon = (id: string): string[] | null => budgetGruppen.find(g => g.includes(id)) ?? null
   if (uploadBedarf.size) {
     const frei = vorrat
@@ -1320,6 +1440,10 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
         const camp = as ? snap('campaign', kampagneVonAdset(as)) : undefined
         if (!UP) {
           hin({ code: 'upload_regel_aus', entity_level: 'adset', entity_id: adsetId, entity_name: as?.name ?? adsetId, text: 'Ersatz fehlt, Regel POOL_UPLOAD ist aus.' })
+          break
+        }
+        if (s.builder_enabled === false) {
+          hin({ code: 'assistent_aus', rule_key: 'POOL_UPLOAD', entity_level: 'adset', entity_id: adsetId, entity_name: as?.name ?? adsetId, text: 'Ersatz fehlt, Hochladen wartet: Kampagnen-Assistent ist ausgeschaltet (einschalten kann nur ein Admin).' })
           break
         }
         if (!camp || !(camp.special_ad_categories ?? []).includes('HOUSING')) {
@@ -1422,7 +1546,7 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
       const te = zeilen.reduce((a, z) => a + zahl(z?.te_capped), 0)
       const priors = zeilen.map(z => zahl(z?.prior_cpte)).filter(v => v > 0)
       const prior = priors.length ? priors.reduce((a, b) => a + b, 0) / priors.length : target
-      const p = posterior(te, spend, prior, P('prior_strength_te'))
+      const p = posterior(te, spend, prior, priorStaerke)
       st = {
         spend, te, alpha: p.alpha, beta: p.beta,
         booked: zeilen.reduce((a, z) => a + zahl(z?.booked), 0),
@@ -1439,11 +1563,14 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
     const kapAnteil = st.booked > 0 ? st.bookedKap / st.booked : 0
     const slots = ctx.freie_slots_7d
 
-    // D3: keine freien Slots -> Meldung (Budget auf Untergrenze bzw. pausieren)
-    if (D3 && slots === 0) {
+    // D3: zu wenig freie Slots -> Meldung (Budget auf Untergrenze bzw. pausieren). Gleiche Lesart
+    // wie S1: slots < min_free_slots_7d heißt „zu wenig“. Ohne eigenen Wert oder bei 0 meldet D3
+    // nur „keine freien Slots“ (slots < 1), wie der Regelname sagt.
+    const d3Min = Math.max(1, D3?.params?.min_free_slots_7d != null ? P('min_free_slots_7d', D3) : 1)
+    if (D3 && slots != null && slots < d3Min) {
       hin({
         code: 'D3', rule_key: 'D3', entity_level: e.ebene, entity_id: e.ids[0], entity_name: name,
-        text: `Keine freien Termin-Slots in 7 Tagen: Budget von ${name} auf ${fl} € senken oder pausieren (Pause > 7 Tage startet die Lernphase neu).`,
+        text: `${slots === 0 ? 'Keine freien Termin-Slots' : `Nur ${slots} freie Termin-Slots`} in 7 Tagen: Budget von ${name} auf ${fl} € senken oder pausieren (Pause > 7 Tage startet die Lernphase neu).`,
         details: { vorschlag_cents: floorCents, ids: e.ids },
       })
     }
@@ -1454,10 +1581,15 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
     if (objs.some(o => manuellGesperrt(o))) sperren.push('manuell_gesperrt')
     if (e.ids.some(id => adsetsVon(e, id).some(a => lernschutz(a)))) sperren.push('lernschutz')
     const abstaende = e.ids.map(id => letzteBudgetAenderung(e.ebene, id)).filter((d): d is string => !!d).map(d => tageZwischen(d, heute.datum))
-    const minAbstand = P('min_days_between_sig_edits')
-    if (abstaende.some(t => t < minAbstand)) sperren.push('budget_abstand')
     const sigAbstand = e.ids.flatMap(id => adsetsVon(e, id)).map(tageSeitSig).filter((t): t is number => t != null)
-    if (sigAbstand.some(t => t < minAbstand)) sperren.push('aenderungsabstand')
+    /** Abstand je Regel (S1/D1-Startwert min_tage_seit_aenderung, sonst SCHUTZ min_days_between_sig_edits). */
+    const abstandSperren = (rule: RegelDef): string[] => {
+      const min = P('min_days_between_sig_edits', rule)
+      const out: string[] = []
+      if (abstaende.some(t => t < min)) out.push('budget_abstand')
+      if (sigAbstand.some(t => t < min)) out.push('aenderungsabstand')
+      return out
+    }
 
     const evBasis = (extra: Partial<Evidenz>): Evidenz => evidenzAus(st, bf, {
       p_good: rund(pGood, 4),
@@ -1479,25 +1611,28 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
     const sperrTexte: Record<string, string> = {
       ...SPERRTEXT,
       gruppe_asymmetrisch: 'Plan-B-Gruppe hat ungleiche Budgets',
-      budget_abstand: `letzte Budgetänderung vor weniger als ${minAbstand} Tagen`,
       frequenz: `Frequenz ${freq ?? 'unbekannt'} nicht unter ${P('s1_freq_max', S1)}`,
       slots: `freie Slots ${slots ?? 'unbekannt'} unter ${P('min_free_slots_7d', S1)}`,
       stopp: 'Stopp aktiv',
     }
     const sperrHinweis = (rule: RegelDef, liste: string[], grund: string) => {
-      hin({ code: liste[0], rule_key: rule.rule_key, entity_level: e.ebene, entity_id: e.ids[0], entity_name: name, text: `${rule.rule_key} (${grund}) gesperrt: ${liste.map(x => sperrTexte[x] ?? x).join(', ')}.`, details: { sperren: liste } })
+      const min = P('min_days_between_sig_edits', rule)
+      const text = (x: string) => x === 'budget_abstand' ? `letzte Budgetänderung vor weniger als ${min} Tagen`
+        : x === 'aenderungsabstand' ? `weniger als ${min} Tage seit der letzten wesentlichen Änderung` : sperrTexte[x] ?? x
+      hin({ code: liste[0], rule_key: rule.rule_key, entity_level: e.ebene, entity_id: e.ids[0], entity_name: name, text: `${rule.rule_key} (${grund}) gesperrt: ${liste.map(text).join(', ')}.`, details: { sperren: liste } })
     }
 
     // S1 hochskalieren
     let s1Gefeuert = false
     if (S1) {
-      // Kapitalbasis-Untergrenze aus ad_settings.kap_floor, Regel-Parameter kap_floor überschreibt
-      const kapMin = S1.params?.kap_floor != null ? P('kap_floor', S1) : zahl(s.kap_floor)
+      // Kapitalbasis-Untergrenze: der strengere Wert aus ad_settings.kap_floor und S1.kap_floor
+      // (beide wirken; Erhöhen eines der beiden Werte verschärft S1)
+      const kapMin = Math.max(zahl(s.kap_floor), S1.params?.kap_floor != null ? P('kap_floor', S1) : 0)
       const bed = st.booked >= P('s1_min_booked', S1) && pGood >= P('p_scale', S1) && kapAnteil >= kapMin
       if (bed) {
         s1Gefeuert = true
         const grund = `${st.booked} Termine in ${bf} Tagen, P(Kosten/TE < ${target} €) = ${Math.round(pGood * 100)} %, Kapitalbasis-Ja-Anteil ${Math.round(kapAnteil * 100)} %.`
-        const s1Sperren = [...sperren]
+        const s1Sperren = [...sperren, ...abstandSperren(S1)]
         if (freq == null || freq >= P('s1_freq_max', S1)) s1Sperren.push('frequenz')
         if (slots == null || slots < P('min_free_slots_7d', S1)) s1Sperren.push('slots')
         if (sperrtBudget || stopps.length) s1Sperren.push('stopp')
@@ -1541,7 +1676,7 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
       const pBad = pCpteGreater(st.alpha, st.beta, P('d1_factor', D1) * target)
       if (pBad >= P('d1_p', D1)) {
         const grund = `P(Kosten/TE > ${Math.round(P('d1_factor', D1) * target)} €) = ${Math.round(pBad * 100)} % bei ${Math.round(st.spend)} € in ${bf} Tagen.`
-        const d1Sperren = [...sperren]
+        const d1Sperren = [...sperren, ...abstandSperren(D1)]
         if (sperrtBudget) d1Sperren.push('stopp')
         if (nurImFenster(D1) && !fenstertag) d1Sperren.unshift('wartet_auf_fenster')
         if (altCents <= floorCents) {

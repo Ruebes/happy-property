@@ -26,7 +26,9 @@
 //   berlinTag(date)      { datum 'YYYY-MM-DD', isoDow 1..7 } in Europe/Berlin
 //
 // Ablauf je Autopilot-Gruppe (gruppe_id, sonst Einzelzeile), PLAN-B §3:
-//   1 Not-Aus, Modus, autopilot_paused_until    2 Claim per RPC werbe_aktionen_claimen(ids)
+//   1 Not-Aus, Modus, autopilot_paused_until (freigabe 'autonom' nur im Modus autonom, sonst
+//     abgelehnt mit freigabe 'abgelaufen', result 'Modus gesenkt'; 'freigegeben' in
+//     vorschlag/ein_klick/autonom)    2 Claim per RPC werbe_aktionen_claimen(p_ids)
 //   3 Ablauf (expires_at) -> abgelehnt/abgelaufen    4 Live-Zustand + Konto + pre_state_hash -> veraltet
 //   5 Leitplanken (Fenster, Budget, Summe, Monat, Plan-B-Symmetrie, Lernschutz, Takt, Tageslimit)
 //   6 graphPost    7 Rücklesen + Vergleich    8 Spiegel + Log    9 Gruppe teilweise fehlgeschlagen ->
@@ -36,7 +38,15 @@
 //   budget_set: payload.daily_budget_cents (Ziel, USD-Cent, ganzzahlig), entity_level adset|campaign
 //   payload.nur_im_fenster === true: Zeile nur an Tagen aus ad_settings.change_window_dows
 //   activate, ersatz_aktivieren, budget_set laufen IMMER nur im Änderungsfenster.
-//   ersatz_hochladen wird hier nie ausgeführt (eigener Modus 'hochladen' in werbe-ausfuehren).
+//   ersatz_aktivieren: payload.pool_id (+ ersetzt_kennung); nach Erfolg Vorrat -> aktiv,
+//     aktiv_seit, ersetzt_kennung (Grundlage für R1b).
+//   ersatz_hochladen (payload.pool_id, payload.adset_id): eigene Gruppe. Nach Claim, Ablauf,
+//     Fenster und Modus-Prüfung gibt der Ausführer die Gruppe in Ergebnis.delegiert zurück
+//     (Claim bleibt); werbe-ausfuehren lädt dann über hochladen.ts hoch und schließt die Zeilen.
+//   Plan-B-Budgets: Gruppen aus ad_autopilot_rules.params.budget_gruppen, sonst das bekannte
+//     Plan-B-Paar (PLAN_B_BUDGET_GRUPPE, wie werbe-autopilot/kontext.ts).
+//   Gruppen-Rücksetzung: zurückgesetzte Zeilen gehen ausgeführt -> fehlgeschlagen mit result
+//     'zurückgenommen: …' (werbe_actions_guard erlaubt genau das nur dem System).
 //
 // Log-Vertrag ad_autopilot_log (art 'ausfuehrung'): ergebnis 'ok' nur bei echter Änderung bei
 // Meta; akteur_art 'system' = Autopilot-Zeile (eigene Änderung), 'mensch' = manuelle Zeile.
@@ -81,6 +91,12 @@ export interface AusfuehrenErgebnis {
   abgebrochen?: string
   /** nur bei validateOnly */
   validiert?: Array<{ id: string; ok: boolean; fehler?: string }>
+  /**
+   * ersatz_hochladen-Gruppen, die alle Prüfungen bestanden haben (Claim gehalten, außer bei
+   * validateOnly). Der Aufrufer (werbe-ausfuehren) lädt hoch und schließt die Zeilen ab;
+   * nie an die Oberfläche durchreichen.
+   */
+  delegiert?: AktionsZeile[][]
 }
 
 /** Eine Zeile aus ad_actions (Spalten ab Migration 20261003110000 optional). */
@@ -129,15 +145,31 @@ export const BUDGET_ABSTAND_MS = 3 * 86_400_000
 export const BUDGET_TAKT_MS = 3_600_000
 export const LERNSCHUTZ_MS = 72 * 3_600_000
 export const MAX_NEUE_ANZEIGEN_JE_FENSTER = 2
+/**
+ * Kurs-Toleranz der 30-€-Untergrenze: Regel-Motor und Ausführer nehmen beide
+ * metaGraph.wechselkurs, aber zu verschiedenen Zeitpunkten (Vorschlag nachts, Ausführung im
+ * Fenster). Ohne Toleranz scheitert jeder D1-Schritt genau auf der Untergrenze, sobald der
+ * Dollar minimal steigt.
+ */
+export const UNTERGRENZE_KURS_TOLERANZ = 0.02
+/** Bekanntes Plan-B-Paar (Kalt · Kurz / Kalt · Lang), Spiegel von werbe-autopilot/kontext.ts PLAN_B_GRUPPE. */
+export const PLAN_B_BUDGET_GRUPPE = ['120249505116660314', '120248678452700314']
 
 const ERLAUBT = new Set(['pause', 'activate', 'ersatz_aktivieren', 'budget_set'])
 const NUR_IM_FENSTER = new Set(['activate', 'ersatz_aktivieren', 'budget_set'])
 const REIHENFOLGE: Record<string, number> = { activate: 0, ersatz_aktivieren: 0, budget_set: 1, pause: 2 }
 const STATUS_BESTAETIGT = 'bestätigt'
+/** result autonomer Zeilen, wenn der Modus seit dem Anlegen unter 'autonom' gesenkt wurde */
+const MODUS_GESENKT = 'Modus gesenkt'
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+/** Präfix, mit dem werbe_actions_guard dem System ausgeführt -> fehlgeschlagen erlaubt. */
+export const ZURUECKGENOMMEN_PRAEFIX = 'zurückgenommen: '
 
 // ── kleine Helfer ────────────────────────────────────────────────────────────
 
 const digits = (v: unknown): string => String(v ?? '').replace(/[^0-9]/g, '')
+/** Trimmen wie werbeMathe.kennungBasis bzw. SQL btrim: nur Leerzeichen, kein Tab/Umbruch/NBSP. */
+const nurLeerzeichenTrimmen = (s: string): string => s.replace(/^ +| +$/g, '')
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 const toNum = (v: unknown): number | null => {
   const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v) : NaN
@@ -445,7 +477,7 @@ export async function autopilotStoppen(
 
 type Pruefung =
   | { art: 'ok' }
-  | { art: 'ablehnen'; grund: string; freigabe?: string; zeile?: string }
+  | { art: 'ablehnen'; grund: string; freigabe?: string; zeile?: string; result?: string }
   | { art: 'warten'; grund: string }
   | { art: 'stopp'; grund: string }
   | { art: 'abbruch'; grund: string }
@@ -476,7 +508,7 @@ async function gruppeBeenden(ctx: Ctx, rows: AktionsZeile[], p: Befund): Promise
   if (p.art === 'ablehnen') {
     for (const r of rows) {
       const eigene = !p.zeile || p.zeile === r.id
-      const result = (eigene ? (p.freigabe === 'abgelaufen' ? 'Abgelaufen' : p.freigabe === 'veraltet' ? `Veraltet: ${p.grund}` : `Leitplanke: ${p.grund}`) : `Gruppe abgelehnt: ${p.grund}`).slice(0, 200)
+      const result = (eigene ? (p.result ?? (p.freigabe === 'abgelaufen' ? 'Abgelaufen' : p.freigabe === 'veraltet' ? `Veraltet: ${p.grund}` : `Leitplanke: ${p.grund}`)) : `Gruppe abgelehnt: ${p.grund}`).slice(0, 200)
       const patch: Record<string, unknown> = { status: 'abgelehnt', executed_at: new Date().toISOString(), result }
       if (p.freigabe) patch.freigabe = p.freigabe
       await updateAktion(ctx, r.id, patch, true)
@@ -531,8 +563,13 @@ async function summeSpendEur(sb: Sb, abTag: string): Promise<number> {
   throw new Error('ad_insights_daily: zu viele Zeilen für die Monatssumme')
 }
 
-async function budgetGruppen(ctx: Ctx): Promise<string[][]> {
-  const { data, error } = await ctx.sb.from('ad_autopilot_rules').select('rule_key, params').eq('aktion', 'budget_set')
+/**
+ * Budget-Gruppen (Plan-B-Paare) aus ad_autopilot_rules.params.budget_gruppen der budget_set-Regeln,
+ * sonst PLAN_B_BUDGET_GRUPPE. Wirft bei DB-Fehler. Auch von werbe-ausfuehren/hochladen.ts genutzt
+ * (Namen _lang/_kurz und Links je Hälfte eines Paars).
+ */
+export async function budgetGruppenLesen(sb: Sb): Promise<string[][]> {
+  const { data, error } = await sb.from('ad_autopilot_rules').select('rule_key, params').eq('aktion', 'budget_set')
   if (error) throw new Error(`ad_autopilot_rules lesen: ${String(error.message ?? error)}`)
   const out: string[][] = []
   for (const r of (data ?? []) as Array<{ params?: Record<string, unknown> | null }>) {
@@ -540,6 +577,8 @@ async function budgetGruppen(ctx: Ctx): Promise<string[][]> {
     if (!Array.isArray(g)) continue
     for (const grp of g) if (Array.isArray(grp) && grp.length > 1) out.push(grp.map(digits).filter(Boolean))
   }
+  // Solange in den Regeln keine Gruppen gepflegt sind: das bekannte Plan-B-Paar (wie der Regel-Motor)
+  if (!out.length) out.push([...PLAN_B_BUDGET_GRUPPE])
   return out
 }
 
@@ -602,7 +641,7 @@ async function pruefeLeitplanken(
     } else {
       if (ziel > Math.round(alt * (1 + MAX_BUDGET_SCHRITT))) return { art: 'ablehnen', grund: 'Erhöhung über +20 %', zeile: r.id }
       if (ziel < Math.round(alt * (1 - MAX_BUDGET_SCHRITT))) return { art: 'ablehnen', grund: 'Senkung über -20 %', zeile: r.id }
-      if (ziel < alt && eur(ziel, kurs.usdPerEur) < MIN_TAGESBUDGET_EUR) {
+      if (ziel < alt && eur(ziel, kurs.usdPerEur) < MIN_TAGESBUDGET_EUR * (1 - UNTERGRENZE_KURS_TOLERANZ)) {
         return { art: 'ablehnen', grund: `Untergrenze ${MIN_TAGESBUDGET_EUR} €/Tag`, zeile: r.id }
       }
       if (z.last_sig_edit_ms && Date.now() - z.last_sig_edit_ms < LERNSCHUTZ_MS) {
@@ -619,7 +658,7 @@ async function pruefeLeitplanken(
   // Plan-B-Gruppen symmetrisch (alle Mitglieder in derselben Gruppe, gleiches Ziel)
   if (budgetRows.length) {
     let gruppen: string[][]
-    try { gruppen = await budgetGruppen(ctx) } catch (err) { return { art: 'warten', grund: `leitplanke_nicht_pruefbar: ${errMsg(err)}`.slice(0, 180) } }
+    try { gruppen = await budgetGruppenLesen(ctx.sb) } catch (err) { return { art: 'warten', grund: `leitplanke_nicht_pruefbar: ${errMsg(err)}`.slice(0, 180) } }
     const zielJe = new Map(budgetRows.map(r => [entityOf(r), zielCents(r)]))
     for (const grp of gruppen) {
       const betroffen = grp.filter(id => zielJe.has(id))
@@ -705,10 +744,17 @@ async function pruefeLeitplanken(
 
 // ── Zurücksetzen (Gruppe teilweise fehlgeschlagen) ───────────────────────────
 
-interface Ausgefuehrt { row: AktionsZeile; vorher: LiveZustand; markieren: boolean }
+interface Ausgefuehrt { row: AktionsZeile; vorher: LiveZustand; nachher?: LiveZustand; markieren: boolean }
 
-async function zuruecksetzen(ctx: Ctx, items: Ausgefuehrt[], grund: string): Promise<string[]> {
+/**
+ * Setzt bereits ausgeführte Gruppenmitglieder bei Meta auf den Vorher-Wert zurück.
+ * Gelingt das, geht die Zeile ausgeführt -> fehlgeschlagen ('zurückgenommen: …', vom
+ * werbe_actions_guard nur dem System erlaubt). Scheitert es, ist die Änderung bei Meta noch
+ * aktiv: die Zeile bleibt 'ausgeführt' und bekommt den Fehler in result/readback.
+ */
+async function zuruecksetzen(ctx: Ctx, items: Ausgefuehrt[], grund: string): Promise<{ fehler: string[]; zurueckgenommen: number }> {
   const fehler: string[] = []
+  let zurueckgenommen = 0
   for (const it of [...items].reverse()) {
     const { row, vorher } = it
     const id = entityOf(row)
@@ -736,11 +782,26 @@ async function zuruecksetzen(ctx: Ctx, items: Ausgefuehrt[], grund: string): Pro
     }
     if (fehlerText) fehler.push(`${id}: ${fehlerText}`)
     if (it.markieren) {
-      await updateAktion(ctx, row.id, {
-        status: 'fehlgeschlagen', executed_at: new Date().toISOString(),
-        result: (fehlerText ? `Zurücksetzen fehlgeschlagen: ${fehlerText}` : `Zurückgesetzt: ${grund}`).slice(0, 200),
-        readback: { vorher: zustandKurz(vorher), zurueckgesetzt: rb ? zustandKurz(rb) : null, fehler: fehlerText },
-      })
+      if (fehlerText) {
+        // Änderung ist bei Meta noch aktiv: Status bleibt 'ausgeführt' (Rückgängig bleibt möglich)
+        await updateAktion(ctx, row.id, {
+          result: `Zurücknehmen fehlgeschlagen, Änderung bei Meta noch aktiv: ${fehlerText}`.slice(0, 200),
+          readback: {
+            vorher: zustandKurz(vorher), nachher: it.nachher ? zustandKurz(it.nachher) : null,
+            zuruecknehmen_fehler: fehlerText, nach_versuch: rb ? zustandKurz(rb) : null,
+          },
+        })
+      } else {
+        await updateAktion(ctx, row.id, {
+          status: 'fehlgeschlagen', executed_at: new Date().toISOString(),
+          result: `${ZURUECKGENOMMEN_PRAEFIX}${grund}`.slice(0, 200),
+          readback: {
+            vorher: zustandKurz(vorher), nachher: it.nachher ? zustandKurz(it.nachher) : null,
+            zurueckgesetzt: rb ? zustandKurz(rb) : null,
+          },
+        })
+        zurueckgenommen++
+      }
     }
     await logAp(ctx, {
       ...logFelder(ctx, row, vorher.name), ergebnis: fehlerText ? 'fehler' : 'zurueckgesetzt',
@@ -748,7 +809,48 @@ async function zuruecksetzen(ctx: Ctx, items: Ausgefuehrt[], grund: string): Pro
       meta_response: fehlerText ? { fehler: fehlerText } : null,
     })
   }
-  return fehler
+  return { fehler, zurueckgenommen }
+}
+
+// ── Vorrat nach ersatz_aktivieren ────────────────────────────────────────────
+
+/**
+ * Ersatz-Anzeige ist ACTIVE: Vorrat-Zeile (payload.pool_id) -> 'aktiv' mit aktiv_seit und
+ * ersetzt_kennung (payload.ersetzt_kennung). R1b pausiert die ersetzte Anzeige erst danach.
+ * Wirft nie (die Meta-Änderung ist schon geschehen).
+ */
+async function vorratAktivSetzen(ctx: Ctx, r: AktionsZeile): Promise<void> {
+  const poolId = String(r.payload?.pool_id ?? '').trim()
+  if (!UUID_RE.test(poolId)) {
+    console.warn(`[werbeAusfuehren] ersatz_aktivieren ${r.id}: payload.pool_id fehlt, Vorrat bleibt unverändert`)
+    return
+  }
+  const ersetzt = typeof r.payload?.ersetzt_kennung === 'string' ? nurLeerzeichenTrimmen(r.payload.ersetzt_kennung) : ''
+  try {
+    const { data, error } = await ctx.sb.from('ad_creative_pool').select('id, status, ersetzt_kennung').eq('id', poolId).maybeSingle()
+    if (error || !data) {
+      console.warn(`[werbeAusfuehren] Vorrat ${poolId} lesen:`, error ? String(error.message ?? error).slice(0, 200) : 'nicht gefunden')
+      return
+    }
+    const p = data as { status?: string | null; ersetzt_kennung?: string | null }
+    const patch: Record<string, unknown> = {}
+    if (p.status !== 'aktiv') {
+      if (p.status !== 'hochgeladen' && p.status !== 'pausiert') {
+        console.warn(`[werbeAusfuehren] Vorrat ${poolId} steht auf ${p.status}, nicht auf aktiv gesetzt`)
+        return
+      }
+      patch.status = 'aktiv'
+      patch.aktiv_seit = new Date().toISOString()
+      if (ersetzt) patch.ersetzt_kennung = ersetzt
+    } else if (ersetzt && !p.ersetzt_kennung) {
+      patch.ersetzt_kennung = ersetzt
+    }
+    if (!Object.keys(patch).length) return
+    const { error: uErr } = await ctx.sb.from('ad_creative_pool').update(patch).eq('id', poolId)
+    if (uErr) console.warn(`[werbeAusfuehren] Vorrat ${poolId} aktiv setzen:`, String(uErr.message ?? uErr).slice(0, 200))
+  } catch (err) {
+    console.warn(`[werbeAusfuehren] Vorrat ${poolId} aktiv setzen:`, errMsg(err))
+  }
 }
 
 // ── Autopilot-Gruppe ─────────────────────────────────────────────────────────
@@ -759,21 +861,28 @@ async function verarbeiteGruppe(ctx: Ctx, gruppe: AktionsZeile[], st: Einstellun
   const validate = ctx.opts.validateOnly === true
   const jetzt = new Date()
 
+  // Autonome Zeilen nur, solange der Modus autonom ist; Modus gesenkt -> ganze Gruppe ablehnen
+  if (rows.some(r => r.freigabe === 'autonom') && st.autopilot_mode !== 'autonom') {
+    return await gruppeBeenden(ctx, rows, { art: 'ablehnen', grund: MODUS_GESENKT, freigabe: 'abgelaufen', result: MODUS_GESENKT })
+  }
+
   // 3 Ablauf
   if (!validate && rows.some(r => r.expires_at && Date.parse(r.expires_at) < jetzt.getTime())) {
     return await gruppeBeenden(ctx, rows, { art: 'ablehnen', grund: 'abgelaufen', freigabe: 'abgelaufen' })
   }
 
+  // Hochladen (ersatz_hochladen) nur als eigene Gruppe; Ausführung über werbe-ausfuehren
+  const hochladen = rows.filter(r => r.action === 'ersatz_hochladen').length
+  if (hochladen && hochladen !== rows.length) {
+    return await gruppeBeenden(ctx, rows, { art: 'ablehnen', grund: 'Hochladen nur als eigene Gruppe' })
+  }
+
   // Aktionen + Ziele
   for (const r of rows) {
-    if (r.action === 'ersatz_hochladen') return await gruppeBeenden(ctx, rows, { art: 'warten', grund: 'nur_ueber_modus_hochladen' })
-    if (!ERLAUBT.has(r.action)) return await gruppeBeenden(ctx, rows, { art: 'ablehnen', grund: `Unbekannte Aktion "${r.action}"`, zeile: r.id })
+    if (!hochladen && !ERLAUBT.has(r.action)) return await gruppeBeenden(ctx, rows, { art: 'ablehnen', grund: `Unbekannte Aktion "${r.action}"`, zeile: r.id })
     if (!entityOf(r)) return await gruppeBeenden(ctx, rows, { art: 'ablehnen', grund: 'Ziel-ID fehlt', zeile: r.id })
     if (r.action === 'budget_set' && levelOf(r) === 'ad') {
       return await gruppeBeenden(ctx, rows, { art: 'ablehnen', grund: 'Budget nur auf Anzeigengruppe oder Kampagne', zeile: r.id })
-    }
-    if (r.freigabe === 'autonom' && st.autopilot_mode !== 'autonom') {
-      return await gruppeBeenden(ctx, rows, { art: 'ablehnen', grund: 'Modus ist nicht mehr autonom', freigabe: 'veraltet', zeile: r.id })
     }
   }
 
@@ -794,6 +903,13 @@ async function verarbeiteGruppe(ctx: Ctx, gruppe: AktionsZeile[], st: Einstellun
     } catch (err) {
       return await gruppeBeenden(ctx, rows, { art: 'warten', grund: `leitplanke_nicht_pruefbar: ${errMsg(err)}`.slice(0, 180) })
     }
+  }
+
+  // ersatz_hochladen: Rest (Konto, HOUSING, Lint, Bilder, validate_only, Lease) macht hochladen.ts
+  if (hochladen) {
+    ctx.erg.delegiert ??= []
+    ctx.erg.delegiert.push(rows)
+    return
   }
 
   // 4 Live-Zustand, Konto, Vorher-Hash
@@ -879,9 +995,10 @@ async function verarbeiteGruppe(ctx: Ctx, gruppe: AktionsZeile[], st: Einstellun
       }
       let stopp: string | null = null
       if (erledigt.length) {
-        const rf = await zuruecksetzen(ctx, erledigt, `Gruppe unvollständig (${msg})`)
-        ctx.erg.ausgefuehrt -= erledigt.length
-        ctx.erg.fehlgeschlagen += erledigt.length
+        const rz = await zuruecksetzen(ctx, erledigt, `Gruppe unvollständig (${msg})`)
+        const rf = rz.fehler
+        ctx.erg.ausgefuehrt -= rz.zurueckgenommen
+        ctx.erg.fehlgeschlagen += rz.zurueckgenommen
         stopp = `Gruppe teilweise fehlgeschlagen, zurückgesetzt${rf.length ? ` (Fehler beim Zurücksetzen: ${rf.join('; ')})` : ''}: ${msg}`
       } else if (me && ['auth', 'deprecated_version', 'permission', 'dev_mode'].includes(me.kind)) {
         stopp = `Meta ${me.kind}: ${msg}`
@@ -912,9 +1029,10 @@ async function verarbeiteGruppe(ctx: Ctx, gruppe: AktionsZeile[], st: Einstellun
         await updateAktion(ctx, x.id, { status: 'abgelehnt', executed_at: new Date().toISOString(), result: `Gruppe abgebrochen: ${grund}`.slice(0, 200) }, true)
         ctx.erg.uebersprungen.push({ id: x.id, grund: 'gruppe_abgebrochen' })
       }
-      const rf = await zuruecksetzen(ctx, [...erledigt, { row: r, vorher, markieren: false }], grund)
-      ctx.erg.ausgefuehrt -= erledigt.length
-      ctx.erg.fehlgeschlagen += erledigt.length
+      const rz = await zuruecksetzen(ctx, [...erledigt, { row: r, vorher, markieren: false }], grund)
+      const rf = rz.fehler
+      ctx.erg.ausgefuehrt -= rz.zurueckgenommen
+      ctx.erg.fehlgeschlagen += rz.zurueckgenommen
       const stopp = `${grund} bei ${id}${rf.length ? ` (Fehler beim Zurücksetzen: ${rf.join('; ')})` : ''}`
       await autopilotStoppen(ctx.sb, stopp, { laufId: ctx.laufId })
       ctx.erg.gestoppt = stopp
@@ -937,9 +1055,12 @@ async function verarbeiteGruppe(ctx: Ctx, gruppe: AktionsZeile[], st: Einstellun
       ...logFelder(ctx, r, vorher.name), ergebnis: 'ok', before: zustandKurz(vorher), after: patch,
       readback: zustandKurz(rb), meta_response: resp ?? null,
     })
-    erledigt.push({ row: r, vorher, markieren: true })
+    erledigt.push({ row: r, vorher, nachher: rb, markieren: true })
     ctx.erg.ausgefuehrt++
   }
+
+  // Ganze Gruppe ok: Ersatz-Werbemittel im Vorrat auf aktiv (erst jetzt, eine Rücksetzung wäre sonst falsch)
+  for (const e of erledigt) if (e.row.action === 'ersatz_aktivieren') await vorratAktivSetzen(ctx, e.row)
 }
 
 // ── Manuelle Zeilen (exakt wie der bisherige Ausführer in meta-ads-sync) ──────
@@ -992,25 +1113,58 @@ async function manuellAusfuehren(ctx: Ctx, a: AktionsZeile): Promise<void> {
 
 // ── Einstieg ─────────────────────────────────────────────────────────────────
 
+function spalteFehlt(error: unknown, spalte: string): boolean {
+  const e = error as { code?: string; message?: string } | null
+  return (e?.code === '42703' || e?.code === 'PGRST204' || /does not exist|could not find/i.test(String(e?.message ?? '')))
+    && String(e?.message ?? '').includes(spalte)
+}
+
 async function ladeZeilen(sb: Sb, opts: AusfuehrenOptionen): Promise<AktionsZeile[]> {
   // select('*'): funktioniert vor UND nach der Migration 20261003110000 (neue Spalten optional)
-  let q = sb.from('ad_actions').select('*')
-  if (opts.gruppeId) q = q.eq('gruppe_id', opts.gruppeId)
-  if (opts.ids?.length) q = q.in('id', opts.ids.slice(0, 200))
-  if (!opts.validateOnly) q = q.eq('status', STATUS_BESTAETIGT)
+  const basis = () => {
+    let q = sb.from('ad_actions').select('*')
+    if (opts.gruppeId) q = q.eq('gruppe_id', opts.gruppeId)
+    if (opts.ids?.length) q = q.in('id', opts.ids.slice(0, 200))
+    if (!opts.validateOnly) q = q.eq('status', STATUS_BESTAETIGT)
+    return q
+  }
+  // Herkunft VOR dem Limit filtern, sonst verdrängen hängende Autopilot-Zeilen die manuellen
+  let q = basis()
   if (opts.modus === 'fenster') q = q.eq('origin', 'autopilot')
-  const { data, error } = await q.order('created_at', { ascending: true }).limit(200)
+  else if (opts.modus === 'manuell') q = q.or('origin.is.null,origin.neq.autopilot')
+  let { data, error } = await q.order('created_at', { ascending: true }).limit(200)
+  if (error && opts.modus === 'manuell' && spalteFehlt(error, 'origin')) {
+    // vor der Migration gibt es origin nicht: dann sind alle Zeilen manuell
+    ({ data, error } = await basis().order('created_at', { ascending: true }).limit(200))
+  }
   if (error) throw new Error(`Queue lesen: ${String(error.message ?? error)}`)
   return (data ?? []) as AktionsZeile[]
 }
 
-/** Claim per RPC; null = RPC fehlt (vor Migration 20261003110000). */
+/**
+ * Ist Migration 20261003110000 eingespielt (Spalte ad_actions.claimed_at da)? Dann ist ein
+ * „Funktion nicht gefunden“ beim Claim ein echter Fehler (z.B. falscher Parametername) und
+ * darf die Ausführung nie still abschalten. Im Zweifel (anderer Fehler): ja.
+ */
+async function claimSpalteDa(sb: Sb): Promise<boolean> {
+  try {
+    const { error } = await sb.from('ad_actions').select('claimed_at').limit(1)
+    return !(error && spalteFehlt(error, 'claimed_at'))
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Claim per RPC werbe_aktionen_claimen(p_ids uuid[]); null = Migration 20261003110000 fehlt.
+ * Ist die Migration da und der RPC trotzdem nicht aufrufbar, wirft claimen (harter Fehler).
+ */
 async function claimen(sb: Sb, ids: string[]): Promise<Set<string> | null> {
   if (!ids.length) return new Set()
-  const { data, error } = await sb.rpc('werbe_aktionen_claimen', { ids })
+  const { data, error } = await sb.rpc('werbe_aktionen_claimen', { p_ids: ids })
   if (error) {
-    if (funktionFehlt(error)) return null
-    throw new Error(`Claim: ${String(error.message ?? error)}`)
+    if (funktionFehlt(error) && !(await claimSpalteDa(sb))) return null
+    throw new Error(`Claim (werbe_aktionen_claimen): ${String(error.message ?? error)}`)
   }
   return new Set(((data ?? []) as Array<{ id?: string }>).map(r => String(r.id ?? '')).filter(Boolean))
 }
@@ -1067,7 +1221,9 @@ export async function ausfuehren(sb: Sb, opts: AusfuehrenOptionen): Promise<Ausf
   const pausiert = st.autopilot_paused_until && Date.parse(st.autopilot_paused_until) > Date.now()
   const kandidaten: AktionsZeile[] = []
   for (const r of passend) {
-    if (!opts.validateOnly) {
+    // autonome Zeilen bei gesenktem Modus: nicht liegen lassen, verarbeiteGruppe lehnt sie ab
+    const gesenkt = r.freigabe === 'autonom' && st.autopilot_mode !== 'autonom'
+    if (!opts.validateOnly && !gesenkt) {
       if (!modusOk) { erg.uebersprungen.push({ id: r.id, grund: `autopilot_modus_${st.autopilot_mode}` }); continue }
       if (pausiert) { erg.uebersprungen.push({ id: r.id, grund: 'autopilot_pausiert' }); continue }
       if (r.freigabe !== 'freigegeben' && r.freigabe !== 'autonom') { erg.uebersprungen.push({ id: r.id, grund: 'nicht_freigegeben' }); continue }

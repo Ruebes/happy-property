@@ -22,8 +22,8 @@ import PruefPanel from './PruefPanel'
 import VorschauPanel from './VorschauPanel'
 import { fehlerCode, fehlerText, ladeKatalog, vorgabenAus } from './builderApi'
 import {
-  AssistentKontext, leererEntwurf, neueAnzeige, neueAnzeigengruppe, neueKennung, neuerKey, paarPartner,
-  passeAnzeigengruppeAn, useEntwurf, useLeitplanke,
+  AssistentKontext, anzeigeAngelegt, belegteKeys, gruppeAngelegt, leererEntwurf, neueAnzeige, neueAnzeigengruppe,
+  neueKennung, neuerKey, paarPartner, passeAnzeigengruppeAn, useEntwurf, useLeitplanke,
   type AssistentStart, type AssistentWerte,
 } from './useEntwurf'
 
@@ -112,8 +112,7 @@ export default function KampagnenAssistent({ start, einstellungen, onClose }: Pr
   }
 
   const neueGruppe = () => {
-    const keys = e.spec.adsets.map(a => a.key)
-    const key = neuerKey('as', keys)
+    const key = neuerKey('as', belegteKeys(e.spec, e.metaIds, 'adsets'))
     e.update(d => {
       const n = d.adsets.length + 1
       let a: AdsetDraft = neueAnzeigengruppe(key, t('crm.werbung.builder.baum.gruppeName', 'Anzeigengruppe {{n}}', { n }), entwurfVorgaben, d.campaign.special_ad_category_country?.length ? d.campaign.special_ad_category_country : ['DE'])
@@ -127,7 +126,7 @@ export default function KampagnenAssistent({ start, einstellungen, onClose }: Pr
   }
 
   const neueAnz = (adsetKey: string) => {
-    const key = neuerKey('ad', e.spec.ads.map(a => a.key))
+    const key = neuerKey('ad', belegteKeys(e.spec, e.metaIds, 'ads'))
     e.update(d => {
       const as = d.adsets.find(a => a.key === adsetKey)
       let ad: AdDraft = neueAnzeige(key, adsetKey, entwurfVorgaben, t('crm.werbung.builder.baum.anzeigeName', 'Anzeige {{n}}', { n: d.ads.length + 1 }))
@@ -143,7 +142,7 @@ export default function KampagnenAssistent({ start, einstellungen, onClose }: Pr
       toast.error(t('crm.werbung.builder.baum.paarFehlt', 'Für Paare braucht es die Anzeigengruppen „Kalt · Lang“ und „Kalt · Kurz“ der Vorlage.'))
       return
     }
-    const kennung = neueKennung(d0)
+    const kennung = neueKennung(d0, e.metaIds)
     const paar = TEMPLATES.plan_b.pair({
       kennung, primary_texts: [''], headlines: [''], media: {},
       page_id: entwurfVorgaben.pageId ?? undefined, instagram_user_id: entwurfVorgaben.igUserId ?? undefined,
@@ -156,8 +155,8 @@ export default function KampagnenAssistent({ start, einstellungen, onClose }: Pr
     const d0 = e.spec
     const as = d0.adsets.find(a => a.key === node)
     if (as) {
-      const key = neuerKey('as', d0.adsets.map(a => a.key))
-      const adKeys = d0.ads.map(a => a.key)
+      const key = neuerKey('as', belegteKeys(d0, e.metaIds, 'adsets'))
+      const adKeys = belegteKeys(d0, e.metaIds, 'ads')
       const kopien: AdDraft[] = []
       for (const ad of d0.ads.filter(x => x.adset_key === node)) {
         const k = neuerKey('ad', [...adKeys, ...kopien.map(x => x.key)])
@@ -174,7 +173,7 @@ export default function KampagnenAssistent({ start, einstellungen, onClose }: Pr
     }
     const ad = d0.ads.find(a => a.key === node)
     if (!ad) return
-    const key = neuerKey('ad', d0.ads.map(a => a.key))
+    const key = neuerKey('ad', belegteKeys(d0, e.metaIds, 'ads'))
     const { existing_id: _c, ...rest } = ad
     void _c
     e.update(d => ({ ...d, ads: [...d.ads, { ...JSON.parse(JSON.stringify(rest)) as AdDraft, key, name: `${ad.name} ${t('crm.werbung.builder.baum.kopie', 'Kopie')}` }] }))
@@ -186,6 +185,15 @@ export default function KampagnenAssistent({ start, einstellungen, onClose }: Pr
     const as = d0.adsets.find(a => a.key === node)
     const ad = d0.ads.find(a => a.key === node)
     const partner = ad && gepaart ? paarPartner(d0, node) : undefined
+    // Schon bei Meta angelegt (auch Partner oder Anzeigen der Gruppe): bleibt im Entwurf
+    const ids = e.metaIds
+    const gesperrt = as
+      ? !!as.existing_id || gruppeAngelegt(ids, node) || d0.ads.some(x => x.adset_key === node && anzeigeAngelegt(ids, x.key))
+      : !!ad && (!!ad.existing_id || anzeigeAngelegt(ids, node) || (!!partner && anzeigeAngelegt(ids, partner.key)))
+    if (gesperrt) {
+      toast.error(t('crm.werbung.builder.baum.entfernenGesperrt', 'Schon bei Meta angelegt: lässt sich nicht mehr aus dem Entwurf nehmen.'))
+      return
+    }
     const ok = await confirm({
       title: as
         ? t('crm.werbung.builder.baum.gruppeEntfernenTitel', 'Anzeigengruppe aus dem Entwurf nehmen?')

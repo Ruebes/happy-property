@@ -15,7 +15,7 @@ import {
   Abschnitt, AuswahlFeld, FeldRahmen, GeldFeld, Schalter, TextFeld, ZeitFeld, feldId, feldLabel, optionenFuer,
 } from './KampagnenFormular'
 import ZielgruppeHousing from './ZielgruppeHousing'
-import { passeAnzeigengruppeAn, setzeAnzeigengruppe, useAssistent } from './useEntwurf'
+import { gruppeAngelegt, passeAnzeigengruppeAn, setzeAnzeigengruppe, useAssistent } from './useEntwurf'
 
 // ── Anzeigengruppe (Reihenfolge wie im Meta-Werbeanzeigenmanager) ────────────
 // Conversion: Conversion-Ort -> Leistungsziel -> Abrechnung -> Datensatz +
@@ -38,10 +38,13 @@ export default function AnzeigengruppenFormular({ adsetKey }: { adsetKey: string
   if (!a) return null
   const c = spec.campaign
   const node = a.key
-  const gesperrt = nurLesen
-  const set = (patch: Partial<AdsetDraft>) => e.update(d => setzeAnzeigengruppe(d, node, patch))
+  // Von diesem Entwurf schon bei Meta angelegt: Fortsetzen übernimmt keine Änderungen mehr
+  const angelegt = !a.existing_id && gruppeAngelegt(e.metaIds, node)
+  const gesperrt = nurLesen || angelegt
+  const set = (patch: Partial<AdsetDraft>) => e.update(d => setzeAnzeigengruppe(d, node, patch, e.metaIds))
   const setAngepasst = (patch: Partial<AdsetDraft>) => e.update(d => {
-    const basis = setzeAnzeigengruppe(d, node, patch)
+    if (gruppeAngelegt(e.metaIds, node)) return d
+    const basis = setzeAnzeigengruppe(d, node, patch, e.metaIds)
     return { ...basis, adsets: basis.adsets.map(x => (x.key === node ? passeAnzeigengruppeAn(x, basis.campaign.objective, vorgaben.pixelId ?? '') : x)) }
   })
 
@@ -118,6 +121,11 @@ export default function AnzeigengruppenFormular({ adsetKey }: { adsetKey: string
 
   return (
     <div className="space-y-4">
+      {angelegt && (
+        <div role="note" className="rounded-lg border border-hp-navy/15 bg-hp-navy/5 px-3 py-2 text-xs text-hp-navy">
+          {t('crm.werbung.builder.gruppe.angelegt', 'Diese Anzeigengruppe ist schon bei Meta angelegt (ID {{id}}). Ihre Einstellungen lassen sich hier nicht mehr ändern.', { id: e.metaIds.adsets?.[node] })}
+        </div>
+      )}
       <Abschnitt titel={t('crm.werbung.builder.gruppe.name', 'Name der Anzeigengruppe')}>
         <TextFeld node={node} feld="adset.name" label={feldLabel(t, 'adset.name', 'Name der Anzeigengruppe')}
           value={a.name ?? ''} onChange={v => set({ name: v })} maxLen={400} disabled={gesperrt} />

@@ -22,7 +22,7 @@
 //   1b Conversions API: Termin gebucht (Schedule), Termin stattgefunden
 //      (AppointmentHeld), gute Bewertung (QualifiedLead), Sale (Purchase mit
 //      Provisionswert). Nur Meta-Leads (_shared/werbeCapi.ts istMetaLead), Dedupe über
-//      capi_log und capi_outbox (status gesendet), Fenster 7 Tage. Nachhol-Netz für
+//      capi_log und capi_outbox (status gesendet, Test-Ereignisse zählen nicht), Fenster 7 Tage. Nachhol-Netz für
 //      werbe-signal (Echtzeit), gleiche event_ids.
 //   1c Tagesstand -> ad_entity_snapshot (optional, nur lesend bei Meta): Kampagnen,
 //      Anzeigengruppen (Budget, Lernstatus, Status) und Anzeigen plus Insights
@@ -493,7 +493,11 @@ async function capiLeadFelder(sb: Sb): Promise<string> {
   return CAPI_LEAD_FIELDS
 }
 
-/** event_ids, die schon gesendet sind (capi_log, capi_outbox status gesendet). */
+/**
+ * event_ids, die schon gesendet sind (capi_log, capi_outbox status gesendet).
+ * Test-Ereignisse zählen nicht: neue stehen auf 'uebersprungen'/'test', ältere Zeilen
+ * auf 'gesendet' mit grund 'test_event_code' (or(): neq allein ließe grund NULL weg).
+ */
 async function schonGesendet(sb: Sb, ids: string[]): Promise<Set<string>> {
   const sent = new Set<string>()
   let outboxDa = true
@@ -505,7 +509,7 @@ async function schonGesendet(sb: Sb, ids: string[]): Promise<Set<string>> {
     for (const r of (logRows ?? []) as { event_id: string }[]) sent.add(r.event_id)
     if (!outboxDa) continue
     const { data: ob, error: obErr } = await sb.from('capi_outbox')
-      .select('event_id').eq('status', 'gesendet').in('event_id', block)
+      .select('event_id').eq('status', 'gesendet').or('grund.is.null,grund.neq.test_event_code').in('event_id', block)
     if (obErr) {
       if (!tabelleFehlt(obErr)) throw new Error(`capi_outbox lesen: ${fehlerText(obErr)}`)
       outboxDa = false   // Tabelle kommt erst mit Migration 20261003112000

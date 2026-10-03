@@ -7,11 +7,19 @@
 // meta-ads-sync bleibt das Nachhol-Netz mit denselben event_ids (Dedupe über capi_log).
 //
 // Body (JSON):
-//   { aktion: 'outbox', anlass?: <event_id>, limit?: 1..1000 (Standard 500),
-//     test_event_code?: string, dry_run?: true }
+//   { aktion: 'outbox', anlass?: <event_id>, limit?: 1..1000 (Standard 500), dry_run?: true }
 //   dry_run: nichts beanspruchen, nichts senden, nichts schreiben; zeigt nur, was passieren würde.
-// Antwort: { success, aktion, anlass, runden, geclaimt, gesendet, uebersprungen: {grund: n},
-//            wiederholen, fehler, test, warnungen }
+//   { aktion: 'test', event_id: <event_id>, test_event_code?: string }
+//   Sendet GENAU dieses eine Ausgang-Ereignis mit Test-Code (Body, sonst
+//   ad_settings.capi_test_event_code), aber nur, wenn der Lead ein interner Kontakt ist
+//   (werbe_ist_intern_kontakt: Sven, Verwaltung, Mitarbeitende). Sonst 403, nichts gesendet.
+// Antwort outbox: { success, aktion, anlass, runden, geclaimt, gesendet, test_gesendet,
+//            uebersprungen: {grund: n}, wiederholen, fehler, test, warnungen }
+//
+// Test-Code (ad_settings.capi_test_event_code, setzen nur Admin über werbe_settings_guard):
+//   gilt NUR für Ereignisse interner Kontakte. Echte Kunden gehen immer normal an Meta
+//   (ohne Test-Code, mit capi_log). Test-gesendete Zeilen: status 'uebersprungen', grund 'test',
+//   kein capi_log-Eintrag; meta-ads-sync zählt sie nicht als gesendet.
 //
 // Ablauf je Runde (höchstens 4 Runden, ca. 45 s):
 //   1 Claim per RPC werbe_capi_claimen(p_limit) (5-Minuten-Lease, versuche + 1, nur System)
@@ -22,10 +30,11 @@
 //     content_category kap_ja/kap_nein (Antwort „Kapitalbasis“ im Funnel) und Wert
 //     = Gewicht gebucht x ev_ref_eur aus ad_ev_weights (aktiv), nur wenn ev_ref_eur gesetzt;
 //     Purchase mit commission_amount (aus der Zeile, sonst aus deals)
-//   4 EIN POST an /{pixel}/events (sendCapiEvents, graphPost: respektiert META_WRITES_DISABLED)
+//   4 EIN POST an /{pixel}/events je Gruppe, echte Kunden und Test-Ereignisse getrennt
+//     (sendCapiEvents, graphPost: respektiert META_WRITES_DISABLED)
 //   5 Erfolg: capi_log (event_id, event_name, lead_id) schreiben, damit meta-ads-sync nie doppelt
-//     sendet; Zeilen 'gesendet' mit antwort. Mit test_event_code KEIN capi_log-Eintrag (Test-
-//     Ereignisse zählen bei Meta nicht; der Tageslauf meldet das echte Ereignis nach).
+//     sendet; Zeilen 'gesendet' mit antwort. Interne Kontakte bei gesetztem Test-Code: eigener
+//     POST mit test_event_code, KEIN capi_log-Eintrag, Zeile 'uebersprungen' grund 'test'.
 //   6 Fehler: Validierungsfehler im Sammel-POST -> einzeln senden, um die kaputte Zeile zu
 //     finden ('fehler'); sonst Zeile bleibt 'offen' (Claim gelöst, fehler-Text), nach 5
 //     Versuchen 'fehler'.
@@ -78,6 +87,7 @@ interface OutboxZeile {
   event_time: string
   daten: Record<string, unknown> | null
   versuche: number
+  status?: string
 }
 
 interface Kontext {
@@ -91,12 +101,14 @@ interface Kontext {
 interface Summe {
   geclaimt: number
   gesendet: number
+  test_gesendet: number
   uebersprungen: Record<string, number>
   wiederholen: number
   fehler: number
 }
 
-interface Geplant { zeile: OutboxZeile; ev: CapiEvent }
+/** test = Lead ist interner Kontakt und ein Test-Code ist aktiv (nur dann mit Test-Code senden). */
+interface Geplant { zeile: OutboxZeile; ev: CapiEvent; test: boolean }
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } })
@@ -213,6 +225,31 @@ async function ladeProvisionen(ctx: Kontext, dealIds: string[]): Promise<Map<str
   return out
 }
 
+/**
+ * Lead-IDs interner Kontakte (Sven, Verwaltung, Mitarbeitende, interne Einladungen) über
+ * dieselbe DB-Funktion wie die Qualitätsrechnung. Im Zweifel NICHT intern: dann geht das
+ * Ereignis normal (ohne Test-Code) an Meta, nie ein echter Kunde als Test.
+ */
+async function interneLeads(ctx: Kontext, leads: CapiLead[]): Promise<Set<string>> {
+  const out = new Set<string>()
+  const gesehen = new Set<string>()
+  for (const l of leads) {
+    const id = String(l.id)
+    if (gesehen.has(id)) continue
+    gesehen.add(id)
+    if (!l.email && !l.phone && !l.whatsapp) continue
+    const { data, error } = await ctx.sb.rpc('werbe_ist_intern_kontakt', {
+      p_email: l.email ?? null, p_phone: l.phone ?? null, p_whatsapp: l.whatsapp ?? null,
+    })
+    if (error) {
+      ctx.warnungen.push(`werbe_ist_intern_kontakt: ${String(error.message ?? error)} (Test-Code nicht angewendet)`.slice(0, 200))
+      return new Set<string>()
+    }
+    if (data === true) out.add(id)
+  }
+  return out
+}
+
 async function planen(ctx: Kontext, zeilen: OutboxZeile[]): Promise<{ skip: Map<string, OutboxZeile[]>; geplant: Geplant[] }> {
   const skip = new Map<string, OutboxZeile[]>()
   const weg = (grund: string, z: OutboxZeile) => {
@@ -253,6 +290,11 @@ async function planen(ctx: Kontext, zeilen: OutboxZeile[]): Promise<{ skip: Map<
     return true
   })
 
+  // 3b Test-Code nur für interne Kontakte, echte Kunden immer normal
+  const intern = ctx.testCode
+    ? await interneLeads(ctx, rest.map(z => leads.get(String(z.lead_id))!))
+    : new Set<string>()
+
   // 4 Zusatzwerte
   const kap = await ladeKap(ctx, [...new Set(rest.filter(z => z.event_name === 'Schedule').map(z => String(z.lead_id)))])
   const ohneProvision = rest.filter(z => z.event_name === 'Purchase' && !(toNum(z.daten?.commission_amount) ?? 0) && z.quelle_id)
@@ -284,55 +326,125 @@ async function planen(ctx: Kontext, zeilen: OutboxZeile[]): Promise<{ skip: Map<
       ...(contentCategory ? { content_category: contentCategory } : {}),
     }), jetzt)
     if (!ev) weg('keine_merkmale', z)
-    else geplant.push({ zeile: z, ev })
+    else geplant.push({ zeile: z, ev, test: !!ctx.testCode && intern.has(String(z.lead_id)) })
   }
   return { skip, geplant }
 }
 
 // ── Senden ──────────────────────────────────────────────────────────────────
 
-async function alsGesendet(ctx: Kontext, summe: Summe, teil: Geplant[], antwort: Record<string, unknown>): Promise<void> {
-  if (!ctx.testCode) {
-    const rows = teil.map(g => ({ event_id: g.zeile.event_id, event_name: g.zeile.event_name, lead_id: g.zeile.lead_id }))
-    const { error } = await ctx.sb.from('capi_log').upsert(rows, { onConflict: 'event_id', ignoreDuplicates: true })
-    if (error) {
-      // Kein Datenverlust: Meta entdoppelt über event_name + event_id, der Tageslauf sendet höchstens erneut
-      const msg = `capi_log schreiben: ${String(error.message ?? error)}`.slice(0, 200)
-      console.error('[werbe-signal]', msg)
-      ctx.warnungen.push(msg)
-    }
+async function alsGesendet(ctx: Kontext, summe: Summe, teil: Geplant[], antwort: Record<string, unknown>, test: boolean): Promise<void> {
+  if (test) {
+    // Test-Ereignis (nur interne Kontakte): kein capi_log, Zeile gilt nicht als gesendet
+    await setze(ctx, teil.map(g => g.zeile.id), {
+      status: 'uebersprungen', grund: 'test', gesendet_at: new Date().toISOString(), antwort, fehler: null, claimed_at: null,
+    })
+    summe.test_gesendet += teil.length
+    return
+  }
+  const rows = teil.map(g => ({ event_id: g.zeile.event_id, event_name: g.zeile.event_name, lead_id: g.zeile.lead_id }))
+  const { error } = await ctx.sb.from('capi_log').upsert(rows, { onConflict: 'event_id', ignoreDuplicates: true })
+  if (error) {
+    // Kein Datenverlust: Meta entdoppelt über event_name + event_id, der Tageslauf sendet höchstens erneut
+    const msg = `capi_log schreiben: ${String(error.message ?? error)}`.slice(0, 200)
+    console.error('[werbe-signal]', msg)
+    ctx.warnungen.push(msg)
   }
   await setze(ctx, teil.map(g => g.zeile.id), {
-    status: 'gesendet', gesendet_at: new Date().toISOString(), antwort, fehler: null, claimed_at: null,
-    grund: ctx.testCode ? 'test_event_code' : null,
+    status: 'gesendet', gesendet_at: new Date().toISOString(), antwort, fehler: null, claimed_at: null, grund: null,
   })
   summe.gesendet += teil.length
 }
 
 const endgueltigerFehler = (err: unknown) => err instanceof MetaApiError && err.kind === 'validation'
 
+/** Echte Kunden und Test-Ereignisse (interne Kontakte) nie im selben POST. */
 async function senden(ctx: Kontext, summe: Summe, geplant: Geplant[]): Promise<void> {
+  await sendenGruppe(ctx, summe, geplant.filter(g => !g.test), null)
+  if (ctx.testCode) await sendenGruppe(ctx, summe, geplant.filter(g => g.test), ctx.testCode)
+}
+
+async function sendenGruppe(ctx: Kontext, summe: Summe, geplant: Geplant[], testCode: string | null): Promise<void> {
   if (!geplant.length) return
   try {
-    const r = await sendCapiEvents(geplant.map(g => g.ev), { testEventCode: ctx.testCode })
+    const r = await sendCapiEvents(geplant.map(g => g.ev), { testEventCode: testCode })
     const verworfen = new Set(r.verworfen)
     const alt = geplant.filter(g => verworfen.has(g.zeile.event_id))
     const ok = geplant.filter(g => !verworfen.has(g.zeile.event_id))
     if (alt.length) await ueberspringen(ctx, summe, new Map([['zu_alt', alt.map(g => g.zeile)]]), true)
     await alsGesendet(ctx, summe, ok, {
-      events_received: r.events_received, fbtrace_id: r.fbtrace_id, messages: r.messages.slice(0, 5), test: !!ctx.testCode,
-    })
+      events_received: r.events_received, fbtrace_id: r.fbtrace_id, messages: r.messages.slice(0, 5), test: !!testCode,
+    }, !!testCode)
   } catch (err) {
     const msg = err instanceof MetaApiError ? `${err.kind}: ${err.userMsg ?? err.message}` : errMsg(err)
     console.error('[werbe-signal] CAPI-Versand:', msg)
     if (endgueltigerFehler(err) && geplant.length > 1) {
       // Ein kaputtes Event kippt den ganzen Sammel-POST: einzeln senden
       const einzeln = geplant.slice(0, MAX_EINZELN)
-      for (const g of einzeln) await senden(ctx, summe, [g])
+      for (const g of einzeln) await sendenGruppe(ctx, summe, [g], testCode)
       await fehlversuch(ctx, summe, geplant.slice(MAX_EINZELN).map(g => g.zeile), msg, false)
       return
     }
     await fehlversuch(ctx, summe, geplant.map(g => g.zeile), msg, endgueltigerFehler(err))
+  }
+}
+
+// ── aktion 'test': genau ein Ereignis mit Test-Code, nur interne Kontakte ──
+
+async function testSenden(ctx: Kontext, eventId: string, dryRun: boolean): Promise<Response> {
+  const { data, error } = await ctx.sb.from('capi_outbox').select('*').eq('event_id', eventId).maybeSingle()
+  if (error) throw new Error(`capi_outbox lesen: ${String(error.message ?? error)}`)
+  if (!data) return json({ success: false, aktion: 'test', event_id: eventId, error: 'Ereignis nicht im Ausgang' }, 404)
+  const zeile = data as OutboxZeile
+  const basis = { aktion: 'test', event_id: eventId, event_name: zeile.event_name, status: zeile.status ?? null }
+
+  // Offene Zeile belegen (5-Minuten-Lease wie werbe_capi_claimen), damit kein paralleler Lauf sie anfasst
+  let belegt = false
+  if (!dryRun && zeile.status === 'offen') {
+    const jetzt = new Date()
+    const frei = new Date(jetzt.getTime() - 5 * 60_000).toISOString()
+    const { data: got, error: lErr } = await ctx.sb.from('capi_outbox')
+      .update({ claimed_at: jetzt.toISOString(), updated_at: jetzt.toISOString() })
+      .eq('id', zeile.id).eq('status', 'offen').or(`claimed_at.is.null,claimed_at.lt."${frei}"`).select('id')
+    if (lErr) throw new Error(`capi_outbox belegen: ${String(lErr.message ?? lErr)}`)
+    if (!got?.length) return json({ success: false, ...basis, error: 'Ereignis wird gerade verarbeitet, bitte später erneut' }, 409)
+    belegt = true
+  }
+  const freigeben = async () => { if (belegt) await setze(ctx, [zeile.id], { claimed_at: null }) }
+
+  try {
+    const { skip, geplant } = await planen(ctx, [zeile])
+    const g = geplant[0]
+    if (!g) {
+      await freigeben()
+      return json({ success: false, ...basis, uebersprungen: [...skip.keys()][0] ?? 'unbekannt', warnungen: ctx.warnungen }, 422)
+    }
+    if (!g.test) {
+      await freigeben()
+      return json({
+        success: false, ...basis, warnungen: ctx.warnungen,
+        error: 'Kein interner Kontakt: der Test-Code gilt nur für interne Kontakte (Sven, Verwaltung, Mitarbeitende). Nichts gesendet.',
+      }, 403)
+    }
+    if (dryRun) {
+      return json({ success: true, ...basis, dry_run: true, wuerde_test_senden: true, custom_data: g.ev.custom_data ?? null, action_source: g.ev.action_source, warnungen: ctx.warnungen })
+    }
+    const r = await sendCapiEvents([g.ev], { testEventCode: ctx.testCode })
+    if (r.verworfen.includes(zeile.event_id)) {
+      await freigeben()
+      return json({ success: false, ...basis, uebersprungen: 'zu_alt', warnungen: ctx.warnungen }, 422)
+    }
+    const antwort = { events_received: r.events_received, fbtrace_id: r.fbtrace_id, messages: r.messages.slice(0, 5), test: true }
+    // Nur die eben belegte offene Zeile abschließen; schon erledigte Zeilen bleiben, wie sie sind
+    if (belegt) {
+      await setze(ctx, [zeile.id], {
+        status: 'uebersprungen', grund: 'test', gesendet_at: new Date().toISOString(), antwort, fehler: null, claimed_at: null,
+      })
+    }
+    return json({ success: true, ...basis, status: belegt ? 'uebersprungen' : basis.status, ...antwort, warnungen: ctx.warnungen })
+  } catch (err) {
+    await freigeben()
+    throw err
   }
 }
 
@@ -351,7 +463,16 @@ Deno.serve(async (req: Request) => {
     if (raw && typeof raw === 'object' && !Array.isArray(raw)) body = raw as Record<string, unknown>
   } catch { /* leerer Body = outbox */ }
   const aktion = String(body.aktion ?? 'outbox')
-  if (aktion !== 'outbox') return json({ success: false, error: `Unbekannte aktion "${aktion}" (erlaubt: outbox)` }, 400)
+  if (aktion !== 'outbox' && aktion !== 'test') {
+    return json({ success: false, error: `Unbekannte aktion "${aktion}" (erlaubt: outbox, test)` }, 400)
+  }
+  const bodyCode = typeof body.test_event_code === 'string' ? body.test_event_code.trim().slice(0, 64) : ''
+  // Test-Code im Body nur für genau ein benanntes Ereignis, nie für den ganzen Ausgang
+  if (aktion === 'outbox' && bodyCode) {
+    return json({ success: false, error: 'test_event_code nur mit aktion "test" und event_id' }, 400)
+  }
+  const eventId = String(body.event_id ?? '').trim().slice(0, 120)
+  if (aktion === 'test' && !eventId) return json({ success: false, error: 'event_id fehlt' }, 400)
   const anlass = String(body.anlass ?? '').slice(0, 120) || null
   const dryRun = body.dry_run === true
   const limit = Math.min(1000, Math.max(1, Math.trunc(toNum(body.limit) ?? STANDARD_LIMIT)))
@@ -364,22 +485,28 @@ Deno.serve(async (req: Request) => {
 
   const sb = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')
   const ctx: Kontext = { sb, testCode: null, evRef: null, gewichte: {}, warnungen: [] }
-  const summe: Summe = { geclaimt: 0, gesendet: 0, uebersprungen: {}, wiederholen: 0, fehler: 0 }
+  const summe: Summe = { geclaimt: 0, gesendet: 0, test_gesendet: 0, uebersprungen: {}, wiederholen: 0, fehler: 0 }
 
   try {
-    // Test-Code (nur für Tests mit Svens eigenen Daten) + Wertleiter
+    // Test-Code (gilt nur für interne Kontakte, siehe planen) + Wertleiter
     const { data: st, error: sErr } = await sb.from('ad_settings').select('capi_test_event_code').eq('id', 'default').maybeSingle()
     if (sErr && !spalteFehlt(sErr)) throw new Error(`ad_settings lesen: ${String(sErr.message ?? sErr)}`)
-    const bodyCode = typeof body.test_event_code === 'string' ? body.test_event_code.trim() : ''
-    const dbCode = String((st as { capi_test_event_code?: string | null } | null)?.capi_test_event_code ?? '').trim()
-    ctx.testCode = (bodyCode || dbCode || null)?.slice(0, 64) ?? null
-    if (ctx.testCode) ctx.warnungen.push('test_event_code aktiv: Ereignisse gehen als Test an Meta und landen nicht in capi_log')
+    const dbCode = String((st as { capi_test_event_code?: string | null } | null)?.capi_test_event_code ?? '').trim().slice(0, 64)
+    ctx.testCode = (aktion === 'test' ? bodyCode || dbCode : dbCode) || null
+    if (aktion === 'test' && !ctx.testCode) {
+      return json({ success: false, aktion, event_id: eventId, error: 'Kein test_event_code (Body oder ad_settings.capi_test_event_code)' }, 400)
+    }
+    if (aktion === 'outbox' && ctx.testCode) {
+      ctx.warnungen.push('test_event_code aktiv: nur Ereignisse interner Kontakte gehen als Test an Meta (ohne capi_log); echte Kunden normal')
+    }
 
     const { data: ev, error: eErr } = await sb.from('ad_ev_weights').select('weights, ev_ref_eur').eq('status', 'aktiv').maybeSingle()
     if (eErr) ctx.warnungen.push(`ad_ev_weights lesen: ${String(eErr.message ?? eErr)}`.slice(0, 200))
     const evRow = (ev ?? null) as { weights?: Record<string, unknown> | null; ev_ref_eur?: unknown } | null
     ctx.gewichte = evRow?.weights ?? {}
     ctx.evRef = toNum(evRow?.ev_ref_eur)
+
+    if (aktion === 'test') return await testSenden(ctx, eventId, dryRun)
 
     if (dryRun) {
       const { data, error } = await sb.from('capi_outbox').select('*').eq('status', 'offen').order('id', { ascending: true }).limit(limit)
@@ -388,9 +515,10 @@ Deno.serve(async (req: Request) => {
       const { skip, geplant } = await planen(ctx, zeilen)
       await ueberspringen(ctx, summe, skip, false)
       return json({
-        success: true, aktion, anlass, dry_run: true, offen: zeilen.length, wuerde_senden: geplant.length,
+        success: true, aktion, anlass, dry_run: true, offen: zeilen.length,
+        wuerde_senden: geplant.filter(g => !g.test).length, wuerde_test_senden: geplant.filter(g => g.test).length,
         uebersprungen: summe.uebersprungen, test: !!ctx.testCode,
-        beispiel: geplant.slice(0, 20).map(g => ({ event_id: g.zeile.event_id, event_name: g.zeile.event_name, custom_data: g.ev.custom_data ?? null, action_source: g.ev.action_source })),
+        beispiel: geplant.slice(0, 20).map(g => ({ event_id: g.zeile.event_id, event_name: g.zeile.event_name, test: g.test, custom_data: g.ev.custom_data ?? null, action_source: g.ev.action_source })),
         warnungen: ctx.warnungen,
       })
     }
@@ -417,7 +545,7 @@ Deno.serve(async (req: Request) => {
       }
       if (zeilen.length < limit) break
     }
-    console.log(`[werbe-signal] ${anlass ?? 'ohne Anlass'}: geclaimt ${summe.geclaimt}, gesendet ${summe.gesendet}, übersprungen ${JSON.stringify(summe.uebersprungen)}, wiederholen ${summe.wiederholen}, fehler ${summe.fehler}`)
+    console.log(`[werbe-signal] ${anlass ?? 'ohne Anlass'}: geclaimt ${summe.geclaimt}, gesendet ${summe.gesendet}, test ${summe.test_gesendet}, übersprungen ${JSON.stringify(summe.uebersprungen)}, wiederholen ${summe.wiederholen}, fehler ${summe.fehler}`)
     return json({ success: true, aktion, anlass, runden, ...summe, test: !!ctx.testCode, warnungen: ctx.warnungen, dauer_ms: Date.now() - start })
   } catch (err) {
     const msg = errMsg(err)

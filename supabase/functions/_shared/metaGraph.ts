@@ -703,6 +703,12 @@ export interface BudgetDelta {
   replaceEntityIds?: string[]
 }
 
+/**
+ * effective_status, deren Tagesbudget als laufend zählt: ACTIVE, IN_PROCESS (Meta
+ * verarbeitet gerade eine Aktivierung/Änderung) und WITH_ISSUES (liefert ggf. weiter aus).
+ */
+export const BUDGET_ZAEHLT_STATUS = ['ACTIVE', 'IN_PROCESS', 'WITH_ISSUES'] as const
+
 const centsOf = (v: unknown): number => {
   const n = toNum(v)
   return n !== null && n > 0 ? Math.round(n) : 0
@@ -711,8 +717,9 @@ const round2 = (n: number) => Math.round(n * 100) / 100
 
 /**
  * Leitplanke „Summe aktiver Tagesbudgets <= ad_settings.max_account_daily_budget“.
- * Liest live bei Meta alle ACTIVE-Kampagnen (Kampagnenbudget zählt einmal) und
- * ACTIVE-Anzeigengruppen mit eigenem Budget; Laufzeitbudgets als Restbudget je
+ * Liest live bei Meta alle laufenden Kampagnen (Kampagnenbudget zählt einmal) und
+ * laufenden Anzeigengruppen mit eigenem Budget; „laufend“ = BUDGET_ZAEHLT_STATUS
+ * (auch IN_PROCESS kurz nach dem Aktivieren und WITH_ISSUES); Laufzeitbudgets als Restbudget je
  * Resttag. Wirft, wenn die Liste nicht vollständig gelesen werden kann (lieber
  * nichts tun als falsch rechnen).
  */
@@ -732,19 +739,20 @@ export async function budgetHeadroom(sb: SupabaseClient, delta: BudgetDelta): Pr
   }
 
   type Row = Record<string, unknown>
+  const zaehlt = (r: Row) => (BUDGET_ZAEHLT_STATUS as readonly string[]).indexOf(String(r.effective_status ?? '')) >= 0
   const campaigns = await graphAll<Row>(`act_${account}/campaigns`, {
     fields: 'id,name,effective_status,daily_budget,lifetime_budget,budget_remaining,stop_time',
-    effective_status: ['ACTIVE'], limit: 200,
+    effective_status: [...BUDGET_ZAEHLT_STATUS], limit: 200,
   }, { strict: true })
   const adsets = await graphAll<Row>(`act_${account}/adsets`, {
     fields: 'id,name,campaign_id,effective_status,daily_budget,lifetime_budget,budget_remaining,end_time',
-    effective_status: ['ACTIVE'], limit: 500,
+    effective_status: [...BUDGET_ZAEHLT_STATUS], limit: 500,
   }, { strict: true })
 
   const eintraege: BudgetEintrag[] = []
   const cboCampaigns = new Set<string>()
   for (const c of campaigns) {
-    if (String(c.effective_status ?? '') !== 'ACTIVE') continue
+    if (!zaehlt(c)) continue
     const daily = centsOf(c.daily_budget)
     const lifetime = centsOf(c.lifetime_budget)
     if (!daily && !lifetime) continue
@@ -753,7 +761,7 @@ export async function budgetHeadroom(sb: SupabaseClient, delta: BudgetDelta): Pr
     eintraege.push({ id: String(c.id), level: 'campaign', name: String(c.name ?? ''), art: daily ? 'daily' : 'lifetime', usdCents, eur: usdCents / 100 / kurs.usdPerEur })
   }
   for (const a of adsets) {
-    if (String(a.effective_status ?? '') !== 'ACTIVE') continue
+    if (!zaehlt(a)) continue
     if (cboCampaigns.has(String(a.campaign_id ?? ''))) continue
     const daily = centsOf(a.daily_budget)
     const lifetime = centsOf(a.lifetime_budget)

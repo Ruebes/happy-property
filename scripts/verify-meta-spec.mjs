@@ -190,7 +190,7 @@ ok(t1.excluded_geo_locations === undefined && t1.exclusions === undefined && t1.
 ok(JSON.stringify(t1.flexible_spec) === JSON.stringify([{ interests: [{ id: 'i1' }] }]), `applyHousing: flexible_spec falsch bereinigt ${JSON.stringify(t1.flexible_spec)}`)
 eq(t1.custom_audiences.map(a => a.id), ['c1'], 'applyHousing: Lookalike nicht entfernt')
 ok(t1.targeting_relaxation_types?.lookalike === undefined && t1.targeting_relaxation_types?.custom_audience === 1, 'applyHousing: Advantage Lookalike')
-ok(t1.geo_locations.cities[0].radius === 15 && t1.geo_locations.cities[1].radius === 20, 'applyHousing: Radius')
+ok(t1.geo_locations.cities[0].radius === 17 && t1.geo_locations.cities[1].radius === 20, 'applyHousing: Radius (Städte mindestens 17 km)')
 ok(t1.geo_locations.custom_locations[0].radius === 15, 'applyHousing: Radius custom_location')
 ok(t1.targeting_automation.advantage_audience === 1 && t1.targeting_automation.individual_setting === undefined, 'applyHousing: advantage_audience nicht explizit')
 ok(h1.changes.length > 0 && h1.locks.length > 0, 'applyHousing: keine changes/locks gemeldet')
@@ -203,8 +203,9 @@ const dirtyIssues = S.validateDraft(dirty).map(i => i.code)
 ok(dirtyIssues.includes('housing_missing'), 'validateDraft erkennt fehlende Sonderkategorie Wohnen nicht')
 // Ohne HOUSING laufen die Housing-Prüfungen nicht; mit HOUSING ohne applyHousing müssen sie greifen
 const dirtyHousing = JSON.parse(dirtyCopy); dirtyHousing.campaign.special_ad_categories = ['HOUSING']; dirtyHousing.campaign.special_ad_category_country = ['DE']
+dirtyHousing.adsets[0].targeting.geo_locations.custom_locations = [{ latitude: 52.5, longitude: 13.4, radius: 5, distance_unit: 'kilometer' }]
 const dhIssues = S.validateDraft(dirtyHousing).map(i => i.code)
-for (const c of ['housing_age', 'housing_gender', 'housing_geo_type', 'housing_exclusion', 'housing_radius', 'housing_detailed', 'housing_lookalike', 'housing_advantage_audience'])
+for (const c of ['housing_age', 'housing_gender', 'housing_geo_type', 'housing_exclusion', 'housing_radius', 'city_radius', 'housing_detailed', 'housing_lookalike', 'housing_advantage_audience'])
   ok(dhIssues.includes(c), `validateDraft erkennt ${c} nicht`)
 
 // ── 5. Plan B ────────────────────────────────────────────────────────────────
@@ -298,6 +299,86 @@ ok(S.validateDraft(wrongPixel).some(i => i.code === 'pixel_mismatch' && i.severi
 // DSA fehlt bei EU
 const noDsa = JSON.parse(JSON.stringify(hb.spec)); noDsa.adsets[0].dsa_payor = ''
 ok(S.validateDraft(noDsa).some(i => i.code === 'dsa_missing'), 'fehlende DSA nicht erkannt')
+
+// ── 5b. Bestehende Kampagnen, Ziele, Beschreibungen, Advantage+, Radius ─────
+const codesOf = (spec, opts) => S.validateDraft(spec, opts)
+const PLANB_CAMP = '120248678452490314'
+// Neue Gruppe in bestehender HOUSING-Kampagne: Wohnen-Regeln greifen (add_adsets)
+const addSpec = JSON.parse(JSON.stringify(hb.spec))
+addSpec.campaign.existing_id = PLANB_CAMP
+addSpec.adsets[0].existing_id = '120248678452700314'
+addSpec.adsets[1].targeting = {
+  geo_locations: { countries: ['DE'], cities: [{ key: '1', radius: 15, distance_unit: 'kilometer' }] },
+  age_min: 30, age_max: 55, genders: [1], flexible_spec: [{ behaviors: [{ id: 'b1' }] }],
+}
+const hAdd = S.applyHousing(addSpec)
+const tAdd = hAdd.spec.adsets[1].targeting
+eq(hAdd.spec.campaign.special_ad_categories, ['HOUSING'], 'add_adsets: Kategorie der bestehenden Kampagne bleibt')
+ok(tAdd.genders === undefined && tAdd.age_min === 18 && tAdd.age_max === 65 && tAdd.flexible_spec === undefined, `add_adsets in HOUSING-Kampagne: Wohnen-Regeln nicht angewandt ${JSON.stringify(tAdd)}`)
+eq(tAdd.geo_locations.cities[0].radius, 17, 'add_adsets in HOUSING-Kampagne: Stadt-Radius 17 km')
+eq(tAdd.targeting_automation, { advantage_audience: 1 }, 'add_adsets in HOUSING-Kampagne: advantage_audience explizit')
+ok(!codesOf(hAdd.spec).some(i => i.severity === 'error'), `add_adsets in HOUSING-Kampagne: Fehler ${codesOf(hAdd.spec).filter(i => i.severity === 'error').map(i => i.code).join(', ')}`)
+const pAdd = S.buildAdsetPayload(hAdd.spec.adsets[1], hAdd.spec.campaign, PLANB_CAMP)
+ok(pAdd.targeting.genders === undefined && pAdd.targeting.flexible_spec === undefined, 'add_adsets: Payload ohne Geschlecht/Verhalten')
+// Neue Anzeige in bestehender HOUSING-Gruppe (add_ads): nichts zu korrigieren, keine Fehler
+const addAds = JSON.parse(JSON.stringify(hb.spec))
+addAds.campaign.existing_id = PLANB_CAMP
+addAds.adsets.forEach(a => { a.existing_id = `AS_${a.key}` })
+eq(S.applyHousing(addAds).changes.map(c => c.code), [], 'add_ads in HOUSING-Kampagne: keine Housing-Korrektur nötig')
+ok(!codesOf(addAds).some(i => i.severity === 'error'), 'add_ads in HOUSING-Kampagne: Fehler')
+// Bestehende Kampagne OHNE HOUSING + Neues: Fehler (Server lässt nur Admin mit Begründung durch)
+const noHousing = JSON.parse(JSON.stringify(addSpec)); noHousing.campaign.special_ad_categories = []; noHousing.campaign.special_ad_category_country = []
+const hNo = S.applyHousing(noHousing)
+eq(hNo.spec.campaign.special_ad_categories, [], 'bestehende Kampagne: applyHousing erzwingt keine Kategorie')
+ok(codesOf(hNo.spec).some(i => i.code === 'housing_existing' && i.severity === 'error'), 'Neues in Kampagne ohne HOUSING nicht als Fehler erkannt')
+ok(codesOf(hNo.spec, { realEstate: false }).some(i => i.code === 'housing_existing' && i.severity === 'warn'), 'Nicht-Immobilien-Entwurf: housing_existing nur Hinweis')
+const onlyExisting = JSON.parse(JSON.stringify(hNo.spec)); onlyExisting.adsets.forEach(a => { a.existing_id = a.existing_id || 'X' }); onlyExisting.ads = []
+ok(codesOf(onlyExisting).some(i => i.code === 'housing_existing' && i.severity === 'warn'), 'ohne Neues: housing_existing nur Hinweis')
+ok(S.isRealEstateDraft('plan_b') && S.isRealEstateDraft(null) && S.isRealEstateDraft('unbekannt'), 'isRealEstateDraft')
+// Bestehende Gruppe mit WEBSITE_AND_PHONE_CALL (laufendes Plan B) nimmt neue Website-Anzeigen
+const wpc = JSON.parse(JSON.stringify(addAds)); wpc.adsets.forEach(a => { a.destination = 'WEBSITE_AND_PHONE_CALL' })
+const wpcCodes = codesOf(wpc).map(i => i.code)
+ok(!wpcCodes.includes('destination_unsupported') && !wpcCodes.includes('destination_mismatch'), `WEBSITE_AND_PHONE_CALL: Website-Anzeige abgelehnt (${wpcCodes.join(', ')})`)
+const wpcLead = JSON.parse(JSON.stringify(wpc)); wpcLead.ads[0].destination = { kind: 'lead_form', form_id: 'F1' }; wpcLead.ads[0].cta_type = 'SIGN_UP'
+ok(codesOf(wpcLead).some(i => i.code === 'destination_mismatch'), 'WEBSITE_AND_PHONE_CALL: Sofortformular-Anzeige nicht abgelehnt')
+const wpcNew = JSON.parse(JSON.stringify(wpc)); delete wpcNew.adsets[0].existing_id
+ok(codesOf(wpcNew).some(i => i.node === wpcNew.adsets[0].key && i.field === 'adset.destination' && i.severity === 'error'), 'neue Gruppe mit WEBSITE_AND_PHONE_CALL nicht als nicht unterstützt erkannt')
+// Beschreibungen: höchstens eine; asset_feed genau eine (leer = Leerzeichen); zählen nicht für den Modus
+const twoDesc = JSON.parse(JSON.stringify(hb.spec)); twoDesc.ads[0].descriptions = ['Eins', 'Zwei']
+ok(codesOf(twoDesc).some(i => i.code === 'descriptions_single' && i.field === 'ad.descriptions' && i.severity === 'error'), 'zwei Beschreibungen nicht als Fehler erkannt')
+const singleTwoDesc = JSON.parse(JSON.stringify(single)); singleTwoDesc.descriptions = ['Eins', 'Zwei']
+eq(S.creativeMode(singleTwoDesc), 'link_data', 'Beschreibungen erzwingen kein asset_feed')
+eq(afs.descriptions, [{ text: '30 Minuten, unverbindlich' }], 'asset_feed: genau eine Beschreibung')
+const noDesc = JSON.parse(JSON.stringify(lang)); noDesc.descriptions = []
+eq(S.buildCreativePayload(noDesc, { placements: hb.spec.adsets[0].placements }).payload.asset_feed_spec.descriptions, [{ text: ' ' }], 'asset_feed ohne Beschreibung: Leerzeichen statt Landingpage-Text')
+// Advantage+ Zielgruppe: fehlt = 1 (Payload und Prüfung gleich), false/'0' = 0
+eq([S.effectiveAdvantageAudience(undefined), S.effectiveAdvantageAudience(1), S.effectiveAdvantageAudience(0), S.effectiveAdvantageAudience(false), S.effectiveAdvantageAudience('0')], [1, 1, 0, 0, 0], 'effectiveAdvantageAudience')
+const advSpec = JSON.parse(JSON.stringify(hNo.spec)); advSpec.adsets[1].targeting = { geo_locations: { countries: ['DE'] }, age_min: 30, age_max: 55 }
+ok(codesOf(advSpec).some(i => i.code === 'advantage_age' && i.node === advSpec.adsets[1].key), 'advantage_age bei fehlendem advantage_audience nicht erkannt')
+eq(S.buildTargeting(advSpec.adsets[1], advSpec.campaign).targeting_automation, { advantage_audience: 1 }, 'buildTargeting: fehlend = 1 explizit')
+advSpec.adsets[1].targeting.targeting_automation = { advantage_audience: false }
+eq(S.buildTargeting(advSpec.adsets[1], advSpec.campaign).targeting_automation, { advantage_audience: 0 }, 'buildTargeting: false = 0')
+ok(!codesOf(advSpec).some(i => i.code === 'advantage_age' && i.node === advSpec.adsets[1].key), 'advantage_age trotz Advantage+ aus')
+// Stadt-Radius (Meta: 10-50 Meilen bzw. 17-80 km, immer) vs. Wohnen-Minimum 15 km für Adressen
+const radiusCase = (geo, hec) => {
+  const sp = JSON.parse(JSON.stringify(hb.spec))
+  if (!hec) { sp.campaign.special_ad_categories = []; sp.campaign.special_ad_category_country = [] }
+  sp.adsets[0].targeting.geo_locations = geo
+  return codesOf(sp).filter(i => i.node === sp.adsets[0].key).map(i => i.code)
+}
+ok(radiusCase({ cities: [{ key: '1', radius: 15, distance_unit: 'kilometer' }] }, true).includes('city_radius'), 'Wohnen: Stadt mit 15 km nicht abgelehnt')
+ok(radiusCase({ cities: [{ key: '1', radius: 15, distance_unit: 'kilometer' }] }, false).includes('city_radius'), 'Stadt mit 15 km ohne Wohnen nicht abgelehnt')
+ok(!radiusCase({ cities: [{ key: '1', radius: 17, distance_unit: 'kilometer' }] }, true).some(c => c === 'city_radius' || c === 'housing_radius'), 'Wohnen: Stadt mit 17 km abgelehnt')
+ok(!radiusCase({ cities: [{ key: '1', radius: 10, distance_unit: 'mile' }] }, true).includes('city_radius'), 'Stadt mit 10 Meilen abgelehnt')
+ok(radiusCase({ cities: [{ key: '1', radius: 9, distance_unit: 'mile' }] }, true).includes('city_radius'), 'Stadt mit 9 Meilen nicht abgelehnt')
+ok(radiusCase({ cities: [{ key: '1', radius: 81, distance_unit: 'kilometer' }] }, true).includes('city_radius'), 'Stadt mit 81 km nicht abgelehnt')
+ok(!radiusCase({ custom_locations: [{ latitude: 34.77, longitude: 32.42, radius: 15, distance_unit: 'kilometer' }] }, true).some(c => c === 'city_radius' || c === 'housing_radius'), 'Wohnen: Adresse mit 15 km abgelehnt')
+ok(radiusCase({ custom_locations: [{ latitude: 34.77, longitude: 32.42, radius: 10, distance_unit: 'kilometer' }] }, true).includes('housing_radius'), 'Wohnen: Adresse mit 10 km nicht abgelehnt')
+eq(S.CITY_MIN_RADIUS_KM, 17, 'CITY_MIN_RADIUS_KM')
+// Video ohne Vorschaubild: serverseitig Fehler (nicht erst nach Kampagne + Gruppen), im Browser Warnung (Server holt das Bild nach)
+const vid = JSON.parse(JSON.stringify(hb.spec)); vid.ads[0].format = 'single_video'; vid.ads[0].media = { feed_4x5: { media_id: 'm-v', video_id: 'V1' } }
+ok(S.validateDraft(vid, { server: true }).some(i => i.code === 'video_thumb_missing' && i.severity === 'error'), 'Video ohne Vorschaubild serverseitig nicht als Fehler erkannt')
+ok(S.validateDraft(vid).some(i => i.code === 'video_thumb_missing' && i.severity === 'warn'), 'Video ohne Vorschaubild im Browser nicht als Warnung erkannt')
 
 // ── 6. Lint ──────────────────────────────────────────────────────────────────
 const ctx = {

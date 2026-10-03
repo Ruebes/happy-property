@@ -60,6 +60,26 @@ export function neuerKey(prefix: string, vorhanden: readonly string[]): string {
   return `${prefix}${n}`
 }
 
+// Knoten, die dieser Entwurf schon bei Meta angelegt hat (meta_ids), sind wie
+// bestehende gesperrt: nicht entfernen, nicht ändern. Fortsetzen überspringt
+// sie, und ihre Schlüssel dürfen nie neu vergeben werden.
+
+/** Anzeigengruppe schon von diesem Entwurf bei Meta angelegt */
+export const gruppeAngelegt = (ids: DraftMetaIds, key: string): boolean => !!ids.adsets?.[key]
+
+/** Werbeanzeige oder ihr Werbemittel schon von diesem Entwurf bei Meta angelegt */
+export const anzeigeAngelegt = (ids: DraftMetaIds, key: string): boolean => !!(ids.ads?.[key] || ids.creatives?.[key])
+
+/** Alle belegten Schlüssel einer Ebene: im Entwurf plus in meta_ids */
+export function belegteKeys(d: DraftSpec, ids: DraftMetaIds, ebene: 'adsets' | 'ads'): string[] {
+  const out = (ebene === 'adsets' ? d.adsets : d.ads).map(x => x.key)
+  const extra = ebene === 'adsets'
+    ? Object.keys(ids.adsets ?? {})
+    : [...Object.keys(ids.ads ?? {}), ...Object.keys(ids.creatives ?? {})]
+  for (const k of extra) if (out.indexOf(k) < 0) out.push(k)
+  return out
+}
+
 export function neueAnzeigengruppe(key: string, name: string, v: EntwurfVorgaben, countries: string[] = ['DE']): AdsetDraft {
   return {
     key,
@@ -124,9 +144,20 @@ export function specAus(raw: unknown, ersatz: DraftSpec): DraftSpec {
   }
 }
 
-/** Wohnen erzwingen (neue Kampagnen bekommen HOUSING, bestehende behalten ihre Kategorien) */
-export function normalisiere(d: DraftSpec): DraftSpec {
-  return applyHousing(d).spec
+/**
+ * Wohnen erzwingen (neue Kampagnen bekommen HOUSING, bestehende behalten ihre Kategorien).
+ * Knoten, die dieser Entwurf schon bei Meta angelegt hat, bleiben unverändert: sonst
+ * änderte eine fremde Bearbeitung ihren Inhalt, und Fortsetzen meldete 409.
+ */
+export function normalisiere(d: DraftSpec, ids: DraftMetaIds = {}): DraftSpec {
+  const n = applyHousing(d).spec
+  const altGruppe = new Map(d.adsets.map(a => [a.key, a]))
+  const altAnzeige = new Map(d.ads.map(a => [a.key, a]))
+  return {
+    ...n,
+    adsets: n.adsets.map(a => (gruppeAngelegt(ids, a.key) && altGruppe.has(a.key) ? altGruppe.get(a.key)! : a)),
+    ads: n.ads.map(a => (anzeigeAngelegt(ids, a.key) && altAnzeige.has(a.key) ? altAnzeige.get(a.key)! : a)),
+  }
 }
 
 /** Art des Entwurfs + Ziel-IDs aus dem Inhalt ableiten */
@@ -162,12 +193,13 @@ const PAAR_FELDER: ReadonlyArray<keyof AdDraft> = [
 const kopie = <T>(x: T): T => JSON.parse(JSON.stringify(x)) as T
 
 /** Anzeige ändern; bei Plan B wandern Texte, Medien, Format und Identität mit zum Partner. */
-export function setzeAnzeige(d: DraftSpec, key: string, patch: Partial<AdDraft>, gepaart: boolean): DraftSpec {
+export function setzeAnzeige(d: DraftSpec, key: string, patch: Partial<AdDraft>, gepaart: boolean, ids: DraftMetaIds = {}): DraftSpec {
+  if (anzeigeAngelegt(ids, key)) return d
   const ads = d.ads.map(a => (a.key === key ? { ...a, ...patch } : a))
   let next: DraftSpec = { ...d, ads }
   if (!gepaart) return next
   const partner = paarPartner(next, key)
-  if (!partner || partner.existing_id) return next
+  if (!partner || partner.existing_id || anzeigeAngelegt(ids, partner.key)) return next
   const p: Partial<AdDraft> = {}
   for (const f of PAAR_FELDER) {
     if (f in patch) (p as Record<string, unknown>)[f] = kopie((patch as Record<string, unknown>)[f])
@@ -187,12 +219,13 @@ export function setzeAnzeige(d: DraftSpec, key: string, patch: Partial<AdDraft>,
 }
 
 /** Anzeigengruppe ändern; „Budgets synchron" überträgt Budgets auf alle neuen Gruppen. */
-export function setzeAnzeigengruppe(d: DraftSpec, key: string, patch: Partial<AdsetDraft>): DraftSpec {
+export function setzeAnzeigengruppe(d: DraftSpec, key: string, patch: Partial<AdsetDraft>, ids: DraftMetaIds = {}): DraftSpec {
+  if (gruppeAngelegt(ids, key)) return d
   const sync = d.hp?.budgets_synchron === true
   const budget = 'daily_budget_cents' in patch || 'lifetime_budget_cents' in patch
   const adsets = d.adsets.map(a => {
     if (a.key === key) return { ...a, ...patch }
-    if (sync && budget && !a.existing_id) {
+    if (sync && budget && !a.existing_id && !gruppeAngelegt(ids, a.key)) {
       const p: Partial<AdsetDraft> = {}
       if ('daily_budget_cents' in patch) p.daily_budget_cents = patch.daily_budget_cents
       if ('lifetime_budget_cents' in patch) p.lifetime_budget_cents = patch.lifetime_budget_cents
@@ -288,6 +321,8 @@ export function useEntwurf(start: AssistentStart, opt: Optionen): EntwurfApi {
   const [templateKey, setTemplateKey] = useState<string | null>(start.art === 'neu' ? start.templateKey : null)
   const [spec, setSpec] = useState<DraftSpec>(anfangsSpec)
   const [metaIds, setMetaIds] = useState<DraftMetaIds>({})
+  const metaIdsRef = useRef<DraftMetaIds>({})
+  metaIdsRef.current = metaIds
   const [validation, setValidation] = useState<DraftValidation | null>(null)
   const [lastError, setLastError] = useState<DraftLastError | null>(null)
   const [speichern, setSpeichern] = useState<SpeicherStand>('ruhig')
@@ -432,7 +467,7 @@ export function useEntwurf(start: AssistentStart, opt: Optionen): EntwurfApi {
 
   const update = useCallback((fn: (d: DraftSpec) => DraftSpec) => {
     if (nurLesen) return
-    const next = normalisiere(fn(specRef.current))
+    const next = normalisiere(fn(specRef.current), metaIdsRef.current)
     specRef.current = next
     setSpec(next)
     dirtyRef.current = true
@@ -689,9 +724,9 @@ export function useAssistent(): AssistentWerte {
   return v
 }
 
-/** Text-Kürzel des Plan-B-Paares für eine neue Kennung */
-export function neueKennung(d: DraftSpec): string {
-  const basen = d.ads.map(a => a.key.replace(/_(lang|kurz)$/, ''))
+/** Text-Kürzel des Plan-B-Paares für eine neue Kennung (nie ein Schlüssel aus meta_ids) */
+export function neueKennung(d: DraftSpec, ids: DraftMetaIds = {}): string {
+  const basen = belegteKeys(d, ids, 'ads').map(k => k.replace(/_(lang|kurz)$/, ''))
   let n = 1
   while (basen.indexOf(`werbemittel${n}`) >= 0) n++
   return `werbemittel${n}`

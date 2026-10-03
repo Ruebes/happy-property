@@ -105,14 +105,17 @@ export default function QualitaetTab() {
           .eq('status', 'aktiv').order('version', { ascending: false }).limit(1)
         if (aktiv()) setLeiter(((ev as unknown as WerbeEvGewichte[] | null) ?? [])[0] ?? null)
 
-        // Gehaltene Termine der letzten 60 Tage ohne Daumen (gleiche Lesart wie
-        // der Filter „zu bewerten" in der Kundenliste). Ohne Leserecht auf
+        // Kunden mit vergangenem Termin (letzte 60 Tage) ohne Daumen, gleiche
+        // Lesart wie der Filter „zu bewerten" in der Kundenliste (jeder vergangene
+        // Kundentermin, unabhängig vom Ausgang: wer bewertet, setzt auch
+        // outcome='completed', daher hier kein Filter darauf). Ohne Leserecht auf
         // Leads/Termine kommt 0 zurück, dann bleibt der Link weg.
         if (tag) {
           const seit = new Date(Date.now() - BEWERTEN_TAGE * 86_400_000).toISOString()
           const { data: ap, error: eAp } = await supabase.from('crm_appointments')
             .select('lead_id, leads!inner(quality_rating)')
-            .eq('outcome', 'completed').eq('internal', false).gte('start_time', seit)
+            .eq('internal', false).not('lead_id', 'is', null)
+            .lt('start_time', new Date().toISOString()).gte('start_time', seit)
             .is('leads.quality_rating', null).limit(500)
           if (eAp) console.warn('[Qualität] Zähler ohne Bewertung:', eAp)
           else if (aktiv()) setOhneBewertung(new Set(((ap as Array<{ lead_id: string | null }> | null) ?? []).map(r => r.lead_id).filter(Boolean)).size)
@@ -307,7 +310,7 @@ export default function QualitaetTab() {
           </div>
           {ohneBewertung > 0 && (
             <Link to="/admin/crm/leads?bewerten=1" className="hp-btn hp-btn-accent">
-              {t('crm.werbung.qualitaet.ohneBewertung', '{{n}} gehaltene Termine ohne Bewertung', { n: ohneBewertung })}
+              {t('crm.werbung.qualitaet.ohneBewertung', '{{n}} Kunden nach Termin ohne Bewertung', { n: ohneBewertung })}
             </Link>
           )}
         </div>
