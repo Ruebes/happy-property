@@ -784,6 +784,11 @@ export interface AdLead {
   utm_source: string | null
   utm_campaign: string | null
   utm_content: string | null
+  /** Sofortformular-Leads: Anzeigen-ID; Website: Anzeigengruppen-ID */
+  utm_term?: string | null
+  /** Feste Zuordnung zur Meta-Anzeige (Lead-Sync, Funnel, Nachtrag 3.10.2026) */
+  meta_ad_id?: string | null
+  meta_campaign_id?: string | null
   quality_rating: 'gut' | 'schlecht' | null
   created_at: string
 }

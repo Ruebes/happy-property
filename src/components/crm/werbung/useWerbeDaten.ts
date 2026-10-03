@@ -165,11 +165,11 @@ export function useWerbeDaten(segment: AdSegment, days: WerbeZeitraum, canSeeCrm
         setCrmViaRpc(false)
       }
 
-      const orParts = [`utm_source.in.(${[...META_SOURCES].join(',')})`]
+      const orParts = [`utm_source.in.(${[...META_SOURCES].join(',')})`, 'meta_ad_id.not.is.null']
       if (campaignIds.length) orParts.push(`utm_campaign.in.(${campaignIds.join(',')})`)
       const { data: ld, error: e3 } = await supabase
         .from('leads')
-        .select('id, utm_source, utm_campaign, utm_content, quality_rating, created_at')
+        .select('id, utm_source, utm_campaign, utm_content, utm_term, meta_ad_id, meta_campaign_id, quality_rating, created_at')
         .gte('created_at', `${since}T00:00:00Z`)
         .or(orParts.join(','))
       if (e3) throw e3
@@ -283,14 +283,19 @@ export function useWerbeDaten(segment: AdSegment, days: WerbeZeitraum, canSeeCrm
         if (SALE_PHASES.has(d.phase)) { a.sales += 1; a.revenue += d.commission_amount ?? 0 }
       }
     }
+    // Zuordnung Lead -> Anzeige: feste Meta-ID zuerst, dann die alten UTM-Wege
+    // (utm_content = Anzeigen-ID oder eindeutiger Name, utm_term = Anzeigen-ID
+    // bei Sofortformular-Leads). Namen allein sind oft mehrdeutig.
+    const katalogAd = (v: string | null | undefined) => (v && (byAd.has(v) || adToCampaign.has(v)) ? v : undefined)
     for (const l of leads) {
-      const adId = resolveAdId(l.utm_content)
+      const adId = katalogAd(l.meta_ad_id) ?? resolveAdId(l.utm_content) ?? katalogAd(l.utm_term)
       if (adId) {
         applyLead(get(byAd, adId), l)
         const asid = adToAdset.get(adId)
         if (asid) applyLead(get(byAdset, asid), l)
       }
       const cid = resolveCampaignId(l.utm_campaign, adId)
+        ?? (l.meta_campaign_id && byCampaign.has(l.meta_campaign_id) ? l.meta_campaign_id : undefined)
       if (cid) applyLead(get(byCampaign, cid), l)
     }
 
