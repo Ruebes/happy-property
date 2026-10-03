@@ -15,6 +15,11 @@
 // ACHTUNG: Jede Edge Function buendelt ihre eigene Kopie der _shared-Dateien.
 // Nach Aenderungen hier alle Importeure neu deployen.
 
+// Verbotene Versprechen (FORBIDDEN) und Metas Regel zu persönlichen Eigenschaften
+// (PERSONAL_ATTRIBUTE) stehen seit Oktober 2026 in metaLint.ts, damit Studio und
+// Kampagnen-Assistent dieselben Muster prüfen.
+import { FORBIDDEN, PERSONAL_ATTRIBUTE } from './metaLint.ts'
+
 /** Die benannten Bausteine einer Einzelbild-/Karussell-Anzeige. */
 export interface AdCopy {
   /** Erste Zeile. Muss allein verkaufen — Meta kappt nach ~125 Zeichen. */
@@ -52,20 +57,6 @@ export const COPY_PLAYBOOK = `HANDWERKSREGELN (gelten IMMER):
 8. Bild und erste Textzeile erzählen DIESELBE Sache. Wer das trennt, verliert die Aufmerksamkeit, die das Bild erzeugt hat.
 9. Das Versprechen im Text muss auf der Landingpage wieder auftauchen (Terminseite). Kein Bruch zwischen Klick und Ziel.
 10. NIEMALS Gedankenstrich (—) oder Bis-Strich (–), immer normaler Bindestrich.`
-
-/** Verbotene Versprechen — Meta-Ablehnung und rechtliches Risiko. */
-const FORBIDDEN = [
-  /\bgarantiert\w*\b/i, /\bgarantie\b/i, /\brisikolos\b/i, /\bohne\s+risiko\b/i,
-  /\bsichere\s+(rendite|gewinne?)\b/i, /\b100\s*%\s*sicher\b/i, /\btodsicher\b/i,
-  /\bkein\s+risiko\b/i, /\bverdopp(le|elt|eln)\s+dein\b/i,
-]
-
-/** Metas Regel zu persönlichen Eigenschaften: nicht unterstellen, wer jemand ist. */
-const PERSONAL_ATTRIBUTE = [
-  /\b(als|du\s+als)\s+(arzt|ärztin|zahnarzt|zahnärztin|apotheker\w*|unternehmer\w*|beamt\w+|rentner\w*|selbstständig\w*|anwalt|anwältin|steuerberater\w*)\b/i,
-  /\bleidest\s+du\b/i, /\bhast\s+du\s+(probleme|angst|sorgen)\b/i,
-  /\bdu\s+bist\s+(arzt|ärztin|unternehmer\w*|beamt\w+|rentner\w*)\b/i,
-]
 
 const DASH = /[–—]/
 
@@ -129,7 +120,7 @@ export function checkAd(ad: AdCheckInput): AdIssue[] {
     }
     if (bens.length && bens.filter(hasDigit).length < 2)
       add('hinweis', 'benefits', 'Kaum ein Vorteil nennt eine Zahl.', 'Mindestens zwei Vorteile mit Zahl, Prozentsatz oder Zeitraum belegen.')
-    if (!c.proof?.trim()) add('hinweis', 'proof', 'Kein Beweis im Text.', 'Einen Beleg ergänzen: Steuersatz, Rendite, Anzahl Kunden, Zeitraum.')
+    if (!c.proof?.trim()) add('hinweis', 'proof', 'Kein Beweis im Text.', 'Einen Beleg ergänzen: Steuersatz, Anzahl Kunden, Zeitraum oder ein konkretes Rechenbeispiel (keine Renditeprozente).')
     else if (!hasDigit(c.proof)) add('hinweis', 'proof', 'Der Beweis enthält keine Zahl.', 'Beweis mit einer konkreten Zahl belegen.')
     if (!c.cta?.trim()) add('blocker', 'cta', 'Keine Handlungsaufforderung.', 'Nächsten Schritt nennen, inklusive Aufwand ("30 Minuten, unverbindlich").')
     else if (len(c.cta) > 110) add('hinweis', 'cta', 'Die Handlungsaufforderung ist zu lang.', 'Auf einen Satz kürzen.')

@@ -741,3 +741,126 @@ export interface FinTransaction {
   reference:    string
   category:     string | null
 }
+
+// ── Werbemanager (/admin/crm/ads) ─────────────────────────────────────────────
+// Zeilen und Kennzahlen des Werbemanagers (vorher lokal in AdsManager.tsx).
+// Autopilot-, Qualitäts- und Vorrat-Typen stehen in werbungTypes.ts (ganz unten
+// re-exportiert), die Typen des Kampagnen-Assistenten in metaSpec.ts.
+
+/** Zeitraum-Umschalter im Kopf des Werbemanagers (Tage) */
+export type WerbeZeitraum = 7 | 30 | 90
+
+export interface AdCatalogRow {
+  ad_id: string
+  campaign_id: string
+  campaign_name: string | null
+  adset_id: string | null
+  adset_name: string | null
+  ad_name: string | null
+  status: string | null
+  thumbnail_url: string | null
+}
+
+/** Vorbereitete Anzeige (Studio, noch nicht freigegeben) */
+export interface AdPreparedRow extends AdCatalogRow {
+  prepared_at: string
+}
+
+export interface AdInsightRow {
+  day: string
+  ad_id: string
+  spend_eur: number
+  impressions: number
+  reach: number
+  link_clicks: number
+  outbound_clicks: number
+  landing_page_views: number
+  platform_leads: number
+  video_3s: number
+}
+
+export interface AdLead {
+  id: string
+  utm_source: string | null
+  utm_campaign: string | null
+  utm_content: string | null
+  quality_rating: 'gut' | 'schlecht' | null
+  created_at: string
+}
+export interface AdAppt { id: string; lead_id: string | null; start_time: string; outcome: 'completed' | 'no_show' | null }
+export interface AdDeal { id: string; lead_id: string; phase: string; commission_amount: number | null }
+
+/** Bekannte Aktionen in ad_actions. Die Spalte kann künftig mehr Werte haben:
+ *  unbekannte Werte immer neutral anzeigen, nie als „Aktiviert". */
+export type AdActionArt = 'pause' | 'activate' | 'budget_set' | 'ersatz_hochladen' | 'ersatz_aktivieren'
+export type AdActionStatus = 'bestätigt' | 'ausgeführt' | 'fehlgeschlagen' | 'abgelehnt'
+
+/** Aktions-Warteschlange: bestätigte Aktionen führt der Sync-Lauf bei Meta aus */
+export interface AdAction {
+  id: string
+  /** null bei Zeilen auf Anzeigengruppen-Ebene (Autopilot-Budget) */
+  ad_id: string | null
+  ad_name: string | null
+  campaign_name: string | null
+  /** AdActionArt, als string gelesen: unbekannte Werte neutral anzeigen */
+  action: string
+  reason: string | null
+  /** AdActionStatus; null = Vorschlag des Autopiloten (noch nicht freigegeben) */
+  status: string | null
+  created_at: string
+  executed_at: string | null
+  result: string | null
+}
+
+/** Empfehlung der Regel-Engine (rein deterministisch, transparent begründet).
+ *  Zwei Sorten: „Pausieren" (die Anzeige selbst ist das Problem) und „Hinweis"
+ *  (advice gesetzt: die Anzeige läuft, aber dahinter klemmt etwas). */
+export type AdRecommendationKind = 'no_leads' | 'high_cpl' | 'over_target' | 'fatigue' | 'lp_loss' | 'orphan_leads'
+export interface AdRecommendation {
+  ad: AdCatalogRow
+  kind: AdRecommendationKind
+  reason: string
+  spend: number
+  advice?: string
+}
+
+/** Leitplanken (ad_settings, von Sven festgelegt): Ziel-Leadpreis + Tageslimit */
+export interface AdSettings { target_cpl: number; max_account_daily_budget: number; system_campaign_daily_budget: number }
+export const AD_SETTINGS_DEFAULT: AdSettings = { target_cpl: 60, max_account_daily_budget: 180, system_campaign_daily_budget: 50 }
+
+/** Zusammengerollte Kennzahlen (eine Anzeige, Anzeigengruppe oder Kampagne) */
+export interface AdAgg {
+  spendEur: number
+  impressions: number
+  reach: number
+  clicks: number
+  outboundClicks: number
+  landingPageViews: number
+  platformLeads: number
+  video3s: number
+  crmLeads: number
+  termine: number
+  stattgefunden: number
+  noShows: number
+  gut: number
+  schlecht: number
+  sales: number
+  revenue: number
+}
+export const emptyAdAgg = (): AdAgg => ({ spendEur: 0, impressions: 0, reach: 0, clicks: 0, outboundClicks: 0, landingPageViews: 0, platformLeads: 0, video3s: 0, crmLeads: 0, termine: 0, stattgefunden: 0, noShows: 0, gut: 0, schlecht: 0, sales: 0, revenue: 0 })
+
+/** Meta-Rohobjekt (Kampagne, Anzeigengruppe, Anzeige) aus meta-ads-tools mode 'settings' */
+export interface MetaEntity { [k: string]: unknown }
+
+/** Vorschlag des Zielgruppen-Assistenten (meta-ads-tools mode 'audience_suggest') */
+export interface AudienceDraft {
+  age_min: number
+  age_max: number
+  genders: string
+  countries: string[]
+  interests: Array<{ id: string; name: string; audience?: number }>
+  jobs: Array<{ id: string; name: string }>
+  summary: string
+}
+
+export * from './werbungTypes'

@@ -16,6 +16,43 @@ export async function fnErrorMessage(error: unknown): Promise<string> {
   return String(error)
 }
 
+/** Fehler einer Edge Function mit allen Feldern aus dem Body. */
+export interface FnErrorDetail {
+  /** Klartext: body.error, sonst die Meldung des Fehlers */
+  message: string
+  /** Handlungshinweis für den Nutzer (body.hint) */
+  hint?: string
+  /** Maschinenlesbarer Fehlercode (body.code), z.B. 'quality_blocked' */
+  code?: string
+  /** Nutzdaten zum Fehler (body.data), z.B. eine Mängelliste */
+  data?: unknown
+  /** Rohdetails von Meta (body.meta), z.B. Code, Subcode, fbtrace_id */
+  meta?: unknown
+}
+
+/** Wie fnErrorMessage, liefert aber zusätzlich hint, code, data und meta aus
+ *  dem Body ({ error, hint, code, data, meta }). Liest eine Kopie der Antwort,
+ *  der Body bleibt für andere Leser erhalten. */
+export async function fnErrorDetail(error: unknown): Promise<FnErrorDetail> {
+  if (error instanceof FunctionsHttpError) {
+    const res = error.context as Response
+    const body = await res.clone().json().catch(() => null) as
+      { error?: unknown; hint?: unknown; code?: unknown; data?: unknown; meta?: unknown } | null
+    if (body && typeof body === 'object') {
+      const detail: FnErrorDetail = {
+        message: typeof body.error === 'string' && body.error ? body.error : error.message,
+      }
+      if (typeof body.hint === 'string' && body.hint) detail.hint = body.hint
+      if ((typeof body.code === 'string' && body.code) || typeof body.code === 'number') detail.code = String(body.code)
+      if (body.data !== undefined) detail.data = body.data
+      if (body.meta !== undefined) detail.meta = body.meta
+      return detail
+    }
+  }
+  if (error instanceof Error) return { message: error.message }
+  return { message: String(error) }
+}
+
 /** Dauerhafte SMTP-Ablehnung (5xx): Adresse existiert nicht / Domain hat kein MX.
  *  Ein Wiederholen bringt hier nichts — die Adresse muss korrigiert werden. */
 export function isPermanentMailRejection(msg: string): boolean {
