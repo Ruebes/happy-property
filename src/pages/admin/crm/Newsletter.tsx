@@ -742,23 +742,28 @@ export default function Newsletter() {
                     onClick={() => { if (c.status !== 'draft') void toggleArchive(c.id) }}>
                     <span className="font-medium text-gray-800">{c.title}</span>
                     {(() => {
-                      // Der Status der Kampagne steht direkt nach dem Start auf 'sending',
-                      // auch wenn noch keine einzige Mail raus ist. Das sah aus wie
-                      // "versendet", obwohl der Versand erst morgen laeuft (Sven 2.10.26).
-                      // Deshalb entscheidet der echte Fortschritt ueber das Etikett.
+                      // Genau ein Statuswort pro Zeile (Sven 3.10.26): 'geplant' solange noch
+                      // keine Mail raus ist, sonst 'versendet'. Bei 'geplant' steht das
+                      // Startdatum direkt hinter dem Wort, kein zweiter "geplant ab"-Text.
+                      // Der Status der Kampagne selbst steht schon beim Start auf 'sending',
+                      // darum entscheidet der echte Fortschritt ueber das Etikett.
                       const pr = progress[c.id]
                       const geplant = !!pr && pr.sent === 0 && pr.pending > 0
-                      const laeuft = !!pr && pr.sent > 0 && pr.pending > 0
+                      const start = geplant && pr.next_at
+                        ? new Date(pr.next_at).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+                        : ''
                       const label = c.status === 'draft'
                         ? t('crm.newsletter.stDraft', 'Entwurf')
                         : geplant ? t('crm.newsletter.stPlanned', 'geplant')
-                        : laeuft ? t('crm.newsletter.stRunning', 'läuft')
                         : t('crm.newsletter.stSent', 'versendet')
                       const farbe = c.status === 'draft' ? 'bg-gray-100 text-gray-600'
                         : geplant ? 'bg-blue-50 text-blue-700'
-                        : laeuft ? 'bg-amber-50 text-amber-700'
                         : 'bg-orange-50 text-orange-700'
-                      return <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${farbe}`}>{label}</span>
+                      return (
+                        <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${farbe}`}>
+                          {label}{start && <> · {start}</>}
+                        </span>
+                      )
                     })()}
                     <span className="text-xs text-gray-400">
                       {new Date(c.created_at).toLocaleDateString('de-DE')}
@@ -766,10 +771,10 @@ export default function Newsletter() {
                         const pr = progress[c.id]
                         if (!pr) return <> · {c.recipients_done}/{c.recipients_total} {t('crm.newsletter.mails', 'Mails')}</>
                         const total = pr.sent + pr.pending
-                        if (pr.sent === 0 && pr.next_at && new Date(pr.next_at).getTime() > Date.now() + 10 * 60000) {
-                          return <> · 🗓 {t('crm.newsletter.plannedFrom', 'geplant ab')} {new Date(pr.next_at).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} · {total} {t('crm.newsletter.mails', 'Mails')}</>
+                        if (pr.sent === 0 && pr.pending > 0) {
+                          return <> · {total} {t('crm.newsletter.mails', 'Mails')}</>
                         }
-                        return <> · <strong className="text-gray-600">{pr.sent}/{total}</strong> {t('crm.newsletter.sentLabel', 'gesendet')}{pr.pending > 0 && <> · {t('crm.newsletter.running', 'läuft')}</>}</>
+                        return <> · <strong className="text-gray-600">{pr.sent}/{total}</strong> {t('crm.newsletter.sentLabel', 'gesendet')}</>
                       })()}
                     </span>
                     <span className="ml-auto flex items-center gap-2">
