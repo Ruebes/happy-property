@@ -202,14 +202,15 @@ const hecKey = (cats: readonly string[]): string =>
   cats.filter(x => (HEC_CATEGORIES as readonly string[]).indexOf(x) >= 0).sort().join(',')
 
 async function findProxyCampaign(ctx: Ctx, c: CampaignDraft): Promise<string | null> {
-  interface Cand { id: string; name: string; cats: string[]; budget: boolean; status: string }
+  interface Cand { id: string; name: string; cats: string[]; budget: boolean; status: string; sharing: boolean }
   const toCand = (r: Raw, idKey: string, dKey: string, lKey: string): Cand => ({
     id: str(r[idKey]), name: str(r.name), cats: arr<unknown>(r.special_ad_categories).map(str),
     budget: (num(r[dKey]) ?? 0) > 0 || (num(r[lKey]) ?? 0) > 0, status: str(r.effective_status) || str(r.status),
+    sharing: r.is_adset_budget_sharing_enabled === true,
   })
   let cands: Cand[] = []
   const { data, error } = await ctx.sb.from('meta_campaigns')
-    .select('campaign_id, account_id, name, objective, special_ad_categories, daily_budget_cents, lifetime_budget_cents, effective_status, status')
+    .select('campaign_id, account_id, name, objective, special_ad_categories, daily_budget_cents, lifetime_budget_cents, effective_status, status, is_adset_budget_sharing_enabled')
     .eq('objective', c.objective).limit(100)
   if (!error) {
     cands = arr<Raw>(data).filter(r => !str(r.account_id) || digits(r.account_id) === ctx.env.account)
@@ -218,7 +219,7 @@ async function findProxyCampaign(ctx: Ctx, c: CampaignDraft): Promise<string | n
   if (!cands.length) {
     try {
       const list = await graphAll<Raw>(`act_${ctx.env.account}/campaigns`, {
-        fields: 'id,name,objective,special_ad_categories,daily_budget,lifetime_budget,effective_status', limit: 100,
+        fields: 'id,name,objective,special_ad_categories,daily_budget,lifetime_budget,effective_status,is_adset_budget_sharing_enabled', limit: 100,
       }, { maxPages: 2 })
       cands = list.filter(r => str(r.objective) === c.objective).map(r => toCand(r, 'id', 'daily_budget', 'lifetime_budget'))
     } catch (e) { console.warn('[meta-builder] Platzhalter-Kampagne:', errText(e).slice(0, 200)) }
@@ -227,7 +228,10 @@ async function findProxyCampaign(ctx: Ctx, c: CampaignDraft): Promise<string | n
   const cbo = c.budget_level === 'campaign'
   const score = (x: Cand) => (/pr(ü|ue)f/i.test(x.name) ? 0 : 2) + (x.status === 'ACTIVE' ? 1 : 0)
   const ok = cands
-    .filter(x => x.id && DEAD_STATUS.indexOf(x.status) < 0 && hecKey(x.cats) === want && x.budget === cbo)
+    // Budget-Teilung muss passen: in einer Kampagne mit Teilung verlangt Meta
+    // gleiche Pixel/Gebote aller Gruppen (Fehler 4834009), das verfälscht die Prüfung.
+    .filter(x => x.id && DEAD_STATUS.indexOf(x.status) < 0 && hecKey(x.cats) === want && x.budget === cbo
+      && (cbo || x.sharing === (c.is_adset_budget_sharing_enabled === true)))
     .sort((a, b) => score(a) - score(b))
   return ok[0]?.id ?? null
 }
