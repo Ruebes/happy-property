@@ -24,7 +24,7 @@
 //   POST {action:'rerender', month}  rendert eine Ausgabe mit gespeichertem Inhalt
 //                            neu und lädt sie hoch (z.B. nach Textänderung der
 //                            festen Seiten), ohne neue Recherche.
-//   POST {action:'to_owners', month, notify?, test?}  legt eine live Ausgabe im
+//   POST {action:'to_owners', month, notify?, test?, note?}  legt eine live Ausgabe im
 //                            Downloadbereich der Eigentümer ab (Ordner
 //                            „Monatsberichte"). notify: Lotte schreibt allen
 //                            Eigentümern (test: nur an Sven). Passiert nach jeder
@@ -1062,7 +1062,7 @@ async function buildEdition(sb: SupabaseClient, month: string, signal: AbortSign
 // Neue Ausgabe → owner_documents (Ordner monatsbericht, für alle Eigentümer) und
 // Lotte-Nachricht über owner-content (compose + notify). report_month ist unique,
 // jede Ausgabe landet also höchstens einmal im Portal und wird nur einmal gemeldet.
-async function toOwners(sb: SupabaseClient, month: string, opts: { notify: boolean; test?: boolean }): Promise<Record<string, unknown>> {
+async function toOwners(sb: SupabaseClient, month: string, opts: { notify: boolean; test?: boolean; note?: string }): Promise<Record<string, unknown>> {
   const { data: rep } = await sb.from('zypern_reports').select('status, pdf_url, content').eq('month', month).maybeSingle()
   const r = rep as { status?: string; pdf_url?: string | null; content?: ReportContent | null } | null
   if (r?.status !== 'live' || !r.pdf_url) return { ok: false, error: 'Ausgabe ist nicht live.' }
@@ -1099,6 +1099,7 @@ async function toOwners(sb: SupabaseClient, month: string, opts: { notify: boole
     c?.subtitle ? `Thema: ${c.subtitle}` : '',
     ...(c?.news ?? []).slice(0, 4).map(n => `Meldung: ${n.heading}`),
     'Kurz und verständlich zusammengefasst, was sich auf Zypern gerade tut, mit Quellen',
+    opts.note?.trim() ? `Außerdem wichtig, unbedingt erwähnen: ${opts.note.trim()}` : '',
   ].filter(Boolean).join('\n')
   let message_de: string | undefined, message_en: string | undefined
   try {
@@ -1297,7 +1298,7 @@ Deno.serve(async (req) => {
     }
     if (action === 'to_owners') {
       if (!monthArg) return json({ ok: false, error: 'month (YYYY-MM) nötig' }, 400)
-      return json(await toOwners(sb, monthArg, { notify: body.notify === true, test: body.test === true }))
+      return json(await toOwners(sb, monthArg, { notify: body.notify === true, test: body.test === true, note: typeof body.note === 'string' ? body.note.slice(0, 500) : undefined }))
     }
     return json({ ok: false, error: `Unbekannte Aktion: ${action}` }, 400)
   } catch (e) {
