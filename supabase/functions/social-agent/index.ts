@@ -490,9 +490,20 @@ const FB_HAS_TAG = /(^|[^\p{L}\p{N}_&/])#[\p{L}_]/u
 function isCommentBaitLine(line: string): boolean {
   return FB_BAIT_RES.some(re => re.test(line))
 }
+// Facebook-Seiten haben keine Bio mit Link. Sätze wie „Der Renditerechner ist in
+// unserer Bio verlinkt" oder „Link in der Bio" laufen dort ins Leere und fallen
+// für Facebook weg (Sven 3.10.2026). Instagram behält sie.
+const FB_BIO_RE = /(?<![\p{L}\p{N}_])[Bb]io(?![\p{L}\p{N}_-])/u
+function dropBioSentences(src: string): string {
+  return src.split(/\r?\n/).flatMap(line => {
+    if (!FB_BIO_RE.test(line)) return [line]
+    const kept = line.split(/(?<=[.!?…])\s+/).filter(s => !FB_BIO_RE.test(s)).join(' ').trim()
+    return kept && !/^[\s·•|,.:\-\p{Extended_Pictographic}\uFE0F\u200D]*$/u.test(kept) ? [kept] : []
+  }).join('\n')
+}
 function fbCaption(text: string | null | undefined): string {
-  const src = String(text ?? '')
-  if (!src.trim()) return src
+  if (!String(text ?? '').trim()) return String(text ?? '')
+  const src = dropBioSentences(String(text))
   // 1) Köder-Zeilen ersetzen (der Hinweis steht nur einmal, weitere Köder-Zeilen entfallen)
   let hinted = src.includes(FB_BAIT_LINE)
   const lines: string[] = []
