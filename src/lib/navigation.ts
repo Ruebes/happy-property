@@ -122,6 +122,8 @@ export const NAV_ENTRIES: NavEntry[] = [
     keywords: ['verträge', 'unterlagen', 'pdf'] },
   { id: 'ownerContent',     path: '/admin/crm/owner-content', labelKey: 'shell.nav.ownerContent',   icon: 'ownerContent', group: 'eigentuemer', order: 5, roles: AV,  module: 'm9',
     keywords: ['upload', 'baustellenfotos', 'downloads', 'inhalte'] },
+  { id: 'portalPreview',    path: '/admin/crm/vorschau',    labelKey: 'shell.nav.portalPreview',    icon: 'portal',       group: 'eigentuemer', order: 7, roles: [A], module: 'm9',
+    keywords: ['vorschau', 'ansicht als', 'dummy', 'kundenportal', 'eigentümerportal', 'feriengast', 'property service'] },
   { id: 'verwaltungen',     path: '/admin/verwaltungen',    labelKey: 'shell.nav.verwaltungen',     icon: 'companies',    group: 'eigentuemer', order: 6, roles: [A], module: 'rental',
     keywords: ['hausverwaltung', 'firmen'] },
 

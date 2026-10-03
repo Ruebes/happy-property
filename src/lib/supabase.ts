@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { isPreviewActive, previewAllows } from './preview'
 
 const supabaseUrl     = import.meta.env.VITE_SUPABASE_URL     as string
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string
@@ -34,6 +35,17 @@ function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit): Promise
   const timeout = url.includes('/auth/v1/') ? AUTH_TIMEOUT_MS
     : LONG_FUNCTION_URL.test(url) ? LONG_FUNCTION_TIMEOUT_MS
     : DATA_TIMEOUT_MS
+
+  // Portal-Vorschau des Admins: nur lesen, nie schreiben (siehe lib/preview.ts)
+  if (isPreviewActive()) {
+    const method = init?.method ?? (input instanceof Request ? input.method : 'GET')
+    if (!previewAllows(url, method)) {
+      return Promise.resolve(new Response(
+        JSON.stringify({ message: 'Vorschau: nur ansehen, hier wird nichts gespeichert.', error: 'Vorschau: nur ansehen, hier wird nichts gespeichert.', code: 'preview_readonly' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } },
+      ))
+    }
+  }
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeout)

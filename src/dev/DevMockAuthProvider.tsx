@@ -48,6 +48,10 @@ export default function DevMockAuthProvider({ children }: Props) {
       resetPasswordEmail: async () => ({ error: NOT_AVAILABLE }),
       clearPasswordSetup: () => {},
       dashboardPath: landingFor(profile),
+      realProfile: profile,
+      preview: null,
+      startPreview: () => {},
+      endPreview: () => {},
     }
   }, [])
 

@@ -39,7 +39,7 @@ const iconFor = (mime: string) => {
 
 export default function EigentuemerDrive() {
   const { t, i18n } = useTranslation()
-  const { profile } = useAuth()
+  const { profile, preview } = useAuth()
   const [files, setFiles] = useState<DriveFile[]>([])
   const [folder, setFolder] = useState<{ id: string; url: string } | null>(null)
   const [reason, setReason] = useState<string | null>(null)
@@ -55,6 +55,8 @@ export default function EigentuemerDrive() {
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 8000) }
 
   const load = useCallback(async () => {
+    // Portal-Vorschau: Drive-Abfragen laufen über eine Function, die ist dort gesperrt
+    if (preview) { setLoading(false); setLoadError('Vorschau: Die Dateien kommen live aus dem Google Drive des Kunden und werden in der Vorschau nicht geladen.'); return }
     setLoading(true); setLoadError('')
     // Sicherheits-Timeout wie im restlichen Portal: Spinner nie ewig.
     const safety = setTimeout(() => { setLoading(false); setLoadError(t('eigentuemer.drive.loadError', 'Konnte nicht geladen werden. Bitte Seite neu laden.')) }, 25_000)
@@ -70,7 +72,7 @@ export default function EigentuemerDrive() {
       console.error('[Eigentuemer/Drive] load:', e)
       setLoadError(t('eigentuemer.drive.loadError', 'Konnte nicht geladen werden. Bitte Seite neu laden.'))
     } finally { clearTimeout(safety); setLoading(false) }
-  }, [t])
+  }, [t, preview])
   useEffect(() => { if (profile?.id) void load() }, [profile?.id, load])
 
   const upload = async (list: FileList | File[]) => {

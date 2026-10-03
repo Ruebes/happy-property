@@ -30,7 +30,7 @@ const isVideoUrl = (d: DownloadDoc) =>
 
 export default function EigentuemerDownloads() {
   const { t, i18n } = useTranslation()
-  const { profile } = useAuth()
+  const { profile, preview } = useAuth()
   const [docs, setDocs] = useState<DownloadDoc[]>([])
   const [propLabels, setPropLabels] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -56,7 +56,17 @@ export default function EigentuemerDownloads() {
           .select('id, title, description, kind, file_url, property_id, category, created_at')
           .order('created_at', { ascending: false })
         if (error) throw error
-        const rows = (data as DownloadDoc[]) ?? []
+        let rows = (data as DownloadDoc[]) ?? []
+        // Portal-Vorschau des Admins: RLS zeigt ihm alles, deshalb hier auf das
+        // beschränken, was dieser Eigentümer sieht (allgemein + eigene Wohnungen).
+        if (preview) {
+          const [{ data: own }, { data: co }] = await Promise.all([
+            supabase.from('properties').select('id').eq('owner_id', profile.id),
+            supabase.from('property_co_owners').select('property_id').eq('profile_id', profile.id),
+          ])
+          const mineIds = new Set([...((own ?? []) as Array<{ id: string }>).map(x => x.id), ...((co ?? []) as Array<{ property_id: string }>).map(x => x.property_id)])
+          rows = rows.filter(d => !d.property_id || mineIds.has(d.property_id))
+        }
         if (cancelled) return
         setDocs(rows)
         const propIds = [...new Set(rows.map(d => d.property_id).filter(Boolean))] as string[]
@@ -79,7 +89,7 @@ export default function EigentuemerDownloads() {
       }
     })()
     return () => { cancelled = true; clearTimeout(safety) }
-  }, [profile?.id])
+  }, [profile?.id, preview])
 
   const isNew = (d: DownloadDoc) => Date.now() - Date.parse(d.created_at) < NEW_MS
   const folders = OWNER_DOC_FOLDERS

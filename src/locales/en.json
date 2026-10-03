@@ -6678,7 +6678,8 @@
       "myPropertyDetail": "Property",
       "myPropertiesList": "My properties",
       "whatsappTemplates": "WhatsApp templates",
-      "automationRules": "Automation rules"
+      "automationRules": "Automation rules",
+      "portalPreview": "Portal preview"
     },
     "navShort": {
       "myProperties": "Properties",

@@ -10,6 +10,7 @@ import type { User, Session } from '@supabase/supabase-js'
 import { supabase } from './supabase'
 import i18n from './i18n'
 import { landingFor, type Profile, type UserRole } from './permissions'
+import { getPreview, setPreview, type PortalPreview } from './preview'
 
 // ── Profil-Cache ──────────────────────────────────────────────────────────────
 // Speichert das zuletzt geladene Profil im localStorage, damit beim Reload
@@ -57,6 +58,11 @@ export interface AuthContextValue extends AuthState {
   resetPasswordEmail: (email: string) => Promise<{ error: string | null }>
   clearPasswordSetup: () => void
   dashboardPath:      string
+  // Portal-Vorschau: `profile` ist dann das angesehene Profil, `realProfile` der Admin.
+  realProfile:        Profile | null
+  preview:            PortalPreview | null
+  startPreview:       (p: PortalPreview) => void
+  endPreview:         () => void
 }
 
 // Passwort-Setzen-Kontext: sind wir auf /set-password oder kam der Nutzer über
@@ -286,15 +292,47 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setState(s => ({ ...s, needsPasswordSetup: false }))
   }
 
+  // ── Portal-Vorschau ─────────────────────────────────────────
+  const [preview, setPreviewState] = useState<PortalPreview | null>(() => getPreview())
+  useEffect(() => {
+    const sync = () => setPreviewState(getPreview())
+    window.addEventListener('hp-preview-change', sync)
+    return () => window.removeEventListener('hp-preview-change', sync)
+  }, [])
+  // Nur ein echter Admin darf ein fremdes Profil ansehen.
+  const activePreview = preview && state.profile?.role === 'admin' ? preview : null
+  const profile = activePreview ? activePreview.profile : state.profile
+
+  function startPreview(p: PortalPreview) {
+    if (state.profile?.role !== 'admin') return
+    setPreview(p)
+    if ((p.profile.language === 'en' || p.profile.language === 'de') && i18n.language !== p.profile.language) void i18n.changeLanguage(p.profile.language)
+  }
+  function endPreview() {
+    setPreview(null)
+    const lang = state.profile?.language
+    if ((lang === 'en' || lang === 'de') && i18n.language !== lang) void i18n.changeLanguage(lang)
+  }
+
+  async function signOutAll() {
+    setPreview(null)
+    await signOut()
+  }
+
   return (
     <AuthContext.Provider value={{
       ...state,
+      profile,
       signIn,
-      signOut,
+      signOut: signOutAll,
       updatePassword,
       resetPasswordEmail,
       clearPasswordSetup,
-      dashboardPath: landingFor(state.profile),
+      dashboardPath: landingFor(profile),
+      realProfile: state.profile,
+      preview: activePreview,
+      startPreview,
+      endPreview,
     }}>
       {children}
     </AuthContext.Provider>

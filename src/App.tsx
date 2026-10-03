@@ -17,6 +17,7 @@ function UnknownRoute() {
   return <Navigate to="/login" replace />
 }
 import { AuthProvider } from './lib/auth'
+import PreviewBanner from './components/PreviewBanner'
 import ProtectedRoute from './components/ProtectedRoute'
 import ShellGate from './components/ShellGate'
 
@@ -87,6 +88,7 @@ const CrmBookingLinks       = lazy(() => import('./pages/admin/crm/settings/Book
 const CrmNewsletterLists   = lazy(() => import('./pages/admin/crm/settings/NewsletterLists'))
 const CrmConnectors        = lazy(() => import('./pages/admin/crm/settings/Connectors'))
 const CrmOwnerContent      = lazy(() => import('./pages/admin/crm/OwnerContent'))
+const CrmPortalPreview     = lazy(() => import('./pages/admin/crm/PortalPreview'))
 const CrmFinance           = lazy(() => import('./pages/admin/crm/Finance'))
 const CrmInvoices           = lazy(() => import('./pages/admin/crm/Invoices'))
 const CrmInvoiceSettings    = lazy(() => import('./pages/admin/crm/settings/InvoiceSettings'))
@@ -175,6 +177,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthRoot>
+        <PreviewBanner />
         <Suspense fallback={<PageLoader />}>
           <Routes>
 
@@ -230,6 +233,7 @@ export default function App() {
 
             {/* ── Admin only ── */}
             <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
+              <Route path="/admin/crm/vorschau"            element={<CrmPortalPreview />} />
               <Route path="/admin/dashboard"             element={<AdminDashboard />} />
               <Route path="/admin/users"                 element={<AdminUsers />} />
               <Route path="/admin/verwaltungen"          element={<AdminVerwaltungen />} />
