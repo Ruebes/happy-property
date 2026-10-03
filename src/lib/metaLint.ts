@@ -34,7 +34,7 @@ export const PERSONAL_ATTRIBUTE: readonly RegExp[] = [
 export const DASH_CHARS = /[\u2012-\u2015]/
 
 /** Pflichtsatz, sobald eine Anzeige „5 % AfA" nennt (Neubau-AfA gilt auch in Deutschland). */
-export const AFA_PFLICHTSATZ = 'Neubauten in Deutschland bekommen ebenfalls 5 % AfA, sind dort aber kaum bezahlbar.'
+export const AFA_PFLICHTSATZ = 'Das gilt auch für Neubau in Deutschland, der Unterschied ist der Preis.'
 
 /** Eigene Ziel-Domains (Links woanders hin = Hinweis). */
 export const LINT_ALLOWED_HOSTS: readonly string[] = [
@@ -162,7 +162,7 @@ const DE_BASHING: readonly RegExp[] = [
 
 const AFA_MENTION = /\b(?:afa|abschreibung\w*)\b/i
 const FIVE_PERCENT = /(?:^|[^\d,.])5\s?(?:%|prozent\b)/i
-const AFA_SATZ = /neubau\w*[^.!?\n]{0,80}deutschland[^.!?\n]{0,80}(?:ebenfalls|auch)[^.!?\n]{0,40}5\s?(?:%|prozent)|(?:auch|ebenfalls)[^.!?\n]{0,40}deutschland[^.!?\n]{0,80}5\s?(?:%|prozent)/i
+const AFA_SATZ = /gilt\s+auch\s+f(?:ü|ue)r\s+neubau\w*\s+in\s+deutschland|unterschied\s+ist\s+der\s+preis|neubau\w*[^.!?\n]{0,80}deutschland[^.!?\n]{0,80}(?:ebenfalls|auch)[^.!?\n]{0,40}5\s?(?:%|prozent)|(?:auch|ebenfalls)[^.!?\n]{0,40}deutschland[^.!?\n]{0,80}5\s?(?:%|prozent)/i
 
 // ── Helfer ──────────────────────────────────────────────────────────────────
 
