@@ -196,9 +196,29 @@ Deno.serve(async (req) => {
       for (const d of (d2 ?? []) as Array<{ lead_id: string | null }>) if (d.lead_id) leadIds.add(d.lead_id)
     }
     // (c) Interessenten: Deck zum Projekt verschickt — bei buyers_only weglassen.
+    // Wer schon in einem ANDEREN Projekt gekauft hat (laufender Deal auf eine
+    // fremde Wohnung oder Eigentümer im Portal), ist kein Interessent mehr:
+    // Vorfall 5.10.2026: Käufer eines anderen Projekts bekam ein Update,
+    // nur weil er früher ein Deck zu diesem Projekt bekommen hatte.
     if (!buyersOnly) {
       const { data: decks } = await sb.from('sales_decks').select('lead_id').eq('project_id', projectId)
-      for (const d of (decks ?? []) as Array<{ lead_id: string | null }>) if (d.lead_id) leadIds.add(d.lead_id)
+      const deckOnly = [...new Set(((decks ?? []) as Array<{ lead_id: string | null }>).map(d => d.lead_id).filter((x): x is string => !!x && !leadIds.has(x)))]
+      const buyerElsewhere = new Set<string>()
+      if (deckOnly.length) {
+        const { data: od } = await sb.from('deals').select('lead_id, unit_id').in('lead_id', deckOnly).neq('phase', 'archiviert').not('unit_id', 'is', null)
+        for (const d of (od ?? []) as Array<{ lead_id: string; unit_id: string }>) if (!unitIds.includes(d.unit_id)) buyerElsewhere.add(d.lead_id)
+        const { data: dl } = await sb.from('leads').select('id, email').in('id', deckOnly).not('email', 'is', null)
+        for (const l of (dl ?? []) as Array<{ id: string; email: string }>) {
+          if (buyerElsewhere.has(l.id) || !l.email.trim()) continue
+          const { data: pf } = await sb.from('profiles').select('id').ilike('email', l.email.trim()).limit(1)
+          const pid = (pf?.[0] as { id?: string } | undefined)?.id
+          if (!pid) continue
+          const { count: own } = await sb.from('properties').select('id', { count: 'exact', head: true }).eq('owner_id', pid)
+          const { count: co } = await sb.from('property_co_owners').select('property_id', { count: 'exact', head: true }).eq('profile_id', pid)
+          if ((own ?? 0) + (co ?? 0) > 0) buyerElsewhere.add(l.id)
+        }
+      }
+      for (const id of deckOnly) if (!buyerElsewhere.has(id)) leadIds.add(id)
     }
 
     let leadRows: Array<{ id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; whatsapp: string | null; language: string | null; newsletter_optout_at: string | null }> = []
