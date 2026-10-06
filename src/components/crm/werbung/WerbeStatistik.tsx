@@ -200,7 +200,7 @@ export default function WerbeStatistik() {
   // ── Empfehlungen (Regel-Engine über den geladenen Zeitraum) ───────────────
   // Zielseiten-Hinweis erst nach der Gegenprobe mit den eigenen Besucherzahlen
   const lpKandidaten = useMemo(() => lpVerlustKandidaten(catalog, byAd), [catalog, byAd])
-  const eigeneAnkuenfte = useEigeneAnkuenfte(lpKandidaten, insights, istAdmin)
+  const eigeneAnkuenfte = useEigeneAnkuenfte(lpKandidaten, insights, profile ? istAdmin : null)
   const recommendations = useMemo(
     () => berechneEmpfehlungen({ catalog, byAd, vorgemerkt: pendingByAd, targetCpl: settings.target_cpl, crmVisible, eigeneAnkuenfte, t, fmt }),
     [catalog, byAd, pendingByAd, settings, t, fmt, crmVisible, eigeneAnkuenfte],

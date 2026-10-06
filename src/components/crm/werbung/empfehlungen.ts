@@ -103,19 +103,22 @@ export function berechneEmpfehlungen({ catalog, byAd, vorgemerkt, targetCpl, crm
     // „bricht beim Laden ab". Gegenprobe mit dem eigenen, cookie-losen Tracker
     // (wa-track, utm_content = Anzeigen-ID): Kommen dort genug an, lädt die
     // Seite, und es gibt keinen Hinweis. Solange die Gegenprobe läuft, auch nicht.
+    // Bestätigt gilt ein Verlust nur, wenn das ganze Fenster nach dem UTM-Fix
+    // liegt: vorher zählt der Tracker zu wenig (Entlastung geht immer, die
+    // Zahl kann nur zu klein sein).
     if (eigeneAnkuenfte !== 'laedt' && metaLpVerlust(a)) {
       const klicks = a.outboundClicks
-      const eigen = eigeneAnkuenfte === 'ohne' ? 0 : (eigeneAnkuenfte.get(c.ad_id) ?? 0)
+      const e = eigeneAnkuenfte === 'ohne' ? undefined : eigeneAnkuenfte.get(c.ad_id)
+      const eigen = e?.anzahl ?? 0
       if (eigen / klicks < LP_MIN_ANKUNFT) {
-        const arrived = Math.max(eigen, a.landingPageViews) / klicks
         hints.push({
           ad: c, kind: 'lp_loss', spend: a.spendEur,
-          reason: eigen > 0
+          reason: eigen > 0 && e?.vollstaendig
             ? t('crm.ads.recReasonLpLoss', 'Nur {{arrived}} der Klicks erreichen die Seite ({{eigen}} laut eigenem Tracker, {{lpv}} laut Meta, von {{clicks}}) - der Rest bricht beim Laden ab', {
-                arrived: pct(arrived), eigen: int(eigen), lpv: int(a.landingPageViews), clicks: int(klicks),
+                arrived: pct(Math.max(eigen, a.landingPageViews) / klicks), eigen: int(eigen), lpv: int(a.landingPageViews), clicks: int(klicks),
               })
             : t('crm.ads.recReasonLpLossUngeprueft', 'Meta zählt nur {{arrived}} der Klicks auf der Seite ({{lpv}} von {{clicks}}) - ohne eigene Besucherzahlen nicht bestätigt', {
-                arrived: pct(arrived), lpv: int(a.landingPageViews), clicks: int(klicks),
+                arrived: pct(a.landingPageViews / klicks), lpv: int(a.landingPageViews), clicks: int(klicks),
               }),
           advice: t('crm.ads.recAdviceLpLoss', 'Zielseite prüfen, nicht die Anzeige'),
         })

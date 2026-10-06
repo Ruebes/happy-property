@@ -279,14 +279,17 @@ async function handleBatch(session: SessionInfo, events: TrackEvent[], ua: strin
 
   // Session upsert: Zaehler inkrementell, Dauer/Scroll als Maximum.
   const { data: existing } = await supabase.from('web_sessions')
-    .select('id, pageviews, clicks, duration_s, max_scroll_pct, lead_id').eq('id', session.id).maybeSingle()
-  const ex = existing as { pageviews: number; clicks: number; duration_s: number; max_scroll_pct: number; lead_id: string | null } | null
+    .select('id, pageviews, clicks, duration_s, max_scroll_pct, lead_id, entry_path').eq('id', session.id).maybeSingle()
+  const ex = existing as { pageviews: number; clicks: number; duration_s: number; max_scroll_pct: number; lead_id: string | null; entry_path: string | null } | null
 
   // Einstieg (Seite, Referrer, UTM) nur beim ersten Batch der Session setzen.
   // Der Tracker schickt bei jedem Seitenaufruf die AKTUELLE Seite mit; ohne
   // diese Sperre überschrieb die zweite Seite Einstiegsseite und UTM (meist mit
   // leer), und Besucher aus einer Anzeige verloren ihre Anzeigen-Zuordnung.
-  const einstieg = ex ? {} : {
+  // „Erster Batch" heißt: noch keine entry_path. Die Zeile allein reicht nicht,
+  // handleReplay legt oft vorher einen Stub ohne Einstieg an. Der Tracker
+  // schickt immer location.pathname, nach dem echten ersten Batch ist sie gesetzt.
+  const einstieg = ex?.entry_path ? {} : {
     entry_path: (session.entry_path ?? '').slice(0, 500) || null,
     referrer: (session.referrer ?? '')?.slice(0, 500) || null,
     utm: session.utm && Object.keys(session.utm).length ? session.utm : null,

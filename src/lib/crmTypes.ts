@@ -831,8 +831,14 @@ export interface AdRecommendation {
 
 /** Gegenprobe Zielseite: eigene Besucher je Anzeige (web_sessions über wa-track,
  *  utm_content = Anzeigen-ID, ohne Bots). 'laedt' = Abfrage läuft, 'ohne' = nicht
- *  prüfbar (nur Admins lesen web_sessions, oder Fehler), sonst Anzahl je Anzeigen-ID. */
-export type AdEigeneAnkuenfte = 'laedt' | 'ohne' | ReadonlyMap<string, number>
+ *  prüfbar (nur Admins lesen web_sessions, oder Fehler), sonst je Anzeigen-ID die
+ *  Anzahl und ob das ganze Zeitfenster nach dem wa-track-UTM-Fix liegt. */
+export interface AdEigeneAnkunft {
+  anzahl: number
+  /** false: Fenster beginnt vor dem Fix, die Zahl ist eher zu klein */
+  vollstaendig: boolean
+}
+export type AdEigeneAnkuenfte = 'laedt' | 'ohne' | ReadonlyMap<string, AdEigeneAnkunft>
 
 /** Leitplanken (ad_settings, von Sven festgelegt): Ziel-Leadpreis + Tageslimit */
 export interface AdSettings { target_cpl: number; max_account_daily_budget: number; system_campaign_daily_budget: number }

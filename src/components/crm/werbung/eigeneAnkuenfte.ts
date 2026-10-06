@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../../../lib/supabase'
-import type { AdEigeneAnkuenfte, AdInsightRow } from '../../../lib/crmTypes'
+import type { AdEigeneAnkuenfte, AdEigeneAnkunft, AdInsightRow } from '../../../lib/crmTypes'
 
 // ── Gegenprobe Zielseite: eigene Besucher je Anzeige ─────────────────────────
 // Meta zählt einen Zielseitenaufruf nur, wenn auf der Seite das Meta-Pixel
@@ -14,7 +14,14 @@ import type { AdEigeneAnkuenfte, AdInsightRow } from '../../../lib/crmTypes'
 // Nur für die Kandidaten aus lpVerlustKandidaten, je Anzeige eine Zählabfrage
 // ohne Zeilen (head), nacheinander (Micro-Instanz). web_sessions lesen nur
 // Admins (RLS F10-2). Für alle anderen gibt es 'ohne', weil RLS sonst still 0
-// liefert und die 0 wie „niemand angekommen" aussähe.
+// liefert und die 0 wie „niemand angekommen" aussähe. Solange das Profil
+// noch nicht da ist (darfLesen null), bleibt es bei 'laedt'.
+
+// Ab diesem Tag (UTC) behält wa-track die UTM einer Session, auch wenn der
+// Besucher weitere Seiten öffnet. Davor gingen sie ab dem zweiten Seitenaufruf
+// verloren, die Zahl ist für ältere Fenster also zu klein. Muss auf den Tag NACH
+// dem Redeploy von wa-track zeigen.
+export const WA_UTM_FIX_SEIT = '2026-10-07'
 
 const tagDanach = (tag: string) => {
   const d = new Date(`${tag}T00:00:00Z`)
@@ -22,7 +29,7 @@ const tagDanach = (tag: string) => {
   return d.toISOString().slice(0, 10)
 }
 
-export function useEigeneAnkuenfte(adIds: string[], insights: AdInsightRow[], darfLesen: boolean): AdEigeneAnkuenfte {
+export function useEigeneAnkuenfte(adIds: string[], insights: AdInsightRow[], darfLesen: boolean | null): AdEigeneAnkuenfte {
   // Tagesfenster je Anzeige aus den geladenen Meta-Zeilen, als Text, damit der
   // Effekt nur bei echter Änderung neu abfragt
   const auftrag = useMemo(() => {
@@ -43,15 +50,17 @@ export function useEigeneAnkuenfte(adIds: string[], insights: AdInsightRow[], da
   const [stand, setStand] = useState<AdEigeneAnkuenfte>('laedt')
 
   useEffect(() => {
+    if (darfLesen === null) { setStand('laedt'); return }
     if (!darfLesen) { setStand('ohne'); return }
     const liste = JSON.parse(auftrag) as Array<[string, { von: string; bis: string }]>
     if (!liste.length) { setStand(new Map()); return }
     let abgebrochen = false
     setStand('laedt')
     void (async () => {
-      const je = new Map<string, number>()
+      const je = new Map<string, AdEigeneAnkunft>()
       try {
         for (const [adId, f] of liste) {
+          if (abgebrochen) return
           const { count, error } = await supabase.from('web_sessions')
             .select('id', { count: 'exact', head: true })
             .eq('is_bot', false)
@@ -59,7 +68,7 @@ export function useEigeneAnkuenfte(adIds: string[], insights: AdInsightRow[], da
             .gte('started_at', `${f.von}T00:00:00Z`)
             .lt('started_at', `${tagDanach(f.bis)}T00:00:00Z`)
           if (error) throw error
-          je.set(adId, count ?? 0)
+          je.set(adId, { anzahl: count ?? 0, vollstaendig: f.von >= WA_UTM_FIX_SEIT })
         }
         if (!abgebrochen) setStand(je)
       } catch (err) {
