@@ -38,14 +38,22 @@ interface PickUnit { id: string; unit_number: string; bedrooms: number | null; s
 interface OwnedUnit extends PickUnit {
   project_id: string | null; project_name: string; property_id: string | null
   handover_date: string | null; rental_type: string | null
+  // Nur über den Namen (Portal-Konto mit gleichem Namen) gefunden - Sven prüft
+  byName: boolean
 }
+// Was „Eigene Wohnungen" geprüft hat - steht da, wenn nichts gefunden wird
+interface OwnedInfo { deals: number; emails: string[]; profiles: number; nameProfiles: number }
+// Escape für ilike: % und _ wörtlich nehmen
+const likeExact = (v: string) => v.replace(/[\\%_]/g, m => `\\${m}`)
 interface OwnedPropRow {
   id: string; project_name: string | null; unit_number: string | null; bedrooms: number | null
   size_sqm: number | null; purchase_price_net: number | null; purchase_price_gross: number | null; vat_rate: number | null
 }
 type OwnedUnitRow = Pick<CrmProjectUnit, 'id' | 'project_id' | 'unit_number' | 'bedrooms' | 'size_sqm' | 'price_net'
   | 'price_gross' | 'vat_rate' | 'handover_date' | 'rental_type' | 'property_id' | 'parent_unit_id'>
-const OWNED_UNIT_COLS = 'id, project_id, unit_number, bedrooms, size_sqm, price_net, price_gross, vat_rate, handover_date, rental_type, property_id, parent_unit_id'
+// '*' statt Spaltenliste: fehlt live eine jüngere Spalte, liefert die Abfrage
+// trotzdem die Wohnung (sonst Fehler und leere Liste).
+const OWNED_UNIT_COLS = '*'
 // Netto wie überall (lib/price): gepflegtes Netto, sonst Brutto ohne MwSt.
 // Doppelapartments wie Mamba A2 haben oft nur einen Bruttopreis.
 const propNet = (p: OwnedPropRow | undefined) => p
@@ -70,6 +78,10 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   // gehören dann in dieselbe Strategie. Diese Wohnungen sind im Bestand nicht
   // mehr „frei" und tauchen in der Projektauswahl deshalb nicht auf.
   const [ownedUnits, setOwnedUnits] = useState<OwnedUnit[]>([])
+  const [ownedOpen, setOwnedOpen] = useState(false)
+  const [ownedState, setOwnedState] = useState<'loading' | 'done' | 'error'>('loading')
+  const [ownedErr, setOwnedErr] = useState('')
+  const [ownedInfo, setOwnedInfo] = useState<OwnedInfo | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout>>()
   const freeCounter = useRef(0)
   // Freigabe an den Kunden
@@ -111,16 +123,18 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   }, [units, params, loaded, lead])
 
   useEffect(() => { void (async () => {
-    if (!pickerOpen || projects.length) return
+    if ((!pickerOpen && !ownedOpen) || projects.length) return
     const { data } = await supabase.from('crm_projects').select('id, name, furniture_cost, furniture_included, completion_date, calc_defaults').order('name')
     setProjects((data ?? []) as PickProject[])
-  })() }, [pickerOpen, projects.length])
+  })() }, [pickerOpen, ownedOpen, projects.length])
 
-  // Wohnungen des Kunden aus drei Quellen (Sven 6.10.26):
+  // „Eigene Wohnungen" (Sven 6.10.26): alles, was der Kunde schon hat, aus vier Quellen:
   //  1. Deals dieses Leads mit Wohnung und/oder Portal-Objekt, außer verlorenen.
   //  2. Portal-Objekte, deren Eigentümer eines der Profile des Leads ist
-  //     (inkl. Konten unter leads.alt_emails).
-  //  3. Portal-Objekte, bei denen ein Profil des Leads Mit-Eigentümer ist.
+  //     (leads.profile_id, Haupt-Mail, leads.alt_emails).
+  //  3. Portal-Objekte, bei denen ein solches Profil Mit-Eigentümer ist.
+  //  4. Rückfall: Portal-Konten mit exakt gleichem Namen wie der Lead (z.B. Konto
+  //     unter einer Mail, die im Lead fehlt). Markiert als „über Namen gefunden".
   // Portal-Objekte werden über crm_project_units.property_id auf die Wohnung im
   // Projekt zurückgeführt; Teil-Wohnungen eines Doppelapartments auf die
   // Gesamteinheit. Objekte ohne Projekt-Wohnung erscheinen mit ihren eigenen Werten.
@@ -128,19 +142,37 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   // für andere Rollen bleibt es bei den Wohnungen aus den Deals.
   useEffect(() => {
     // Erst nach den Projekten laden (Projektname, Zuordnung über den Namen)
-    if (!pickerOpen || !lead || !projects.length) return
+    if (!ownedOpen || !lead || !projects.length) return
     let cancelled = false
+    setOwnedState('loading'); setOwnedErr('')
     void (async () => {
     try {
-      const profileIds = await leadProfileIds(lead.id, { includeAltEmails: true })
-      const [dealRes, ownRes, coRes] = await Promise.all([
+      const [profileIds, leadRes] = await Promise.all([
+        leadProfileIds(lead.id, { includeAltEmails: true }),
+        supabase.from('leads').select('*').eq('id', lead.id).maybeSingle(),
+      ])
+      const lr = leadRes.data as { email?: string | null; alt_emails?: string[] | null } | null
+      const emails = [...new Set([lr?.email, ...(lr?.alt_emails ?? [])]
+        .map(e => e?.trim()).filter((e): e is string => !!e))]
+      // Namens-Rückfall: nur exakter Vor- + Nachname, ohne die schon bekannten Profile
+      const fullName = `${lead.first_name ?? ''} ${lead.last_name ?? ''}`.trim()
+      const nameRes = fullName.includes(' ')
+        ? await supabase.from('profiles').select('id').ilike('full_name', likeExact(fullName))
+        : { data: [], error: null }
+      if (nameRes.error) console.error('[StrategySimulator] Namenssuche:', nameRes.error)
+      const nameIds = ((nameRes.data ?? []) as Array<{ id: string }>).map(r => r.id).filter(id => !profileIds.includes(id))
+
+      const none = Promise.resolve({ data: [], error: null })
+      const [dealRes, ownRes, coRes, ownNameRes, coNameRes] = await Promise.all([
         supabase.from('deals').select('unit_id, property_id, phase, archived_from_phase').eq('lead_id', lead.id),
-        profileIds.length ? supabase.from('properties').select('id').in('owner_id', profileIds) : Promise.resolve({ data: [], error: null }),
-        profileIds.length ? supabase.from('property_co_owners').select('property_id').in('profile_id', profileIds) : Promise.resolve({ data: [], error: null }),
+        profileIds.length ? supabase.from('properties').select('id').in('owner_id', profileIds) : none,
+        profileIds.length ? supabase.from('property_co_owners').select('property_id').in('profile_id', profileIds) : none,
+        nameIds.length ? supabase.from('properties').select('id').in('owner_id', nameIds) : none,
+        nameIds.length ? supabase.from('property_co_owners').select('property_id').in('profile_id', nameIds) : none,
       ])
       if (dealRes.error) throw dealRes.error
-      if (ownRes.error) console.error('[StrategySimulator] Portal-Objekte:', ownRes.error)
-      if (coRes.error) console.error('[StrategySimulator] Mit-Eigentümer:', coRes.error)
+      if (ownRes.error) throw ownRes.error
+      for (const r of [coRes, ownNameRes, coNameRes]) if (r.error) console.error('[StrategySimulator] Portal-Objekte:', r.error)
       const deals = ((dealRes.data ?? []) as Array<{ unit_id: string | null; property_id: string | null; phase: string | null; archived_from_phase: string | null }>)
         // Archiviert ohne Ursprungsphase = Kauf (Button in der Kundenakte, wie Archived.tsx)
         .filter(d => d.phase !== 'deal_verloren' && d.archived_from_phase !== 'deal_verloren')
@@ -150,12 +182,17 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
         ...((ownRes.data ?? []) as Array<{ id: string }>).map(r => r.id),
         ...((coRes.data ?? []) as Array<{ property_id: string }>).map(r => r.property_id),
       ])
-      if (!unitIds.size && !propIds.size) { if (!cancelled) setOwnedUnits([]); return }
+      const namePropIds = new Set<string>([
+        ...((ownNameRes.data ?? []) as Array<{ id: string }>).map(r => r.id),
+        ...((coNameRes.data ?? []) as Array<{ property_id: string }>).map(r => r.property_id),
+      ].filter(id => !propIds.has(id)))
+      const allPropIds = [...propIds, ...namePropIds]
+      const info: OwnedInfo = { deals: deals.length, emails, profiles: profileIds.length, nameProfiles: nameIds.length }
 
       const [byId, byProp, propRes] = await Promise.all([
-        unitIds.size ? supabase.from('crm_project_units').select(OWNED_UNIT_COLS).in('id', [...unitIds]) : Promise.resolve({ data: [], error: null }),
-        propIds.size ? supabase.from('crm_project_units').select(OWNED_UNIT_COLS).in('property_id', [...propIds]) : Promise.resolve({ data: [], error: null }),
-        propIds.size ? supabase.from('properties').select('id, project_name, unit_number, bedrooms, size_sqm, purchase_price_net, purchase_price_gross, vat_rate').in('id', [...propIds]) : Promise.resolve({ data: [], error: null }),
+        unitIds.size ? supabase.from('crm_project_units').select(OWNED_UNIT_COLS).in('id', [...unitIds]) : none,
+        allPropIds.length ? supabase.from('crm_project_units').select(OWNED_UNIT_COLS).in('property_id', allPropIds) : none,
+        allPropIds.length ? supabase.from('properties').select('*').in('id', allPropIds) : none,
       ])
       if (byId.error) throw byId.error
       if (byProp.error) throw byProp.error
@@ -169,6 +206,9 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
         if (pErr) throw pErr
         for (const u of (parents ?? []) as OwnedUnitRow[]) rows.set(u.id, u)
       }
+      // Gesamteinheit gilt als „über Namen", wenn keine ihrer Wohnungen sicher zugeordnet ist
+      const sureUnit = (u: OwnedUnitRow) => unitIds.has(u.id) || (!!u.property_id && propIds.has(u.property_id))
+      const sureParents = new Set([...rows.values()].filter(u => u.parent_unit_id && sureUnit(u)).map(u => u.parent_unit_id as string))
       const props = new Map(((propRes.data ?? []) as OwnedPropRow[]).map(p => [p.id, p]))
       const projName = new Map(projects.map(p => [p.id, p.name]))
       const out: OwnedUnit[] = []
@@ -181,7 +221,8 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
           id: u.id, project_id: u.project_id, project_name: projName.get(u.project_id) ?? prop?.project_name ?? '',
           unit_number: u.unit_number, bedrooms: u.bedrooms, size_sqm: u.size_sqm,
           price_net: unitNet(u) ?? propNet(prop), property_id: u.property_id,
-          handover_date: u.handover_date, rental_type: u.rental_type,
+          handover_date: u.handover_date ?? null, rental_type: u.rental_type ?? null,
+          byName: !sureUnit(u) && !sureParents.has(u.id),
         })
       }
       for (const p of props.values()) {
@@ -191,16 +232,23 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
         out.push({
           id: `prop-${p.id}`, project_id: proj?.id ?? null, project_name: p.project_name ?? '',
           unit_number: p.unit_number ?? '', bedrooms: p.bedrooms, size_sqm: p.size_sqm, price_net: propNet(p),
-          property_id: p.id, handover_date: null, rental_type: null,
+          property_id: p.id, handover_date: null, rental_type: null, byName: !propIds.has(p.id),
         })
       }
-      out.sort((a, b) => `${a.project_name} ${a.unit_number}`.localeCompare(`${b.project_name} ${b.unit_number}`, 'de', { numeric: true }))
-      if (!cancelled) setOwnedUnits(out)
-    } catch (err) { console.error('[StrategySimulator] Kundenwohnungen:', err) }
+      out.sort((a, b) => Number(a.byName) - Number(b.byName)
+        || `${a.project_name} ${a.unit_number}`.localeCompare(`${b.project_name} ${b.unit_number}`, 'de', { numeric: true }))
+      if (cancelled) return
+      setOwnedUnits(out); setOwnedInfo(info); setOwnedState('done')
+    } catch (err) {
+      console.error('[StrategySimulator] Kundenwohnungen:', err)
+      if (cancelled) return
+      setOwnedErr(err instanceof Error ? err.message : (err as { message?: string })?.message ?? String(err))
+      setOwnedState('error')
+    }
     })()
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pickerOpen, lead?.id, projects])
+  }, [ownedOpen, lead?.id, projects])
 
   useEffect(() => { void (async () => {
     setPickUnits([])
@@ -311,7 +359,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
       buyM: now.getMonth() + 1, buyY: now.getFullYear(), readyM, readyY,
       plan: ymOf(readyY, readyM) - NOW_YM > 2 ? 'luma' : 'sofort',
     }])
-    setPickerOpen(false); setPickProject('')
+    setPickerOpen(false); setPickProject(''); setOwnedOpen(false)
   }
 
   const addFree = () => {
@@ -786,23 +834,6 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                   </button>
                 </div>
               </div>
-              {ownedUnits.length > 0 && (
-                <div>
-                  <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">{t('crm.sim.ownedTitle', 'Wohnungen des Kunden')}</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-44 overflow-y-auto">
-                    {ownedUnits.map(u => (
-                      // Ohne Preis würde die Engine still mit einem Standardpreis rechnen.
-                      // Schon drin: als Projekt-Wohnung ODER früher als reines Portal-Objekt.
-                      <button key={u.id} onClick={() => addFromStock(u, u.project_id, u.project_name)}
-                        disabled={!u.price_net || units.some(x => x.key === u.id || (!!u.property_id && x.key === `prop-${u.property_id}`))}
-                        className="text-left border border-gray-200 rounded-lg px-3 py-1.5 text-sm hover:border-orange-300 hover:bg-orange-50 disabled:opacity-40">
-                        <strong>{u.project_name} {u.unit_number}</strong> · {u.bedrooms ?? '?'} {t('crm.unitSelect.bedroomsAbbr', 'SZ')} · {u.size_sqm ?? '?'} m² · {u.price_net ? `${eur(u.price_net)} ${t('crm.unitSelect.net', 'netto')}` : t('crm.sim.noPrice', 'Preis fehlt')}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-[11px] text-gray-400 mt-1">{t('crm.sim.ownedHint', 'Zahlungsplan und Übergabe nach dem Hinzufügen an den echten Kauf anpassen.')}</p>
-                </div>
-              )}
               {pickUnits.length > 0 && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-44 overflow-y-auto">
                   {pickUnits.map(u => (
@@ -817,11 +848,55 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                 <p className="text-xs text-gray-400">{t('crm.sim.noUnits', 'Keine anbietbaren Wohnungen in diesem Projekt.')}</p>
               )}
             </div>
+          ) : ownedOpen ? (
+            <div className="border border-dashed border-orange-300 rounded-xl p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('crm.sim.ownedTitle', 'Wohnungen des Kunden')}</p>
+                <button onClick={() => setOwnedOpen(false)} className="px-3 py-1.5 rounded-lg text-sm text-gray-400 hover:text-gray-600">
+                  {t('common.close', 'Schließen')}
+                </button>
+              </div>
+              {ownedState === 'loading' && <p className="text-xs text-gray-400">{t('crm.sim.ownedLoading', 'Lade Wohnungen des Kunden…')}</p>}
+              {ownedState === 'error' && (
+                <p className="text-xs text-red-600">{t('crm.sim.ownedError', 'Wohnungen konnten nicht geladen werden: {{msg}}', { msg: ownedErr })}</p>
+              )}
+              {ownedState === 'done' && ownedUnits.length === 0 && ownedInfo && (
+                <p className="text-xs text-gray-500">
+                  {t('crm.sim.ownedNone', 'Keine Wohnungen gefunden. Geprüft: {{deals}} Deal(s) dieses Kunden und Portal-Konten zu {{emails}} ({{profiles}} Konto/Konten gefunden, {{nameProfiles}} weitere über den Namen).', {
+                    deals: ownedInfo.deals, profiles: ownedInfo.profiles, nameProfiles: ownedInfo.nameProfiles,
+                    emails: ownedInfo.emails.length ? ownedInfo.emails.join(', ') : t('crm.sim.ownedNoEmail', 'keiner E-Mail'),
+                  })}
+                </p>
+              )}
+              {ownedState === 'done' && ownedUnits.length > 0 && (<>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-60 overflow-y-auto">
+                  {ownedUnits.map(u => (
+                    // Ohne Preis würde die Engine still mit einem Standardpreis rechnen.
+                    // Schon drin: als Projekt-Wohnung ODER früher als reines Portal-Objekt.
+                    <button key={u.id} onClick={() => addFromStock(u, u.project_id, u.project_name)}
+                      disabled={!u.price_net || units.some(x => x.key === u.id || (!!u.property_id && x.key === `prop-${u.property_id}`))}
+                      className="text-left border border-gray-200 rounded-lg px-3 py-1.5 text-sm hover:border-orange-300 hover:bg-orange-50 disabled:opacity-40">
+                      <strong>{u.project_name} {u.unit_number}</strong> · {u.bedrooms ?? '?'} {t('crm.unitSelect.bedroomsAbbr', 'SZ')} · {u.size_sqm ?? '?'} m² · {u.price_net ? `${eur(u.price_net)} ${t('crm.unitSelect.net', 'netto')}` : t('crm.sim.noPrice', 'Preis fehlt')}
+                      {u.byName && <span className="block text-[11px] text-amber-700">{t('crm.sim.ownedByName', 'über Namen gefunden - bitte prüfen')}</span>}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-gray-400">{t('crm.sim.ownedHint', 'Zahlungsplan und Übergabe nach dem Hinzufügen an den echten Kauf anpassen.')}</p>
+              </>)}
+            </div>
           ) : (
-            <button onClick={() => setPickerOpen(true)}
-              className="px-4 py-2 rounded-xl text-sm border border-dashed border-gray-300 text-gray-600 hover:bg-gray-50">
-              + {t('crm.sim.addUnit', 'Wohnung hinzufügen')}
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button onClick={() => setPickerOpen(true)}
+                className="px-4 py-2 rounded-xl text-sm border border-dashed border-gray-300 text-gray-600 hover:bg-gray-50">
+                + {t('crm.sim.addUnit', 'Wohnung hinzufügen')}
+              </button>
+              {lead && (
+                <button onClick={() => setOwnedOpen(true)}
+                  className="px-4 py-2 rounded-xl text-sm border border-dashed border-orange-300 text-orange-700 hover:bg-orange-50">
+                  {t('crm.sim.ownedButton', 'Eigene Wohnungen')}
+                </button>
+              )}
+            </div>
           )}
 
           {outcomes.length > 0 && totals && scenarios && (<>
