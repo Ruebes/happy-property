@@ -5,6 +5,7 @@ import { CustomSelect } from '../CustomSelect'
 import { createStrategyOutboxDraft } from '../../lib/calcOutbox'
 import { leadProfileIds } from '../../lib/detachProperty'
 import { unitNet } from '../../lib/price'
+import type { CrmProjectUnit } from '../../lib/crmTypes'
 import { runReinvest } from '../../lib/reinvest'
 import {
   roeMeaningful, migrateConfig, ymOf, rentFromSeason, runScenarios, assessRisk,
@@ -42,11 +43,8 @@ interface OwnedPropRow {
   id: string; project_name: string | null; unit_number: string | null; bedrooms: number | null
   size_sqm: number | null; purchase_price_net: number | null; purchase_price_gross: number | null; vat_rate: number | null
 }
-interface OwnedUnitRow {
-  id: string; project_id: string; unit_number: string; bedrooms: number | null; size_sqm: number | null
-  price_net: number | null; price_gross: number | null; vat_rate: number | null
-  handover_date: string | null; rental_type: string | null; property_id: string | null; parent_unit_id: string | null
-}
+type OwnedUnitRow = Pick<CrmProjectUnit, 'id' | 'project_id' | 'unit_number' | 'bedrooms' | 'size_sqm' | 'price_net'
+  | 'price_gross' | 'vat_rate' | 'handover_date' | 'rental_type' | 'property_id' | 'parent_unit_id'>
 const OWNED_UNIT_COLS = 'id, project_id, unit_number, bedrooms, size_sqm, price_net, price_gross, vat_rate, handover_date, rental_type, property_id, parent_unit_id'
 // Netto wie überall (lib/price): gepflegtes Netto, sonst Brutto ohne MwSt.
 // Doppelapartments wie Mamba A2 haben oft nur einen Bruttopreis.
@@ -297,8 +295,14 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
     const done = readyDate ? new Date(readyDate) : null
     const fallbackY = proj ? now.getFullYear() + 2 : now.getFullYear()
     const fallbackM = proj ? 6 : now.getMonth() + 1
-    const readyY = done && !isNaN(done.getTime()) ? Math.max(now.getFullYear(), done.getFullYear()) : fallbackY
-    const readyM = done && !isNaN(done.getTime()) ? done.getMonth() + 1 : fallbackM
+    // Liegt die Übergabe in der Vergangenheit (schon übergebene Kundenwohnung),
+    // gilt der aktuelle Monat - nicht nur das Jahr hochziehen, sonst rutscht
+    // z.B. 12/2025 auf 12/2026 und die Wohnung bekommt Bauraten und Leerstand.
+    const readyYM = done && !isNaN(done.getTime())
+      ? Math.max(NOW_YM, ymOf(done.getFullYear(), done.getMonth() + 1))
+      : ymOf(fallbackY, fallbackM)
+    const readyY = Math.floor(readyYM / 12)
+    const readyM = readyYM % 12 + 1
     const gross = Math.round(((u.price_net ?? 0) + furnNet) * 1.19)
     setUnits(us => [...us, {
       key: u.id, name: `${projectName ?? proj?.name ?? ''} ${u.unit_number}`.trim(),
