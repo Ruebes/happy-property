@@ -4895,6 +4895,7 @@
       "noUnits": "No offerable apartments in this project.",
       "ownedTitle": "Client's properties",
       "ownedHint": "After adding, adjust purchase date, payment plan and handover to the actual purchase.",
+      "noPrice": "No price",
       "gap": "Financing gap",
       "gapMissing": "missing",
       "gapHint": "Enable bundle purchase, buy later or refinance earlier.",

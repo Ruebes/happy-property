@@ -4777,6 +4777,7 @@
       "noUnits": "Keine anbietbaren Wohnungen in diesem Projekt.",
       "ownedTitle": "Wohnungen des Kunden",
       "ownedHint": "Kaufdatum, Zahlungsplan und Übergabe nach dem Hinzufügen an den echten Kauf anpassen.",
+      "noPrice": "Preis fehlt",
       "gap": "Finanzierungslücke",
       "gapMissing": "fehlen",
       "gapHint": "Bundlekauf aktivieren, Kauf später ansetzen oder früher beleihen.",
