@@ -71,6 +71,9 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   const [loaded, setLoaded] = useState(initialUnits.length > 0)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [projects, setProjects] = useState<PickProject[]>([])
+  // Projektliste nicht ladbar: „Eigene Wohnungen" lädt trotzdem (ohne Projektdaten),
+  // statt ewig auf „Lade…" zu stehen. Erneutes Öffnen versucht es noch einmal.
+  const [projectsFailed, setProjectsFailed] = useState(false)
   const [pickProject, setPickProject] = useState('')
   const [pickUnits, setPickUnits] = useState<PickUnit[]>([])
   // Wohnungen, die der Kunde schon gekauft/reserviert hat (Sven 6.10.26): der
@@ -124,8 +127,14 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
 
   useEffect(() => { void (async () => {
     if ((!pickerOpen && !ownedOpen) || projects.length) return
-    const { data } = await supabase.from('crm_projects').select('id, name, furniture_cost, furniture_included, completion_date, calc_defaults').order('name')
-    setProjects((data ?? []) as PickProject[])
+    setProjectsFailed(false)
+    const { data, error } = await supabase.from('crm_projects').select('id, name, furniture_cost, furniture_included, completion_date, calc_defaults').order('name')
+    if (error || !data?.length) {
+      if (error) console.error('[StrategySimulator] Projekte:', error)
+      setProjectsFailed(true)
+      return
+    }
+    setProjects(data as PickProject[])
   })() }, [pickerOpen, ownedOpen, projects.length])
 
   // „Eigene Wohnungen" (Sven 6.10.26): alles, was der Kunde schon hat, aus vier Quellen:
@@ -142,7 +151,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   // für andere Rollen bleibt es bei den Wohnungen aus den Deals.
   useEffect(() => {
     // Erst nach den Projekten laden (Projektname, Zuordnung über den Namen)
-    if (!ownedOpen || !lead || !projects.length) return
+    if (!ownedOpen || !lead || (!projects.length && !projectsFailed)) return
     let cancelled = false
     setOwnedState('loading'); setOwnedErr('')
     void (async () => {
@@ -248,7 +257,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
     })()
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ownedOpen, lead?.id, projects])
+  }, [ownedOpen, lead?.id, projects, projectsFailed])
 
   useEffect(() => { void (async () => {
     setPickUnits([])
