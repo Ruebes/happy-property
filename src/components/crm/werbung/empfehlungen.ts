@@ -1,10 +1,11 @@
 import type { TFunction } from 'i18next'
-import type { AdAgg, AdCatalogRow, AdRecommendation } from '../../../lib/crmTypes'
+import type { AdAgg, AdCatalogRow, AdEigeneAnkuenfte, AdRecommendation } from '../../../lib/crmTypes'
 import type { WerbeFormat } from './format'
 
 // ── Empfehlungen (Regel-Engine des Statistik-Reiters) ────────────────────────
-// Reine Funktion über den geladenen Zeitraum, unverändert aus AdsManager.tsx
-// übernommen: gleiche Regeln, gleiche Schwellen, gleiche Texte. Keine
+// Reine Funktion über den geladenen Zeitraum, aus AdsManager.tsx übernommen
+// (gleiche Regeln, Schwellen und Texte; einzige Ausnahme: der Zielseiten-Hinweis
+// braucht seit 10/2026 die Gegenprobe aus eigeneAnkuenfte.ts). Keine
 // Seiteneffekte, kein Zugriff auf Supabase.
 
 export interface EmpfehlungEingabe {
@@ -16,11 +17,30 @@ export interface EmpfehlungEingabe {
   targetCpl: number
   /** CRM-Zahlen sichtbar (Pipeline-Recht oder RPC) */
   crmVisible: boolean
+  /** Gegenprobe Zielseite mit dem eigenen Tracker (eigeneAnkuenfte.ts) */
+  eigeneAnkuenfte: AdEigeneAnkuenfte
   t: TFunction
   fmt: WerbeFormat
 }
 
-export function berechneEmpfehlungen({ catalog, byAd, vorgemerkt, targetCpl, crmVisible, t, fmt }: EmpfehlungEingabe): AdRecommendation[] {
+// Zielseiten-Verlust: erst ab so vielen ausgehenden Klicks, und nur wenn weniger
+// als dieser Anteil auf der Seite ankommt.
+export const LP_MIN_KLICKS = 40
+export const LP_MIN_ANKUNFT = 0.7
+
+/** Laut Meta kommen zu wenige der Klicks auf der Seite an (noch ohne Gegenprobe). */
+const metaLpVerlust = (a: AdAgg) =>
+  a.outboundClicks >= LP_MIN_KLICKS && a.landingPageViews / a.outboundClicks < LP_MIN_ANKUNFT
+
+/** Aktive Anzeigen mit Meta-Verlust: nur für diese fragt eigeneAnkuenfte.ts die
+ *  eigenen Besucherzahlen ab. */
+export function lpVerlustKandidaten(catalog: AdCatalogRow[], byAd: Map<string, AdAgg>): string[] {
+  return catalog
+    .filter(c => { const a = byAd.get(c.ad_id); return c.status === 'ACTIVE' && !!a && metaLpVerlust(a) })
+    .map(c => c.ad_id)
+}
+
+export function berechneEmpfehlungen({ catalog, byAd, vorgemerkt, targetCpl, crmVisible, eigeneAnkuenfte, t, fmt }: EmpfehlungEingabe): AdRecommendation[] {
   const { eur, int, pct, locale } = fmt
   const recs: AdRecommendation[] = []
   // Median-CPL je Kampagne (nur Ads mit Leads)
@@ -75,18 +95,28 @@ export function berechneEmpfehlungen({ catalog, byAd, vorgemerkt, targetCpl, crm
     const a = byAd.get(c.ad_id)
     if (!a) continue
 
-    // Bezahlte Klicks, die nie auf der Seite ankommen. Meta zählt beides
-    // getrennt: „Outbound Clicks" sind die Klicks weg von Meta, „Landing Page
-    // Views" die Seiten, die wirklich geladen haben. Die Lücke ist verlorenes
-    // Geld und liegt fast immer an der Ladezeit der Zielseite.
-    if (a.outboundClicks >= 40) {
-      const arrived = a.landingPageViews / a.outboundClicks
-      if (arrived < 0.7) {
+    // Bezahlte Klicks, die nie auf der Seite ankommen. Meta zählt „Outbound
+    // Clicks" (Klicks weg von Meta) und „Landing Page Views". Ein Landing Page
+    // View zählt aber nur, wenn auf der Seite das Meta-Pixel feuert: Lädt die
+    // Seite, das Pixel jedoch nicht (z. B. ohne Cookie-Zustimmung), fehlt der
+    // Besuch bei Meta trotzdem. Meta allein reicht deshalb nicht für die Aussage
+    // „bricht beim Laden ab". Gegenprobe mit dem eigenen, cookie-losen Tracker
+    // (wa-track, utm_content = Anzeigen-ID): Kommen dort genug an, lädt die
+    // Seite, und es gibt keinen Hinweis. Solange die Gegenprobe läuft, auch nicht.
+    if (eigeneAnkuenfte !== 'laedt' && metaLpVerlust(a)) {
+      const klicks = a.outboundClicks
+      const eigen = eigeneAnkuenfte === 'ohne' ? 0 : (eigeneAnkuenfte.get(c.ad_id) ?? 0)
+      if (eigen / klicks < LP_MIN_ANKUNFT) {
+        const arrived = Math.max(eigen, a.landingPageViews) / klicks
         hints.push({
           ad: c, kind: 'lp_loss', spend: a.spendEur,
-          reason: t('crm.ads.recReasonLpLoss', 'Nur {{arrived}} der Klicks erreichen die Seite ({{lpv}} von {{clicks}}) - der Rest bricht beim Laden ab', {
-            arrived: pct(arrived), lpv: int(a.landingPageViews), clicks: int(a.outboundClicks),
-          }),
+          reason: eigen > 0
+            ? t('crm.ads.recReasonLpLoss', 'Nur {{arrived}} der Klicks erreichen die Seite ({{eigen}} laut eigenem Tracker, {{lpv}} laut Meta, von {{clicks}}) - der Rest bricht beim Laden ab', {
+                arrived: pct(arrived), eigen: int(eigen), lpv: int(a.landingPageViews), clicks: int(klicks),
+              })
+            : t('crm.ads.recReasonLpLossUngeprueft', 'Meta zählt nur {{arrived}} der Klicks auf der Seite ({{lpv}} von {{clicks}}) - ohne eigene Besucherzahlen nicht bestätigt', {
+                arrived: pct(arrived), lpv: int(a.landingPageViews), clicks: int(klicks),
+              }),
           advice: t('crm.ads.recAdviceLpLoss', 'Zielseite prüfen, nicht die Anzeige'),
         })
       }

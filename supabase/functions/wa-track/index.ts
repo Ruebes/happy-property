@@ -282,13 +282,20 @@ async function handleBatch(session: SessionInfo, events: TrackEvent[], ua: strin
     .select('id, pageviews, clicks, duration_s, max_scroll_pct, lead_id').eq('id', session.id).maybeSingle()
   const ex = existing as { pageviews: number; clicks: number; duration_s: number; max_scroll_pct: number; lead_id: string | null } | null
 
+  // Einstieg (Seite, Referrer, UTM) nur beim ersten Batch der Session setzen.
+  // Der Tracker schickt bei jedem Seitenaufruf die AKTUELLE Seite mit; ohne
+  // diese Sperre überschrieb die zweite Seite Einstiegsseite und UTM (meist mit
+  // leer), und Besucher aus einer Anzeige verloren ihre Anzeigen-Zuordnung.
+  const einstieg = ex ? {} : {
+    entry_path: (session.entry_path ?? '').slice(0, 500) || null,
+    referrer: (session.referrer ?? '')?.slice(0, 500) || null,
+    utm: session.utm && Object.keys(session.utm).length ? session.utm : null,
+  }
   const row = {
     id: session.id,
     visitor_id: String(session.visitor_id ?? '').slice(0, 64),
     site: String(session.site).slice(0, 120),
-    entry_path: (session.entry_path ?? '').slice(0, 500) || null,
-    referrer: (session.referrer ?? '')?.slice(0, 500) || null,
-    utm: session.utm && Object.keys(session.utm).length ? session.utm : null,
+    ...einstieg,
     device, browser, os,
     screen_w: session.screen_w ?? null, screen_h: session.screen_h ?? null,
     lang: (session.lang ?? '').slice(0, 20) || null,

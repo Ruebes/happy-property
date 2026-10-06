@@ -829,6 +829,11 @@ export interface AdRecommendation {
   advice?: string
 }
 
+/** Gegenprobe Zielseite: eigene Besucher je Anzeige (web_sessions über wa-track,
+ *  utm_content = Anzeigen-ID, ohne Bots). 'laedt' = Abfrage läuft, 'ohne' = nicht
+ *  prüfbar (nur Admins lesen web_sessions, oder Fehler), sonst Anzahl je Anzeigen-ID. */
+export type AdEigeneAnkuenfte = 'laedt' | 'ohne' | ReadonlyMap<string, number>
+
 /** Leitplanken (ad_settings, von Sven festgelegt): Ziel-Leadpreis + Tageslimit */
 export interface AdSettings { target_cpl: number; max_account_daily_budget: number; system_campaign_daily_budget: number }
 export const AD_SETTINGS_DEFAULT: AdSettings = { target_cpl: 60, max_account_daily_budget: 180, system_campaign_daily_budget: 50 }

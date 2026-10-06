@@ -6,7 +6,8 @@ import { useAuth } from '../../../lib/auth'
 import type { AdAction, AdCatalogRow } from '../../../lib/crmTypes'
 import { useWerbeKontext } from './useWerbeDaten'
 import { AKTION_SICHTBAR, CHART_COLORS, aktionErledigt, aktionIcon, colorFor, useWerbeFormat } from './format'
-import { berechneEmpfehlungen } from './empfehlungen'
+import { berechneEmpfehlungen, lpVerlustKandidaten } from './empfehlungen'
+import { useEigeneAnkuenfte } from './eigeneAnkuenfte'
 import { BTN_KLEIN } from './felder'
 import { dbFehlerText } from './autopilot/werbeTexte'
 import KampagnenZentrale from './zentrale/KampagnenZentrale'
@@ -197,9 +198,12 @@ export default function WerbeStatistik() {
   }
 
   // ── Empfehlungen (Regel-Engine über den geladenen Zeitraum) ───────────────
+  // Zielseiten-Hinweis erst nach der Gegenprobe mit den eigenen Besucherzahlen
+  const lpKandidaten = useMemo(() => lpVerlustKandidaten(catalog, byAd), [catalog, byAd])
+  const eigeneAnkuenfte = useEigeneAnkuenfte(lpKandidaten, insights, istAdmin)
   const recommendations = useMemo(
-    () => berechneEmpfehlungen({ catalog, byAd, vorgemerkt: pendingByAd, targetCpl: settings.target_cpl, crmVisible, t, fmt }),
-    [catalog, byAd, pendingByAd, settings, t, fmt, crmVisible],
+    () => berechneEmpfehlungen({ catalog, byAd, vorgemerkt: pendingByAd, targetCpl: settings.target_cpl, crmVisible, eigeneAnkuenfte, t, fmt }),
+    [catalog, byAd, pendingByAd, settings, t, fmt, crmVisible, eigeneAnkuenfte],
   )
 
   const campaignColor = useMemo(() => {
