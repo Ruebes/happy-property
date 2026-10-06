@@ -30,6 +30,7 @@ const YEAR_OPTS = Array.from({ length: 12 }, (_, i) => ({ value: String(now.getF
 
 interface PickProject { id: string; name: string; furniture_cost: number | null; furniture_included: boolean | null; completion_date: string | null; calc_defaults: { furniture_by_bedrooms?: Record<string, number> } | null }
 interface PickUnit { id: string; unit_number: string; bedrooms: number | null; size_sqm: number | null; price_net: number | null }
+interface OwnedUnit extends PickUnit { project_id: string }
 
 export default function StrategySimulator({ lead, initialUnits, onClose }: {
   lead: { id: string; first_name: string; last_name: string } | null
@@ -44,6 +45,11 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   const [projects, setProjects] = useState<PickProject[]>([])
   const [pickProject, setPickProject] = useState('')
   const [pickUnits, setPickUnits] = useState<PickUnit[]>([])
+  // Wohnungen, die der Kunde schon gekauft/reserviert hat (Sven 6.10.26): der
+  // Kunde besitzt eine und interessiert sich spontan für eine zweite - beide
+  // gehören dann in dieselbe Strategie. Diese Wohnungen sind im Bestand nicht
+  // mehr „frei" und tauchen in der Projektauswahl deshalb nicht auf.
+  const [ownedUnits, setOwnedUnits] = useState<OwnedUnit[]>([])
   const saveTimer = useRef<ReturnType<typeof setTimeout>>()
   const freeCounter = useRef(0)
   // Freigabe an den Kunden
@@ -86,6 +92,25 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
     const { data } = await supabase.from('crm_projects').select('id, name, furniture_cost, furniture_included, completion_date, calc_defaults').order('name')
     setProjects((data ?? []) as PickProject[])
   })() }, [pickerOpen, projects.length])
+
+  // Wohnungen des Kunden: alle Deals dieses Leads mit Einheit, außer verlorene
+  // (aktiv oder archiviert - archivierte Käufe zählen weiter als Besitz).
+  useEffect(() => { void (async () => {
+    if (!pickerOpen || !lead) return
+    try {
+      const { data: dealRows, error } = await supabase.from('deals')
+        .select('unit_id, phase, archived_from_phase').eq('lead_id', lead.id).not('unit_id', 'is', null)
+      if (error) throw error
+      const ids = [...new Set((dealRows ?? [])
+        .filter(d => d.phase !== 'deal_verloren' && d.archived_from_phase !== 'deal_verloren')
+        .map(d => d.unit_id as string))]
+      if (!ids.length) { setOwnedUnits([]); return }
+      const { data, error: uErr } = await supabase.from('crm_project_units')
+        .select('id, project_id, unit_number, bedrooms, size_sqm, price_net').in('id', ids).order('unit_number')
+      if (uErr) throw uErr
+      setOwnedUnits((data ?? []) as OwnedUnit[])
+    } catch (err) { console.error('[StrategySimulator] Kundenwohnungen:', err) }
+  })() }, [pickerOpen, lead])
 
   useEffect(() => { void (async () => {
     setPickUnits([])
@@ -159,8 +184,8 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   const patchUnit = (key: string, patch: Partial<SimUnit>) =>
     setUnits(us => us.map(u => u.key === key ? { ...u, ...patch } : u))
 
-  const addFromStock = (u: PickUnit) => {
-    const proj = projects.find(p => p.id === pickProject)
+  const addFromStock = (u: PickUnit, projectId: string = pickProject) => {
+    const proj = projects.find(p => p.id === projectId)
     if (!proj || units.some(x => x.key === u.id)) return
     const furnByBed = proj.calc_defaults?.furniture_by_bedrooms ?? null
     const furnNet = proj.furniture_included ? 0
@@ -652,6 +677,23 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                   </button>
                 </div>
               </div>
+              {ownedUnits.length > 0 && (
+                <div>
+                  <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">{t('crm.sim.ownedTitle', 'Wohnungen des Kunden')}</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-44 overflow-y-auto">
+                    {ownedUnits.map(u => {
+                      const proj = projects.find(p => p.id === u.project_id)
+                      return (
+                        <button key={u.id} onClick={() => addFromStock(u, u.project_id)} disabled={!proj || units.some(x => x.key === u.id)}
+                          className="text-left border border-gray-200 rounded-lg px-3 py-1.5 text-sm hover:border-orange-300 hover:bg-orange-50 disabled:opacity-40">
+                          <strong>{proj?.name ?? ''} {u.unit_number}</strong> · {u.bedrooms ?? '?'} SZ · {u.size_sqm ?? '?'} m² · {eur(u.price_net ?? 0)} netto
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p className="text-[11px] text-gray-400 mt-1">{t('crm.sim.ownedHint', 'Kaufdatum, Zahlungsplan und Übergabe nach dem Hinzufügen an den echten Kauf anpassen.')}</p>
+                </div>
+              )}
               {pickUnits.length > 0 && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-44 overflow-y-auto">
                   {pickUnits.map(u => (

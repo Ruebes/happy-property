@@ -4775,6 +4775,8 @@
       "addFree": "frei eingeben",
       "addUnit": "Wohnung hinzufügen",
       "noUnits": "Keine anbietbaren Wohnungen in diesem Projekt.",
+      "ownedTitle": "Wohnungen des Kunden",
+      "ownedHint": "Kaufdatum, Zahlungsplan und Übergabe nach dem Hinzufügen an den echten Kauf anpassen.",
       "gap": "Finanzierungslücke",
       "gapMissing": "fehlen",
       "gapHint": "Bundlekauf aktivieren, Kauf später ansetzen oder früher beleihen.",
