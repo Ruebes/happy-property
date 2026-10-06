@@ -792,7 +792,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                       <button key={u.id} onClick={() => addFromStock(u, u.project_id, u.project_name)}
                         disabled={!u.price_net || units.some(x => x.key === u.id || (!!u.property_id && x.key === `prop-${u.property_id}`))}
                         className="text-left border border-gray-200 rounded-lg px-3 py-1.5 text-sm hover:border-orange-300 hover:bg-orange-50 disabled:opacity-40">
-                        <strong>{u.project_name} {u.unit_number}</strong> · {u.bedrooms ?? '?'} SZ · {u.size_sqm ?? '?'} m² · {u.price_net ? `${eur(u.price_net)} netto` : t('crm.sim.noPrice', 'Preis fehlt')}
+                        <strong>{u.project_name} {u.unit_number}</strong> · {u.bedrooms ?? '?'} {t('crm.unitSelect.bedroomsAbbr', 'SZ')} · {u.size_sqm ?? '?'} m² · {u.price_net ? `${eur(u.price_net)} ${t('crm.unitSelect.net', 'netto')}` : t('crm.sim.noPrice', 'Preis fehlt')}
                       </button>
                     ))}
                   </div>
