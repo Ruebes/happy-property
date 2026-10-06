@@ -4776,7 +4776,7 @@
       "addUnit": "Wohnung hinzufügen",
       "noUnits": "Keine anbietbaren Wohnungen in diesem Projekt.",
       "ownedTitle": "Wohnungen des Kunden",
-      "ownedHint": "Kaufdatum, Zahlungsplan und Übergabe nach dem Hinzufügen an den echten Kauf anpassen.",
+      "ownedHint": "Zahlungsplan und Übergabe nach dem Hinzufügen an den echten Kauf anpassen.",
       "noPrice": "Preis fehlt",
       "gap": "Finanzierungslücke",
       "gapMissing": "fehlen",

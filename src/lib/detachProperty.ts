@@ -64,22 +64,30 @@ export async function fetchUnitPropertyId(unitId: string, fallback: string | nul
   return (data as { property_id: string | null }).property_id ?? null
 }
 
-/** Alle Profile, die zu einem Lead gehören: leads.profile_id plus Profil mit gleicher E-Mail. */
-export async function leadProfileIds(leadId: string): Promise<string[]> {
+/**
+ * Alle Profile, die zu einem Lead gehören: leads.profile_id plus Profil mit gleicher E-Mail.
+ * includeAltEmails: auch Profile zu leads.alt_emails (Kunde schreibt/hat sein Konto unter
+ * einer zweiten Adresse, z.B. Lead rw@…, Konto rainer.wallmeyer@…) — wie create-eigentuemer-access.
+ */
+export async function leadProfileIds(leadId: string, opts: { includeAltEmails?: boolean } = {}): Promise<string[]> {
   const { data: lead } = await supabase
     .from('leads')
-    .select('profile_id, email')
+    .select(opts.includeAltEmails ? 'profile_id, email, alt_emails' : 'profile_id, email')
     .eq('id', leadId)
     .maybeSingle()
-  const l = lead as { profile_id: string | null; email: string | null } | null
+  const l = lead as { profile_id: string | null; email: string | null; alt_emails?: string[] | null } | null
   const ids = new Set<string>()
   if (l?.profile_id) ids.add(l.profile_id)
-  const email = l?.email?.trim()
-  if (email) {
+  const emails = new Set<string>()
+  for (const raw of [l?.email, ...(opts.includeAltEmails ? (l?.alt_emails ?? []) : [])]) {
+    const email = raw?.trim()
+    if (email) { emails.add(email); emails.add(email.toLowerCase()) }
+  }
+  if (emails.size) {
     const { data: profs } = await supabase
       .from('profiles')
       .select('id')
-      .in('email', Array.from(new Set([email, email.toLowerCase()])))
+      .in('email', Array.from(emails))
     for (const r of (profs ?? []) as Array<{ id: string }>) ids.add(r.id)
   }
   return Array.from(ids)
