@@ -23,12 +23,19 @@ export interface SimUnit {
   name: string
   priceNet: number            // Listenpreis netto (Engine rechnet MwSt/brutto)
   furnNet: number             // Möbelpaket netto
+  // Moebel wie in der Immobilienauswahl: ohne, im Kaufpreis enthalten oder als
+  // separates Paket. Steuert nur die Bedienung, gerechnet wird mit furnNet.
+  furnMode?: 'none' | 'included' | 'optional'
   rent: number                // Miete/Monat → Engine-Bruttorendite
   letType: 'short' | 'long'   // Kurzzeit (MwSt-Erstattung) / Langzeit
   fin: boolean                // Annuitätendarlehen ja/nein
   buyM: number; buyY: number      // Kauf Monat/Jahr
   readyM: number; readyY: number  // Übergabe Monat/Jahr (= Mietstart)
-  plan: 'sofort' | 'luma'
+  // 'sofort' = alles bei Kauf, 'luma' = alter Luma-Standard (bleibt fuer
+  // gespeicherte Fahrplaene unveraendert), 'dev' = Zahlungsplan des
+  // Bautraegers aus `schedule` (Sven 6.10.26).
+  plan: 'sofort' | 'luma' | 'dev'
+  schedule?: DevSchedule | null
   // Gemeinschaftskosten dieser Wohnung (EUR/Monat). Leer = globaler Vorgabewert.
   opex?: number | null
   // Verkaufsjahr dieser Wohnung. Leer = wird im Betrachtungszeitraum nicht
@@ -115,9 +122,216 @@ export interface SimParams {
   buyerStructure: BuyerStructure
 }
 
+// ── Zahlungsplan des Bautraegers (Sven 6.10.26) ─────────────────────────────
+// „Bei Mito 30 % jetzt, 20 % mit Uebergabe und die letzten 50 % in Raten bis
+// 24 Monate nach Uebergabe, dann mit Zins. Andere gemaess der normalen
+// Zahlungsplaene." Vorher kannte die Strategie nur „alles bei Kauf" und den
+// Luma-Plan - jede Mito-Wohnung war bei der Uebergabe voll bezahlt.
+//
+// Jede Rate ist ein Anteil am Gesamtpreis brutto. Bauraten verteilen sich
+// gleichmaessig zwischen Vertrag und Uebergabe. Der Teil nach der Uebergabe
+// wird in gleichen Raten (Annuitaet) inklusive Zins auf die offene Summe gezahlt.
+export interface DevSchedule {
+  reservation: number     // EUR, wird bei Vertrag gezahlt und auf eine Rate angerechnet
+  // Auf welche Rate die Reservierung angerechnet wird: Standard die
+  // Vertragsrate (Mito, Luma), bei Kuutio die letzte Rate bei Uebergabe.
+  reservationAt?: 'contract' | 'handover'
+  contractPct: number     // % bei Vertrag
+  build: number[]         // Bauraten in % je Bauabschnitt
+  // Faelligkeit je Baurate in Monaten VOR der Uebergabe (Sven 6.10.26: „Du musst
+  // die Stufen vom Uebergabezeitpunkt runterrechnen"). Fehlt der Wert, verteilt
+  // sich die Rate gleichmaessig ueber die Bauzeit. Die Raten haengen am
+  // Baufortschritt und verschieben sich, wenn der Bau schneller oder langsamer ist.
+  buildMonthsBefore?: Array<number | null>
+  buildLabels?: string[]  // Bauabschnitt je Baurate (nur Anzeige)
+  handoverPct: number     // % bei Uebergabe
+  afterPct: number        // % nach Uebergabe in Raten
+  afterMonths: number     // so viele Monate nach Uebergabe ist alles bezahlt
+  afterPerYear: number    // Raten pro Jahr (4 = quartalsweise)
+  afterRatePct: number    // Zins p.a. auf die offene Summe nach Uebergabe
+  source?: string         // woher der Plan stammt (nur Anzeige)
+}
+
+// Mito-Angebot aus dem Deal Ilic (9/2026): 24 Monate, Quartalsraten, 3,4 %.
+export const DEV_AFTER_MONTHS = 24
+export const DEV_AFTER_PER_YEAR = 4
+export const DEV_AFTER_RATE_PCT = 3.4
+
+export const MITO_SCHEDULE: DevSchedule = {
+  reservation: 20000, contractPct: 30, build: [], handoverPct: 20,
+  afterPct: 50, afterMonths: DEV_AFTER_MONTHS, afterPerYear: DEV_AFTER_PER_YEAR, afterRatePct: DEV_AFTER_RATE_PCT,
+  source: 'Mito',
+}
+// Kuutio Homes (Sven 6.10.26): 10.000 Reservierung, 40 % bei Vertrag, 20 %
+// Rohbau, je 10 % Mauerwerk, Boeden, Aluminium, 10 % abzueglich Reservierung bei
+// Fertigstellung. Die Monate vor Uebergabe sind eine Annahme fuer den ueblichen
+// Bauablauf (Betonskelett, Ausmauerung, Estrich/Fliesen, Fenster) und je
+// Wohnung im Simulator anpassbar.
+export const KUUTIO_SCHEDULE: DevSchedule = {
+  reservation: 10000, reservationAt: 'handover', contractPct: 40,
+  build: [20, 10, 10, 10], buildMonthsBefore: [10, 7, 4, 2],
+  buildLabels: ['Rohbau fertig', 'Mauerwerk fertig', 'Böden fertig', 'Aluminium/Fenster fertig'],
+  handoverPct: 10, afterPct: 0, afterMonths: DEV_AFTER_MONTHS, afterPerYear: DEV_AFTER_PER_YEAR, afterRatePct: DEV_AFTER_RATE_PCT,
+  source: 'Kuutio',
+}
+// Uebliche Faelligkeit eines Bauabschnitts in Monaten vor der Uebergabe, aus
+// der Beschriftung im Projekt. Gleiche Annahme wie bei Kuutio.
+export function monthsBeforeFromLabel(label: string): number | null {
+  const t = label.toLowerCase()
+  if (/rohbau|structure|struktur|frame|skelett|carcass/.test(t)) return 10
+  if (/mauer|brick|verputz|plaster/.test(t)) return 7
+  if (/fliesen|floor|b(ö|oe)den|estrich|tiling/.test(t)) return 4
+  if (/alu|fenster|window/.test(t)) return 2
+  return null
+}
+
+export const LUMA_SCHEDULE: DevSchedule = {
+  reservation: 10000, contractPct: 35, build: [20, 20, 15], handoverPct: 10,
+  afterPct: 0, afterMonths: DEV_AFTER_MONTHS, afterPerYear: DEV_AFTER_PER_YEAR, afterRatePct: DEV_AFTER_RATE_PCT,
+  source: 'Luma',
+}
+
+// Entspricht der Plan dem alten Luma-Standard (35 / 20-20-15 / 10, nichts nach
+// der Uebergabe)? Dann bleibt die Wohnung auf plan 'luma' - der rechnet seit
+// jeher mit festen Bauraten-Zeitpunkten, und die Zahlen bleiben wie bisher.
+export function isLumaStandard(s: DevSchedule | null | undefined): boolean {
+  if (!s) return false
+  const r = (n: number) => Math.round(n * 10) / 10
+  const n = normalizeSchedule(s)
+  return r(n.contractPct) === 35 && n.build.map(r).join('/') === '20/20/15' && r(n.handoverPct) === 10 && r(n.afterPct) === 0
+}
+
+export const pctSum = (s: DevSchedule) => s.contractPct + s.build.reduce((a, b) => a + b, 0) + s.handoverPct + s.afterPct
+
+// Summe muss 100 % ergeben. Fehlt etwas, faellt der Rest auf die Uebergabe;
+// ist es zu viel, wird alles anteilig gekuerzt. Sonst wuerde ein Tippfehler im
+// Plan einen Teil des Kaufpreises still unterschlagen.
+export function normalizeSchedule(src: DevSchedule): DevSchedule {
+  const s: DevSchedule = { ...src, build: (src.build ?? []).map(b => Math.max(0, b || 0)) }
+  s.contractPct = Math.max(0, s.contractPct || 0)
+  s.handoverPct = Math.max(0, s.handoverPct || 0)
+  s.afterPct = Math.max(0, s.afterPct || 0)
+  const sum = pctSum(s)
+  if (sum <= 0) return { ...s, handoverPct: 100 }
+  if (sum < 100) s.handoverPct += 100 - sum
+  else if (sum > 100) {
+    const f = 100 / sum
+    s.contractPct *= f; s.handoverPct *= f; s.afterPct *= f; s.build = s.build.map(b => b * f)
+  }
+  return s
+}
+
+// Zahlungsplan aus crm_projects.payment_schedule - beide gespeicherten Formate:
+// (a) { reservation, stages: [{ label, sub, pct }] } und (b) [{ label, percent,
+// trigger }] aus dem Projektformular (percent "35 %" oder "10.000 €"). Die
+// Zuordnung laeuft ueber die Beschriftung: „nach Übergabe" = Raten danach,
+// „Vertrag"/„Unterzeichnung" = bei Vertrag, „Übergabe"/„Schlüssel" = bei
+// Uebergabe, alles andere = Baufortschritt. Ohne hinterlegten Plan greift der
+// Standard des Bautraegers (Mito, Luma), sonst null.
+export function scheduleFromProject(raw: unknown, developer?: string | null): DevSchedule | null {
+  const dev = (developer ?? '').trim().toLowerCase()
+  const fallback = dev.startsWith('mito') ? { ...MITO_SCHEDULE }
+    : dev.startsWith('luma') ? { ...LUMA_SCHEDULE, build: [...LUMA_SCHEDULE.build] }
+      : dev.startsWith('kuutio') ? { ...KUUTIO_SCHEDULE, build: [...KUUTIO_SCHEDULE.build],
+        buildMonthsBefore: [...(KUUTIO_SCHEDULE.buildMonthsBefore ?? [])], buildLabels: [...(KUUTIO_SCHEDULE.buildLabels ?? [])] }
+        : null
+  const zahl = (s: string) => Number(String(s).replace(/\./g, '').replace(',', '.').replace(/[^\d.]/g, '')) || 0
+  let reservation = 0
+  const stages: Array<{ text: string; label: string; pct: number; monthsBefore?: number }> = []
+  if (raw && !Array.isArray(raw) && typeof raw === 'object') {
+    const o = raw as { reservation?: number; stages?: Array<{ label?: string; sub?: string; pct?: number; monthsBefore?: number }> }
+    reservation = Number(o.reservation) || 0
+    for (const s of o.stages ?? []) {
+      if (Number(s.pct) > 0) stages.push({ text: `${s.label ?? ''} ${s.sub ?? ''}`, label: `${s.label ?? ''} ${s.sub ?? ''}`.trim(), pct: Number(s.pct),
+        ...(Number.isFinite(s.monthsBefore) ? { monthsBefore: Number(s.monthsBefore) } : {}) })
+    }
+  } else if (Array.isArray(raw)) {
+    for (const r of raw as Array<Record<string, unknown>>) {
+      const roh = String(r.percent ?? r.pct ?? '')
+      const text = `${r.label ?? ''} ${r.trigger ?? r.sub ?? ''}`
+      const label = String(r.trigger ?? r.sub ?? r.label ?? '').trim()
+      if (/%/.test(roh)) stages.push({ text, label, pct: zahl(roh) })
+      else if (/€|eur/i.test(roh)) reservation = zahl(roh)
+      else if (typeof r.pct === 'number' && r.pct > 0) stages.push({ text, label, pct: r.pct })
+    }
+  }
+  if (!stages.length) return fallback
+  const s: DevSchedule = {
+    reservation, contractPct: 0, build: [], handoverPct: 0, afterPct: 0,
+    afterMonths: fallback?.afterMonths ?? DEV_AFTER_MONTHS,
+    afterPerYear: fallback?.afterPerYear ?? DEV_AFTER_PER_YEAR,
+    afterRatePct: fallback?.afterRatePct ?? DEV_AFTER_RATE_PCT,
+    buildMonthsBefore: [], buildLabels: [],
+    source: 'Projekt',
+  }
+  for (const st of stages) {
+    const t = st.text.toLowerCase()
+    if (/nach (der )?(ü|ue)bergabe|after (handover|completion)/.test(t)) {
+      s.afterPct += st.pct
+      const mon = t.match(/(\d+)\s*monat/)
+      if (mon) s.afterMonths = Math.max(1, Number(mon[1]))
+      const zins = t.match(/(\d+(?:[.,]\d+)?)\s*%\s*zins/)
+      if (zins) s.afterRatePct = Number(zins[1].replace(',', '.'))
+    } else if (/vertrag|unterzeichnung|contract|signing/.test(t)) s.contractPct += st.pct
+    else if (/(ü|ue)bergabe|schl(ü|ue)ssel|title deed|handover|completion|delivery/.test(t)) {
+      s.handoverPct += st.pct
+      // „abzüglich Reservierung" an der letzten Rate (Kuutio-Muster)
+      if (/reserv/.test(t)) s.reservationAt = 'handover'
+    } else {
+      s.build.push(st.pct)
+      s.buildMonthsBefore!.push(st.monthsBefore ?? monthsBeforeFromLabel(st.text))
+      s.buildLabels!.push(st.label)
+    }
+  }
+  return normalizeSchedule(s)
+}
+
+// Laeuft nach der Uebergabe noch eine Bautraeger-Finanzierung? Dann zahlt die
+// Bank erst danach aus.
+// Raten nach der Uebergabe: Anzahl, Abstand in Monaten und der Monat der
+// letzten Rate. Die Laufzeit wird auf das Ratenraster gerundet (18 Monate bei
+// jaehrlichen Raten = 2 Raten, letzte nach 24 Monaten). Text, Bankstart und
+// Raten nutzen alle diese EINE Laufzeit.
+export function afterInstalments(s: DevSchedule): { n: number; step: number; termMonths: number } {
+  const perYear = Math.max(1, Math.round(s.afterPerYear || DEV_AFTER_PER_YEAR))
+  const n = Math.max(1, Math.round((s.afterMonths || DEV_AFTER_MONTHS) * perYear / 12))
+  const step = 12 / perYear
+  return { n, step, termMonths: Math.round(n * step) }
+}
+export function devAfterMonths(u: SimUnit): number {
+  return u.plan === 'dev' && u.schedule && u.schedule.afterPct > 0 ? afterInstalments(u.schedule).termMonths : 0
+}
+// Ab wann steht das Bankdarlehen dieser Wohnung zur Verfuegung (Monat absolut)?
+export function loanReadyYm(u: SimUnit): number {
+  return ymOf(u.readyY, u.readyM) + (u.fin ? devAfterMonths(u) : 0)
+}
+// Ab welchem Jahr taugt die Wohnung als Sicherheit fuer eine Refinanzierung?
+// Erst wenn sie uebergeben UND beim Bautraeger voll bezahlt ist.
+export function pledgeableFromYear(u: SimUnit): number {
+  return Math.floor((ymOf(u.readyY, u.readyM) + devAfterMonths(u)) / 12)
+}
+
+export interface PlanPayment {
+  ym: number; amount: number; label: string
+  // Nur Raten nach der Uebergabe: Zins auf die offene Summe (zusaetzlich zu
+  // amount, das ist die Tilgung) und Kennzeichen fuer die offene Restsumme.
+  interest?: number; after?: boolean
+}
+
 export interface UnitOutcome {
   unit: SimUnit; res: CalcResult; ekUsed: number; loan: number
-  gross: number; payments: Array<{ ym: number; amount: number; label: string }>
+  gross: number; payments: PlanPayment[]
+  // Monatliche Bankrate (Annuitaet). Steht separat, weil die Engine sie bei
+  // spaeterem Darlehensstart im ersten Jahr nicht ausweist.
+  annuityMonthly: number
+}
+
+// Beim Bautraeger noch offene Summe nach der Uebergabe, Stand Jahresende.
+export function devBalanceAt(o: UnitOutcome, year: number): number {
+  if (year < o.unit.readyY) return 0
+  let open = 0
+  for (const pay of o.payments) if (pay.after && Math.floor(pay.ym / 12) > year) open += pay.amount
+  return open
 }
 
 export interface YearRow {
@@ -257,9 +471,10 @@ export function rentFromSeason(season: { totalOcc: number; adrHigh: number } | n
   return Math.round(seasonBreakdown(season, normalizeMonthPlan(plan)).rent / 12)
 }
 
-export function paymentPlan(u: SimUnit, gross: number): Array<{ ym: number; amount: number; label: string }> {
+export function paymentPlan(u: SimUnit, gross: number): PlanPayment[] {
   const buy = ymOf(u.buyY, u.buyM), ready = Math.max(buy, ymOf(u.readyY, u.readyM))
   if (u.plan === 'sofort') return [{ ym: buy, amount: gross, label: 'Kaufpreis komplett' }]
+  if (u.plan === 'dev' && u.schedule) return devPayments(u.schedule, buy, ready, gross)
   const span = Math.max(1, ready - buy)
   return [
     { ym: buy, amount: 10000, label: 'Reservierung' },
@@ -269,6 +484,70 @@ export function paymentPlan(u: SimUnit, gross: number): Array<{ ym: number; amou
     { ym: Math.round(buy + span * 0.85), amount: gross * 0.15, label: '4. Rate 15 %' },
     { ym: ready, amount: gross * 0.10, label: '10 % bei Übergabe' },
   ]
+}
+
+const fmtPct = (n: number) => `${String(Math.round(n * 10) / 10).replace('.', ',')} %`
+
+function devPayments(raw: DevSchedule, buy: number, ready: number, gross: number): PlanPayment[] {
+  const s = normalizeSchedule(raw)
+  const out: PlanPayment[] = []
+  const share = (pct: number) => gross * pct / 100
+  // Reservierung auf die letzte Rate angerechnet (Kuutio): bei Vertrag zusaetzlich
+  // faellig, bei Uebergabe entsprechend weniger. Nie mehr, als die letzte Rate hergibt.
+  const resAtHandover = s.reservationAt === 'handover' ? Math.min(Math.max(0, s.reservation || 0), share(s.handoverPct)) : 0
+  if (resAtHandover > 0) out.push({ ym: buy, amount: resAtHandover, label: 'Reservierung' })
+  if (s.contractPct > 0) out.push({ ym: buy, amount: share(s.contractPct), label: `${fmtPct(s.contractPct)} bei Vertrag` })
+  const span = ready - buy
+  s.build.forEach((pct, k) => {
+    if (!(pct > 0)) return
+    // Vom Uebergabetermin zurueckgerechnet; ein Abschnitt, der beim Kauf schon
+    // fertig ist, wird mit dem Vertrag faellig.
+    const mb = s.buildMonthsBefore?.[k]
+    const ym = mb != null && Number.isFinite(mb) && mb >= 0
+      ? Math.min(ready, Math.max(buy, ready - Math.round(mb)))
+      : (span > 1 ? Math.round(buy + span * (k + 1) / (s.build.length + 1)) : buy)
+    const name = s.buildLabels?.[k]?.trim()
+    out.push({ ym, amount: share(pct), label: `${name ? `${name}: ` : `Baurate ${k + 1}: `}${fmtPct(pct)}` })
+  })
+  if (s.handoverPct > 0) out.push({
+    ym: ready, amount: share(s.handoverPct) - resAtHandover,
+    label: `${fmtPct(s.handoverPct)} bei Übergabe${resAtHandover > 0 ? ' abzüglich Reservierung' : ''}`,
+  })
+  if (s.afterPct > 0) {
+    // Gleiche Raten inklusive Zins auf die offene Summe (Annuitaet). Bei Mito
+    // ergibt das fuer 696.137,82 EUR acht Quartalsraten zu 90.378,50 EUR.
+    const { n, step } = afterInstalments(s)
+    const r = Math.max(0, s.afterRatePct || 0) / 100 / (12 / step)
+    const principal = share(s.afterPct)
+    const rate = r === 0 ? principal / n : principal * r / (1 - Math.pow(1 + r, -n))
+    let open = principal
+    for (let k = 1; k <= n; k++) {
+      const interest = open * r
+      const tilg = k === n ? open : rate - interest
+      open -= tilg
+      out.push({
+        ym: ready + Math.round(k * step), amount: tilg, interest, after: true,
+        label: `Rate ${k}/${n} nach Übergabe`,
+      })
+    }
+  }
+  return out
+}
+
+// Kurzbeschreibung fuer Anzeigen: „30 % bei Vertrag, 20 % bei Übergabe, 50 % in
+// 8 Raten bis 24 Monate nach Übergabe (3,4 % Zins)".
+export function describeSchedule(raw: DevSchedule): string {
+  const s = normalizeSchedule(raw)
+  const parts: string[] = []
+  if (s.contractPct > 0) parts.push(`${fmtPct(s.contractPct)} bei Vertrag`)
+  const build = s.build.filter(b => b > 0)
+  if (build.length) parts.push(`${build.map(fmtPct).join(' / ')} nach Baufortschritt`)
+  if (s.handoverPct > 0) parts.push(`${fmtPct(s.handoverPct)} bei Übergabe${s.reservationAt === 'handover' && s.reservation > 0 ? ' abzüglich Reservierung' : ''}`)
+  if (s.afterPct > 0) {
+    const { n, termMonths } = afterInstalments(s)
+    parts.push(`${fmtPct(s.afterPct)} ${n === 1 ? 'in einer Rate' : `in ${n} Raten bis`} ${termMonths} Monate nach Übergabe (${fmtPct(s.afterRatePct)} Zins)`)
+  }
+  return parts.join(', ')
 }
 
 export function runUnit(u: SimUnit, ekForUnit: number, p: SimParams): UnitOutcome {
@@ -312,7 +591,11 @@ export function runUnit(u: SimUnit, ekForUnit: number, p: SimParams): UnitOutcom
     // Jede Wohnung wird so lange gerechnet, wie der Horizont ab ihrer Uebergabe
     // noch laeuft - hoechstens aber ueber den ganzen Horizont.
     years: horizonOf(p),
-    furnCost: u.furnNet, furnFree: false,
+    // „Möbel gratis" aus dem Simulator bzw. der Einzelberechnung (Sven 6.10.26:
+    // muss im Simulator genauso waehlbar sein wie in der Immobilienauswahl).
+    furnCost: u.furnNet, furnFree: fromCalc.furnFree === true,
+    // Finanziert der Bautraeger nach der Uebergabe, zahlt die Bank erst danach aus.
+    loanDelayMonths: u.fin ? devAfterMonths(u) : 0,
     // Laufende Kosten der Wohnung: Gemeinschaftskosten je Wohnung (sonst der
     // globale Vorgabewert), Ruecklage einheitlich als Prozentsatz.
     opexMonthly: u.opex ?? p.opexMonthly, maintPct: p.maintPct,
@@ -324,7 +607,11 @@ export function runUnit(u: SimUnit, ekForUnit: number, p: SimParams): UnitOutcom
   }
   const res = compute(params)
   const gross = res.pGross + res.furnGross
-  return { unit: u, res, ekUsed: res.ekStart, loan: res.loan, gross, payments: paymentPlan(u, gross) }
+  // Monatsrate wie in der Engine (Jahresannuitaet / 12).
+  const iR = params.interestPct / 100, n = Math.max(1, params.termYears)
+  const annuityMonthly = res.loan <= 0 ? 0
+    : (iR === 0 ? res.loan / n : res.loan * (iR * Math.pow(1 + iR, n)) / (Math.pow(1 + iR, n) - 1)) / 12
+  return { unit: u, res, ekUsed: res.ekStart, loan: res.loan, gross, payments: paymentPlan(u, gross), annuityMonthly }
 }
 
 // Bundlekauf: EK in ÜBERGABE-Reihenfolge verteilen (die zuerst fertige Wohnung
@@ -581,6 +868,16 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams, extras?: Aggre
         if (sold == null || y < sold) { row.debt += o.res.restL[n - 1]; row.value += o.res.propV[n - 1] }
       }
       for (const pay of o.payments) if (Math.floor(pay.ym / 12) === y) row.invest += pay.amount
+      // Raten an den Bautraeger nach der Uebergabe: Die offene Summe ist Schuld
+      // (die Wohnung steht ab Uebergabe mit vollem Wert im Vermoegen), der Zins
+      // darauf kostet Cashflow und mindert die Steuer wie jeder Darlehenszins.
+      if (sold == null || y < sold) row.debt += devBalanceAt(o, y)
+      let devInterest = 0
+      for (const pay of o.payments) if (pay.interest && Math.floor(pay.ym / 12) === y) devInterest += pay.interest
+      if (devInterest) {
+        row.interest += devInterest; row.cashflow -= devInterest
+        row.baseCY -= devInterest; row.baseDE -= devInterest
+      }
     }
     rows.push(row)
   }
@@ -606,9 +903,10 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams, extras?: Aggre
     let paid = 0
     for (let ym = startYm; ym <= endYm; ym++) {
       paid += pays.filter(x => x.ym === ym).reduce((a, x) => a + x.amount, 0)
-      // Enddarlehen stehen ab der Übergabe der jeweiligen Wohnung zur Verfügung
+      // Enddarlehen stehen ab der Übergabe der jeweiligen Wohnung zur Verfügung,
+      // bei Bautraeger-Raten nach der Uebergabe erst nach der letzten Rate.
       const loansReady = bridgeUnits
-        .filter(o => ymOf(o.unit.readyY, o.unit.readyM) <= ym)
+        .filter(o => loanReadyYm(o.unit) <= ym)
         .reduce((a, o) => a + o.loan, 0)
       const bridge = Math.max(0, paid - ek - loansReady)
       if (bridge > bridgePeak) bridgePeak = bridge
@@ -714,7 +1012,7 @@ export function runScenario(units: SimUnit[], p: SimParams, key: ScenarioKey): S
   const su = factor === 1 ? units : units.map(u => ({ ...u, rent: Math.round(u.rent * factor) }))
   const outcomes = allocate(su, sp)
   const agg = aggregate(outcomes, sp)
-  const exit = computeExit(outcomes, sp, agg.firstYear)
+  const exit = computeExit(outcomes, sp, agg.firstYear, agg.rows)
   const totals = totalsOf(outcomes, agg.rows, sp, exit)
   return { key, params: sp, units: su, outcomes, rows: agg.rows, firstYear: agg.firstYear, lastYear: agg.lastYear, bridgeNeeded: agg.bridgeNeeded, bridgePeak: agg.bridgePeak, exit, totals }
 }
@@ -851,7 +1149,8 @@ export function saleLineOf(o: UnitOutcome, year: number, p: SimParams, tranches:
   const sellCost = Math.round(value * ((p.sellCostPct + p.lawyerPct) / 100) * svcVat)
   // Restschuld: urspruengliches Darlehen PLUS die offenen Refinanzierungs-
   // tranchen, die auf dieser Wohnung liegen. Sonst waere der Erloes zu hoch.
-  const ownDebt = delivered ? o.res.restL[Math.min(i, n - 1)] : 0
+  // Dazu die beim Bautraeger noch offenen Raten nach der Uebergabe.
+  const ownDebt = delivered ? o.res.restL[Math.min(i, n - 1)] + devBalanceAt(o, year) : 0
   const trancheDebt = tranches
     .filter(t => t.propertyKeys.includes(o.unit.key) && t.startYear <= year)
     .reduce((a, t) => {
@@ -924,10 +1223,28 @@ export function computeSale(
   return { ...tax, year, key: o.unit.key, name: o.unit.name, line, levy, netProceeds }
 }
 
-export function computeExit(outcomes: UnitOutcome[], p: SimParams, firstYear: number): ExitResult | null {
+// Anteil einer Wohnung am offenen Zwischenkredit zum Jahresende - nur fuer
+// Wohnungen mit Bautraeger-Raten nach der Uebergabe, deren Bankdarlehen noch
+// aussteht (aufgeteilt nach Darlehenshoehe). Alle anderen: 0, wie bisher.
+export function bridgeShareOf(outcomes: UnitOutcome[], o: UnitOutcome, year: number, rows: YearRow[]): number {
+  const bridge = rows.find(r => r.year === year)?.bridgeDebt ?? 0
+  if (!(bridge > 0) || !devAfterMonths(o.unit) || year < o.unit.readyY || o.unit.model) return 0
+  const pending = outcomes.filter(x => !x.unit.model && x.loan > 0 && loanReadyYm(x.unit) > ymOf(year, 12))
+  if (!pending.includes(o)) return 0
+  const totalLoan = pending.reduce((a, x) => a + x.loan, 0)
+  return totalLoan > 0 ? Math.round(bridge * o.loan / totalLoan) : 0
+}
+
+export function computeExit(outcomes: UnitOutcome[], p: SimParams, firstYear: number, rows?: YearRow[]): ExitResult | null {
   if (!outcomes.length || !p.exitAfterYears) return null
   const year = firstYear + p.exitAfterYears - 1
   const lines = outcomes.map(o => saleLineOf(o, year, p))
+  // Verkauf, waehrend noch Bautraeger-Raten laufen: Die Bank hat noch nicht
+  // ausgezahlt, die Luecke steht als Zwischenkredit offen und muss aus dem
+  // Erloes abgeloest werden. Aufgeteilt auf die Wohnungen, deren Darlehen noch
+  // aussteht, nach Darlehenshoehe. Nur fuer Wohnungen mit Raten nach der
+  // Uebergabe - alle anderen Faelle rechnen wie bisher.
+  if (rows) outcomes.forEach((o, i) => { lines[i].debt += bridgeShareOf(outcomes, o, year, rows) })
   const sum = (f: (l: ExitUnitLine) => number) => lines.reduce((a, l) => a + f(l), 0)
   const value = sum(l => l.value), debt = sum(l => l.debt)
   const sellCost = sum(l => l.sellCost), vatClawback = sum(l => l.vatClawback)
@@ -1075,7 +1392,7 @@ export function breakEvenGrowth(units: SimUnit[], p: SimParams): number {
     const pp = { ...p, growth }
     const outs = allocate(units, pp)
     const agg = aggregate(outs, pp)
-    const ex = computeExit(outs, pp, agg.firstYear)
+    const ex = computeExit(outs, pp, agg.firstYear, agg.rows)
     const cash = agg.rows.filter(r => !ex || r.year <= ex.year).reduce((a, r) => a + r.cashflow, 0)
     const ekTotal = outs.reduce((a, o) => a + o.ekUsed, 0)
     const end = ex ? ex.net : (agg.rows.length ? agg.rows[agg.rows.length - 1].value - agg.rows[agg.rows.length - 1].debt : 0)

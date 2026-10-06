@@ -9,7 +9,7 @@ import { MonthPlanPicker } from './MonthPlanPicker'
 import { CustomSelect } from '../CustomSelect'
 import { NumberStepper } from '../NumberStepper'
 import StrategySimulator, { type SimUnit } from './StrategySimulator'
-import { rentFromSeason, DEFAULT_SIM_PARAMS } from '../../lib/strategy'
+import { rentFromSeason, DEFAULT_SIM_PARAMS, scheduleFromProject, isLumaStandard } from '../../lib/strategy'
 import { bookingUrl } from '../../lib/bookingLink'
 
 // ── Deck-Wizard ──────────────────────────────────────────────────────────────
@@ -19,7 +19,7 @@ import { bookingUrl } from '../../lib/bookingLink'
 // Postausgang (Freigabe durch Sven).
 
 interface LeadLite { id: string; first_name: string; last_name: string; email: string | null; language?: string | null }
-interface ProjectRow { id: string; name: string; developer: string | null; deck_assets: DeckAssetsCache | null; furniture_cost: number | null; furniture_included: boolean | null; calc_defaults: { furniture_by_bedrooms?: Record<string, number> } | null; latitude: number | null; longitude: number | null; completion_date: string | null }
+interface ProjectRow { id: string; name: string; developer: string | null; deck_assets: DeckAssetsCache | null; furniture_cost: number | null; furniture_included: boolean | null; calc_defaults: { furniture_by_bedrooms?: Record<string, number> } | null; latitude: number | null; longitude: number | null; completion_date: string | null; payment_schedule?: unknown }
 interface UnitRow { id: string; unit_number: string; bedrooms: number | null; size_sqm: number | null; terrace_sqm: number | null; plot_sqm: number | null; price_net: number | null; price_net_furnished: number | null; price_gross: number | null; vat_rate: number | null; floor: number | null }
 interface BasketItem { projectId: string; projectName: string; assets: DeckAssetsCache | null; unit: UnitRow; furnitureCost: number | null; furnitureIncluded: boolean | null; furnitureByBedrooms: Record<string, number> | null; lat: number | null; lng: number | null }
 
@@ -84,8 +84,10 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   // Vermietungsart/Finanzierung aus den Wizard-Overrides, Übergabe aus dem
   // Projekt-Fertigstellungsdatum, Kauf = heute.
   const basketToSim = (): SimUnit[] => basket.map(b => {
+    const fmode = furnModeOf(b)
+    // Preis wie in der Einzelrechnung (buildCalcItem): Grundpreis.
     const priceNet = b.unit.price_net ?? 0
-    const furnNet = furnModeOf(b) === 'optional' ? furnNetOf(b) : 0
+    const furnNet = fmode === 'optional' ? furnNetOf(b) : 0
     const gross = Math.round((priceNet + furnNet) * 1.19)
     const proj = projects.find(p => p.id === b.projectId)
     const nowD = new Date()
@@ -98,16 +100,22 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     const yieldPct = pu.yieldPct ?? calcParams.yieldPct ?? 5.5
     const monthsAway = (readyY - nowD.getFullYear()) * 12 + (readyM - (nowD.getMonth() + 1))
     const puSeason = letType === 'short' ? (pu.season !== undefined ? pu.season : calcParams.season) : null
+    // Zahlungsplan des Bautraegers aus dem Projekt (Mito 30/20/50 mit Raten nach
+    // der Uebergabe, Luma 35/20/20/15/10 ...). Ohne Plan bleibt der alte Standard.
+    // Luma-Standard bleibt plan 'luma' (gleiche Zahlen wie bisher).
+    const sched0 = proj ? scheduleFromProject(proj.payment_schedule, proj.developer) : null
+    const sched = sched0 && !isLumaStandard(sched0) ? sched0 : null
     return {
       key: b.unit.id, name: `${b.projectName} ${b.unit.unit_number}`,
-      priceNet, furnNet,
+      priceNet, furnNet, furnMode: fmode,
       // Saisonmodell schlägt die pauschale Rendite - sonst zeigt der Simulator
       // eine andere Miete als er rechnet.
       rent: rentFromSeason(puSeason, planFields(letType).monthPlan) ?? Math.round(gross * yieldPct / 100 / 12),
       letType,
       fin: (pu.fin ?? calcParams.fin) === 'yes',
       buyM: nowD.getMonth() + 1, buyY: nowD.getFullYear(), readyM, readyY,
-      plan: monthsAway > 2 ? 'luma' as const : 'sofort' as const,
+      plan: monthsAway > 2 ? (sched ? 'dev' as const : 'luma' as const) : 'sofort' as const,
+      ...(monthsAway > 2 && sched ? { schedule: sched } : {}),
       // Die im Wizard eingestellten Werte dieser Wohnung 1:1 weitergeben, damit
       // die Strategie mit denselben Zahlen rechnet wie die Einzelberechnung.
       calc: {
@@ -118,6 +126,8 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
         deTaxPct: pu.deTaxPct ?? calcParams.deTaxPct,
         res: calcParams.res,
         vatMode: pu.vatMode, livingSqm: pu.livingSqm ?? b.unit.size_sqm ?? null,
+        // „Möbel gratis" nach derselben Regel wie die Einzelrechnung (buildCalcItem)
+        furnFree: pu.furnFree ?? fmode === 'included',
         ...planFields(letType),
       },
     }
@@ -168,7 +178,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   }
 
   useEffect(() => { void (async () => {
-    const { data } = await supabase.from('crm_projects').select('id, name, developer, deck_assets, furniture_cost, furniture_included, calc_defaults, latitude, longitude, completion_date').order('name')
+    const { data } = await supabase.from('crm_projects').select('id, name, developer, deck_assets, furniture_cost, furniture_included, calc_defaults, latitude, longitude, completion_date, payment_schedule').order('name')
     setProjects((data ?? []) as ProjectRow[])
   })() }, [])
 

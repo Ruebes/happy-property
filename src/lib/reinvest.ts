@@ -15,7 +15,7 @@
 // finanziert, haengt an Einkommen, Bonitaet, Bewertung und Bankrichtlinien.
 import {
   allocate, aggregate, runUnit, computeSale, totalsOf, horizonOf, purchaseGrowthOf, trancheSchedule,
-  type SimUnit, type SimParams, type UnitOutcome, type YearRow,
+  pledgeableFromYear, type SimUnit, type SimParams, type UnitOutcome, type YearRow,
   type LoanTranche, type SaleResult, type StrategyTotals,
 } from './strategy'
 import { CY_CGT_ALLOWANCE, irrCalc, personsOf } from './rechner'
@@ -400,9 +400,10 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
       const sold = saleYears.get(o.unit.key)
       if (sold != null && y >= sold) continue
       // Nur uebergebene Wohnungen sind beleihbar. Eine Wohnung im Bau taugt
-      // nicht als Sicherheit, egal wie viele Raten schon bezahlt sind.
+      // nicht als Sicherheit, egal wie viele Raten schon bezahlt sind. Laufen
+      // nach der Uebergabe noch Bautraeger-Raten, erst nach der letzten Rate.
       const i = y - o.unit.readyY
-      if (i < 0) continue
+      if (i < 0 || y < pledgeableFromYear(o.unit)) continue
       const n = o.res.rents.length
       const value = o.res.propV[Math.min(i, n - 1)]
       const own = o.res.restL[Math.min(i, n - 1)]
@@ -773,9 +774,9 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
       handoverYear: u.readyY,
       handoverMonth: u.readyM,
       constructionMonths: Math.max(0, (u.readyY * 12 + u.readyM) - (u.buyY * 12 + u.buyM)),
-      // Beleihbar ab dem Uebergabejahr - identisch mit der Bedingung, nach der
-      // die Kapazitaetsrechnung oben eine Wohnung beruecksichtigt.
-      pledgeableFrom: u.readyY,
+      // Beleihbar ab dem Uebergabejahr (bei Bautraeger-Raten nach der Uebergabe
+      // ab der letzten Rate) - identisch mit der Bedingung der Kapazitaetsrechnung oben.
+      pledgeableFrom: pledgeableFromYear(u),
       firstRefinanceYear: mine.length ? Math.min(...mine.map(e => e.year)) : null,
       refinancings: mine.length,
       totalRefinanced: round(mine.reduce((a, e) => a + e.newLoanAmount, 0)),

@@ -5,7 +5,7 @@
 // Kundenseite nicht auseinanderlaufen.
 import {
   allocate, aggregate, totalsOf, computeExit, runScenarios, roeMeaningful, assessRisk,
-  breakEvenGrowth, SCENARIO_KEYS,
+  breakEvenGrowth, SCENARIO_KEYS, describeSchedule, devAfterMonths, loanReadyYm, ymOf, devBalanceAt, bridgeShareOf,
   type SimUnit, type SimParams, type ScenarioKey, type RiskItem, type ExitResult,
   type ScenarioResult,
 } from './strategy'
@@ -120,6 +120,11 @@ export interface JourneyStep { label: string; value: string; note: string }
 // ── Was wann passiert ────────────────────────────────────────────────────────
 export interface TimelineEntry { year: number; kind: 'buy' | 'handover' | 'refinance' | 'purchase' | 'sale'; label: string; detail: string }
 
+// Kaufpreiszahlungen je Jahr nach dem Zahlungsplan der Bautraeger (Sven 6.10.26):
+// was an die Bautraeger geht, wie viel davon das Eigenkapital deckt und wie viel
+// finanziert werden muss. Zins = Zins auf Bautraeger-Raten nach der Uebergabe.
+export interface PurchasePaymentRow { year: number; total: number; equity: number; financed: number; interest: number }
+
 export interface CustomerSummary {
   firstYear: number; lastYear: number
   originalEquity: number
@@ -171,6 +176,7 @@ export interface CustomerAnalytics {
   moneyFlow: MoneyFlowRow[]
   journey: JourneyStep[]
   timeline: TimelineEntry[]
+  purchasePayments: PurchasePaymentRow[]
   keyInsights: Insight[]
   insights: Insight[]
   drivers: string[]
@@ -192,7 +198,7 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
   const agg = ri
     ? { rows: ri.rows, firstYear: ri.firstYear, lastYear: ri.lastYear }
     : (() => { const a = aggregate(outcomes, params); return { rows: a.rows, firstYear: a.firstYear, lastYear: a.lastYear } })()
-  const exit: ExitResult | null = ri ? null : computeExit(outcomes, params, agg.firstYear)
+  const exit: ExitResult | null = ri ? null : computeExit(outcomes, params, agg.firstYear, agg.rows)
   // Im Reinvestment-Modus rechnet der Motor die Rendite aus Sicht des Investors
   // (Einzahlungen raus, Endwert rein). Diese Zahl gilt fuer die ganze Seite -
   // sonst stuenden in Kennzahl und Szenariovergleich zwei verschiedene Renditen.
@@ -344,13 +350,20 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
       o.res.propV.length - 1,
     )
     const sale = ri?.sales.find(s => s.key === o.unit.key) ?? null
+    // Laufen am Ende noch Bautraeger-Raten, gehoert die offene Summe (und der
+    // Zwischenkredit bis zur Bankauszahlung) zur Schuld dieser Wohnung - sonst
+    // passen Karte, Verkauf und Endbilanz nicht zusammen. Ohne Raten: 0.
+    const yEnd = sold ?? agg.lastYear
+    const devDebt = devAfterMonths(o.unit) && yEnd >= o.unit.readyY
+      ? devBalanceAt(o, yEnd) + bridgeShareOf(outcomes, o, yEnd, agg.rows) : 0
+    const debtEndRaw = o.res.restL[idxEnd] + devDebt
     return {
       key: o.unit.key, name: o.unit.name,
       buyYear: o.unit.buyY, readyYear: o.unit.readyY,
       buyMonth: o.unit.buyM, readyMonth: o.unit.readyM,
       price: o.unit.priceNet, gross: r0(o.gross), equity: r0(o.ekUsed), loan: r0(o.loan),
-      valueEnd: r0(o.res.propV[idxEnd]), debtEnd: r0(o.res.restL[idxEnd]),
-      equityEnd: r0(o.res.propV[idxEnd] - o.res.restL[idxEnd]),
+      valueEnd: r0(o.res.propV[idxEnd]), debtEnd: r0(debtEndRaw),
+      equityEnd: r0(o.res.propV[idxEnd] - debtEndRaw),
       rentFirstYear: r0(o.res.rents[0]),
       // Kumulierter Zuwachs ueber die gerechneten Jahre, KEINE Jahresrendite.
       // Die Karte beschriftet ihn entsprechend.
@@ -570,19 +583,79 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
 
   // ── Zeitachse aus echten Ereignissen ──────────────────────────────────────
   const timeline: TimelineEntry[] = []
+  const mmYYYY = (ym: number) => `${String(ym % 12 + 1).padStart(2, '0')}/${Math.floor(ym / 12)}`
+  // Letzter Monat, in dem diese Wohnung im Plan noch vorkommt: Ende des
+  // Zeitraums oder ihr Verkaufsjahr. Raten danach loest der Verkaufserloes ab
+  // (computeExit / computeSale ziehen die offene Summe dort schon ab).
+  const saleYearOf = (o: (typeof outcomes)[number]): number | null =>
+    ri?.saleYears.get(o.unit.key) ?? o.unit.saleYear ?? (exit ? exit.year : null)
+  const endYmOf = (o: (typeof outcomes)[number]) =>
+    ymOf(Math.min(agg.lastYear, saleYearOf(o) ?? agg.lastYear), 12)
   for (const o of outcomes) {
     if (o.unit.model) continue
+    const sched = o.unit.plan === 'dev' && o.unit.schedule ? o.unit.schedule : null
     timeline.push({
       year: o.unit.buyY, kind: 'buy', label: `Kauf ${o.unit.name}`,
-      detail: `${eur(o.gross)} gesamt, davon ${eur(o.ekUsed)} Eigenkapital.`,
+      detail: `${eur(o.gross)} gesamt, davon ${eur(o.ekUsed)} Eigenkapital.`
+        + (sched ? ` Zahlungsplan: ${describeSchedule(sched)}.` : ''),
     })
-    if (o.unit.readyY !== o.unit.buyY) {
+    // Raten an den Bautraeger nach der Uebergabe: offene Summe, letzte Rate und
+    // wann die Bank auszahlt.
+    const endYm = endYmOf(o)
+    const afterAll = o.payments.filter(x => x.after)
+    const after = afterAll.filter(x => x.ym <= endYm)
+    const cut = afterAll.filter(x => x.ym > endYm).reduce((a, x) => a + x.amount, 0)
+    const raten = (n: number) => n === 1 ? 'in einer Rate' : `in ${n} Raten`
+    const handoverText = afterAll.length
+      ? 'Ab hier fließt Miete.'
+        + (after.length
+          ? ` ${eur(after.reduce((a, x) => a + x.amount, 0))} zahlst du ${raten(after.length)} bis ${mmYYYY(after[after.length - 1].ym)} an den Bauträger, zuzüglich ${eur(after.reduce((a, x) => a + (x.interest ?? 0), 0))} Zinsen.`
+          : '')
+        + (cut > 0
+          ? (saleYearOf(o) != null && saleYearOf(o)! <= agg.lastYear
+            ? ` Die restlichen ${eur(cut)} an den Bauträger werden beim Verkauf aus dem Erlös bezahlt.`
+            : ` Die restlichen ${eur(cut)} an den Bauträger fallen nach dem Betrachtungszeitraum an.`)
+          : '')
+        + (o.loan > 0 && devAfterMonths(o.unit) && loanReadyYm(o.unit) <= endYm ? ` Das Bankdarlehen läuft ab ${mmYYYY(loanReadyYm(o.unit))}.` : '')
+      : 'Ab hier fließt Miete, und Zins und Tilgung laufen.'
+    if (o.unit.readyY !== o.unit.buyY || afterAll.length) {
       timeline.push({
         year: o.unit.readyY, kind: 'handover', label: `Übergabe ${o.unit.name}`,
-        detail: 'Ab hier fließt Miete, und Zins und Tilgung laufen.',
+        detail: handoverText,
       })
     }
   }
+
+  // ── Kaufpreiszahlungen je Jahr ────────────────────────────────────────────
+  // Gleiche Reihenfolge wie die Zwischenfinanzierung in aggregate(): zuerst das
+  // Eigenkapital, was darueber hinausgeht, finanziert die Bank. Eigenkapital =
+  // was wirklich in die Kaufpreise fliesst (ekAbs je Wohnung): Im Reinvestment-
+  // Modus bleiben Reserve und Kaufnebenkosten draussen, sonst passte die Tabelle
+  // nicht zu den Wohnungskarten. Raten nach dem Verkauf entfallen.
+  const buyUnits = outcomes.filter(o => !o.unit.model)
+  // Nur mit echtem Bautraeger-Plan: Der alte Platzhalter-Plan ('luma' fuer alle)
+  // ist kein Zahlungsplan des Bautraegers, und schon verschickte Seiten bleiben so
+  // unveraendert.
+  const hasDevPlan = buyUnits.some(o => o.unit.plan === 'dev' && !!o.unit.schedule)
+  const pays = (hasDevPlan ? buyUnits : [])
+    .flatMap(o => { const end = endYmOf(o); return o.payments.filter(x => x.ym <= end) })
+    .sort((x, y) => x.ym - y.ym)
+  const payByYear = new Map<number, PurchasePaymentRow>()
+  let ekLeft = buyUnits.reduce((a, o) => a + o.res.ekAbs, 0)
+  for (const pay of pays) {
+    const year = Math.floor(pay.ym / 12)
+    const row = payByYear.get(year) ?? { year, total: 0, equity: 0, financed: 0, interest: 0 }
+    const fromEk = Math.min(Math.max(0, ekLeft), pay.amount)
+    ekLeft -= fromEk
+    row.total += pay.amount; row.equity += fromEk; row.financed += pay.amount - fromEk
+    row.interest += pay.interest ?? 0
+    payByYear.set(year, row)
+  }
+  const purchasePayments: PurchasePaymentRow[] = [...payByYear.values()]
+    .sort((x, y) => x.year - y.year)
+    // Finanziert = Summe minus Eigenkapital aus den GERUNDETEN Werten, damit
+    // die Zeile auf der Seite aufgeht.
+    .map(r => ({ year: r.year, total: r0(r.total), equity: r0(r.equity), financed: r0(r.total) - r0(r.equity), interest: r0(r.interest) }))
   for (const e of events) {
     if (e.kind === 'refinance') {
       timeline.push({
@@ -636,7 +709,7 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
     liquidity, minimumReserve: reserve, liquidityWarning,
     financing, financingKpis, capitalSteps, recyclingRows, opportunity,
     properties, tax, taxKpis, scenarios, exits, risks, insights, drivers, sensitivity,
-    balance, cost, moneyFlow, journey, timeline, keyInsights, events,
+    balance, cost, moneyFlow, journey, timeline, purchasePayments, keyInsights, events,
   }
 }
 

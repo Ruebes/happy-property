@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import { CustomSelect } from '../CustomSelect'
+import { NumberStepper } from '../NumberStepper'
+import { MonthPlanPicker } from './MonthPlanPicker'
 import { createStrategyOutboxDraft } from '../../lib/calcOutbox'
 import { leadProfileIds } from '../../lib/detachProperty'
 import { unitNet } from '../../lib/price'
@@ -10,8 +12,10 @@ import { runReinvest } from '../../lib/reinvest'
 import {
   roeMeaningful, migrateConfig, ymOf, rentFromSeason, runScenarios, assessRisk,
   breakEvenGrowth, defaultDivTaxPct, DEFAULT_SIM_PARAMS, SCENARIO_KEYS,
-  type SimUnit, type SimParams, type ScenarioKey, type ScenarioResult, purchaseGrowthOf } from '../../lib/strategy'
-import { defaultMgmtPct, type CalcParams, type CalcItem } from '../../lib/rechner'
+  scheduleFromProject, normalizeSchedule, afterInstalments, isLumaStandard, pctSum, LUMA_SCHEDULE, loanReadyYm, devAfterMonths, DEV_AFTER_MONTHS, DEV_AFTER_PER_YEAR, DEV_AFTER_RATE_PCT,
+  type SimUnit, type SimParams, type ScenarioKey, type ScenarioResult, type DevSchedule, purchaseGrowthOf } from '../../lib/strategy'
+import { defaultMgmtPct, seasonBreakdown, vatSplit, normalizeMonthPlan, monthPlanCounts, MONTH_PLAN_ALL_LET,
+  type CalcParams, type CalcItem, type MonthPlan, type VatMode } from '../../lib/rechner'
 
 // ── Strategie-Simulator ──────────────────────────────────────────────────────
 // Zusatz ÜBER den Einzelrechnungen (Sven 15.8.26): rechnet je Wohnung mit der
@@ -31,8 +35,42 @@ const NOW_YM = ymOf(now.getFullYear(), now.getMonth() + 1)
 const MONTH_OPTS = Array.from({ length: 12 }, (_, i) => ({ value: String(i + 1), label: String(i + 1).padStart(2, '0') }))
 const YEAR_OPTS = Array.from({ length: 12 }, (_, i) => ({ value: String(now.getFullYear() + i), label: String(now.getFullYear() + i) }))
 
-interface PickProject { id: string; name: string; furniture_cost: number | null; furniture_included: boolean | null; completion_date: string | null; calc_defaults: { furniture_by_bedrooms?: Record<string, number> } | null }
-interface PickUnit { id: string; unit_number: string; bedrooms: number | null; size_sqm: number | null; price_net: number | null }
+interface PickProject {
+  id: string; name: string; furniture_cost: number | null; furniture_included: boolean | null; completion_date: string | null
+  calc_defaults: { furniture_by_bedrooms?: Record<string, number> } | null
+  // Zahlungsplan des Bautraegers (Sven 6.10.26): fliesst in die Kaufraten ein
+  developer: string | null; payment_schedule: unknown
+}
+interface PickUnit { id: string; unit_number: string; bedrooms: number | null; size_sqm: number | null; price_net: number | null; price_net_furnished?: number | null }
+// Stammdaten einer Wohnung aus Projekt und Bestand - nur fuer die Bedienung der
+// Karte (Moebel-Modus, Zahlungsplan des Bautraegers, Wohnflaeche), nicht gespeichert.
+interface UnitMeta {
+  sizeSqm: number | null
+  furnPackage: number; furnIncluded: boolean
+  schedule: DevSchedule | null; developer: string | null
+}
+const PROJECT_COLS = 'id, name, furniture_cost, furniture_included, completion_date, calc_defaults, developer, payment_schedule'
+// Moebelpaket des Projekts fuer diese Wohnung, dieselbe Kette wie die
+// Immobilienauswahl (furnDefaultFor) und das Deck: Staffel je Zimmerzahl ->
+// projektweiter Standard -> Differenz der zweiten Preisspalte -> 0.
+const furnPackageOf = (proj: PickProject | undefined, u: { bedrooms: number | null | undefined; price_net?: number | null; price_net_furnished?: number | null }) => {
+  if (!proj) return 0
+  const byBed = proj.calc_defaults?.furniture_by_bedrooms ?? null
+  if (byBed && u.bedrooms != null && byBed[String(u.bedrooms)] != null) return Number(byBed[String(u.bedrooms)]) || 0
+  const std = Number(proj.furniture_cost) || 0
+  if (std > 0) return std
+  const n = u.price_net, f = u.price_net_furnished
+  return n != null && f != null && f > n ? f - n : 0
+}
+// Geteilter Selbstnutzungs-Kalender der Kurzzeit-Wohnungen (Sven 16.9.26: der
+// Eigentuemer wohnt in denselben Monaten dort, egal welche Wohnung).
+const sharedPlanOf = (us: SimUnit[]): MonthPlan | null => {
+  for (const x of us) if (x.letType === 'short') { const mp = normalizeMonthPlan(x.calc?.monthPlan); if (mp) return mp }
+  return null
+}
+// Nur Kalender-Felder in calc: zaehlt nicht als uebernommene Einzelberechnung.
+const planOnlyCalc = (c: Partial<CalcParams> | undefined) => !!c && Object.keys(c).every(k => k === 'monthPlan' || k === 'selfUseMonths')
+const isUuid = (k: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(k)
 // Wohnung des Kunden: entweder eine Wohnung im Projekt (project_id gesetzt) oder
 // ein Portal-Objekt ohne verknüpfte Projekt-Wohnung (nur properties-Werte).
 interface OwnedUnit extends PickUnit {
@@ -50,7 +88,7 @@ interface OwnedPropRow {
   size_sqm: number | null; purchase_price_net: number | null; purchase_price_gross: number | null; vat_rate: number | null
 }
 type OwnedUnitRow = Pick<CrmProjectUnit, 'id' | 'project_id' | 'unit_number' | 'bedrooms' | 'size_sqm' | 'price_net'
-  | 'price_gross' | 'vat_rate' | 'handover_date' | 'rental_type' | 'property_id' | 'parent_unit_id'>
+  | 'price_gross' | 'vat_rate' | 'handover_date' | 'rental_type' | 'property_id' | 'parent_unit_id' | 'price_net_furnished'>
 // '*' statt Spaltenliste: fehlt live eine jüngere Spalte, liefert die Abfrage
 // trotzdem die Wohnung (sonst Fehler und leere Liste).
 const OWNED_UNIT_COLS = '*'
@@ -125,10 +163,12 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
     return () => clearTimeout(saveTimer.current)
   }, [units, params, loaded, lead])
 
+  // Projekte gleich beim Oeffnen laden: Moebel-Modus und Zahlungsplan des
+  // Bautraegers brauchen sie auch fuer schon vorhandene Wohnungen.
   useEffect(() => { void (async () => {
-    if ((!pickerOpen && !ownedOpen) || projects.length) return
+    if (projects.length) return
     setProjectsFailed(false)
-    const { data, error } = await supabase.from('crm_projects').select('id, name, furniture_cost, furniture_included, completion_date, calc_defaults').order('name')
+    const { data, error } = await supabase.from('crm_projects').select(PROJECT_COLS).order('name')
     if (error || !data?.length) {
       if (error) console.error('[StrategySimulator] Projekte:', error)
       setProjectsFailed(true)
@@ -229,7 +269,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
         out.push({
           id: u.id, project_id: u.project_id, project_name: projName.get(u.project_id) ?? prop?.project_name ?? '',
           unit_number: u.unit_number, bedrooms: u.bedrooms, size_sqm: u.size_sqm,
-          price_net: unitNet(u) ?? propNet(prop), property_id: u.property_id,
+          price_net: unitNet(u) ?? propNet(prop), price_net_furnished: u.price_net_furnished ?? null, property_id: u.property_id,
           handover_date: u.handover_date ?? null, rental_type: u.rental_type ?? null,
           byName: !sureUnit(u) && !sureParents.has(u.id),
         })
@@ -264,7 +304,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
     if (!pickProject) return
     try {
       const [{ data }, { data: dealRows }] = await Promise.all([
-        supabase.from('crm_project_units').select('id, unit_number, bedrooms, size_sqm, price_net')
+        supabase.from('crm_project_units').select('id, unit_number, bedrooms, size_sqm, price_net, price_net_furnished')
           // Teil-Wohnungen (parent_unit_id) nie einzeln: verkauft wird die Gesamteinheit.
           .eq('project_id', pickProject).not('status', 'in', '(sold,reserved)').is('property_id', null).is('parent_unit_id', null).gt('price_net', 0).order('unit_number'),
         supabase.from('deals').select('unit_id').is('archived_from_phase', null).neq('phase', 'deal_verloren').not('unit_id', 'is', null),
@@ -283,7 +323,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
     const keys = new Set(units.map(u => u.key))
     // Entfernte Wohnungen vergessen, damit sie beim erneuten Hinzufügen wieder greifen
     for (const k of calcChecked.current) if (!keys.has(k)) calcChecked.current.delete(k)
-    const fresh = units.filter(u => !u.calc && !calcChecked.current.has(u.key))
+    const fresh = units.filter(u => (!u.calc || planOnlyCalc(u.calc)) && !calcChecked.current.has(u.key))
     units.forEach(u => calcChecked.current.add(u.key))
     if (!fresh.length) return
     const freshKeys = new Set(fresh.map(u => u.key))
@@ -303,14 +343,15 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
       if (!byUnit.size) return
       const hits = fresh.filter(u => byUnit.has(u.name.trim().toLowerCase())).length
       setUnits(us => us.map(u => {
-        if (u.calc || !freshKeys.has(u.key)) return u
+        if ((u.calc && !planOnlyCalc(u.calc)) || !freshKeys.has(u.key)) return u
         const p = byUnit.get(u.name.trim().toLowerCase())
         if (!p) return u
         const letType = p.letType === 'long' ? 'long' : 'short'
         const season = letType === 'short' ? (p.season ?? null) : null
         // Bei Saisonmodell rechnet die Engine daraus - Miete entsprechend angleichen,
-        // sonst zeigt der Simulator eine andere Miete als er rechnet.
-        const monthPlan = letType === 'short' ? (p.monthPlan ?? null) : null
+        // sonst zeigt der Simulator eine andere Miete als er rechnet. Ein schon
+        // geteilter Kalender der Strategie geht vor.
+        const monthPlan = letType === 'short' ? (normalizeMonthPlan(u.calc?.monthPlan) ?? p.monthPlan ?? null) : null
         const seasonRent = rentFromSeason(season, monthPlan)
         return {
           ...u,
@@ -322,8 +363,10 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
             // MwSt-Regelung der Einzelberechnung mitnehmen - sonst rechnet die
             // Strategie 19 %, waehrend die Einzelrechnung 5/19 gemischt zeigt.
             vatMode: p.vatMode, livingSqm: p.livingSqm,
+            // „Einrichtung kostenfrei" der Einzelberechnung
+            furnFree: p.furnFree,
             // Mischnutzung (Selbstnutzung) nur bei Kurzzeit
-            selfUseMonths: letType === 'short' ? (p.selfUseMonths ?? 0) : 0, monthPlan,
+            selfUseMonths: letType === 'short' ? (monthPlan ? monthPlanCounts(normalizeMonthPlan(monthPlan)).self : (p.selfUseMonths ?? 0)) : 0, monthPlan,
           },
         }
       }))
@@ -335,18 +378,81 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   })() }, [lead?.id, units.length, t])
 
+  // ── Stammdaten der Wohnungen (Projekt + Bestand) ──────────────────────────
+  // Fuer Moebel-Modus, Zahlungsplan des Bautraegers und Wohnflaeche. Nur
+  // gelesen: an der Wohnung geaendert wird erst, wenn Sven etwas anklickt -
+  // sonst verschoeben sich Zahlen eines schon verschickten Fahrplans still.
+  const [unitMeta, setUnitMeta] = useState<Record<string, UnitMeta | null>>({})
+  useEffect(() => {
+    if (!projects.length) return
+    const missing = units.map(u => u.key).filter(k => isUuid(k) && !(k in unitMeta))
+    if (!missing.length) return
+    let cancelled = false
+    void (async () => {
+      const { data, error } = await supabase.from('crm_project_units')
+        .select('id, project_id, bedrooms, size_sqm, price_net, price_net_furnished, price_gross, vat_rate').in('id', missing)
+      if (error) { console.error('[StrategySimulator] Wohnungsdaten:', error); return }
+      if (cancelled) return
+      const next: Record<string, UnitMeta | null> = {}
+      for (const k of missing) next[k] = null   // nicht gefunden: nicht endlos nachfragen
+      for (const r of (data ?? []) as Array<Pick<CrmProjectUnit, 'id' | 'project_id' | 'bedrooms' | 'size_sqm' | 'price_net' | 'price_net_furnished' | 'price_gross' | 'vat_rate'>>) {
+        const proj = projects.find(p => p.id === r.project_id)
+        next[r.id] = {
+          sizeSqm: r.size_sqm ?? null,
+          furnPackage: furnPackageOf(proj, { bedrooms: r.bedrooms, price_net: unitNet(r), price_net_furnished: r.price_net_furnished }),
+          furnIncluded: !!proj?.furniture_included,
+          schedule: proj ? scheduleFromProject(proj.payment_schedule, proj.developer) : null,
+          developer: proj?.developer ?? null,
+        }
+      }
+      setUnitMeta(m => ({ ...m, ...next }))
+    })()
+    return () => { cancelled = true }
+  // unitMeta bewusst nicht: der Effekt fuellt sie selbst
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [units, projects])
+
   const patchUnit = (key: string, patch: Partial<SimUnit>) =>
     setUnits(us => us.map(u => u.key === key ? { ...u, ...patch } : u))
+  const patchCalc = (u: SimUnit, patch: Partial<CalcParams>, extra: Partial<SimUnit> = {}) =>
+    patchUnit(u.key, { ...extra, calc: { ...(u.calc ?? {}), ...patch } })
+  // Selbstnutzung GETEILT fuer alle Kurzzeit-Wohnungen, wie in beiden Wizards.
+  // Bei Saisonmodell folgt die angezeigte Miete dem Kalender.
+  const setSharedMonthPlan = (mp: MonthPlan | null) => setUnits(us => us.map(x => {
+    if (x.letType !== 'short') return x
+    const sn = x.calc?.season ?? null
+    return {
+      ...x, ...(sn ? { rent: rentFromSeason(sn, mp) ?? x.rent } : {}),
+      calc: { ...(x.calc ?? {}), monthPlan: mp, selfUseMonths: mp ? monthPlanCounts(mp).self : 0 },
+    }
+  }))
+  // Kurzbeschreibung eines Zahlungsplans fuer die CRM-Oberflaeche (uebersetzt).
+  const schedText = (raw: DevSchedule): string => {
+    const s = normalizeSchedule(raw)
+    const f = (n: number) => `${String(Math.round(n * 10) / 10).replace('.', ',')} %`
+    const parts: string[] = []
+    if (s.contractPct > 0) parts.push(t('crm.sim.descContract', '{{p}} bei Vertrag', { p: f(s.contractPct) }))
+    const build = s.build.filter(b => b > 0)
+    if (build.length) parts.push(t('crm.sim.descBuild', '{{p}} nach Baufortschritt', { p: build.map(f).join(' / ') }))
+    if (s.handoverPct > 0) parts.push(s.reservationAt === 'handover' && s.reservation > 0
+      ? t('crm.sim.descHandoverRes', '{{p}} bei Übergabe abzüglich Reservierung', { p: f(s.handoverPct) })
+      : t('crm.sim.descHandover', '{{p}} bei Übergabe', { p: f(s.handoverPct) }))
+    if (s.afterPct > 0) {
+      const { n, termMonths } = afterInstalments(s)
+      parts.push(t('crm.sim.descAfter', '{{p}} in {{count}} Raten bis {{m}} Monate nach Übergabe ({{r}} Zins)', { p: f(s.afterPct), count: n, m: termMonths, r: f(s.afterRatePct) }))
+    }
+    return parts.join(', ')
+  }
+  const srcText = (src?: string) => src === 'Projekt' ? t('crm.sim.srcProject', 'Projekt') : (src ?? '')
 
   const addFromStock = (u: PickUnit & Partial<Pick<OwnedUnit, 'handover_date' | 'rental_type'>>,
     projectId: string | null = pickProject, projectName?: string) => {
     const proj = projectId ? projects.find(p => p.id === projectId) : undefined
     // Portal-Objekt ohne zuordenbares Projekt: Möbel 0, Übergabe = jetzt (anpassen)
     if ((!proj && projectName === undefined) || units.some(x => x.key === u.id)) return
-    const furnByBed = proj?.calc_defaults?.furniture_by_bedrooms ?? null
-    const furnNet = !proj || proj.furniture_included ? 0
-      : (furnByBed && u.bedrooms != null && furnByBed[String(u.bedrooms)] != null
-        ? Number(furnByBed[String(u.bedrooms)]) : (proj.furniture_cost ?? 0))
+    const furnNet = !proj || proj.furniture_included ? 0 : furnPackageOf(proj, u)
+    // Preis wie in der Einzelrechnung: immer der Grundpreis (price_net).
+    const priceNet = u.price_net ?? 0
     // Übergabe: Datum der Wohnung, sonst Fertigstellung des Projekts
     const readyDate = u.handover_date ?? proj?.completion_date ?? null
     const done = readyDate ? new Date(readyDate) : null
@@ -360,14 +466,28 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
       : ymOf(fallbackY, fallbackM)
     const readyY = Math.floor(readyYM / 12)
     const readyM = readyYM % 12 + 1
-    const gross = Math.round(((u.price_net ?? 0) + furnNet) * 1.19)
-    setUnits(us => [...us, {
-      key: u.id, name: `${projectName ?? proj?.name ?? ''} ${u.unit_number}`.trim(),
-      priceNet: u.price_net ?? 0, furnNet,
-      rent: Math.round(gross * 0.055 / 12), letType: u.rental_type === 'long' ? 'long' : 'short', fin: true,
-      buyM: now.getMonth() + 1, buyY: now.getFullYear(), readyM, readyY,
-      plan: ymOf(readyY, readyM) - NOW_YM > 2 ? 'luma' : 'sofort',
-    }])
+    const gross = Math.round((priceNet + furnNet) * 1.19)
+    // Zahlungsplan des Bautraegers aus dem Projekt (Sven 6.10.26). Ohne
+    // hinterlegten Plan bleibt es beim bisherigen Standard.
+    const sched = proj ? scheduleFromProject(proj.payment_schedule, proj.developer) : null
+    // Luma-Standard bleibt plan 'luma' (gleiche Zahlen wie bisher).
+    const devPlan = sched && !isLumaStandard(sched) ? sched : null
+    const offPlan = ymOf(readyY, readyM) - NOW_YM > 2
+    const letType: SimUnit['letType'] = u.rental_type === 'long' ? 'long' : 'short'
+    setUnits(us => {
+      // Neue Kurzzeit-Wohnung uebernimmt den geteilten Selbstnutzungs-Kalender.
+      const shared = letType === 'short' ? sharedPlanOf(us) : null
+      return [...us, {
+        key: u.id, name: `${projectName ?? proj?.name ?? ''} ${u.unit_number}`.trim(),
+        priceNet, furnNet,
+        furnMode: proj?.furniture_included ? 'included' : furnNet > 0 ? 'optional' : 'none',
+        rent: Math.round(gross * 0.055 / 12), letType, fin: true,
+        buyM: now.getMonth() + 1, buyY: now.getFullYear(), readyM, readyY,
+        plan: offPlan ? (devPlan ? 'dev' : 'luma') : 'sofort',
+        ...(offPlan && devPlan ? { schedule: devPlan } : {}),
+        ...(shared ? { calc: { monthPlan: shared, selfUseMonths: monthPlanCounts(shared).self } } : {}),
+      }]
+    })
     setPickerOpen(false); setPickProject(''); setOwnedOpen(false)
   }
 
@@ -701,6 +821,37 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {units.map(u => {
               const o = outcomes.find(x => x.unit.key === u.key)
+              const meta = unitMeta[u.key] ?? null
+              // Moebel wie in der Immobilienauswahl: ohne / im Kaufpreis / Paket separat
+              const fm = u.furnMode ?? (meta?.furnIncluded ? 'included' : u.furnNet > 0 ? 'optional' : 'none')
+              // Preis bleibt der Grundpreis wie in der Einzelrechnung; nur das
+              // Moebelpaket kommt (bei „Optional") dazu.
+              const setFurnMode = (mode: 'none' | 'included' | 'optional') => patchUnit(u.key, {
+                furnMode: mode,
+                furnNet: mode === 'optional' ? (u.furnNet || meta?.furnPackage || 0) : 0,
+              })
+              const isShort = u.letType === 'short'
+              const season = isShort ? (u.calc?.season ?? null) : null
+              const plan = isShort ? normalizeMonthPlan(u.calc?.monthPlan) : null
+              const selfCount = plan ? monthPlanCounts(plan).self : (u.calc?.selfUseMonths ?? 0)
+              // Alt-Berechnungen kennen nur eine Monatszahl ohne Kalender - auch
+              // dann ist Selbstnutzung an.
+              const planOn = isShort && (!!plan || selfCount > 0)
+              const hc = isShort && !!u.calc?.hotelConcept
+              const ff = !!u.calc?.furnFree
+              // Saisonmodell und Selbstnutzungs-Kalender bestimmen die Miete - Anzeige
+              // und Rechnung muessen dieselbe Zahl haben.
+              const setSeason = (sn: { totalOcc: number; adrHigh: number } | null) =>
+                patchCalc(u, { season: sn }, sn ? { rent: rentFromSeason(sn, plan) ?? u.rent } : {})
+              const vatMode: VatMode = u.calc?.vatMode ?? 'standard19'
+              // Nur der gespeicherte Wert - genau damit rechnet die Engine (leer =
+              // alles beguenstigt, dann erscheint die Warnung).
+              const livingSqm = u.calc?.livingSqm ?? 0
+              const sched = u.plan === 'dev' ? u.schedule ?? null : null
+              const setSched = (patch: Partial<DevSchedule>) =>
+                sched && patchUnit(u.key, { schedule: { ...sched, ...patch, source: 'manuell' } })
+              const chipCls = (on: boolean) => `inline-flex items-center gap-1 px-2 py-1 rounded border text-[11px] font-medium ${on ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-gray-200 text-gray-600'}`
+              const chipBox = (on: boolean) => <span className={`w-3 h-3 rounded border flex items-center justify-center text-[8px] ${on ? 'bg-orange-500 border-orange-500 text-white' : 'border-gray-300'}`}>{on ? '✓' : ''}</span>
               return (
                 <div key={u.key} className="border border-gray-200 rounded-xl p-3">
                   <div className="flex items-center justify-between mb-2">
@@ -716,15 +867,27 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                         onChange={e => patchUnit(u.key, { priceNet: +e.target.value })} />
                     </div>
                     <div>
-                      <label className={lbl}>{t('crm.sim.furnNet', 'Möbel netto (€)')}</label>
-                      <input type="number" step={1000} className={inputCls} value={Math.round(u.furnNet)}
-                        onChange={e => patchUnit(u.key, { furnNet: +e.target.value })} />
+                      <label className={lbl}>{t('crm.sim.furnMode', 'Möbel')}</label>
+                      <div className="flex rounded-lg overflow-hidden border border-gray-200">
+                        {([['none', t('crm.wizard.furnNone', 'Ohne')], ['included', t('crm.wizard.furnIncl', 'Mit')], ['optional', t('crm.wizard.furnOpt', 'Optional')]] as const).map(([val, label]) => (
+                          <button key={val} type="button" onClick={() => setFurnMode(val)}
+                            className={`flex-1 px-1.5 py-1.5 text-[11px] font-medium ${fm === val ? 'bg-orange-500 text-white' : 'bg-white text-gray-600'}`}>{label}</button>
+                        ))}
+                      </div>
+                      {fm === 'optional' && (
+                        <input type="number" step={1000} className={`${inputCls} mt-1`} value={Math.round(u.furnNet)}
+                          title={t('crm.sim.furnNet', 'Möbel netto (€)')}
+                          onChange={e => patchUnit(u.key, { furnNet: +e.target.value })} />
+                      )}
+                      {fm === 'included' && (
+                        <p className="text-[10px] text-gray-400 mt-0.5">{t('crm.sim.furnInclHint', 'im Kaufpreis enthalten')}</p>
+                      )}
                     </div>
                     <div>
                       <label className={lbl}>
                         {t('crm.sim.rent', 'Miete/Monat (€)')}
                         {u.calc?.season && <span className="text-orange-600"> · {t('crm.sim.fromSeason', 'aus Saisonmodell')}</span>}
-                        {(u.calc?.selfUseMonths ?? 0) > 0 && <span className="text-orange-600"> · {t('crm.sim.selfUse', '🏠 {{m}} Mon. Selbstnutzung', { m: u.calc?.selfUseMonths })}</span>}
+                        {isShort && selfCount > 0 && <span className="text-orange-600"> · {t('crm.sim.selfUse', '🏠 {{m}} Mon. Selbstnutzung', { m: selfCount })}</span>}
                       </label>
                       {/* Eigene Miete eintippen hebt ein Saisonmodell auf - sonst
                           würde die Engine weiter mit dem Modell rechnen. */}
@@ -795,9 +958,17 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                     <div>
                       <label className={lbl}>{t('crm.sim.plan', 'Zahlungsplan')}</label>
                       <CustomSelect value={u.plan}
-                        onChange={v => patchUnit(u.key, { plan: v as 'sofort' | 'luma' })}
+                        onChange={v => {
+                          const pl = v as SimUnit['plan']
+                          // Bautraeger-Plan: der bisher eingestellte, sonst der aus dem
+                          // Projekt, sonst der Luma-Standard als Vorlage zum Anpassen.
+                          patchUnit(u.key, pl === 'dev'
+                            ? { plan: pl, schedule: u.schedule ?? meta?.schedule ?? { ...LUMA_SCHEDULE, build: [...LUMA_SCHEDULE.build], source: 'manuell' } }
+                            : { plan: pl })
+                        }}
                         options={[{ value: 'sofort', label: t('crm.sim.planNow', 'Alles bei Kauf') },
-                          { value: 'luma', label: t('crm.sim.planLuma', '10k → 35/20/20/15/10') }]} />
+                          { value: 'luma', label: t('crm.sim.planLuma', '10k → 35/20/20/15/10') },
+                          { value: 'dev', label: t('crm.sim.planDev', 'Plan des Bauträgers') }]} />
                     </div>
                     <div className="col-span-2 sm:col-span-1">
                       <label className={lbl}>{t('crm.sim.buyDate', 'Kauf (Monat/Jahr)')}</label>
@@ -814,10 +985,223 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                       </div>
                     </div>
                   </div>
+
+                  {/* Objektwerte wie in der Immobilienauswahl (Sven 6.10.26: „Das muss
+                      hier exakt so sein wie in der normalen Immoauswahl"). */}
+                  <div className="flex flex-wrap items-center gap-2 mt-2">
+                    <button type="button" onClick={() => patchCalc(u, { furnFree: !ff })} className={chipCls(ff)}>
+                      {chipBox(ff)}{t('crm.wizard.furnFree', 'Möbel gratis')}
+                    </button>
+                    {isShort && (
+                      <button type="button" className={chipCls(hc)}
+                        onClick={() => {
+                          const cur = u.calc?.mgmtPct
+                          const wasDefault = cur == null || cur === defaultMgmtPct(u.letType, hc)
+                          patchCalc(u, { hotelConcept: !hc, ...(wasDefault ? { mgmtPct: defaultMgmtPct(u.letType, !hc) } : {}) })
+                        }}>
+                        {chipBox(hc)}🏨 {t('crm.wizard.hotel', 'Hotelkonzept')}
+                      </button>
+                    )}
+                    {isShort && (
+                      <button type="button" className={chipCls(!!season)}
+                        onClick={() => setSeason(season ? null : { totalOcc: 56, adrHigh: 120 })}>
+                        {chipBox(!!season)}🏖 {t('crm.wizard.season', 'Saisonmodell')}
+                      </button>
+                    )}
+                    {isShort && (
+                      <button type="button" className={chipCls(planOn)}
+                        onClick={() => setSharedMonthPlan(planOn ? null : (sharedPlanOf(units) ?? [...MONTH_PLAN_ALL_LET] as MonthPlan))}>
+                        {chipBox(planOn)}🏠 {t('crm.sim.selfUseToggle', 'Selbstnutzung')}
+                      </button>
+                    )}
+                  </div>
+
+                  {season && (() => {
+                    const sb = seasonBreakdown(season, plan)
+                    const basis = vatSplit(u.priceNet, vatMode, u.calc?.livingSqm ?? null).gross   // wie applySeason()
+                    const effY = basis > 0 ? Math.round(sb.rent / basis * 1000) / 10 : 0
+                    return (
+                      <div className="bg-orange-50/60 border border-orange-100 rounded-lg p-2.5 space-y-2 mt-2">
+                        <div className="grid grid-cols-2 gap-3">
+                          <label className="flex flex-col gap-1 text-xs font-medium text-gray-500">
+                            <span>{t('deckWizard.seasonOcc', 'Gesamtauslastung')}</span>
+                            <NumberStepper value={season.totalOcc} min={5} max={90} suffix="%"
+                              onChange={v => setSeason({ totalOcc: v, adrHigh: season.adrHigh })} />
+                          </label>
+                          <label className="flex flex-col gap-1 text-xs font-medium text-gray-500">
+                            <span>{t('deckWizard.seasonAdr', 'Preis/Nacht Hochsaison')}</span>
+                            <NumberStepper value={season.adrHigh} min={20} step={5} suffix="€"
+                              onChange={v => setSeason({ totalOcc: season.totalOcc, adrHigh: v })} />
+                          </label>
+                        </div>
+                        <p className="text-[11px] text-gray-500">
+                          {t('crm.wizard.seasonResult', 'Jahresmiete')} <b>{sb.rent.toLocaleString('de-DE')} €</b>
+                          {' = '}{t('crm.wizard.seasonYieldUnit', 'Bruttorendite dieser Wohnung')} <b>{effY.toLocaleString('de-DE')} %</b>
+                        </p>
+                      </div>
+                    )
+                  })()}
+
+                  {planOn && (
+                    <div className="rounded-lg border border-orange-100 bg-orange-50/40 p-2.5 mt-2 space-y-1.5">
+                      <p className="text-[11px] text-gray-500">{t('crm.sim.selfUseShared', 'Gilt für alle Kurzzeit-Wohnungen dieser Strategie.')}</p>
+                      {!plan && selfCount > 0 && (
+                        <p className="text-[11px] text-amber-700">{t('crm.sim.selfUseLegacy', 'Aus der Einzelberechnung: {{n}} Monate Selbstnutzung ohne Kalender. Monate anklicken, um sie festzulegen.', { n: selfCount })}</p>
+                      )}
+                      <MonthPlanPicker value={plan} onChange={mp => setSharedMonthPlan(mp)} season={season} compact />
+                    </div>
+                  )}
+
+                  {/* MwSt-Regelung: Sven waehlt MANUELL, das System prueft keinen Anspruch. */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2">
+                    <div className="col-span-2">
+                      <label className={lbl}>{t('rechnerWizard.vatModeLabel', 'MwSt-Regelung')}</label>
+                      <CustomSelect value={vatMode}
+                        onChange={v => patchCalc(u, { vatMode: v as VatMode, ...(v !== 'standard19' && u.calc?.livingSqm == null && meta?.sizeSqm ? { livingSqm: meta.sizeSqm } : {}) })}
+                        options={[{ value: 'standard19', label: t('rechnerWizard.vatStandard', 'Standard – 19 %') },
+                          { value: 'reduced130', label: t('rechnerWizard.vatReduced130', 'Reduziert – 5 % bis 130 m²') },
+                          { value: 'reduced200', label: t('rechnerWizard.vatReduced200', 'Reduziert – 5 % bis 200 m² (Übergangsregelung)') }]} />
+                    </div>
+                    {vatMode !== 'standard19' && (
+                      <div>
+                        <label className={lbl}>{t('rechnerWizard.livingSqmLabel', 'Wohnfläche m²')}</label>
+                        <input type="number" className={inputCls} value={livingSqm || ''} placeholder="130"
+                          onChange={e => patchCalc(u, { livingSqm: +e.target.value > 0 ? +e.target.value : null })} />
+                      </div>
+                    )}
+                  </div>
+                  {vatMode !== 'standard19' && (() => {
+                    const v = vatSplit(u.priceNet, vatMode, livingSqm > 0 ? livingSqm : null)
+                    return (
+                      <p className="text-[11px] text-gray-400 mt-1">
+                        {livingSqm > 0
+                          ? t('rechnerWizard.vatPreview', '{{red}} € netto zu 5 % + {{std}} € netto zu 19 % → {{vat}} € MwSt, brutto {{gross}} €',
+                              { red: Math.round(v.netReduced).toLocaleString('de-DE'), std: Math.round(v.netStandard).toLocaleString('de-DE'), vat: Math.round(v.vat).toLocaleString('de-DE'), gross: Math.round(v.gross).toLocaleString('de-DE') })
+                          : t('rechnerWizard.vatNoSqm', '⚠ Ohne Wohnfläche gilt der gesamte Preis als begünstigt (5 %). Bitte Wohnfläche eintragen.')}
+                      </p>
+                    )
+                  })()}
+
+                  {/* Zahlungsplan des Bautraegers (Sven 6.10.26) */}
+                  {u.plan === 'luma' && meta?.schedule && !isLumaStandard(meta.schedule) && (
+                    <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-900 flex flex-wrap items-center gap-2">
+                      <span>{t('crm.sim.schedAvailable', 'Zahlungsplan des Bauträgers: {{plan}}', { plan: schedText(meta.schedule) })}</span>
+                      <button type="button" onClick={() => patchUnit(u.key, { plan: 'dev', schedule: meta.schedule })}
+                        className="px-2 py-0.5 rounded border border-amber-300 bg-white hover:bg-amber-100 font-medium">
+                        {t('crm.sim.schedApply', 'Übernehmen')}
+                      </button>
+                    </div>
+                  )}
+                  {u.plan !== 'sofort' && meta && !meta.schedule && (
+                    <p className="text-[11px] text-gray-400 mt-1">
+                      {t('crm.sim.schedMissing', 'Im Projekt ist kein Zahlungsplan hinterlegt. Bitte im Projekt pflegen oder hier als Plan des Bauträgers eintragen.')}
+                    </p>
+                  )}
+                  {sched && (() => {
+                    const sum = Math.round(pctSum(sched) * 10) / 10
+                    const num = (label: string, val: number, on: (v: number) => void, step = 1) => (
+                      <div>
+                        <label className={lbl}>{label}</label>
+                        <input type="number" step={step} className={inputCls} value={Math.round(val * 10) / 10}
+                          onChange={e => on(Math.max(0, +e.target.value || 0))} />
+                      </div>
+                    )
+                    return (
+                      <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 p-2.5 space-y-2">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          {num(t('crm.sim.schedReservation', 'Reservierung €'), sched.reservation, v => setSched({ reservation: v }), 1000)}
+                          <div>
+                            <label className={lbl}>{t('crm.sim.schedResAt', 'Reservierung angerechnet auf')}</label>
+                            <CustomSelect value={sched.reservationAt ?? 'contract'}
+                              onChange={v => setSched({ reservationAt: v as 'contract' | 'handover' })}
+                              options={[{ value: 'contract', label: t('crm.sim.schedResContract', 'Vertragsrate') },
+                                { value: 'handover', label: t('crm.sim.schedResHandover', 'letzte Rate') }]} />
+                          </div>
+                          {num(t('crm.sim.schedContract', '% bei Vertrag'), sched.contractPct, v => setSched({ contractPct: v }))}
+                          {num(t('crm.sim.schedHandover', '% bei Übergabe'), sched.handoverPct, v => setSched({ handoverPct: v }))}
+                          {num(t('crm.sim.schedAfter', '% nach Übergabe'), sched.afterPct, v => setSched({ afterPct: v }))}
+                          {sched.afterPct > 0 && (<>
+                            {num(t('crm.sim.schedMonths', 'Monate nach Übergabe'), sched.afterMonths, v => setSched({ afterMonths: Math.max(1, Math.round(v)) || DEV_AFTER_MONTHS }))}
+                            <div>
+                              <label className={lbl}>{t('crm.sim.schedPerYear', 'Raten')}</label>
+                              <CustomSelect value={String(sched.afterPerYear || DEV_AFTER_PER_YEAR)}
+                                onChange={v => setSched({ afterPerYear: +v })}
+                                options={[{ value: '12', label: t('crm.sim.schedMonthly', 'monatlich') },
+                                  { value: '4', label: t('crm.sim.schedQuarterly', 'quartalsweise') },
+                                  { value: '2', label: t('crm.sim.schedHalfYear', 'halbjährlich') },
+                                  { value: '1', label: t('crm.sim.schedYearly', 'jährlich') }]} />
+                            </div>
+                            {num(t('crm.sim.schedRate', 'Zins % p.a.'), sched.afterRatePct ?? DEV_AFTER_RATE_PCT, v => setSched({ afterRatePct: v }), 0.1)}
+                          </>)}
+                        </div>
+                        {/* Bauraten je Bauabschnitt, vom Übergabetermin zurückgerechnet
+                            (Sven 6.10.26). Leeres Monatsfeld = gleichmäßig über die Bauzeit. */}
+                        {(() => {
+                          const rows = sched.build.map((pct, k) => ({ pct, months: sched.buildMonthsBefore?.[k] ?? null, label: sched.buildLabels?.[k] ?? '' }))
+                          const write = (rs: typeof rows) => setSched({ build: rs.map(r => r.pct), buildMonthsBefore: rs.map(r => r.months), buildLabels: rs.map(r => r.label) })
+                          const buyYm = ymOf(u.buyY, u.buyM), readyYm = Math.max(buyYm, ymOf(u.readyY, u.readyM))
+                          const dueOf = (k: number, months: number | null) => {
+                            const ym = months != null ? Math.min(readyYm, Math.max(buyYm, readyYm - Math.round(months)))
+                              : (readyYm - buyYm > 1 ? Math.round(buyYm + (readyYm - buyYm) * (k + 1) / (rows.length + 1)) : buyYm)
+                            return `${String(ym % 12 + 1).padStart(2, '0')}/${Math.floor(ym / 12)}`
+                          }
+                          return (
+                            <div className="space-y-1">
+                              <p className="text-[11px] font-medium text-gray-500">{t('crm.sim.schedBuildTitle', 'Bauraten nach Baufortschritt')}</p>
+                              {rows.map((r, k) => (
+                                <div key={k} className="grid grid-cols-[1fr_64px_88px_64px_20px] gap-1.5 items-center">
+                                  <input className={inputCls} value={r.label} placeholder={t('crm.sim.schedStage', 'Bauabschnitt')}
+                                    onChange={e => write(rows.map((x, i) => i === k ? { ...x, label: e.target.value } : x))} />
+                                  <input type="number" className={inputCls} value={Math.round(r.pct * 10) / 10} title="%"
+                                    onChange={e => write(rows.map((x, i) => i === k ? { ...x, pct: Math.max(0, +e.target.value || 0) } : x))} />
+                                  <input type="number" className={inputCls} value={r.months ?? ''} placeholder={t('crm.sim.schedEven', 'gleichm.')}
+                                    title={t('crm.sim.schedMonthsBefore', 'Monate vor Übergabe')}
+                                    onChange={e => write(rows.map((x, i) => i === k ? { ...x, months: e.target.value === '' ? null : Math.max(0, Math.round(+e.target.value)) } : x))} />
+                                  <span className="text-[11px] text-gray-500 tabular-nums">{dueOf(k, r.months)}</span>
+                                  <button type="button" onClick={() => write(rows.filter((_, i) => i !== k))} className="text-gray-300 hover:text-red-500">✕</button>
+                                </div>
+                              ))}
+                              {rows.length > 0 && (
+                                <p className="text-[10px] text-gray-400">{t('crm.sim.schedRowsHint', 'Bauabschnitt · % · Monate vor Übergabe · voraussichtlich fällig')}</p>
+                              )}
+                              <button type="button" onClick={() => write([...rows, { pct: 0, months: null, label: '' }])}
+                                className="text-[11px] text-orange-600 hover:underline">
+                                + {t('crm.sim.schedAddStage', 'Bauabschnitt')}
+                              </button>
+                              {rows.length > 0 && (
+                                <p className="text-[11px] text-amber-700">{t('crm.sim.schedShift', 'Die Bauraten sind vom Übergabetermin zurückgerechnet. Sie werden fällig, wenn der Bauabschnitt fertig ist, und verschieben sich, wenn der Bau schneller oder langsamer vorankommt.')}</p>
+                              )}
+                            </div>
+                          )
+                        })()}
+                        <p className={`text-[11px] ${Math.abs(sum - 100) > 0.05 ? 'text-red-600' : 'text-gray-500'}`}>
+                          {Math.abs(sum - 100) > 0.05
+                            ? t('crm.sim.schedSumOff', 'Summe {{sum}} %: {{fix}}', { sum: String(sum).replace('.', ','), fix: sum < 100 ? t('crm.sim.schedSumLow', 'der Rest wird bei Übergabe gerechnet') : t('crm.sim.schedSumHigh', 'alle Raten werden anteilig gekürzt') })
+                            : schedText(sched)}
+                          {sched.source && sched.source !== 'manuell' ? ` · ${t('crm.sim.schedSource', 'Quelle: {{s}}', { s: srcText(sched.source) })}` : ''}
+                        </p>
+                        {sched.afterPct > 0 && u.fin && (
+                          <p className="text-[11px] text-gray-500">
+                            {t('crm.sim.schedBankLater', 'Die Bank zahlt erst nach der letzten Rate aus ({{date}}). Reicht das Eigenkapital vorher nicht, rechnet der Simulator eine Zwischenfinanzierung.', {
+                              date: (() => { const ym = loanReadyYm(u); return `${String(ym % 12 + 1).padStart(2, '0')}/${Math.floor(ym / 12)}` })(),
+                            })}
+                          </p>
+                        )}
+                        {meta?.schedule && sched.source === 'manuell' && (
+                          <button type="button" onClick={() => patchUnit(u.key, { schedule: meta.schedule })}
+                            className="text-[11px] text-orange-600 hover:underline">
+                            {t('crm.sim.schedReset', '↺ Plan aus dem Projekt übernehmen')}
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })()}
+
                   {o && (
                     <p className="text-[11px] text-gray-400 mt-2">
                       {t('crm.sim.unitLine', 'Gesamt brutto')} {eur(o.gross)} · EK {eur(o.ekUsed)}
-                      {o.loan > 0 ? ` · ${t('crm.sim.loan', 'Darlehen')} ${eur(o.loan)} (${t('crm.sim.annuity', 'Annuität')} ${eur(o.res.mRate)}/M.)` : ''}
+                      {o.loan > 0 ? ` · ${t('crm.sim.loan', 'Darlehen')} ${eur(o.loan)} (${t('crm.sim.annuity', 'Annuität')} ${eur(o.annuityMonthly)}/M.)` : ''}
+                      {o.loan > 0 && devAfterMonths(u) ? ` · ${t('crm.sim.bankFrom', 'Bank ab {{date}}', { date: (() => { const ym = loanReadyYm(u); return `${String(ym % 12 + 1).padStart(2, '0')}/${Math.floor(ym / 12)}` })() })}` : ''}
                       {roeMeaningful(o) ? `${' · '}${t('crm.sim.roe', 'EK-Rendite 10 J.')} ${pct(o.res.roe10)}` : ` · ${t('crm.sim.mostlyFinanced', 'überwiegend fremdfinanziert')}`}
                     </p>
                   )}

@@ -62,6 +62,11 @@ export interface CalcParams {
   // MwSt-Regelung (optional, Default standard19 = heutiges Verhalten)
   vatMode?: VatMode
   vatRefundMonths?: number   // Wartezeit ab Uebergabe, Standard 24
+  // Bankdarlehen startet erst so viele Monate nach der Uebergabe (Standard 0).
+  // Nur die Strategie setzt das: Finanziert der Bautraeger einen Teil des
+  // Kaufpreises nach der Uebergabe in Raten (Mito: 50 % ueber 24 Monate), wird
+  // das Bankdarlehen erst danach ausgezahlt. Vorher keine Rate, keine Restschuld.
+  loanDelayMonths?: number
   livingSqm?: number | null   // Wohnflaeche m² fuer die anteilige 5/19-Aufteilung
   // ── Mischnutzung (Sven 16.9.26) ───────────────────────────────────────────
   // Kurzzeitvermietung mit eigener Nutzung: so viele Monate im Jahr wohnt der
@@ -638,6 +643,15 @@ function computeCore(p: CalcParams): CalcResult {
   const iR = iP / 100
   const intC: number[] = [], princC: number[] = [], rateC: number[] = [], restL: number[] = [], prepayC: number[] = []
   let rem = loan
+  // Darlehensaufschub (nur Strategie): Monate je Jahr, in denen das Darlehen
+  // schon laeuft, und das Darlehensjahr fuer die Laufzeitgrenze. Ohne Aufschub
+  // sind beide identisch mit fA und dem Jahresindex - bit-genau wie bisher.
+  const loanDelay = Math.max(0, Math.round(p.loanDelayMonths ?? 0))
+  let monthsBefore = 0, loanYearsDone = 0
+  const lA = mA.map(m => { const act = Math.max(0, Math.min(m, monthsBefore + m - loanDelay)); monthsBefore += m; return act })
+  const lF = loanDelay > 0 ? lA.map(m => m / 12) : fA
+  const lY = lA.map(m => { const idx = loanYearsDone; if (m > 0) loanYearsDone++; return idx })
+  const notStarted = (y: number) => loanDelay > 0 && lA[y] === 0 && lY[y] === 0
 
   if (fin === 'no' || loan <= 0) {
     for (let y2 = 0; y2 < YEARS; y2++) { intC.push(0); princC.push(0); rateC.push(0); restL.push(0); prepayC.push(0) }
@@ -645,8 +659,10 @@ function computeCore(p: CalcParams): CalcResult {
     const payA = iR === 0 ? Math.round(loan / Math.max(1, termY))
       : Math.round(loan * (iR * Math.pow(1 + iR, termY)) / (Math.pow(1 + iR, termY) - 1))
     for (let y3 = 0; y3 < YEARS; y3++) {
-      const f2 = fA[y3]
-      if (rem > 0 && y3 < termY) {
+      const f2 = lF[y3]
+      // Vor der Auszahlung gibt es weder Rate noch Restschuld.
+      if (notStarted(y3)) { intC.push(0); princC.push(0); rateC.push(0); prepayC.push(0); restL.push(0); continue }
+      if (rem > 0 && lY[y3] < termY) {
         const z = Math.round(rem * iR * f2)
         let rP = Math.round(payA * f2); let ti = Math.max(0, rP - z)
         if (ti > rem) { ti = rem; rP = z + ti }
@@ -658,8 +674,9 @@ function computeCore(p: CalcParams): CalcResult {
   } else {
     const pAnn = loan * (amP / 100)
     for (let y4 = 0; y4 < YEARS; y4++) {
-      const f3 = fA[y4]
-      if (y4 < termY && rem > 0) {
+      const f3 = lF[y4]
+      if (notStarted(y4)) { intC.push(0); princC.push(0); rateC.push(0); prepayC.push(0); restL.push(0); continue }
+      if (lY[y4] < termY && rem > 0) {
         const z2 = Math.round(rem * iR * f3); const ti2 = Math.min(rem, Math.round(pAnn * f3))
         const pp2 = Math.max(0, Math.min(rem - ti2, Math.round(ppVals[y4] * f3)))
         intC.push(z2); princC.push(ti2); rateC.push(z2 + ti2); prepayC.push(pp2)

@@ -708,6 +708,38 @@ export default function Strategie() {
           </div>
         </Section>
 
+        {/* 9c — Kaufpreiszahlungen nach dem Zahlungsplan der Bauträger (Sven 6.10.26) */}
+        {a.purchasePayments.length > 0 && (
+          <Section title={t('strategie.payTitle', 'Wann du was zahlst')}
+            sub={t('strategie.paySub', 'Die Kaufpreisraten nach dem Zahlungsplan der Bauträger. Dein Eigenkapital fließt in zeitlicher Reihenfolge in die Raten, über alle Wohnungen zusammen. Was darüber hinausgeht, finanziert die Bank, bis zur Auszahlung des Darlehens als Zwischenkredit.')}>
+            <ScrollBox>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560 }}>
+                <thead><tr style={{ borderBottom: '1px solid #eee' }}>
+                  <th style={{ ...th, textAlign: 'left' }}>{t('strategie.tYear', 'Jahr')}</th>
+                  <th style={th}>{t('strategie.payTotal', 'An die Bauträger')}</th>
+                  <th style={th}>{t('strategie.payEquity', 'aus Eigenkapital')}</th>
+                  <th style={th}>{t('strategie.payFinanced', 'finanziert')}</th>
+                  {a.purchasePayments.some(r => r.interest) && <th style={th}>{t('strategie.payInterest', 'Zinsen Bauträger-Raten')}</th>}
+                </tr></thead>
+                <tbody>
+                  {a.purchasePayments.map(r => (
+                    <tr key={r.year} style={{ borderBottom: '1px solid #f5f3f0' }}>
+                      <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{r.year}</td>
+                      <td style={{ ...td, fontWeight: 700 }}>{eur(r.total)}</td>
+                      <td style={td}>{r.equity ? eur(r.equity) : ''}</td>
+                      <td style={{ ...td, color: r.financed ? '#b45309' : undefined }}>{r.financed ? eur(r.financed) : ''}</td>
+                      {a.purchasePayments.some(x => x.interest) && <td style={td}>{r.interest ? eur(r.interest) : ''}</td>}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </ScrollBox>
+            <p style={{ fontSize: 12, color: '#777', margin: '10px 0 0', lineHeight: 1.6 }}>
+              {t('strategie.payShift', 'Die Bauraten sind vom Übergabetermin zurückgerechnet. Sie werden fällig, wenn der jeweilige Bauabschnitt fertig ist, und verschieben sich, wenn der Bau schneller oder langsamer vorankommt.')}
+            </p>
+          </Section>
+        )}
+
         {/* 10 — Verkauf */}
         {a.exits.length > 0 && (
           <Section title={t('strategie.s10', 'Was beim Verkauf übrig bleibt')}>
