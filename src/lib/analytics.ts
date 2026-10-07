@@ -72,6 +72,13 @@ export interface PropertyCard {
   // Nur bei Raten nach der Uebergabe: Teil des Kaufpreises aus Miete und
   // MwSt-Erstattung (Gesamtpreis = Eigenkapital + dieser Teil + Darlehen)
   fromSurplus?: number
+  // Plan endet waehrend der Raten: noch offene Raten (aus dem Verkaufserloes
+  // bzw. nach dem Zeitraum); das „Darlehen" ist dann nur der bisher abgerufene Kredit
+  openRest?: number
+  openRestFromSale?: boolean
+  creditSoFar?: boolean
+  // Barkauf mit zu wenig Eigenkapital: offener Kredit
+  openCredit?: number
 }
 
 export interface ScenarioSummary {
@@ -183,6 +190,8 @@ export interface CustomerAnalytics {
   creditPath: FinancingPath | null
   // MwSt-Erstattungen, die an den Kunden zurueckgehen statt Raten zu bezahlen
   vatReturned: Array<{ name: string; ym: number; amount: number }>
+  surplusWithVat: boolean
+  cashUnitsReserved: boolean
   keyInsights: Insight[]
   insights: Insight[]
   drivers: string[]
@@ -208,7 +217,11 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
   // Im Reinvestment-Modus rechnet der Motor die Rendite aus Sicht des Investors
   // (Einzahlungen raus, Endwert rein). Diese Zahl gilt fuer die ganze Seite -
   // sonst stuenden in Kennzahl und Szenariovergleich zwei verschiedene Renditen.
-  const totals = ri ? ri.totals : totalsOf(outcomes, agg.rows, params, exit)
+  const totals = ri ? ri.totals : totalsOf(outcomes, agg.rows, params, exit, 'liquidity' in agg ? agg.liquidity : undefined)
+  const liqRes = 'liquidity' in agg ? agg.liquidity : undefined
+  // Letzter Monat einer Wohnung im Plan: Ende des Zeitraums oder Verkauf
+  const unitEndYm = (o: (typeof outcomes)[number]) =>
+    ymOf(Math.min(agg.lastYear, ri?.saleYears.get(o.unit.key) ?? o.unit.saleYear ?? (exit ? exit.year : agg.lastYear)), 12)
 
   // ── Vermoegen ──────────────────────────────────────────────────────────────
   const cashByYear = new Map<number, number>()
@@ -371,6 +384,23 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
       buyMonth: o.unit.buyM, readyMonth: o.unit.readyM,
       price: o.unit.priceNet, gross: r0(o.gross), equity: r0(o.ekUsed), loan: r0(o.loan),
       ...(o.funding && o.funding.surplus > 0.5 ? { fromSurplus: r0(o.funding.surplus) } : {}),
+      ...(() => {
+        if (!liqRes || o.unit.model) return {}
+        const end = unitEndYm(o)
+        const conv = Math.max(loanReadyYm(o.unit), ...o.payments.map(x => x.ym))
+        const extra: Partial<PropertyCard> = {}
+        if (o.unit.fin && conv > end) {
+          const rest = o.gross - (o.ekUsed - o.res.costs) - (o.funding?.surplus ?? 0) - o.loan
+          if (rest > 0.5) {
+            extra.openRest = r0(rest)
+            extra.openRestFromSale = (ri?.saleYears.get(o.unit.key) ?? o.unit.saleYear ?? (exit ? exit.year : null)) != null
+          }
+          if (o.loan > 0) extra.creditSoFar = true
+        }
+        const cc = liqRes.cashCredit.get(o.unit.key)
+        if (cc) extra.openCredit = r0(cc)
+        return extra
+      })(),
       valueEnd: r0(o.res.propV[idxEnd]), debtEnd: r0(debtEndRaw),
       equityEnd: r0(o.res.propV[idxEnd] - debtEndRaw),
       rentFirstYear: r0(o.res.rents[0]),
@@ -630,12 +660,13 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
           const yms = new Set(after.map(x => x.ym))
           const recs = liq.records.filter(r => r.key === o.unit.key && yms.has(r.ym))
           const sum = (f: (r: typeof recs[number]) => number) => recs.reduce((a, r) => a + f(r), 0)
+          // „kommen" passt zu jedem Betrag (Review: „Davon zahlen die Bank" war falsch).
           const parts = [
-            [sum(r => r.fromSurplus), 'Miete und MwSt-Erstattung'],
-            [sum(r => r.fromEquity), 'dein Eigenkapital'],
-            [sum(r => r.credit), 'die Bank'],
-          ].filter(([v]) => (v as number) > 0.5).map(([v, who]) => `${who} ${eur(v as number)}`)
-          return parts.length ? ` Davon zahlen ${parts.length > 1 ? parts.slice(0, -1).join(', ') + ' und ' + parts[parts.length - 1] : parts[0]}.` : ''
+            [sum(r => r.fromSurplus), liq.vatIntoPot ? 'aus Miete und MwSt-Erstattung' : 'aus der Miete'],
+            [sum(r => r.fromEquity), 'aus deinem Eigenkapital'],
+            [sum(r => r.credit), 'von der Bank'],
+          ].filter(([v]) => (v as number) > 0.5).map(([v, who]) => `${eur(v as number)} ${who}`)
+          return parts.length ? ` Davon kommen ${parts.length > 1 ? parts.slice(0, -1).join(', ') + ' und ' + parts[parts.length - 1] : parts[0]}.` : ''
         })()
         + (cut > 0
           ? (saleYearOf(o) != null && saleYearOf(o)! <= agg.lastYear
@@ -716,9 +747,12 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
     financing, financingKpis, capitalSteps, recyclingRows, opportunity,
     properties, tax, taxKpis, scenarios, exits, risks, insights, drivers, sensitivity,
     balance, cost, moneyFlow, journey, timeline, creditPath, keyInsights, events,
-    vatReturned: creditPath && 'liquidity' in agg && agg.liquidity
-      ? agg.liquidity.vatReturned.map(v => ({ name: outcomes.find(o => o.unit.key === v.key)?.unit.name ?? '', ym: v.ym, amount: r0(v.amount) }))
+    vatReturned: creditPath && liqRes
+      ? liqRes.vatReturned.map(v => ({ name: outcomes.find(o => o.unit.key === v.key)?.unit.name ?? '', ym: v.ym, amount: r0(v.amount) }))
       : [],
+    // Texte: zahlt neben der Miete auch eine MwSt-Erstattung Raten mit? Gibt es Barkaeufe?
+    surplusWithVat: !!liqRes?.vatIntoPot,
+    cashUnitsReserved: !!liqRes && outcomes.some(o => !o.unit.model && !o.unit.fin),
   }
 }
 

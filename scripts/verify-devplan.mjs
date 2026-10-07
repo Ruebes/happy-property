@@ -15,11 +15,11 @@
 //   npx esbuild src/lib/reinvest.ts --bundle --format=esm --outfile=/tmp/reinvest.mjs
 //   npx esbuild src/lib/analytics.ts --bundle --format=esm --outfile=/tmp/analytics.mjs
 //   node scripts/verify-devplan.mjs
-import { compute, DEFAULT_PARAMS } from '/tmp/rechner.mjs'
+import { compute, DEFAULT_PARAMS, irrCalc } from '/tmp/rechner.mjs'
 import {
   DEFAULT_SIM_PARAMS, allocate, aggregate, computeExit, paymentPlan, scheduleFromProject,
   normalizeSchedule, describeSchedule, devBalanceAt, loanReadyYm, pledgeableFromYear, ymOf,
-  MITO_SCHEDULE, LUMA_SCHEDULE, KUUTIO_SCHEDULE, isLumaStandard, totalsOf,
+  MITO_SCHEDULE, LUMA_SCHEDULE, KUUTIO_SCHEDULE, isLumaStandard, totalsOf, financingPath, saleLineOf,
 } from '/tmp/strategy.mjs'
 import { runReinvest } from '/tmp/reinvest.mjs'
 const st_ready = o => loanReadyYm(o.unit)
@@ -335,6 +335,56 @@ T('Mito 2033: vor der Mito-Übergabe nichts einbehalten', bF.a.rows.filter(r => 
 // (g) Wohnungskarte geht auf: Preis = EK + Überschuss + Darlehen
 const cardOk = buildCustomerAnalytics(LU, LP).properties.every(pc => near(pc.gross, pc.equity - (lo.find(x => x.unit.key === pc.key).res.costs) + (pc.fromSurplus ?? 0) + pc.loan, 2))
 T('Wohnungskarte: Gesamtpreis = Eigenkapital + Miete/MwSt + Darlehen', cardOk)
+// ── 13. Review Runde 2 (7.10.26) ─────────────────────────────────────────────
+// (1) Rendite: Eigenkapital-Abfluss genau wie in der Liquiditaetsrechnung
+const S1 = [mamba({ rent: 3500 }), { key: 'C', name: 'Bar', priceNet: 250000, furnNet: 0, rent: 1200, letType: 'long', fin: false,
+  buyM: 6, buyY: 2030, readyM: 6, readyY: 2030, plan: 'sofort', calc: {} }]
+const P1 = { ...LP, ek: 600000, interest: 4, exitAfterYears: 0 }
+const o1 = allocate(S1, P1), a1 = aggregate(o1, P1), t1 = totalsOf(o1, a1.rows, P1, null, a1.liquidity)
+const ekY = new Map(); for (const r of a1.liquidity.records) ekY.set(Math.floor(r.ym / 12), (ekY.get(Math.floor(r.ym / 12)) ?? 0) + r.fromEquity)
+for (const o of o1) ekY.set(o.unit.readyY, (ekY.get(o.unit.readyY) ?? 0) + (o.res.ekStart - o.res.ekAbs))
+const last1 = a1.rows[a1.rows.length - 1]
+const flows1 = a1.rows.map(r => r.cashflow - (ekY.get(r.year) ?? 0)); flows1[flows1.length - 1] += last1.value + last1.committed - last1.debt
+T('Rendite nutzt den Eigenkapital-Zeitpunkt der Liquiditätsrechnung', near(t1.irr, irrCalc(flows1), 1e-9), `${(t1.irr * 100).toFixed(2)} %`)
+// (2) Verkauf vor der MwSt-Erstattung: Forderung statt Rueckzahlung
+const o2 = allocate([mamba()], { ...P, exitAfterYears: 4 })
+const l2 = saleLineOf(o2[0], 2029, { ...P, exitAfterYears: 4 })
+T('Verkauf vor der Erstattung: keine Rückzahlung, sondern Forderung (Erstattung minus Berichtigung)', near(l2.vatClawback, Math.round(o2[0].res.vatRefund * 8 / 10) - o2[0].res.vatRefund, 1), `${eur(l2.vatClawback)}`)
+const l2b = saleLineOf(o2[0], 2031, { ...P, exitAfterYears: 6 })
+T('Verkauf nach der Erstattung: Rückzahlung wie bisher (6 von 10 Restjahren)', near(l2b.vatClawback, Math.round(o2[0].res.vatRefund * 6 / 10), 1))
+// (3) Einbehalt nur fuers laufende Fenster
+const mA = mamba({ key: 'A', priceNet: 400000, rent: 6000, buyM: 1, buyY: 2026, readyM: 6, readyY: 2026 })
+const mB = mamba({ key: 'B', priceNet: 400000, rent: 6000, buyM: 6, buyY: 2029, readyM: 6, readyY: 2031 })
+const P3 = { ...P, ek: 400000, interest: 4, exitAfterYears: 0 }
+const aA = aggregate(allocate([mA], P3), P3), aAB = aggregate(allocate([mA, mB], P3), P3)
+T('Einbehalt im Fenster A unabhängig von späterem Kauf B', near(aA.rows.find(r => r.year === 2027).retained ?? 0, aAB.rows.find(r => r.year === 2027).retained ?? 0, 1),
+  `${eur(aA.rows.find(r => r.year === 2027).retained ?? 0)} / ${eur(aAB.rows.find(r => r.year === 2027).retained ?? 0)}`)
+// (4) Zurueckgefuehrte Erstattung nach Planende wird nicht genannt
+const an4 = buildCustomerAnalytics([mamba({ vatReturn: true })], { ...P, ek: 300000, exitAfterYears: 4 })
+T('Erstattung nach dem Verkauf wird nicht als zurückgeführt genannt', an4.vatReturned.length === 0)
+// (5) Wohnungskarte geht auf, auch wenn der Plan in den Raten endet
+const an5 = buildCustomerAnalytics([mamba()], { ...P, ek: 300000, exitAfterYears: 4 })
+const c5 = an5.properties[0], o5 = allocate([mamba()], { ...P, ek: 300000, exitAfterYears: 4 })[0]
+T('Karte bei Verkauf in den Raten: Preis = EK + Miete/MwSt + Kredit + offene Raten', near(c5.gross, c5.equity - o5.res.costs + (c5.fromSurplus ?? 0) + c5.loan + (c5.openRest ?? 0), 2) && c5.openRestFromSale && c5.creditSoFar,
+  `offen ${eur(c5.openRest ?? 0)}`)
+// (6) Kennzahlen unabhaengig von der Listenreihenfolge
+const cpa = buildCustomerAnalytics(LU, { ...LP, ek: 400000 }).creditPath, cpb = buildCustomerAnalytics([...LU].reverse(), { ...LP, ek: 400000 }).creditPath
+T('"Eigenkapital reicht bis" / "Kredit nötig ab" unabhängig von der Reihenfolge', cpa.equityLastYm === cpb.equityLastYm && cpa.firstCreditYm === cpb.firstCreditYm,
+  `${cpa.equityLastYm} ${cpa.firstCreditYm}`)
+// (7) Grammatik
+const ho7 = buildCustomerAnalytics([mamba({ rent: 500, vatReturn: true })], { ...P, ek: 300000 }).timeline.find(e => e.kind === 'handover').detail
+T('Satz zur Übergabe: „Davon kommen …"', /Davon kommen/.test(ho7) && !/Davon zahlen/.test(ho7), ho7)
+// (8) Alle Erstattungen zurueckgefuehrt: nur die Miete zahlt mit
+const an8 = buildCustomerAnalytics(LU.map(u => ({ ...u, vatReturn: true })), LP)
+T('Alles zurückgeführt: Texte ohne MwSt', an8.surplusWithVat === false && !/MwSt-Erstattung \d/.test(an8.timeline.map(e => e.detail).join(' ')))
+// (9) Kreditbedarf mit Planende: Kredit gesamt = Darlehen (inkl. bis Planende abgerufen)
+const cp9 = an5.creditPath
+T('Kreditbedarf bei Verkauf in den Raten: Kredit gesamt = aufgeführte Kredite', near(cp9.creditTotal, cp9.loans.reduce((a, l) => a + l.amount, 0), 3) && cp9.loans.every(l => l.afterEnd))
+// (10) Barkauf mit zu wenig EK: offener Kredit sichtbar und in der Summe
+const an10 = buildCustomerAnalytics([mamba({ key: 'A1' }), mamba({ key: 'C1', fin: false, plan: 'luma', schedule: null })], { ...LP, ek: 600000 })
+const cp10 = an10.creditPath
+T('Barkauf ohne genug EK: offener Kredit gelistet, Summe stimmt', cp10.loans.some(l => l.open) && near(cp10.creditTotal, cp10.loans.reduce((a, l) => a + l.amount, 0), 3)
+  && an10.properties.find(pc => pc.key === 'C1').openCredit > 0)
 // Reinvestment: Liquiditaetsrechnung aus (eigener Kassen-Motor)
 T('Reinvest: keine Liquiditätsrechnung', !aggregate(allocate(LU, { ...LP, reinvestEnabled: true }), { ...LP, reinvestEnabled: true }).liquidity)
 

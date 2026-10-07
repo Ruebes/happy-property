@@ -365,7 +365,14 @@ export interface FinancingStep {
   credit: number
   creditTotal: number     // Kredit insgesamt bis hierher
 }
-export interface BankLoanInfo { key: string; name: string; amount: number; startYm: number; monthly: number }
+export interface BankLoanInfo {
+  key: string; name: string; amount: number; startYm: number; monthly: number
+  // Monatsrate beginnt erst nach dem Ende des Plans bzw. nach dem Verkauf: bis
+  // dahin abgerufener Kredit, beim Verkauf aus dem Erloes abgeloest
+  afterEnd?: boolean
+  // Barkauf mit zu wenig Eigenkapital: offener Kredit ohne Monatsrate
+  open?: boolean
+}
 export interface FinancingPath {
   equity: number
   steps: FinancingStep[]
@@ -387,20 +394,24 @@ export function financingPath(outcomes: UnitOutcome[], endYmOf?: (o: UnitOutcome
     recs.set(k, c)
   }
   // Zahlungen derselben Wohnung im selben Monat zusammenfassen (Reservierung + Vertrag).
-  const merged = new Map<string, { k: string; ym: number; unit: string; labels: string[]; amount: number; interest: number }>()
+  const merged = new Map<string, { k: string; key: string; fin: boolean; ym: number; unit: string; labels: string[]; amount: number; interest: number }>()
   for (const o of own) {
     const end = endYmOf ? endYmOf(o) : Infinity
     for (const pay of o.payments) {
       if (pay.ym > end) continue
       const k = `${pay.ym}|${o.unit.key}`
-      const m = merged.get(k) ?? { k, ym: pay.ym, unit: o.unit.name, labels: [], amount: 0, interest: 0 }
+      const m = merged.get(k) ?? { k, key: o.unit.key, fin: o.unit.fin, ym: pay.ym, unit: o.unit.name, labels: [], amount: 0, interest: 0 }
       m.labels.push(pay.label); m.amount += pay.amount; m.interest += pay.interest ?? 0
       merged.set(k, m)
     }
   }
   let left = equity, total = 0
   let equityLastYm: number | null = null, firstCreditYm: number | null = null
-  const steps: FinancingStep[] = [...merged.values()].sort((a, b) => a.ym - b.ym).map(m => {
+  // Mit Liquiditaetsrechnung dieselbe Reihenfolge wie dort (Monat, dann Wohnung),
+  // sonst haengen Tabelle und Kennzahlen von der Reihenfolge der Liste ab.
+  const sorted = [...merged.values()].sort((a, b) => a.ym - b.ym
+    || (liq ? (a.key < b.key ? -1 : a.key > b.key ? 1 : 0) : 0))
+  const steps: FinancingStep[] = sorted.map(m => {
     const rec = liq ? recs.get(m.k) : undefined
     const fromEquity = rec ? rec.fromEquity : Math.min(Math.max(0, left), m.amount)
     left -= fromEquity
@@ -409,13 +420,24 @@ export function financingPath(outcomes: UnitOutcome[], endYmOf?: (o: UnitOutcome
     total += credit
     // „Eigenkapital reicht bis": letzte Zahlung vor dem ersten Kredit, die noch
     // Eigenkapital bekommt (nicht eine, die nur aus Miete/MwSt bezahlt ist).
-    if (credit > 0.5 && firstCreditYm == null) firstCreditYm = m.ym
-    if (firstCreditYm == null && fromEquity > 0.5) equityLastYm = m.ym
+    // Mit Liquiditaetsrechnung nur finanzierte Wohnungen - Barkaeufe haben ihr
+    // Eigenkapital fest reserviert.
+    const counts = !liq || m.fin
+    if (counts && credit > 0.5 && firstCreditYm == null) firstCreditYm = m.ym
+    if (counts && firstCreditYm == null && fromEquity > 0.5) equityLastYm = m.ym
     return { ym: m.ym, unit: m.unit, label: m.labels.join(' + '), amount: m.amount, interest: m.interest, fromEquity, fromSurplus, credit, creditTotal: total }
   })
-  const loans = own.filter(o => o.loan > 0)
-    .map(o => ({ key: o.unit.key, name: o.unit.name, amount: o.loan, startYm: loanReadyYm(o.unit), monthly: o.annuityMonthly }))
-    .sort((a, b) => a.startYm - b.startYm)
+  const loans: BankLoanInfo[] = own.filter(o => o.loan > 0)
+    .map(o => {
+      const startYm = loanReadyYm(o.unit)
+      const end = endYmOf ? endYmOf(o) : Infinity
+      return { key: o.unit.key, name: o.unit.name, amount: o.loan, startYm, monthly: o.annuityMonthly, ...(startYm > end ? { afterEnd: true } : {}) }
+    })
+  for (const [k, v] of liq?.cashCredit ?? []) {
+    const o = own.find(x => x.unit.key === k)
+    if (o) loans.push({ key: k, name: o.unit.name, amount: Math.round(v), startYm: ymOf(o.unit.readyY, o.unit.readyM), monthly: 0, open: true })
+  }
+  loans.sort((a, b) => a.startYm - b.startYm)
   return { equity, steps, equityLastYm, firstCreditYm, creditTotal: total, loans }
 }
 
@@ -1176,6 +1198,11 @@ export interface LiquidityResult {
   peak: number
   // MwSt-Erstattungen, die an den Kunden zurueckgehen (Haken je Wohnung)
   vatReturned: Array<{ key: string; ym: number; amount: number }>
+  // Ist ueberhaupt eine MwSt-Erstattung in den Topf fuer die Raten geflossen?
+  // Sonst bezahlt nur die Miete mit (Texte ohne „MwSt").
+  vatIntoPot: boolean
+  // Barkaeufe mit zu wenig Eigenkapital: offener Kredit je Wohnung
+  cashCredit: Map<string, number>
 }
 export function liquidityMode(outcomes: UnitOutcome[], p?: SimParams): boolean {
   return !!p && !p.reinvestEnabled && outcomes.some(o => !o.unit.model && o.unit.fin && devAfterMonths(o.unit) > 0)
@@ -1210,6 +1237,7 @@ function liquiditySim(outcomes: UnitOutcome[], rows: YearRow[], p: SimParams, la
   const vatAt = new Map<number, number>()
   const vatOut = new Map<number, number>()
   const vatReturned: LiquidityResult['vatReturned'] = []
+  const endYm = ymOf(lastYear, 12)
   for (const o of own) {
     o.res.vatA.forEach((v, i) => {
       if (!v) return
@@ -1217,9 +1245,11 @@ function liquiditySim(outcomes: UnitOutcome[], rows: YearRow[], p: SimParams, la
       const ym = Math.min(ymOf(y, 12), Math.max(ymOf(y, 1), ymOf(o.unit.readyY, o.unit.readyM) + VAT_REFUND_MONTHS_STRATEGY))
       const target = o.unit.vatReturn ? vatOut : vatAt
       target.set(ym, (target.get(ym) ?? 0) + v)
-      if (o.unit.vatReturn) vatReturned.push({ key: o.unit.key, ym, amount: v })
+      // Nur Erstattungen im Zeitraum nennen - danach kommt im Plan nichts an.
+      if (o.unit.vatReturn && ym <= endYm) vatReturned.push({ key: o.unit.key, ym, amount: v })
     })
   }
+  let vatIntoPot = false
   // Zahlungen in fester Reihenfolge: nach Monat, im selben Monat nach Wohnung -
   // so haengt das Ergebnis nicht von der Reihenfolge der Liste ab.
   const pays = own.flatMap(o => o.payments.map(x => ({ ...x, key: o.unit.key, fin: o.unit.fin })))
@@ -1247,7 +1277,6 @@ function liquiditySim(outcomes: UnitOutcome[], rows: YearRow[], p: SimParams, la
   const sumOpen = () => [...open.values()].reduce((a, b) => a + b, 0)
   const addFree = (y: number, v: number) => { if (rowYears.has(y)) freeCash.set(y, (freeCash.get(y) ?? 0) + v) }
   const startYm = Math.min(ymOf(rows[0]?.year ?? lastYear, 1), ...pays.map(x => x.ym))
-  const endYm = ymOf(lastYear, 12)
   for (let ym = startYm; ym <= endYm; ym++) {
     const y = Math.floor(ym / 12)
     if (rowYears.has(y) && !freeCash.has(y)) freeCash.set(y, 0)
@@ -1259,6 +1288,7 @@ function liquiditySim(outcomes: UnitOutcome[], rows: YearRow[], p: SimParams, la
     const flow = (rowYears.has(y) ? opMonthOf(ym) : 0) + (vatAt.get(ym) ?? 0) - interest
     addFree(y, vatOut.get(ym) ?? 0)          // zurueckgefuehrte MwSt ist sofort frei
     if (inWindow(ym)) {
+      if ((vatAt.get(ym) ?? 0) > 0) vatIntoPot = true
       surplus += flow
       // Reicht der Ueberschuss nicht, legt der Kunde wie bisher selbst zu.
       if (surplus < 0) { addFree(y, surplus); surplus = 0 }
@@ -1288,9 +1318,12 @@ function liquiditySim(outcomes: UnitOutcome[], rows: YearRow[], p: SimParams, la
       loans.set(k, Math.round(open.get(k) ?? 0))
       open.delete(k)
     }
-    // 4) Nur behalten, was die kommenden Raten noch brauchen
+    // 4) Nur behalten, was die kommenden Raten im LAUFENDEN Fenster noch
+    //    brauchen - nach dem Fenster wird der Rest ohnehin frei.
     if (surplus > 0) {
-      const futureNeed = pays.filter(x => x.fin && x.ym > ym && x.ym <= lastWindowEnd).reduce((a, x) => a + x.amount, 0) - finPool
+      let runEnd = ym
+      while (runEnd < endYm && runEnd < lastWindowEnd && inWindow(runEnd + 1)) runEnd++
+      const futureNeed = pays.filter(x => x.fin && x.ym > ym && x.ym <= runEnd).reduce((a, x) => a + x.amount, 0) - finPool
       const keep = Math.max(0, Math.min(surplus, futureNeed))
       if (surplus - keep > 0.005) { addFree(y, surplus - keep); surplus = keep }
     }
@@ -1300,7 +1333,9 @@ function liquiditySim(outcomes: UnitOutcome[], rows: YearRow[], p: SimParams, la
   }
   // Wohnungen, deren Umwandlung nach dem Zeitraum liegt: abgerufener Stand
   for (const k of convYm.keys()) if (!loans.has(k)) loans.set(k, Math.round(open.get(k) ?? 0))
-  return { records, loans, bridge, freeCash, held, peak, vatReturned }
+  // Barkauf mit weniger Eigenkapital als Kaufpreis: offener Kredit (nur Zinsen)
+  const cashCredit = new Map(cashUnits.map(o => [o.unit.key, open.get(o.unit.key) ?? 0] as const).filter(([, v]) => v > 0.5))
+  return { records, loans, bridge, freeCash, held, peak, vatReturned, vatIntoPot, cashCredit }
 }
 
 
@@ -1366,7 +1401,7 @@ export function runScenario(units: SimUnit[], p: SimParams, key: ScenarioKey): S
   const outcomes = allocate(su, sp)
   const agg = aggregate(outcomes, sp)
   const exit = computeExit(outcomes, sp, agg.firstYear, agg.rows)
-  const totals = totalsOf(outcomes, agg.rows, sp, exit)
+  const totals = totalsOf(outcomes, agg.rows, sp, exit, agg.liquidity)
   return { key, params: sp, units: su, outcomes, rows: agg.rows, firstYear: agg.firstYear, lastYear: agg.lastYear, bridgeNeeded: agg.bridgeNeeded, bridgePeak: agg.bridgePeak, exit, totals,
     ...(agg.liquidity ? { liquidity: agg.liquidity } : {}) }
 }
@@ -1515,9 +1550,15 @@ export function saleLineOf(o: UnitOutcome, year: number, p: SimParams, tranches:
     }, 0)
   const debt = Math.round(ownDebt + trancheDebt)
   const soldInterval = delivered ? i + 1 : 0
-  const vatClawback = (o.unit.letType === 'short' && delivered && soldInterval < VAT_ADJUST_YEARS)
+  const clawback = (o.unit.letType === 'short' && delivered && soldInterval < VAT_ADJUST_YEARS)
     ? Math.round(o.res.vatRefund * (VAT_ADJUST_YEARS - soldInterval) / VAT_ADJUST_YEARS)
     : 0
+  // Verkauf, bevor die MwSt-Erstattung eingegangen ist (Review 7.10.26): Dann
+  // gibt es nichts zurueckzuzahlen, sondern noch eine Forderung - um denselben
+  // anteiligen Betrag gekuerzt (Berichtigung fuer die Restjahre). Vorher wurde
+  // die Rueckzahlung abgezogen, obwohl die Erstattung nie geflossen war.
+  const refundReceived = o.res.vatA.slice(0, Math.min(Math.max(i, 0), n - 1) + 1).some(v => v > 0)
+  const vatClawback = clawback && !refundReceived ? clawback - o.res.vatRefund : clawback
   return {
     name: o.unit.name, value, cost, costIndexed, sellCost, debt, vatClawback, delivered,
     yearsHeld: soldInterval,
@@ -1645,6 +1686,21 @@ export function equityOutflowByYear(outcomes: UnitOutcome[], p: SimParams): Map<
   return out
 }
 
+function equityOutflowFromLiquidity(outcomes: UnitOutcome[], liq: LiquidityResult): Map<number, number> {
+  const out = new Map<number, number>()
+  for (const r of liq.records) {
+    const y = Math.floor(r.ym / 12)
+    if (r.fromEquity > 0) out.set(y, (out.get(y) ?? 0) + r.fromEquity)
+  }
+  // Kaufnebenkosten zahlt der Kunde aus eigener Tasche, faellig zur Uebergabe.
+  for (const o of outcomes) {
+    if (o.unit.model) continue
+    const extra = o.res.ekStart - o.res.ekAbs
+    if (extra > 0) out.set(o.unit.readyY, (out.get(o.unit.readyY) ?? 0) + extra)
+  }
+  return out
+}
+
 // Interner Zinsfuss auf den TATSAECHLICHEN Zahlungsstroemen des Kunden:
 // Eigenkapital raus, laufender Cashflow rein, am Ende der Verkaufserloes.
 //
@@ -1657,10 +1713,13 @@ export function equityOutflowByYear(outcomes: UnitOutcome[], p: SimParams): Map<
 // Verkaufserloes uebergeben wurde - doppelt gezaehlt wird nichts.
 export function irrOfPlan(
   rows: YearRow[], outcomes: UnitOutcome[], p: SimParams,
-  exitProceeds = 0, exitYear?: number, terminalValue?: number,
+  exitProceeds = 0, exitYear?: number, terminalValue?: number, liq?: LiquidityResult,
 ): number {
   if (!rows.length) return NaN
-  const ekOut = equityOutflowByYear(outcomes, p)
+  // In der Liquiditaetsrechnung fliesst Eigenkapital genau dann ab, wenn eine
+  // Rate es nutzt (Barkaeufe reserviert) - sonst zaehlte die Rendite Geld zu
+  // frueh ab und zusaetzlich die Zinsen des Kredits, der es ersetzt hat.
+  const ekOut = liq ? equityOutflowFromLiquidity(outcomes, liq) : equityOutflowByYear(outcomes, p)
   const flows: number[] = []
   for (const r of rows) {
     if (exitYear != null && r.year > exitYear) break
@@ -1718,7 +1777,7 @@ export function roeAfterYears(rows: YearRow[], ekTotal: number, years: number): 
   return ((worth + cash - ekTotal) / ekTotal) * 100
 }
 
-export function totalsOf(outcomes: UnitOutcome[], rows: YearRow[], p?: SimParams, exit?: ExitResult | null): StrategyTotals {
+export function totalsOf(outcomes: UnitOutcome[], rows: YearRow[], p?: SimParams, exit?: ExitResult | null, liq?: LiquidityResult): StrategyTotals {
   const sum = (f: (r: YearRow) => number) => rows.reduce((a, r) => a + f(r), 0)
   const ekTotal = outcomes.reduce((a, o) => a + o.ekUsed, 0)
   const last = rows[rows.length - 1]
@@ -1735,7 +1794,7 @@ export function totalsOf(outcomes: UnitOutcome[], rows: YearRow[], p?: SimParams
   const valueEnd = last ? last.value : 0
   // Ohne Verkauf zaehlt das Netto-Vermoegen am Ende als Schlusswert.
   const terminal = last ? last.value + last.committed - last.debt : 0
-  const irr = p ? irrOfPlan(rows, outcomes, p, exit ? exit.net : 0, exit?.year, terminal) : NaN
+  const irr = p ? irrOfPlan(rows, outcomes, p, exit ? exit.net : 0, exit?.year, terminal, liq) : NaN
   return {
     ekTotal, netWorth, rents, taxes, vat, interest, cashflow, totalReturn, roe, debtEnd,
     taxCY: sum(r => r.taxCY), taxDE: sum(r => r.taxDE), gesy: sum(r => r.gesy), si: sum(r => r.si),

@@ -523,7 +523,13 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   const exit = active?.exit ?? null
   const totals = active?.totals ?? null
   // Ab wann und in welcher Hoehe ein Kredit noetig ist (Sven 7.10.26)
-  const credit = useMemo(() => outcomes.length ? financingPath(outcomes, undefined, active?.liquidity) : null, [outcomes, active])
+  // Gleiches Planende wie die Kundenseite: Raten nach dem Verkauf bzw. dem
+  // Zeitraum zahlt der Erlös, sie gehören nicht in den Kreditbedarf.
+  const credit = useMemo(() => {
+    if (!outcomes.length || !active) return null
+    const end = (o: (typeof outcomes)[number]) => ymOf(Math.min(active.lastYear, o.unit.saleYear ?? (active.exit ? active.exit.year : active.lastYear)), 12)
+    return financingPath(outcomes, end, active.liquidity)
+  }, [outcomes, active])
   const mmYYYY = (ym: number) => `${String(ym % 12 + 1).padStart(2, '0')}/${Math.floor(ym / 12)}`
   // Break-even rechnet die ganze Strategie mehrfach durch - nur bei Bedarf.
   const [beOpen, setBeOpen] = useState(false)
@@ -1353,7 +1359,9 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                         <td className="px-3 py-2 tabular-nums">{String(o.unit.readyM).padStart(2, '0')}/{o.unit.readyY}</td>
                         <td className="px-3 py-2 text-green-700 font-semibold">{eur(o.ekUsed)}
                           {/* Raten nach der Uebergabe: Teil des Preises aus Miete und MwSt-Erstattung */}
-                          {(o.funding?.surplus ?? 0) > 0.5 && <span className="block text-xs font-normal text-gray-500">{t('crm.sim.fromSurplusShort', '+ {{v}} aus Miete/MwSt', { v: eur(o.funding!.surplus) })}</span>}
+                          {(o.funding?.surplus ?? 0) > 0.5 && <span className="block text-xs font-normal text-gray-500">{active?.liquidity?.vatIntoPot
+                            ? t('crm.sim.fromSurplusShort', '+ {{v}} aus Miete/MwSt', { v: eur(o.funding!.surplus) })
+                            : t('crm.sim.fromSurplusRent', '+ {{v}} aus Miete', { v: eur(o.funding!.surplus) })}</span>}
                         </td>
                         <td className="px-3 py-2 text-amber-700 font-semibold">{o.loan > 0 ? eur(o.loan) : '–'}</td>
                         <td className="px-3 py-2">{roeMeaningful(o) ? pct(o.roe10) : '–'}</td>
@@ -1377,14 +1385,20 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                       until: credit.equityLastYm != null ? mmYYYY(credit.equityLastYm) : t('crm.sim.credFirst', 'vor der ersten Rate'),
                       from: mmYYYY(credit.firstCreditYm), total: eur(credit.creditTotal),
                     })}
-                  {active?.liquidity && credit.steps.some(s => s.fromSurplus > 0.5) && ` ${t('crm.sim.credSurplusText', 'Miete und MwSt-Erstattung zahlen {{sum}} der Raten mit.', { sum: eur(credit.steps.reduce((a, s) => a + s.fromSurplus, 0)) })}`}
+                  {active?.liquidity && credit.steps.some(s => s.fromSurplus > 0.5) && ` ${active.liquidity.vatIntoPot
+                    ? t('crm.sim.credSurplusText', 'Miete und MwSt-Erstattung zahlen {{sum}} der Raten mit.', { sum: eur(credit.steps.reduce((a, s) => a + s.fromSurplus, 0)) })
+                    : t('crm.sim.credSurplusRent', 'Die Miete zahlt {{sum}} der Raten mit.', { sum: eur(credit.steps.reduce((a, s) => a + s.fromSurplus, 0)) })}`}
                   {agg.bridgeNeeded && ` ${t('crm.sim.credBridge2', 'Bis zum Start der Monatsraten wird der Kredit in Stufen abgerufen, darauf nur Zinsen (in der Spitze {{peak}}, im Cashflow enthalten).', { peak: eur(agg.bridgePeak) })}`}
                 </p>
                 {credit.loans.length > 0 && (
                   <p className="mt-1">
-                    {credit.loans.map(l => t('crm.sim.credLoan', '{{name}}: {{amount}} ab {{start}} ({{monthly}}/M.)', {
-                      name: l.name, amount: eur(l.amount), start: mmYYYY(l.startYm), monthly: eur(l.monthly),
-                    })).join(' · ')}
+                    {credit.loans.map(l => l.open
+                      ? t('crm.sim.credLoanOpen', '{{name}}: {{amount}} offener Kredit (Eigenkapital reicht nicht für den Barkauf)', { name: l.name, amount: eur(l.amount) })
+                      : l.afterEnd
+                        ? t('crm.sim.credLoanAfter', '{{name}}: {{amount}} abgerufen bis Planende, Monatsrate erst ab {{start}}', { name: l.name, amount: eur(l.amount), start: mmYYYY(l.startYm) })
+                        : t('crm.sim.credLoan', '{{name}}: {{amount}} ab {{start}} ({{monthly}}/M.)', {
+                          name: l.name, amount: eur(l.amount), start: mmYYYY(l.startYm), monthly: eur(l.monthly),
+                        })).join(' · ')}
                   </p>
                 )}
                 <details className="mt-2">
@@ -1396,7 +1410,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                         <th className="px-2 py-1">{t('crm.sim.credRate', 'Wohnung · Rate')}</th>
                         <th className="px-2 py-1 text-right">{t('crm.sim.credAmount', 'Betrag')}</th>
                         <th className="px-2 py-1 text-right">{t('crm.sim.credEquity', 'aus EK')}</th>
-                        {credit.steps.some(s => s.fromSurplus > 0.5) && <th className="px-2 py-1 text-right">{t('crm.sim.credSurplus', 'aus Miete/MwSt')}</th>}
+                        {credit.steps.some(s => s.fromSurplus > 0.5) && <th className="px-2 py-1 text-right">{active?.liquidity?.vatIntoPot ? t('crm.sim.credSurplus', 'aus Miete/MwSt') : t('crm.sim.credSurplusRentCol', 'aus Miete')}</th>}
                         <th className="px-2 py-1 text-right">{t('crm.sim.credCredit', 'Kredit')}</th>
                         <th className="px-2 py-1 text-right">{t('crm.sim.credCumul', 'Kredit gesamt')}</th>
                       </tr></thead>

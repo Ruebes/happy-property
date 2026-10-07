@@ -603,8 +603,10 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                   {([
                     [t('strategie.pPrice', 'Gesamtpreis'), eur(p.gross)],
                     [t('strategie.pEquity', 'davon Eigenkapital'), eur(p.equity)],
-                    ...(p.fromSurplus ? [[t('strategie.pSurplus', 'aus Miete und MwSt-Erstattung'), eur(p.fromSurplus)]] : []),
-                    ...(p.loan > 0 ? [[t('strategie.pLoan', 'Darlehen'), eur(p.loan)]] : []),
+                    ...(p.fromSurplus ? [[a.surplusWithVat ? t('strategie.pSurplus', 'aus Miete und MwSt-Erstattung') : t('strategie.pSurplusRent', 'aus der Miete'), eur(p.fromSurplus)]] : []),
+                    ...(p.loan > 0 ? [[p.creditSoFar ? t('strategie.pCreditSoFar', 'Kredit bisher abgerufen') : t('strategie.pLoan', 'Darlehen'), eur(p.loan)]] : []),
+                    ...(p.openRest ? [[p.openRestFromSale ? t('strategie.pOpenSale', 'offene Raten, aus dem Verkaufserlös') : t('strategie.pOpenAfter', 'offene Raten nach dem Zeitraum'), eur(p.openRest)]] : []),
+                    ...(p.openCredit ? [[t('strategie.pOpenCredit', 'Kredit (Eigenkapital reicht nicht)'), eur(p.openCredit)]] : []),
                     [t('strategie.pRent', 'Miete im 1. Jahr'), eur(p.rentFirstYear)],
                     [p.soldYear ? t('strategie.pValueSale', 'Wert beim Verkauf') : t('strategie.pValue', 'Wert am Ende'), eur(p.valueEnd)],
                     [t('strategie.pEquityEnd', 'davon dir gehörend'), eur(p.equityEnd)],
@@ -741,9 +743,12 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
           const withSurplus = cp.steps.some(s => s.fromSurplus > 0.5)
           return (
             <Section title={t('strategie.credTitle', 'Wann du einen Kredit brauchst')}
-              sub={withSurplus
-                ? t('strategie.credSubSurplus', 'Jede Kaufpreisrate nach dem Zahlungsplan der Bauträger. Dein Eigenkapital deckt die Raten der Reihe nach, über alle Wohnungen zusammen. Danach zahlen Miete und MwSt-Erstattung mit. Nur was dann noch fehlt, finanziert die Bank.')
-                : t('strategie.credSub', 'Jede Kaufpreisrate nach dem Zahlungsplan der Bauträger. Dein Eigenkapital deckt die Raten der Reihe nach, über alle Wohnungen zusammen. Ab dem Punkt, an dem es aufgebraucht ist, brauchst du einen Kredit.')}>
+              sub={(withSurplus
+                ? (a.surplusWithVat
+                  ? t('strategie.credSubSurplus', 'Jede Kaufpreisrate nach dem Zahlungsplan der Bauträger. Dein Eigenkapital deckt die Raten der Reihe nach, über alle Wohnungen zusammen. Danach zahlen Miete und MwSt-Erstattung mit. Nur was dann noch fehlt, finanziert die Bank.')
+                  : t('strategie.credSubRent', 'Jede Kaufpreisrate nach dem Zahlungsplan der Bauträger. Dein Eigenkapital deckt die Raten der Reihe nach, über alle Wohnungen zusammen. Danach zahlt die Miete mit. Nur was dann noch fehlt, finanziert die Bank.'))
+                : t('strategie.credSub', 'Jede Kaufpreisrate nach dem Zahlungsplan der Bauträger. Dein Eigenkapital deckt die Raten der Reihe nach, über alle Wohnungen zusammen. Ab dem Punkt, an dem es aufgebraucht ist, brauchst du einen Kredit.'))
+                + (a.cashUnitsReserved ? ' ' + t('strategie.credCashReserved', 'Bar gekaufte Wohnungen haben ihr Eigenkapital fest reserviert.') : '')}>
               <div style={kpiGrid}>
                 {[
                   { l: t('strategie.credEqUntil', 'Eigenkapital reicht bis'),
@@ -751,7 +756,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                       : cp.equityLastYm != null ? mm(cp.equityLastYm) : t('strategie.credFirstRate', 'vor der ersten Rate') },
                   { l: t('strategie.credFrom', 'Kredit nötig ab'),
                     v: cp.firstCreditYm != null ? mm(cp.firstCreditYm)
-                      : withSurplus ? t('strategie.credNoneSurplus', 'kein Kredit, Miete und MwSt reichen') : t('strategie.credNone', 'kein Kredit nötig'),
+                      : withSurplus ? (a.surplusWithVat ? t('strategie.credNoneSurplus', 'kein Kredit, Miete und MwSt reichen') : t('strategie.credNoneRent', 'kein Kredit, die Miete reicht')) : t('strategie.credNone', 'kein Kredit nötig'),
                     hero: cp.firstCreditYm != null },
                   { l: t('strategie.credTotal', 'Kredit insgesamt'), v: eur(cp.creditTotal) },
                 ].map(k => (
@@ -768,7 +773,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                     <th style={{ ...th, textAlign: 'left' }}>{t('strategie.credRate', 'Rate')}</th>
                     <th style={th}>{t('strategie.credAmount', 'Betrag')}</th>
                     <th style={th}>{t('strategie.credEquity', 'aus Eigenkapital')}</th>
-                    {withSurplus && <th style={th}>{t('strategie.credSurplus', 'aus Miete/MwSt')}</th>}
+                    {withSurplus && <th style={th}>{a.surplusWithVat ? t('strategie.credSurplus', 'aus Miete/MwSt') : t('strategie.credSurplusRent', 'aus Miete')}</th>}
                     <th style={th}>{t('strategie.credCredit', 'Kredit')}</th>
                     <th style={th}>{t('strategie.credCumul', 'Kredit gesamt')}</th>
                     {withInterest && <th style={th}>{t('strategie.credInterest', 'zzgl. Zinsen')}</th>}
@@ -810,8 +815,8 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                           <tr key={l.key} style={{ borderBottom: '1px solid #f5f3f0' }}>
                             <td style={{ ...td, textAlign: 'left', fontWeight: 600 }}>{l.name}</td>
                             <td style={{ ...td, fontWeight: 700 }}>{eur(l.amount)}</td>
-                            <td style={td}>{mm(l.startYm)}</td>
-                            <td style={td}>{eur(l.monthly)}</td>
+                            <td style={td}>{l.open ? t('strategie.credLoanOpen', 'offen, nur Zinsen') : l.afterEnd ? t('strategie.credLoanAfter', 'nach dem Zeitraum ({{d}})', { d: mm(l.startYm) }) : mm(l.startYm)}</td>
+                            <td style={td}>{l.open || l.afterEnd ? '' : eur(l.monthly)}</td>
                           </tr>
                         ))}
                       </tbody>
