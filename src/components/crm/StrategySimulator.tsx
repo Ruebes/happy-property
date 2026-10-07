@@ -1019,6 +1019,17 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                         {chipBox(!!season)}🏖 {t('crm.wizard.season', 'Saisonmodell')}
                       </button>
                     )}
+                    {/* MwSt-Erstattung zurückführen statt Raten damit zu bezahlen (Sven
+                        7.10.26, je Objekt). Nur sichtbar, wenn die Strategie Bauträger-Raten
+                        nach der Übergabe hat - sonst ist die Erstattung ohnehin frei. */}
+                    {isShort && active?.liquidity && (
+                      <button type="button" className={chipCls(!!u.vatReturn)}
+                        title={t('crm.sim.vatReturnHint', 'Mit Haken geht die MwSt-Erstattung dieser Wohnung an den Kunden zurück und zahlt keine Bauträger-Raten. Die Lücke finanziert dann die Bank.')}
+                        onClick={() => patchUnit(u.key, { vatReturn: !u.vatReturn })}>
+                        {chipBox(!!u.vatReturn)}💶 {t('crm.sim.vatReturn', 'MwSt-Erstattung zurückführen')}
+                        {o?.res.vatRefund ? <span className="text-gray-400 font-normal"> ({eur(o.res.vatRefund)})</span> : null}
+                      </button>
+                    )}
                     {isShort && (
                       <button type="button" className={chipCls(planOn)}
                         onClick={() => setSharedMonthPlan(planOn ? null : (sharedPlanOf(units) ?? [...MONTH_PLAN_ALL_LET] as MonthPlan))}>
@@ -1191,7 +1202,14 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                             : schedText(sched)}
                           {sched.source && sched.source !== 'manuell' ? ` · ${t('crm.sim.schedSource', 'Quelle: {{s}}', { s: srcText(sched.source) })}` : ''}
                         </p>
-                        {sched.afterPct > 0 && u.fin && (
+                        {sched.afterPct > 0 && u.fin && !params.reinvestEnabled && (
+                          <p className="text-[11px] text-gray-500">
+                            {t('crm.sim.schedBankLater2', 'Die Raten zahlen Eigenkapital, Miete und MwSt-Erstattung. Was fehlt, wird als Kredit in Stufen abgerufen (nur Zinsen); die Monatsrate beginnt nach der letzten Rate ({{date}}).', {
+                              date: (() => { const ym = loanReadyYm(u); return `${String(ym % 12 + 1).padStart(2, '0')}/${Math.floor(ym / 12)}` })(),
+                            })}
+                          </p>
+                        )}
+                        {sched.afterPct > 0 && u.fin && params.reinvestEnabled && (
                           <p className="text-[11px] text-gray-500">
                             {t('crm.sim.schedBankLater', 'Die Bank zahlt erst nach der letzten Rate aus ({{date}}). Reicht das Eigenkapital vorher nicht, rechnet der Simulator eine Zwischenfinanzierung.', {
                               date: (() => { const ym = loanReadyYm(u); return `${String(ym % 12 + 1).padStart(2, '0')}/${Math.floor(ym / 12)}` })(),
@@ -1323,7 +1341,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                         <td className="px-3 py-2 tabular-nums">{String(o.unit.readyM).padStart(2, '0')}/{o.unit.readyY}</td>
                         <td className="px-3 py-2 text-green-700 font-semibold">{eur(o.ekUsed)}
                           {/* Raten nach der Uebergabe: Teil des Preises aus Miete und MwSt-Erstattung */}
-                          {o.gross - o.loan - o.ekAlloc > 0.5 && <span className="block text-xs font-normal text-gray-500">{t('crm.sim.fromSurplusShort', '+ {{v}} aus Miete/MwSt', { v: eur(o.gross - o.loan - o.ekAlloc) })}</span>}
+                          {(o.funding?.surplus ?? 0) > 0.5 && <span className="block text-xs font-normal text-gray-500">{t('crm.sim.fromSurplusShort', '+ {{v}} aus Miete/MwSt', { v: eur(o.funding!.surplus) })}</span>}
                         </td>
                         <td className="px-3 py-2 text-amber-700 font-semibold">{o.loan > 0 ? eur(o.loan) : '–'}</td>
                         <td className="px-3 py-2">{roeMeaningful(o) ? pct(o.roe10) : '–'}</td>
@@ -1340,7 +1358,9 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                 <p>
                   <strong>{t('crm.sim.credTitle', 'Finanzierungsbedarf')}:</strong>{' '}
                   {credit.firstCreditYm == null
-                    ? t('crm.sim.credNone', 'Das Eigenkapital deckt alle Kaufraten, kein Kredit nötig.')
+                    ? (credit.steps.some(s => s.fromSurplus > 0.5)
+                      ? t('crm.sim.credNoneSurplus', 'Eigenkapital, Miete und MwSt-Erstattung decken alle Kaufraten, kein Kredit nötig.')
+                      : t('crm.sim.credNone', 'Das Eigenkapital deckt alle Kaufraten, kein Kredit nötig.'))
                     : t('crm.sim.credText', 'Eigenkapital reicht bis {{until}}. Kredit nötig ab {{from}}, insgesamt {{total}}.', {
                       until: credit.equityLastYm != null ? mmYYYY(credit.equityLastYm) : t('crm.sim.credFirst', 'vor der ersten Rate'),
                       from: mmYYYY(credit.firstCreditYm), total: eur(credit.creditTotal),

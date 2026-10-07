@@ -36,6 +36,10 @@ export interface SimUnit {
   // Bautraegers aus `schedule` (Sven 6.10.26).
   plan: 'sofort' | 'luma' | 'dev'
   schedule?: DevSchedule | null
+  // MwSt-Erstattung dieser Wohnung an den Kunden zurueckfuehren statt damit
+  // Bautraeger-Raten zu bezahlen (Sven 7.10.26, je Objekt). Wirkt nur in der
+  // Liquiditaetsrechnung bei Raten nach der Uebergabe.
+  vatReturn?: boolean
   // Gemeinschaftskosten dieser Wohnung (EUR/Monat). Leer = globaler Vorgabewert.
   opex?: number | null
   // Verkaufsjahr dieser Wohnung. Leer = wird im Betrachtungszeitraum nicht
@@ -342,6 +346,8 @@ export interface UnitOutcome {
   // Raten nach der Uebergabe weicht er vom Engine-Eigenkapital ab, weil dort
   // auch die aus Miete und MwSt-Erstattung bezahlten Raten stecken.
   ekAlloc: number
+  // Nur in der Liquiditaetsrechnung: woraus der Kaufpreis wirklich bezahlt wurde
+  funding?: { equity: number; surplus: number; credit: number }
 }
 
 // ── Finanzierungsbedarf (Sven 7.10.26) ──────────────────────────────────────
@@ -401,8 +407,10 @@ export function financingPath(outcomes: UnitOutcome[], endYmOf?: (o: UnitOutcome
     const fromSurplus = rec ? rec.fromSurplus : 0
     const credit = rec ? rec.credit : m.amount - fromEquity
     total += credit
-    if (credit <= 0.5) { if (firstCreditYm == null) equityLastYm = m.ym }
-    else if (firstCreditYm == null) firstCreditYm = m.ym
+    // „Eigenkapital reicht bis": letzte Zahlung vor dem ersten Kredit, die noch
+    // Eigenkapital bekommt (nicht eine, die nur aus Miete/MwSt bezahlt ist).
+    if (credit > 0.5 && firstCreditYm == null) firstCreditYm = m.ym
+    if (firstCreditYm == null && fromEquity > 0.5) equityLastYm = m.ym
     return { ym: m.ym, unit: m.unit, label: m.labels.join(' + '), amount: m.amount, interest: m.interest, fromEquity, fromSurplus, credit, creditTotal: total }
   })
   const loans = own.filter(o => o.loan > 0)
@@ -455,6 +463,8 @@ export interface YearRow {
   // Nur bei Bautraeger-Raten nach der Uebergabe: Teil des Cashflows, der bis zur
   // letzten Rate auf dem Konto bleibt und die Raten bezahlt (nicht frei verfuegbar).
   retained?: number
+  // davon zum Jahresende noch auf dem Konto (fuer die naechsten Raten)
+  held?: number
 }
 
 export interface StrategyConfig { unitsV2?: SimUnit[]; paramsV2?: SimParams; units?: LegacyUnit[]; params?: LegacyParams }
@@ -714,27 +724,40 @@ export function runUnit(u: SimUnit, ekForUnit: number, p: SimParams): UnitOutcom
 export function allocate(units: SimUnit[], p: SimParams): UnitOutcome[] {
   const base = allocateBase(units, p)
   if (!liquidityMode(base, p)) return base
-  // Bautraeger-Raten nach der Uebergabe (Sven 7.10.26): Das Bankdarlehen dieser
-  // Wohnungen ist der Kredit, den die Liquiditaetsrechnung wirklich braucht -
-  // nicht Kaufpreis minus Eigenkapital-Anteil. Vor dem Start der Monatsrate
-  // haengt der Bedarf nicht vom Darlehen ab; zwei Runden genuegen, vier sind Reserve.
+  // Bautraeger-Raten nach der Uebergabe (Sven 7.10.26): Jedes Bankdarlehen ist
+  // der Kredit, den die Liquiditaetsrechnung fuer diese Wohnung wirklich
+  // abgerufen hat - nicht Kaufpreis minus Eigenkapital-Anteil. Der Bedarf einer
+  // Wohnung haengt nur von frueher uebergebenen Wohnungen ab; die Runden
+  // laufen, bis sich kein Darlehen mehr um einen Euro aendert.
   let outs = base
-  for (let round = 0; round < 4; round++) {
-    const need = aggregate(outs, p).liquidity?.devLoans
-    if (!need) break
+  let liq: LiquidityResult | undefined
+  for (let round = 0; round < 10; round++) {
+    liq = aggregate(outs, p).liquidity
+    if (!liq) break
+    const need = liq.loans
     let changed = false
     outs = outs.map(o => {
       const L = need.get(o.unit.key)
       if (L == null || Math.abs(L - o.loan) < 1) return o
       changed = true
-      const r = runUnit(o.unit, o.res.pGross + o.res.furnGross - L, p)
-      // Eigenkapital des Kunden bleibt der Anteil aus der Verteilung; der Rest
-      // des Kaufpreises kommt aus Miete und MwSt-Erstattung bzw. dem Kredit.
-      return { ...r, ekAlloc: o.ekAlloc, ekUsed: o.ekAlloc + r.res.costs }
+      // Eigenkapital-Anteil (Topf der Liquiditaetsrechnung) bleibt der aus der Verteilung.
+      return { ...runUnit(o.unit, o.res.pGross + o.res.furnGross - L, p), ekAlloc: o.ekAlloc }
     })
     if (!changed) break
+    liq = undefined
   }
-  return outs
+  if (!liq) liq = aggregate(outs, p).liquidity
+  // Was jede Wohnung wirklich bekommen hat: Eigenkapital, Ueberschuss, Kredit.
+  // Das Eigenkapital in den Kennzahlen ist das wirklich eingesetzte.
+  return outs.map(o => {
+    const recs = (liq?.records ?? []).filter(r => r.key === o.unit.key)
+    const funding = {
+      equity: recs.reduce((a, r) => a + r.fromEquity, 0),
+      surplus: recs.reduce((a, r) => a + r.fromSurplus, 0),
+      credit: recs.reduce((a, r) => a + r.credit, 0),
+    }
+    return { ...o, funding, ekUsed: Math.round(funding.equity) + o.res.costs }
+  })
 }
 
 function allocateBase(units: SimUnit[], p: SimParams): UnitOutcome[] {
@@ -1068,6 +1091,8 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams, extras?: Aggre
       if (free == null) continue
       r.retained = r.cashflow - free
       r.cashflow = free
+      // Fuer kommende Raten gehaltener Ueberschuss: Geld des Kunden, zaehlt zum Vermoegen
+      r.held = liq!.held.get(r.year) ?? 0
     }
     return { rows: out, firstYear, lastYear, bridgeNeeded: liq!.peak > 0.5, bridgePeak: liq!.peak, liquidity: liq! }
   }
@@ -1142,10 +1167,15 @@ export interface FundingRecord {
 }
 export interface LiquidityResult {
   records: FundingRecord[]
-  devLoans: Map<string, number>     // Bankdarlehen je Wohnung mit Raten nach Uebergabe
+  // Bankdarlehen je finanzierter Wohnung = der fuer sie abgerufene Kredit bei
+  // Uebergabe bzw. nach der letzten Mito-Rate
+  loans: Map<string, number>
+  held: Map<number, number>         // fuer kommende Raten gehaltener Ueberschuss, Jahresende
   bridge: BridgeByYear              // abgerufener Kredit ohne Monatsrate: Zinsen + Stand Jahresende
   freeCash: Map<number, number>     // frei verfuegbarer Cashflow je Jahr
   peak: number
+  // MwSt-Erstattungen, die an den Kunden zurueckgehen (Haken je Wohnung)
+  vatReturned: Array<{ key: string; ym: number; amount: number }>
 }
 export function liquidityMode(outcomes: UnitOutcome[], p?: SimParams): boolean {
   return !!p && !p.reinvestEnabled && outcomes.some(o => !o.unit.model && o.unit.fin && devAfterMonths(o.unit) > 0)
@@ -1154,7 +1184,11 @@ function liquiditySim(outcomes: UnitOutcome[], rows: YearRow[], p: SimParams, la
   const own = outcomes.filter(o => !o.unit.model)
   const isDev = (o: UnitOutcome) => o.unit.fin && devAfterMonths(o.unit) > 0
   const devUnits = own.filter(isDev)
-  const retainUntil = Math.max(...devUnits.map(o => loanReadyYm(o.unit)))
+  // Einbehalt nur von der Uebergabe bis zur letzten Rate einer Mito-Wohnung -
+  // davor und danach ist der Ueberschuss frei verfuegbar (Review 7.10.26).
+  const windows = devUnits.map(o => [afterAnchorYm(o.unit), loanReadyYm(o.unit)] as const)
+  const inWindow = (ym: number) => windows.some(([a, b]) => ym >= a && ym <= b)
+  const lastWindowEnd = Math.max(...windows.map(w => w[1]))
   const iMon = Math.max(0, p.interest) / 100 / 12
   // Ueberschuss je Monat ohne MwSt-Erstattung und ohne Kreditzinsen (die rechnet
   // diese Simulation selbst). Verteilt auf die Monate, in denen Wohnungen schon
@@ -1170,89 +1204,103 @@ function liquiditySim(outcomes: UnitOutcome[], rows: YearRow[], p: SimParams, la
     return wSum > 0 ? total * weight(ym) / wSum : total / 12
   }
   const rowYears = new Set(rows.map(r => r.year))
-  // MwSt-Erstattung im Monat der Erstattung (Frist ab Uebergabe, im Jahr der Engine)
+  // MwSt-Erstattung im Monat der Erstattung (Frist ab Uebergabe, im Jahr der
+  // Engine). Mit Haken „zurückführen" geht sie direkt an den Kunden, sonst in
+  // den Topf, aus dem die Raten bezahlt werden.
   const vatAt = new Map<number, number>()
+  const vatOut = new Map<number, number>()
+  const vatReturned: LiquidityResult['vatReturned'] = []
   for (const o of own) {
     o.res.vatA.forEach((v, i) => {
       if (!v) return
       const y = o.unit.readyY + i
       const ym = Math.min(ymOf(y, 12), Math.max(ymOf(y, 1), ymOf(o.unit.readyY, o.unit.readyM) + VAT_REFUND_MONTHS_STRATEGY))
-      vatAt.set(ym, (vatAt.get(ym) ?? 0) + v)
+      const target = o.unit.vatReturn ? vatOut : vatAt
+      target.set(ym, (target.get(ym) ?? 0) + v)
+      if (o.unit.vatReturn) vatReturned.push({ key: o.unit.key, ym, amount: v })
     })
   }
-  const pays = own.flatMap(o => o.payments.map(x => ({ ...x, key: o.unit.key })))
-  const fixedLoans = own.filter(o => !isDev(o) && o.loan > 0).map(o => ({ key: o.unit.key, ym: loanReadyYm(o.unit), amount: o.loan }))
-  // Ab Januar des ersten Jahres, damit kein Monatsueberschuss verloren geht.
-  const startYm = Math.min(ymOf(rows[0]?.year ?? lastYear, 1), ...pays.map(x => x.ym))
-  const endYm = ymOf(lastYear, 12)
-  let ekLeft = own.reduce((a, o) => a + o.ekAlloc, 0)
-  let loanCash = 0, surplus = 0, peak = 0
+  // Zahlungen in fester Reihenfolge: nach Monat, im selben Monat nach Wohnung -
+  // so haengt das Ergebnis nicht von der Reihenfolge der Liste ab.
+  const pays = own.flatMap(o => o.payments.map(x => ({ ...x, key: o.unit.key, fin: o.unit.fin })))
+    .sort((a, b) => a.ym - b.ym || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+  // Wann wird der abgerufene Kredit einer Wohnung zum Bankdarlehen? Bei der
+  // Uebergabe bzw. nach der letzten Mito-Rate, nie vor der letzten Zahlung.
+  const convYm = new Map(own.filter(o => o.unit.fin).map(o => [o.unit.key,
+    Math.max(loanReadyYm(o.unit), ...o.payments.map(x => x.ym))]))
+  // Eigenkapital: hoechstens das Startkapital. Bar gekaufte Wohnungen bekommen
+  // ihren Anteil fest reserviert (sonst traegt ein Barkauf ploetzlich Kredit),
+  // der Rest steht den finanzierten Wohnungen der Reihe nach zur Verfuegung.
+  const ekTotal = Math.min(own.reduce((a, o) => a + o.ekAlloc, 0), Math.max(0, p.ek))
+  const cashUnits = own.filter(o => !o.unit.fin)
+  const cashWant = cashUnits.reduce((a, o) => a + o.ekAlloc, 0)
+  const cashFactor = cashWant > 0 ? Math.min(1, ekTotal / cashWant) : 0
+  const cashLeft = new Map(cashUnits.map(o => [o.unit.key, o.ekAlloc * cashFactor]))
+  let finPool = Math.max(0, ekTotal - cashWant * cashFactor)
+  let surplus = 0, peak = 0
   const open = new Map<string, number>()      // abgerufener Kredit je Wohnung, noch ohne Monatsrate
   const records: FundingRecord[] = []
-  const devLoans = new Map<string, number>()
+  const loans = new Map<string, number>()
   const bridge: BridgeByYear = new Map()
   const freeCash = new Map<number, number>()
+  const held = new Map<number, number>()
   const sumOpen = () => [...open.values()].reduce((a, b) => a + b, 0)
+  const addFree = (y: number, v: number) => { if (rowYears.has(y)) freeCash.set(y, (freeCash.get(y) ?? 0) + v) }
+  const startYm = Math.min(ymOf(rows[0]?.year ?? lastYear, 1), ...pays.map(x => x.ym))
+  const endYm = ymOf(lastYear, 12)
   for (let ym = startYm; ym <= endYm; ym++) {
     const y = Math.floor(ym / 12)
-    const retaining = ym <= retainUntil
+    if (rowYears.has(y) && !freeCash.has(y)) freeCash.set(y, 0)
     // 1) Zinsen auf den abgerufenen Kredit, Ueberschuss des Monats
     const interest = sumOpen() * iMon
     const cur = bridge.get(y) ?? { interest: 0, debt: 0 }
     cur.interest += interest
     bridge.set(y, cur)
     const flow = (rowYears.has(y) ? opMonthOf(ym) : 0) + (vatAt.get(ym) ?? 0) - interest
-    if (rowYears.has(y)) {
-      // Jedes Jahr im Zeitraum bekommt einen Eintrag, auch wenn alles einbehalten wird.
-      if (!freeCash.has(y)) freeCash.set(y, 0)
-      if (retaining) {
-        surplus += flow
-        // Reicht der Ueberschuss nicht, legt der Kunde wie bisher selbst zu.
-        if (surplus < 0) { freeCash.set(y, (freeCash.get(y) ?? 0) + surplus); surplus = 0 }
-      } else {
-        freeCash.set(y, (freeCash.get(y) ?? 0) + flow)
-      }
+    addFree(y, vatOut.get(ym) ?? 0)          // zurueckgefuehrte MwSt ist sofort frei
+    if (inWindow(ym)) {
+      surplus += flow
+      // Reicht der Ueberschuss nicht, legt der Kunde wie bisher selbst zu.
+      if (surplus < 0) { addFree(y, surplus); surplus = 0 }
+    } else {
+      if (surplus > 0) { addFree(y, surplus); surplus = 0 }
+      addFree(y, flow)
     }
-    // 2) Bankdarlehen der uebrigen Wohnungen: loesen deren Zwischenfinanzierung ab
-    for (const fl of fixedLoans) {
-      if (fl.ym !== ym) continue
-      let cash = fl.amount
-      for (const [k, v] of open) {
-        if (devUnits.some(o => o.unit.key === k) || cash <= 0) continue
-        const use = Math.min(v, cash)
-        cash -= use
-        if (v - use > 0.005) open.set(k, v - use); else open.delete(k)
-      }
-      loanCash += cash
-    }
-    // 3) Kaufpreiszahlungen dieses Monats
+    // 2) Kaufpreiszahlungen dieses Monats: Eigenkapital, Ueberschuss, Kredit
     for (const pay of pays) {
       if (pay.ym !== ym) continue
       let need = pay.amount
-      const fromEquity = Math.min(Math.max(0, ekLeft), need); ekLeft -= fromEquity; need -= fromEquity
-      const fromLoan = Math.min(loanCash, need); loanCash -= fromLoan; need -= fromLoan
+      let fromEquity: number
+      if (pay.fin) { fromEquity = Math.min(finPool, need); finPool -= fromEquity }
+      else { const c = cashLeft.get(pay.key) ?? 0; fromEquity = Math.min(c, need); cashLeft.set(pay.key, c - fromEquity) }
+      need -= fromEquity
       const fromSurplus = Math.min(Math.max(0, surplus), need); surplus -= fromSurplus; need -= fromSurplus
-      if (need > 0.005) open.set(pay.key, (open.get(pay.key) ?? 0) + need)
-      records.push({ ym, key: pay.key, amount: pay.amount, fromEquity, fromSurplus, credit: fromLoan + Math.max(0, need) })
+      const credit = need > 0.005 ? need : 0
+      if (credit) open.set(pay.key, (open.get(pay.key) ?? 0) + credit)
+      records.push({ ym, key: pay.key, amount: pay.amount, fromEquity, fromSurplus, credit })
     }
     const nowOpen = sumOpen()
     if (nowOpen > peak) peak = nowOpen
-    // 4) Nach der letzten Rate wird der abgerufene Kredit zum Bankdarlehen
-    for (const o of devUnits) {
-      if (loanReadyYm(o.unit) !== ym) continue
-      devLoans.set(o.unit.key, Math.round(open.get(o.unit.key) ?? 0))
-      open.delete(o.unit.key)
+    // 3) Bei Uebergabe bzw. nach der letzten Mito-Rate wird der abgerufene Kredit
+    //    der Wohnung zu ihrem Bankdarlehen - genau so hoch wie gebraucht.
+    for (const [k, c] of convYm) {
+      if (c !== ym) continue
+      loans.set(k, Math.round(open.get(k) ?? 0))
+      open.delete(k)
     }
-    // 5) Ende der Einbehalt-Phase: der Rest des Ueberschusses ist frei
-    if (ym === retainUntil || (ym === endYm && retaining)) {
-      if (rowYears.has(y)) freeCash.set(y, (freeCash.get(y) ?? 0) + surplus)
-      surplus = 0
+    // 4) Nur behalten, was die kommenden Raten noch brauchen
+    if (surplus > 0) {
+      const futureNeed = pays.filter(x => x.fin && x.ym > ym && x.ym <= lastWindowEnd).reduce((a, x) => a + x.amount, 0) - finPool
+      const keep = Math.max(0, Math.min(surplus, futureNeed))
+      if (surplus - keep > 0.005) { addFree(y, surplus - keep); surplus = keep }
     }
+    if (ym === endYm && surplus > 0) { addFree(y, surplus); surplus = 0 }
+    held.set(y, surplus)
     cur.debt = sumOpen()
   }
-  // Wohnungen, deren letzte Rate nach dem Zeitraum liegt: abgerufener Stand
-  for (const o of devUnits) if (!devLoans.has(o.unit.key)) devLoans.set(o.unit.key, Math.round(open.get(o.unit.key) ?? 0))
-  return { records, devLoans, bridge, freeCash, peak }
+  // Wohnungen, deren Umwandlung nach dem Zeitraum liegt: abgerufener Stand
+  for (const k of convYm.keys()) if (!loans.has(k)) loans.set(k, Math.round(open.get(k) ?? 0))
+  return { records, loans, bridge, freeCash, held, peak, vatReturned }
 }
 
 
@@ -1662,7 +1710,8 @@ export function roeAfterYears(rows: YearRow[], ekTotal: number, years: number): 
   for (const r of rows) {
     if (r.year > target) break
     cash += r.cashflow
-    worth = r.value + r.committed - r.debt
+    // Fuer kommende Bautraeger-Raten gehaltenes Geld zaehlt mit (sonst 0).
+    worth = r.value + r.committed - r.debt + (r.held ?? 0)
     found = true
   }
   if (!found) return 0

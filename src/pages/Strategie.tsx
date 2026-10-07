@@ -582,6 +582,7 @@ export default function Strategie() {
                   {([
                     [t('strategie.pPrice', 'Gesamtpreis'), eur(p.gross)],
                     [t('strategie.pEquity', 'davon Eigenkapital'), eur(p.equity)],
+                    ...(p.fromSurplus ? [[t('strategie.pSurplus', 'aus Miete und MwSt-Erstattung'), eur(p.fromSurplus)]] : []),
                     ...(p.loan > 0 ? [[t('strategie.pLoan', 'Darlehen'), eur(p.loan)]] : []),
                     [t('strategie.pRent', 'Miete im 1. Jahr'), eur(p.rentFirstYear)],
                     [p.soldYear ? t('strategie.pValueSale', 'Wert beim Verkauf') : t('strategie.pValue', 'Wert am Ende'), eur(p.valueEnd)],
@@ -724,8 +725,13 @@ export default function Strategie() {
                 : t('strategie.credSub', 'Jede Kaufpreisrate nach dem Zahlungsplan der Bauträger. Dein Eigenkapital deckt die Raten der Reihe nach, über alle Wohnungen zusammen. Ab dem Punkt, an dem es aufgebraucht ist, brauchst du einen Kredit.')}>
               <div style={kpiGrid}>
                 {[
-                  { l: t('strategie.credEqUntil', 'Eigenkapital reicht bis'), v: cp.firstCreditYm == null ? t('strategie.credAllCovered', 'alle Raten') : cp.equityLastYm != null ? mm(cp.equityLastYm) : '–' },
-                  { l: t('strategie.credFrom', 'Kredit nötig ab'), v: cp.firstCreditYm != null ? mm(cp.firstCreditYm) : t('strategie.credNone', 'kein Kredit nötig'), hero: cp.firstCreditYm != null },
+                  { l: t('strategie.credEqUntil', 'Eigenkapital reicht bis'),
+                    v: cp.firstCreditYm == null && !withSurplus ? t('strategie.credAllCovered', 'alle Raten')
+                      : cp.equityLastYm != null ? mm(cp.equityLastYm) : t('strategie.credFirstRate', 'vor der ersten Rate') },
+                  { l: t('strategie.credFrom', 'Kredit nötig ab'),
+                    v: cp.firstCreditYm != null ? mm(cp.firstCreditYm)
+                      : withSurplus ? t('strategie.credNoneSurplus', 'kein Kredit, Miete und MwSt reichen') : t('strategie.credNone', 'kein Kredit nötig'),
+                    hero: cp.firstCreditYm != null },
                   { l: t('strategie.credTotal', 'Kredit insgesamt'), v: eur(cp.creditTotal) },
                 ].map(k => (
                   <div key={k.l} style={{ ...card, padding: isMobile ? 12 : 16, borderTop: `3px solid ${k.hero ? CORAL : '#e6e3dd'}` }}>
@@ -794,6 +800,13 @@ export default function Strategie() {
                     {t('strategie.credBridgeNote2', 'Bis die Monatsrate eines Darlehens beginnt, rufst du den Kredit in Stufen ab, so wie die Raten fällig werden. Darauf fallen nur Zinsen an, sie sind im Cashflow enthalten. Ab dem genannten Monat läuft die normale Monatsrate.')}
                   </p>
                 </div>
+              )}
+              {a.vatReturned.length > 0 && (
+                <p style={{ fontSize: 12.5, color: '#555', margin: '10px 0 0', lineHeight: 1.6 }}>
+                  {a.vatReturned.map(v => t('strategie.vatReturned', 'Die MwSt-Erstattung von {{name}} ({{amount}}, {{date}}) geht an dich zurück und wird nicht für Kaufraten verwendet.', {
+                    name: v.name, amount: eur(v.amount), date: `${String(v.ym % 12 + 1).padStart(2, '0')}/${Math.floor(v.ym / 12)}`,
+                  })).join(' ')}
+                </p>
               )}
               <p style={{ fontSize: 12, color: '#777', margin: '10px 0 0', lineHeight: 1.6 }}>
                 {t('strategie.payShift', 'Die Bauraten sind vom Übergabetermin zurückgerechnet. Sie werden fällig, wenn der jeweilige Bauabschnitt fertig ist, und verschieben sich, wenn der Bau schneller oder langsamer vorankommt.')}

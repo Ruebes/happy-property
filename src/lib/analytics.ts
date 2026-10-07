@@ -69,6 +69,9 @@ export interface PropertyCard {
   soldYear: number | null
   netSaleProceeds: number | null
   model: boolean
+  // Nur bei Raten nach der Uebergabe: Teil des Kaufpreises aus Miete und
+  // MwSt-Erstattung (Gesamtpreis = Eigenkapital + dieser Teil + Darlehen)
+  fromSurplus?: number
 }
 
 export interface ScenarioSummary {
@@ -178,6 +181,8 @@ export interface CustomerAnalytics {
   timeline: TimelineEntry[]
   // Finanzierungsbedarf je Zahlung (nur mit Zahlungsplan des Bautraegers)
   creditPath: FinancingPath | null
+  // MwSt-Erstattungen, die an den Kunden zurueckgehen statt Raten zu bezahlen
+  vatReturned: Array<{ name: string; ym: number; amount: number }>
   keyInsights: Insight[]
   insights: Insight[]
   drivers: string[]
@@ -211,7 +216,8 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
   // Alle Groessen aus den GERUNDETEN Werten bilden, damit die Rechnung auf der
   // Seite aufgeht: Der Kunde rechnet mit dem nach, was dort steht.
   const wealth: WealthPoint[] = agg.rows.map(row => {
-    const cash = r0(cashByYear.get(row.year) ?? 0)
+    // Bei Bautraeger-Raten nach Uebergabe: fuer die naechsten Raten gehaltenes Geld
+    const cash = r0((cashByYear.get(row.year) ?? 0) + (row.held ?? 0))
     const propertyValue = r0(row.value)
     const debt = r0(row.debt)
     const committed = r0(row.committed)
@@ -364,6 +370,7 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
       buyYear: o.unit.buyY, readyYear: o.unit.readyY,
       buyMonth: o.unit.buyM, readyMonth: o.unit.readyM,
       price: o.unit.priceNet, gross: r0(o.gross), equity: r0(o.ekUsed), loan: r0(o.loan),
+      ...(o.funding && o.funding.surplus > 0.5 ? { fromSurplus: r0(o.funding.surplus) } : {}),
       valueEnd: r0(o.res.propV[idxEnd]), debtEnd: r0(debtEndRaw),
       equityEnd: r0(o.res.propV[idxEnd] - debtEndRaw),
       rentFirstYear: r0(o.res.rents[0]),
@@ -566,7 +573,9 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
   const journey: JourneyStep[] = [
     { label: 'Dein Startkapital', value: eur(params.ek), note: `Ausgangspunkt im Jahr ${firstBuyYear}.` },
     { label: startUnits === 1 ? 'Erste Wohnung' : `${startUnits} Wohnungen`, value: eur(r0(ownEquity)),
-      note: 'So viel Eigenkapital ist beim Kauf gebunden, den Rest finanziert die Bank.' },
+      note: 'liquidity' in agg && agg.liquidity
+        ? 'So viel Eigenkapital fließt in die Kaufpreise. Den Rest zahlen Miete, MwSt-Erstattung und, wo nötig, die Bank.'
+        : 'So viel Eigenkapital ist beim Kauf gebunden, den Rest finanziert die Bank.' },
     { label: 'Miete, Tilgung, Wertzuwachs', value: eur(r0(totals.rents)),
       note: 'Mieteinnahmen über den ganzen Zeitraum. Sie tragen Zinsen und Tilgung mit.' },
     { label: 'Eigenkapital wächst', value: eur(equityBuilt),
@@ -614,10 +623,19 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
           ? ` ${eur(after.reduce((a, x) => a + x.amount, 0))} zahlst du ${raten(after.length)} bis ${mmYYYY(after[after.length - 1].ym)} an den Bauträger, zuzüglich ${eur(after.reduce((a, x) => a + (x.interest ?? 0), 0))} Zinsen.`
           : '')
         + (() => {
-          // Bei Raten nach der Uebergabe: wie viel davon Miete und MwSt-Erstattung tragen
+          // Woraus genau diese Raten nach der Uebergabe bezahlt werden (nur deren
+          // Zahlungen, nicht die 20 % bei Uebergabe) - aus den Teilen, die es gibt.
           const liq = 'liquidity' in agg ? agg.liquidity : undefined
-          const sur = (liq?.records ?? []).filter(r => r.key === o.unit.key && r.ym <= endYm).reduce((a, r) => a + r.fromSurplus, 0)
-          return sur > 0.5 ? ` Davon zahlen Miete und MwSt-Erstattung ${eur(sur)}, nur den Rest finanziert die Bank.` : ''
+          if (!liq) return ''
+          const yms = new Set(after.map(x => x.ym))
+          const recs = liq.records.filter(r => r.key === o.unit.key && yms.has(r.ym))
+          const sum = (f: (r: typeof recs[number]) => number) => recs.reduce((a, r) => a + f(r), 0)
+          const parts = [
+            [sum(r => r.fromSurplus), 'Miete und MwSt-Erstattung'],
+            [sum(r => r.fromEquity), 'dein Eigenkapital'],
+            [sum(r => r.credit), 'die Bank'],
+          ].filter(([v]) => (v as number) > 0.5).map(([v, who]) => `${who} ${eur(v as number)}`)
+          return parts.length ? ` Davon zahlen ${parts.length > 1 ? parts.slice(0, -1).join(', ') + ' und ' + parts[parts.length - 1] : parts[0]}.` : ''
         })()
         + (cut > 0
           ? (saleYearOf(o) != null && saleYearOf(o)! <= agg.lastYear
@@ -698,6 +716,9 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
     financing, financingKpis, capitalSteps, recyclingRows, opportunity,
     properties, tax, taxKpis, scenarios, exits, risks, insights, drivers, sensitivity,
     balance, cost, moneyFlow, journey, timeline, creditPath, keyInsights, events,
+    vatReturned: creditPath && 'liquidity' in agg && agg.liquidity
+      ? agg.liquidity.vatReturned.map(v => ({ name: outcomes.find(o => o.unit.key === v.key)?.unit.name ?? '', ym: v.ym, amount: r0(v.amount) }))
+      : [],
   }
 }
 

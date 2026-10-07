@@ -285,6 +285,56 @@ const lt = totalsOf(lo, la.rows, LP, computeExit(lo, LP, la.firstYear, la.rows))
 T('Rendite und Vermögen rechenbar', Number.isFinite(lt.irr) && lt.netWorth > 0, `IRR ${(lt.irr * 100).toFixed(1)} %`)
 const lcp = buildCustomerAnalytics(LU, LP).creditPath
 T('Kundenseite zeigt Spalte aus Miete/MwSt', lcp.steps.some(x => x.fromSurplus > 0) && near(lcp.creditTotal, lm.loan + lb.loan, 3))
+// MwSt-Erstattung zurueckfuehren (Haken je Objekt, Sven 7.10.26)
+const LUr = LU.map(u => ({ ...u, vatReturn: true }))
+const lor = allocate(LUr, LP), lar = aggregate(lor, LP)
+const lmr = lor.find(o => o.unit.key === 'M'), lbr = lor.find(o => o.unit.key === 'B9')
+const vat29 = lar.rows.find(r => r.year === 2029).vat, vat30 = lar.rows.find(r => r.year === 2030).vat
+T('Zurückgeführt: MwSt nicht für Raten verwendet', lar.liquidity.vatReturned.length === 2 && near(lar.liquidity.vatReturned.reduce((a, v) => a + v.amount, 0), vat29 + vat30, 1))
+T('Zurückgeführt: frei verfügbar im Erstattungsjahr', lar.rows.find(r => r.year === 2029).cashflow >= vat29 - 1 && lar.rows.find(r => r.year === 2030).cashflow >= vat30 - 1)
+T('Zurückgeführt: Mamba-Kredit steigt entsprechend', lmr.loan > lm.loan + 0.9 * (vat29 + vat30) - 20000, `${eur(lm.loan)} → ${eur(lmr.loan)}`)
+T('Zurückgeführt: Identitäten halten', lar.liquidity.records.every(r => near(r.amount, r.fromEquity + r.fromSurplus + r.credit, 0.05))
+  && near(lar.liquidity.records.reduce((a, r) => a + r.fromSurplus, 0), lar.rows.reduce((a, r) => a + (r.retained ?? 0), 0), 3)
+  && near(lar.liquidity.records.reduce((a, r) => a + r.credit, 0), lmr.loan + lbr.loan, 3))
+T('Zurückgeführt: Kundenseite nennt die Erstattung', buildCustomerAnalytics(LUr, LP).vatReturned.length === 2)
+T('Ohne Haken: keine Rückführung', buildCustomerAnalytics(LU, LP).vatReturned.length === 0)
+// ── 12. Review 7.10.26 (Liquiditaetsmodell) ──────────────────────────────────
+const balance = (units, pp) => {
+  const o = allocate(units, pp), a = aggregate(o, pp)
+  const recs = a.liquidity.records
+  const pay = recs.reduce((x, r) => x + r.amount, 0)
+  const eq = recs.reduce((x, r) => x + r.fromEquity, 0), su = recs.reduce((x, r) => x + r.fromSurplus, 0), cr = recs.reduce((x, r) => x + r.credit, 0)
+  const loans = o.filter(x => x.unit.fin).reduce((x, u) => x + u.loan, 0)
+  return { o, a, pay, eq, su, cr, loans, openEnd: a.rows[a.rows.length - 1].bridgeDebt }
+}
+// (a) Kuutio spaeter uebergeben als Mito, EK 600k (vorher verschwand Bankgeld)
+const SA = [mamba({ readyM: 12, readyY: 2026, rent: 4500 }), kuu({ key: 'K', priceNet: 585000, furnNet: 25000, readyM: 6, readyY: 2029 })]
+const bA = balance(SA, { ...LP, ek: 600000 })
+T('Fall a: Zahlungen = EK + Überschuss + Kredit', near(bA.pay, bA.eq + bA.su + bA.cr, 1))
+T('Fall a: Kredit = Summe der Darlehen, kein Rest', near(bA.cr, bA.loans, 3) && bA.openEnd < 1, `${eur(bA.cr)} / ${eur(bA.loans)} / offen ${eur(bA.openEnd)}`)
+// (b) Kuutio erst nach Mito-Uebergabe gekauft, EK 500k (vorher ewiger Restkredit)
+const SB = [mamba({ readyM: 12, readyY: 2027, rent: 4000 }), kuu({ key: 'K', priceNet: 585000, furnNet: 25000, buyM: 1, buyY: 2028, readyM: 12, readyY: 2030 })]
+const bB = balance(SB, { ...LP, ek: 500000, exitAfterYears: 0 })
+T('Fall b: Kredit = Summe der Darlehen, kein Rest', near(bB.cr, bB.loans, 3) && bB.openEnd < 1, `${eur(bB.cr)} / ${eur(bB.loans)} / offen ${eur(bB.openEnd)}`)
+// (c) Reihenfolge der Liste egal
+const bC1 = balance(LU, { ...LP, ek: 400000 }), bC2 = balance([...LU].reverse(), { ...LP, ek: 400000 })
+const tC1 = totalsOf(bC1.o, bC1.a.rows, { ...LP, ek: 400000 }), tC2 = totalsOf(bC2.o, bC2.a.rows, { ...LP, ek: 400000 })
+T('Reihenfolge egal: gleiche Darlehen und gleiches Vermögen', near(bC1.loans, bC2.loans, 1) && near(tC1.netWorth, tC2.netWorth, 1) && near(tC1.irr, tC2.irr, 1e-9),
+  `${eur(bC1.loans)} / ${eur(bC2.loans)}`)
+T('EK 400k: kein Restkredit', bC1.openEnd < 1 && near(bC1.cr, bC1.loans, 3))
+// (d) Barkauf neben Mito: Barkauf bekommt nie Kredit, wenn das EK reicht
+const SD = [mamba({ key: 'A1' }), mamba({ key: 'C1', fin: false, plan: 'luma', schedule: null })]
+const bD = balance(SD, { ...LP, ek: 1000000 })
+T('Barkauf trägt keinen Kredit', bD.a.liquidity.records.filter(r => r.key === 'C1').every(r => r.credit < 0.01) && bD.openEnd < 1)
+// (e) EK deckt alles: nichts wird einbehalten
+const bE = balance(LU, { ...LP, ek: 1500000 })
+T('EK deckt alles: kein Einbehalt, kein Kredit', bE.a.rows.every(r => Math.abs(r.retained ?? 0) < 1) && bE.cr < 1)
+// (f) Mito erst 2033 gekauft: BAIA-Ueberschuss davor frei
+const bF = balance([mamba({ buyY: 2033, buyM: 1, readyY: 2034, readyM: 12 }), kuu({ key: 'B9', priceNet: 585000, furnNet: 25000 })], { ...LP, exitAfterYears: 0 })
+T('Mito 2033: vor der Mito-Übergabe nichts einbehalten', bF.a.rows.filter(r => r.year < 2034).every(r => Math.abs(r.retained ?? 0) < 1))
+// (g) Wohnungskarte geht auf: Preis = EK + Überschuss + Darlehen
+const cardOk = buildCustomerAnalytics(LU, LP).properties.every(pc => near(pc.gross, pc.equity - (lo.find(x => x.unit.key === pc.key).res.costs) + (pc.fromSurplus ?? 0) + pc.loan, 2))
+T('Wohnungskarte: Gesamtpreis = Eigenkapital + Miete/MwSt + Darlehen', cardOk)
 // Reinvestment: Liquiditaetsrechnung aus (eigener Kassen-Motor)
 T('Reinvest: keine Liquiditätsrechnung', !aggregate(allocate(LU, { ...LP, reinvestEnabled: true }), { ...LP, reinvestEnabled: true }).liquidity)
 
