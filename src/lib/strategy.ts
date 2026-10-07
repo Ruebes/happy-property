@@ -1,5 +1,5 @@
 import {
-  DEFAULT_PARAMS, compute, defaultMgmtPct, seasonBreakdown, vatSplit, cyTaxFor, personsOf, irrCalc,
+  DEFAULT_PARAMS, compute, defaultMgmtPct, seasonBreakdown, monthBreakdown, vatSplit, cyTaxFor, personsOf, irrCalc,
   CY_CORP_TAX_PCT, DE_DIV_TAX_PCT, CY_DIV_TAX_PCT, CY_GESY_RATE, CY_GESY_CAP, CY_LOSS_CARRY_YEARS,
   CY_SI_RATE, CY_SI_MIN_INCOME, CY_SI_MAX_INCOME, CY_GESY_SELF_RATE,
   CY_CGT_PCT, CY_CGT_ALLOWANCE, CY_CGT_LIFETIME_CAP, DE_SPEC_YEARS,
@@ -718,6 +718,8 @@ export function runUnit(u: SimUnit, ekForUnit: number, p: SimParams): UnitOutcom
     // Gezaehlt ab der Uebergabe (Anker der Engine); liegt der Kauf danach,
     // verschiebt sich der Start entsprechend.
     loanDelayMonths: u.fin && devAfterMonths(u) ? loanReadyYm(u) - ymOf(u.readyY, u.readyM) : 0,
+    // Uebergabejahr mit dem echten Saisonanteil (Dezember-Uebergabe = wenig Miete).
+    seasonalFirstYear: true,
     // Laufende Kosten der Wohnung: Gemeinschaftskosten je Wohnung (sonst der
     // globale Vorgabewert), Ruecklage einheitlich als Prozentsatz.
     opexMonthly: u.opex ?? p.opexMonthly, maintPct: p.maintPct,
@@ -1223,12 +1225,35 @@ function liquiditySim(outcomes: UnitOutcome[], rows: YearRow[], p: SimParams, la
   const readyYms = own.map(o => ymOf(o.unit.readyY, o.unit.readyM))
   const weight = (ym: number) => readyYms.filter(r => r <= ym).length
   const opYear = new Map(rows.map(r => [r.year, r.cashflow + r.bridgeInterest - r.vat]))
+  const rentsYear = new Map(rows.map(r => [r.year, r.rents]))
+  // Miete je Monat (Sven 7.10.26): mit Saisonmodell nach dem Saisonprofil -
+  // im Sommer viel, im Winter wenig -, sonst gleichmaessig ab der Uebergabe.
+  // Alle anderen Posten (Kosten, Zinsen, Tilgung, Steuern) gleichmaessig.
+  const seasonRev = new Map<string, number[] | null>()
+  for (const o of own) {
+    const sn = o.unit.letType === 'short' ? o.unit.calc?.season ?? null : null
+    seasonRev.set(o.unit.key, sn && sn.totalOcc > 0 && sn.adrHigh > 0 && o.unit.priceNet > 0
+      ? monthBreakdown(sn, normalizeMonthPlan(o.unit.calc?.monthPlan)).map(m => m.revenue) : null)
+  }
+  const rentMonthOf = (o: UnitOutcome, ym: number) => {
+    const y = Math.floor(ym / 12), m = ym % 12 + 1
+    const i = y - o.unit.readyY
+    if (i < 0 || i >= o.res.rents.length || (o.unit.saleYear != null && y > o.unit.saleYear)) return 0
+    const from = i === 0 ? o.unit.readyM : 1
+    if (m < from) return 0
+    const rev = seasonRev.get(o.unit.key)
+    const months = Array.from({ length: 13 - from }, (_, k) => from + k)
+    const sumRev = rev ? months.reduce((a, mm) => a + rev[mm - 1], 0) : 0
+    const share = rev && sumRev > 0 ? rev[m - 1] / sumRev : 1 / months.length
+    return o.res.rents[i] * share
+  }
   const opMonthOf = (ym: number) => {
     const y = Math.floor(ym / 12)
-    const total = opYear.get(y) ?? 0
+    const nonRent = (rentsYear.get(y) ?? 0) - (opYear.get(y) ?? 0)   // Kosten, Zinsen, Tilgung, Steuern
     let wSum = 0
     for (let m = 1; m <= 12; m++) wSum += weight(ymOf(y, m))
-    return wSum > 0 ? total * weight(ym) / wSum : total / 12
+    const costShare = wSum > 0 ? nonRent * weight(ym) / wSum : nonRent / 12
+    return own.reduce((a, o) => a + rentMonthOf(o, ym), 0) - costShare
   }
   const rowYears = new Set(rows.map(r => r.year))
   // MwSt-Erstattung im Monat der Erstattung (Frist ab Uebergabe, im Jahr der

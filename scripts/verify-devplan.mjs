@@ -291,7 +291,11 @@ const lor = allocate(LUr, LP), lar = aggregate(lor, LP)
 const lmr = lor.find(o => o.unit.key === 'M'), lbr = lor.find(o => o.unit.key === 'B9')
 const vat29 = lar.rows.find(r => r.year === 2029).vat, vat30 = lar.rows.find(r => r.year === 2030).vat
 T('Zurückgeführt: MwSt nicht für Raten verwendet', lar.liquidity.vatReturned.length === 2 && near(lar.liquidity.vatReturned.reduce((a, v) => a + v.amount, 0), vat29 + vat30, 1))
-T('Zurückgeführt: frei verfügbar im Erstattungsjahr', lar.rows.find(r => r.year === 2029).cashflow >= vat29 - 1 && lar.rows.find(r => r.year === 2030).cashflow >= vat30 - 1)
+// Mit Haken kommt die Erstattung im Erstattungsjahr zusaetzlich frei an (Winter-
+// Zuzahlungen gibt es mit Saisonprofil in beiden Varianten).
+const free = (rows, y) => rows.find(r => r.year === y).cashflow
+T('Zurückgeführt: Erstattung im Erstattungsjahr frei verfügbar', free(lar.rows, 2029) - free(la.rows, 2029) >= 0.9 * vat29 && free(lar.rows, 2030) - free(la.rows, 2030) >= 0.5 * vat30,
+  `2029 +${eur(free(lar.rows, 2029) - free(la.rows, 2029))}, 2030 +${eur(free(lar.rows, 2030) - free(la.rows, 2030))}`)
 T('Zurückgeführt: Mamba-Kredit steigt entsprechend', lmr.loan > lm.loan + 0.9 * (vat29 + vat30) - 20000, `${eur(lm.loan)} → ${eur(lmr.loan)}`)
 T('Zurückgeführt: Identitäten halten', lar.liquidity.records.every(r => near(r.amount, r.fromEquity + r.fromSurplus + r.credit, 0.05))
   && near(lar.liquidity.records.reduce((a, r) => a + r.fromSurplus, 0), lar.rows.reduce((a, r) => a + (r.retained ?? 0), 0), 3)
@@ -385,6 +389,15 @@ const an10 = buildCustomerAnalytics([mamba({ key: 'A1' }), mamba({ key: 'C1', fi
 const cp10 = an10.creditPath
 T('Barkauf ohne genug EK: offener Kredit gelistet, Summe stimmt', cp10.loans.some(l => l.open) && near(cp10.creditTotal, cp10.loans.reduce((a, l) => a + l.amount, 0), 3)
   && an10.properties.find(pc => pc.key === 'C1').openCredit > 0)
+// ── 14. Saisonmodell im Uebergabejahr (Sven 7.10.26) ─────────────────────────
+const SN = { totalOcc: 60, adrHigh: 350 }
+const seasonUnit = (m) => kuu({ key: 'S' + m, priceNet: 585000, furnNet: 25000, readyM: m, readyY: 2027, calc: { season: SN, mgmtPct: 25, bedrooms: 2 } })
+const [oDec] = allocate([seasonUnit(12)], LP), [oJun] = allocate([seasonUnit(6)], LP)
+const shareDec = oDec.res.rents[0] / (oDec.res.rents[1] / (1 + LP.rentGrowth / 100))
+const shareJun = oJun.res.rents[0] / (oJun.res.rents[1] / (1 + LP.rentGrowth / 100))
+T('Übergabe Dezember: nur der Saisonanteil Dezember (ca. 2,4 %)', shareDec > 0.02 && shareDec < 0.03, `${(shareDec * 100).toFixed(2)} %`)
+T('Übergabe Juni: Juni bis Dezember (ca. 78 %)', shareJun > 0.74 && shareJun < 0.82, `${(shareJun * 100).toFixed(1)} %`)
+T('Einzelrechnung unverändert (ohne Schalter Monate/12)', compute({ ...DEFAULT_PARAMS, letType: 'short', season: SN, month: 12 }).rents[0] === Math.round(compute({ ...DEFAULT_PARAMS, letType: 'short', season: SN, month: 12 }).rents[1] / (1 + DEFAULT_PARAMS.rentGrowth / 100) / 12))
 // Reinvestment: Liquiditaetsrechnung aus (eigener Kassen-Motor)
 T('Reinvest: keine Liquiditätsrechnung', !aggregate(allocate(LU, { ...LP, reinvestEnabled: true }), { ...LP, reinvestEnabled: true }).liquidity)
 

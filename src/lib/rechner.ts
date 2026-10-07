@@ -67,6 +67,10 @@ export interface CalcParams {
   // Kaufpreises nach der Uebergabe in Raten (Mito: 50 % ueber 24 Monate), wird
   // das Bankdarlehen erst danach ausgezahlt. Vorher keine Rate, keine Restschuld.
   loanDelayMonths?: number
+  // Saisonmodell im Rumpfjahr (nur Strategie, Sven 7.10.26): Statt Jahresmiete
+  // x Monate/12 zaehlt der echte Saisonanteil der Monate ab dem Startmonat - ein
+  // Dezember bringt in Paphos rund 2,5 % der Jahresmiete, nicht 8,3 %.
+  seasonalFirstYear?: boolean
   livingSqm?: number | null   // Wohnflaeche m² fuer die anteilige 5/19-Aufteilung
   // ── Mischnutzung (Sven 16.9.26) ───────────────────────────────────────────
   // Kurzzeitvermietung mit eigener Nutzung: so viele Monate im Jahr wohnt der
@@ -234,6 +238,16 @@ export function seasonActive(p: CalcParams): boolean {
 }
 // Saison aktiv → effektive Bruttorendite aus der Saison-Jahresmiete ableiten;
 // die verifizierte Engine bleibt formelgleich (Miete = pGrossList × yield%).
+// Anteil der Monate startMonth..12 an der Saison-Jahresmiete (mit Kalender).
+// null, wenn kein Saisonmodell greift.
+export function seasonFirstYearShare(p: CalcParams, startMonth: number): number | null {
+  if (!seasonActive(p)) return null
+  const mb = monthBreakdown(p.season!, normalizeMonthPlan(p.monthPlan))
+  const total = mb.reduce((a, m) => a + m.revenue, 0)
+  if (!(total > 0)) return null
+  return mb.filter(m => m.month >= startMonth).reduce((a, m) => a + m.revenue, 0) / total
+}
+
 export function applySeason(p: CalcParams): CalcParams {
   if (!seasonActive(p)) return p
   const basis = vatSplit(p.priceNet || 0, p.vatMode, p.livingSqm).gross
@@ -625,7 +639,10 @@ function computeCore(p: CalcParams): CalcResult {
 
   // Miete nur fuer die vermieteten Monate (Selbstnutzung bringt keine Miete).
   const baseR = pGrossList * (yPct / 100) * rentShare
-  const rents = fA.map((f, i) => Math.round(baseR * Math.pow(1 + rG / 100, i) * f))
+  // Rumpfjahr mit Saisonmodell (nur wenn ausdruecklich verlangt): Anteil der
+  // Saisonmonate ab dem Startmonat an der Jahresmiete. Sonst wie bisher fA[0].
+  const firstRentF = p.seasonalFirstYear ? seasonFirstYearShare(p, km) ?? fA[0] : fA[0]
+  const rents = fA.map((f, i) => Math.round(baseR * Math.pow(1 + rG / 100, i) * (i === 0 ? firstRentF : f)))
   // Verwaltung: Prozent der Miete (Standard) oder fester Monatsbetrag. Beide
   // steigen mit 2 % p.a., anteilig im Rumpfjahr.
   const mgmtFixed = Math.max(0, p.mgmtFix ?? 0)
