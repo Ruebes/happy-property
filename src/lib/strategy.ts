@@ -181,7 +181,7 @@ export function monthsBeforeFromLabel(label: string): number | null {
   if (/rohbau|structure|struktur|frame|skelett|carcass/.test(t)) return 10
   if (/mauer|brick|verputz|plaster/.test(t)) return 7
   if (/fliesen|floor|b(ö|oe)den|estrich|tiling/.test(t)) return 4
-  if (/alu|fenster|window/.test(t)) return 2
+  if (/alumin|\balu\b|fenster|window/.test(t)) return 2
   return null
 }
 
@@ -266,14 +266,20 @@ export function scheduleFromProject(raw: unknown, developer?: string | null): De
   }
   for (const st of stages) {
     const t = st.text.toLowerCase()
-    if (/nach (der )?(ü|ue)bergabe|after (handover|completion)/.test(t)) {
+    if (/nach (der )?((ü|ue)bergabe|fertigstellung)|after (handover|completion|delivery)|post.?handover/.test(t)) {
       s.afterPct += st.pct
       const mon = t.match(/(\d+)\s*monat/)
       if (mon) s.afterMonths = Math.max(1, Number(mon[1]))
       const zins = t.match(/(\d+(?:[.,]\d+)?)\s*%\s*zins/)
       if (zins) s.afterRatePct = Number(zins[1].replace(',', '.'))
     } else if (/vertrag|unterzeichnung|contract|signing/.test(t)) s.contractPct += st.pct
-    else if (/(ü|ue)bergabe|schl(ü|ue)ssel|title deed|handover|completion|delivery/.test(t)) {
+    // Bauabschnitt vor Uebergabe pruefen: „upon completion of structure" ist
+    // eine Baurate, nur „upon completion" allein ist die Uebergabe (Kuutio-Wortlaut).
+    else if (monthsBeforeFromLabel(st.text) != null) {
+      s.build.push(st.pct)
+      s.buildMonthsBefore!.push(st.monthsBefore ?? monthsBeforeFromLabel(st.text))
+      s.buildLabels!.push(st.label)
+    } else if (/(ü|ue)bergabe|schl(ü|ue)ssel|title deed|handover|completion|delivery|fertigstellung/.test(t)) {
       s.handoverPct += st.pct
       // „abzüglich Reservierung" an der letzten Rate (Kuutio-Muster)
       if (/reserv/.test(t)) s.reservationAt = 'handover'
@@ -302,13 +308,19 @@ export function devAfterMonths(u: SimUnit): number {
   return u.plan === 'dev' && u.schedule && u.schedule.afterPct > 0 ? afterInstalments(u.schedule).termMonths : 0
 }
 // Ab wann steht das Bankdarlehen dieser Wohnung zur Verfuegung (Monat absolut)?
+// Ab hier laufen die Raten nach der Uebergabe (wie in paymentPlan: spaeterer
+// Monat von Kauf und Uebergabe). Ohne solche Raten: die Uebergabe wie bisher.
+function afterAnchorYm(u: SimUnit): number {
+  const ready = ymOf(u.readyY, u.readyM)
+  return devAfterMonths(u) ? Math.max(ymOf(u.buyY, u.buyM), ready) : ready
+}
 export function loanReadyYm(u: SimUnit): number {
-  return ymOf(u.readyY, u.readyM) + (u.fin ? devAfterMonths(u) : 0)
+  return afterAnchorYm(u) + (u.fin ? devAfterMonths(u) : 0)
 }
 // Ab welchem Jahr taugt die Wohnung als Sicherheit fuer eine Refinanzierung?
 // Erst wenn sie uebergeben UND beim Bautraeger voll bezahlt ist.
 export function pledgeableFromYear(u: SimUnit): number {
-  return Math.floor((ymOf(u.readyY, u.readyM) + devAfterMonths(u)) / 12)
+  return Math.floor((afterAnchorYm(u) + devAfterMonths(u)) / 12)
 }
 
 export interface PlanPayment {
@@ -324,11 +336,13 @@ export interface UnitOutcome {
   // Monatliche Bankrate (Annuitaet). Steht separat, weil die Engine sie bei
   // spaeterem Darlehensstart im ersten Jahr nicht ausweist.
   annuityMonthly: number
+  // EK-Rendite 10 J. je Wohnung fuer die Anzeige (siehe runUnit)
+  roe10: number
 }
 
 // Beim Bautraeger noch offene Summe nach der Uebergabe, Stand Jahresende.
 export function devBalanceAt(o: UnitOutcome, year: number): number {
-  if (year < o.unit.readyY) return 0
+  if (year < Math.floor(afterAnchorYm(o.unit) / 12)) return 0
   let open = 0
   for (const pay of o.payments) if (pay.after && Math.floor(pay.ym / 12) > year) open += pay.amount
   return open
@@ -595,7 +609,9 @@ export function runUnit(u: SimUnit, ekForUnit: number, p: SimParams): UnitOutcom
     // muss im Simulator genauso waehlbar sein wie in der Immobilienauswahl).
     furnCost: u.furnNet, furnFree: fromCalc.furnFree === true,
     // Finanziert der Bautraeger nach der Uebergabe, zahlt die Bank erst danach aus.
-    loanDelayMonths: u.fin ? devAfterMonths(u) : 0,
+    // Gezaehlt ab der Uebergabe (Anker der Engine); liegt der Kauf danach,
+    // verschiebt sich der Start entsprechend.
+    loanDelayMonths: u.fin && devAfterMonths(u) ? loanReadyYm(u) - ymOf(u.readyY, u.readyM) : 0,
     // Laufende Kosten der Wohnung: Gemeinschaftskosten je Wohnung (sonst der
     // globale Vorgabewert), Ruecklage einheitlich als Prozentsatz.
     opexMonthly: u.opex ?? p.opexMonthly, maintPct: p.maintPct,
@@ -611,7 +627,12 @@ export function runUnit(u: SimUnit, ekForUnit: number, p: SimParams): UnitOutcom
   const iR = params.interestPct / 100, n = Math.max(1, params.termYears)
   const annuityMonthly = res.loan <= 0 ? 0
     : (iR === 0 ? res.loan / n : res.loan * (iR * Math.pow(1 + iR, n)) / (Math.pow(1 + iR, n) - 1)) / 12
-  return { unit: u, res, ekUsed: res.ekStart, loan: res.loan, gross, payments: paymentPlan(u, gross), annuityMonthly }
+  // EK-Rendite je Wohnung: Mit Darlehensaufschub kennt die Engine fuer die
+  // Ratenzeit keine Finanzierungskosten (Bautraeger- und Zwischenkredit-Zinsen
+  // laufen nur in der Strategie). Die Kennzahl je Wohnung rechnet deshalb wie
+  // mit Bankdarlehen ab Uebergabe - sonst stiege sie mit dem teureren Plan.
+  const roe10 = params.loanDelayMonths ? compute({ ...params, loanDelayMonths: 0 }).roe10 : res.roe10
+  return { unit: u, res, ekUsed: res.ekStart, loan: res.loan, gross, payments: paymentPlan(u, gross), annuityMonthly, roe10 }
 }
 
 // Bundlekauf: EK in ÜBERGABE-Reihenfolge verteilen (die zuerst fertige Wohnung
@@ -887,7 +908,12 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams, extras?: Aggre
   // sind das Eigenkapital und die Enddarlehen der bereits ÜBERGEBENEN Wohnungen.
   // Alles darüber muss die Bank vorfinanzieren - darauf laufen Zinsen ab dem
   // Monat der Entstehung, nicht erst ab Übergabe.
-  const ek = p?.ek ?? 0
+  // Mit Bautraeger-Raten nach der Uebergabe zaehlt das Eigenkapital, das
+  // wirklich in die Kaufpreise fliesst (ohne Reserve und Nebenkosten im
+  // Reinvestment-Modus) - wie die Tabelle „Wann du was zahlst". Ohne solche
+  // Raten bleibt es bei p.ek, damit gespeicherte Fahrplaene gleich rechnen.
+  const hasDevAfter = outcomes.some(o => !o.unit.model && devAfterMonths(o.unit))
+  const ek = hasDevAfter ? outcomes.filter(o => !o.unit.model).reduce((a, o) => a + o.res.ekAbs, 0) : (p?.ek ?? 0)
   const iMon = (p?.interest ?? 0) / 100 / 12
   let bridgePeak = 0
   // Modellobjekte des Reinvestment-Motors bleiben hier aussen vor: Sie werden
@@ -1227,12 +1253,20 @@ export function computeSale(
 // Wohnungen mit Bautraeger-Raten nach der Uebergabe, deren Bankdarlehen noch
 // aussteht (aufgeteilt nach Darlehenshoehe). Alle anderen: 0, wie bisher.
 export function bridgeShareOf(outcomes: UnitOutcome[], o: UnitOutcome, year: number, rows: YearRow[]): number {
+  // Nur Strategien mit Bautraeger-Raten nach der Uebergabe - alle anderen
+  // rechnen unveraendert wie vorher.
+  if (o.unit.model || !outcomes.some(x => !x.unit.model && devAfterMonths(x.unit))) return 0
   const bridge = rows.find(r => r.year === year)?.bridgeDebt ?? 0
-  if (!(bridge > 0) || !devAfterMonths(o.unit) || year < o.unit.readyY || o.unit.model) return 0
+  if (!(bridge > 0)) return 0
+  // Der ganze Zwischenkredit muss beim Verkauf abgeloest werden: verteilt auf
+  // alle Wohnungen, deren Bankdarlehen noch aussteht, nach Darlehenshoehe.
+  // Ohne ausstehendes Darlehen (Barkauf mit zu wenig Eigenkapital) nach Preis.
   const pending = outcomes.filter(x => !x.unit.model && x.loan > 0 && loanReadyYm(x.unit) > ymOf(year, 12))
-  if (!pending.includes(o)) return 0
-  const totalLoan = pending.reduce((a, x) => a + x.loan, 0)
-  return totalLoan > 0 ? Math.round(bridge * o.loan / totalLoan) : 0
+  const pool = pending.length ? pending : outcomes.filter(x => !x.unit.model)
+  if (!pool.includes(o)) return 0
+  const weight = (x: UnitOutcome) => pending.length ? x.loan : x.gross
+  const total = pool.reduce((a, x) => a + weight(x), 0)
+  return total > 0 ? Math.round(bridge * weight(o) / total) : 0
 }
 
 export function computeExit(outcomes: UnitOutcome[], p: SimParams, firstYear: number, rows?: YearRow[]): ExitResult | null {

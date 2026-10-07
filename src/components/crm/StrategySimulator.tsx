@@ -420,6 +420,10 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   // Bei Saisonmodell folgt die angezeigte Miete dem Kalender.
   const setSharedMonthPlan = (mp: MonthPlan | null) => setUnits(us => us.map(x => {
     if (x.letType !== 'short') return x
+    // Ein Kalender ohne markierte Monate loescht keine Monatszahl aus einer
+    // aelteren Einzelberechnung - erst ein Klick auf Monate ersetzt sie.
+    const blank = !!mp && monthPlanCounts(mp).self === 0 && monthPlanCounts(mp).empty === 0
+    if (blank && !normalizeMonthPlan(x.calc?.monthPlan) && (x.calc?.selfUseMonths ?? 0) > 0) return x
     const sn = x.calc?.season ?? null
     return {
       ...x, ...(sn ? { rent: rentFromSeason(sn, mp) ?? x.rent } : {}),
@@ -823,7 +827,9 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
               const o = outcomes.find(x => x.unit.key === u.key)
               const meta = unitMeta[u.key] ?? null
               // Moebel wie in der Immobilienauswahl: ohne / im Kaufpreis / Paket separat
-              const fm = u.furnMode ?? (meta?.furnIncluded ? 'included' : u.furnNet > 0 ? 'optional' : 'none')
+              // Ohne gespeicherten Modus zaehlt der gespeicherte Moebelpreis - genau
+              // damit rechnet die Engine.
+              const fm = u.furnMode ?? (u.furnNet > 0 ? 'optional' : meta?.furnIncluded ? 'included' : 'none')
               // Preis bleibt der Grundpreis wie in der Einzelrechnung; nur das
               // Moebelpaket kommt (bei „Optional") dazu.
               const setFurnMode = (mode: 'none' | 'included' | 'optional') => patchUnit(u.key, {
@@ -1202,7 +1208,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                       {t('crm.sim.unitLine', 'Gesamt brutto')} {eur(o.gross)} · EK {eur(o.ekUsed)}
                       {o.loan > 0 ? ` · ${t('crm.sim.loan', 'Darlehen')} ${eur(o.loan)} (${t('crm.sim.annuity', 'Annuität')} ${eur(o.annuityMonthly)}/M.)` : ''}
                       {o.loan > 0 && devAfterMonths(u) ? ` · ${t('crm.sim.bankFrom', 'Bank ab {{date}}', { date: (() => { const ym = loanReadyYm(u); return `${String(ym % 12 + 1).padStart(2, '0')}/${Math.floor(ym / 12)}` })() })}` : ''}
-                      {roeMeaningful(o) ? `${' · '}${t('crm.sim.roe', 'EK-Rendite 10 J.')} ${pct(o.res.roe10)}` : ` · ${t('crm.sim.mostlyFinanced', 'überwiegend fremdfinanziert')}`}
+                      {roeMeaningful(o) ? `${' · '}${t('crm.sim.roe', 'EK-Rendite 10 J.')} ${pct(o.roe10)}` : ` · ${t('crm.sim.mostlyFinanced', 'überwiegend fremdfinanziert')}`}
                     </p>
                   )}
                 </div>
@@ -1312,7 +1318,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                         <td className="px-3 py-2 tabular-nums">{String(o.unit.readyM).padStart(2, '0')}/{o.unit.readyY}</td>
                         <td className="px-3 py-2 text-green-700 font-semibold">{eur(o.ekUsed)}</td>
                         <td className="px-3 py-2 text-amber-700 font-semibold">{o.loan > 0 ? eur(o.loan) : '–'}</td>
-                        <td className="px-3 py-2">{roeMeaningful(o) ? pct(o.res.roe10) : '–'}</td>
+                        <td className="px-3 py-2">{roeMeaningful(o) ? pct(o.roe10) : '–'}</td>
                       </tr>
                     ))}
                   </tbody>

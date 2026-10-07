@@ -198,5 +198,58 @@ const fin = reinv.purchasePayments.reduce((a, r) => a + r.financed, 0)
 const loans = reinv.properties.filter(p => !p.model).reduce((a, p) => a + p.loan, 0)
 T('Reinvest: finanziert = Darlehen der Wohnungen', near(fin, loans, 3), `${eur(fin)} / ${eur(loans)}`)
 
+// ── 10. Review-Runde 3 ───────────────────────────────────────────────────────
+// Kuutios eigener Wortlaut (Sven 6.10.26), englisch im Projektformular
+const KU_EN = [
+  { label: 'Reservation', percent: '10.000 €' },
+  { label: '40%', percent: '40 %', trigger: 'upon signing contract' },
+  { label: '20%', percent: '20 %', trigger: 'upon completion of structure' },
+  { label: '10%', percent: '10 %', trigger: 'upon completion of brickwork' },
+  { label: '10%', percent: '10 %', trigger: 'upon completion of flooring' },
+  { label: '10%', percent: '10 %', trigger: 'upon completion of aluminium' },
+  { label: '10%', percent: '10 %', trigger: 'minus reservation fee upon completion' },
+]
+const kEn = scheduleFromProject(KU_EN, 'Kuutio Homes')
+T('Kuutio englisch: 40 / 20-10-10-10 / 10, Reservierung von der letzten Rate', kEn.contractPct === 40 && kEn.build.join('/') === '20/10/10/10' && kEn.handoverPct === 10 && kEn.reservationAt === 'handover',
+  describeSchedule(kEn))
+T('Kuutio englisch: zurückgerechnet 10/7/4/2', (kEn.buildMonthsBefore ?? []).join('/') === '10/7/4/2')
+const KU_DE = { reservation: 10000, stages: [
+  { pct: 40, label: 'Bei Vertragsunterzeichnung' }, { pct: 20, label: 'Fertigstellung Rohbau' },
+  { pct: 10, label: 'Fertigstellung Mauerwerk' }, { pct: 10, label: 'Fertigstellung Böden' },
+  { pct: 10, label: 'Fertigstellung Aluminium' }, { pct: 10, label: 'Bei Fertigstellung abzüglich Reservierung' } ] }
+const kDe = scheduleFromProject(KU_DE, 'Kuutio Homes')
+T('Kuutio deutsch: gleich erkannt', kDe.contractPct === 40 && kDe.build.join('/') === '20/10/10/10' && kDe.handoverPct === 10 && kDe.reservationAt === 'handover', describeSchedule(kDe))
+
+// Uebergabe vor Kauf: Bank erst nach der letzten Rate, keine Ueberlappung
+const pastU = mamba({ buyM: 10, buyY: 2026, readyM: 1, readyY: 2026 })
+const pastPays = paymentPlan(pastU, 714000).filter(x => x.after)
+T('Übergabe vor Kauf: Bankstart = letzte Rate', loanReadyYm(pastU) === pastPays[pastPays.length - 1].ym,
+  `${loanReadyYm(pastU) % 12 + 1}/${Math.floor(loanReadyYm(pastU) / 12)}`)
+const [pastO] = allocate([pastU], P)
+const firstBank = pastO.res.restL.findIndex(x => x > 0)
+T('Übergabe vor Kauf: keine Bankrestschuld vor der letzten Rate', 2026 + firstBank === 2028, `erstes Jahr mit Bankschuld ${2026 + firstBank}`)
+
+// Verkauf: der GANZE Zwischenkredit wird abgeloest (auch Anteil anderer Wohnungen)
+const MK = [mamba({ priceNet: 500000, readyM: 6, readyY: 2027 }), kuu({ key: 'K', priceNet: 400000, furnNet: 0, readyM: 6, readyY: 2029 })]
+const PK = { ...P, ek: 400000 }
+const oMK = allocate(MK, PK), aMK = aggregate(oMK, PK)
+const exMK = computeExit(oMK, { ...PK, exitAfterYears: 3 }, 2026, aMK.rows)
+const bridge28 = aMK.rows.find(r => r.year === 2028).bridgeDebt
+const lineDebt = exMK.lines.reduce((a, l) => a + l.debt, 0)
+const own = oMK.reduce((a, o) => a + (2028 >= o.unit.readyY ? o.res.restL[Math.min(2028 - o.unit.readyY, o.res.restL.length - 1)] + devBalanceAt(o, 2028) : 0), 0)
+T('Verkauf: ganzer Zwischenkredit abgezogen', near(lineDebt, own + bridge28, 3), `${eur(lineDebt)} = ${eur(own)} + ${eur(bridge28)}`)
+
+// EK-Rendite je Wohnung steigt nicht durch den Mito-Plan
+const [rDev] = allocate([mamba()], P), [rLuma] = allocate([mamba({ plan: 'luma', schedule: null })], P)
+T('EK-Rendite je Wohnung: Mito-Plan nicht besser als Bank ab Übergabe', rDev.roe10 <= rLuma.roe10 + 0.01, `${rDev.roe10.toFixed(1)} / ${rLuma.roe10.toFixed(1)}`)
+
+// Reinvest: Zwischenkredit gegen das wirklich eingesetzte Eigenkapital
+const RP = { ...P, ek: 400000, reinvestEnabled: true, horizonYears: 20, minimumCashReserve: 60000 }
+const [rio] = allocate([mamba()], RP)
+const rAgg = aggregate([rio], RP)
+const paid29 = rio.payments.filter(x => Math.floor(x.ym / 12) <= 2029).reduce((a, x) => a + x.amount, 0)
+T('Reinvest: Zwischenkredit = Raten minus eingesetztes Eigenkapital', near(rAgg.rows.find(r => r.year === 2029).bridgeDebt, paid29 - rio.res.ekAbs, 2),
+  `${eur(rAgg.rows.find(r => r.year === 2029).bridgeDebt)} / ${eur(paid29 - rio.res.ekAbs)}`)
+
 console.log(`\n${fail ? '❌' : '🎉'}  ${pass} PASS, ${fail} FAIL`)
 process.exit(fail ? 1 : 0)

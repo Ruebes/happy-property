@@ -354,7 +354,7 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
     // Zwischenkredit bis zur Bankauszahlung) zur Schuld dieser Wohnung - sonst
     // passen Karte, Verkauf und Endbilanz nicht zusammen. Ohne Raten: 0.
     const yEnd = sold ?? agg.lastYear
-    const devDebt = devAfterMonths(o.unit) && yEnd >= o.unit.readyY
+    const devDebt = yEnd >= o.unit.readyY
       ? devBalanceAt(o, yEnd) + bridgeShareOf(outcomes, o, yEnd, agg.rows) : 0
     const debtEndRaw = o.res.restL[idxEnd] + devDebt
     return {
@@ -367,7 +367,7 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
       rentFirstYear: r0(o.res.rents[0]),
       // Kumulierter Zuwachs ueber die gerechneten Jahre, KEINE Jahresrendite.
       // Die Karte beschriftet ihn entsprechend.
-      equityGrowthPct: roeMeaningful(o) ? Math.round(o.res.roe10 * 10) / 10 : null,
+      equityGrowthPct: roeMeaningful(o) ? Math.round(o.roe10 * 10) / 10 : null,
       equityGrowthYears: o.res.rents.length,
       soldYear: sold,
       netSaleProceeds: sale ? r0(sale.netProceeds) : null,
