@@ -525,21 +525,26 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   // Ab wann und in welcher Hoehe ein Kredit noetig ist (Sven 7.10.26)
   // Gleiches Planende wie die Kundenseite: Raten nach dem Verkauf bzw. dem
   // Zeitraum zahlt der Erlös, sie gehören nicht in den Kreditbedarf.
-  const credit = useMemo(() => {
-    if (!outcomes.length || !active) return null
-    const end = (o: (typeof outcomes)[number]) => ymOf(Math.min(active.lastYear, o.unit.saleYear ?? (active.exit ? active.exit.year : active.lastYear)), 12)
-    return financingPath(outcomes, end, active.liquidity)
-  }, [outcomes, active])
-  const mmYYYY = (ym: number) => `${String(ym % 12 + 1).padStart(2, '0')}/${Math.floor(ym / 12)}`
-  // Break-even rechnet die ganze Strategie mehrfach durch - nur bei Bedarf.
-  const [beOpen, setBeOpen] = useState(false)
-  const breakEven = useMemo(() => beOpen && units.length ? breakEvenGrowth(units, params) : NaN, [beOpen, units, params])
-  const risks = useMemo(() => scenarios ? assessRisk(scenarios, breakEven) : [], [scenarios, breakEven])
   // Kapital-Recycling laeuft ueber einen eigenen Motor auf derselben Schicht.
   const reinvest = useMemo(
     () => params.reinvestEnabled && units.length ? runReinvest(units, params) : null,
     [params, units],
   )
+  const credit = useMemo(() => {
+    if (!outcomes.length || !active) return null
+    // Verkaufsjahr wie auf der Kundenseite: mit Reinvestment aus dessen Motor
+    // (der gemeinsame Verkauf gilt dann nicht), sonst Einzel- oder Gesamtverkauf.
+    const saleY = (o: (typeof outcomes)[number]): number | null => params.reinvestEnabled
+      ? reinvest?.saleYears.get(o.unit.key) ?? o.unit.saleYear ?? null
+      : o.unit.saleYear ?? (active.exit ? active.exit.year : null)
+    const end = (o: (typeof outcomes)[number]) => ymOf(Math.min(active.lastYear, saleY(o) ?? active.lastYear), 12)
+    return financingPath(outcomes, end, active.liquidity, o => { const y = saleY(o); return y != null && y <= active.lastYear })
+  }, [outcomes, active, reinvest, params.reinvestEnabled])
+  const mmYYYY = (ym: number) => `${String(ym % 12 + 1).padStart(2, '0')}/${Math.floor(ym / 12)}`
+  // Break-even rechnet die ganze Strategie mehrfach durch - nur bei Bedarf.
+  const [beOpen, setBeOpen] = useState(false)
+  const breakEven = useMemo(() => beOpen && units.length ? breakEvenGrowth(units, params) : NaN, [beOpen, units, params])
+  const risks = useMemo(() => scenarios ? assessRisk(scenarios, breakEven) : [], [scenarios, breakEven])
 
   // ── Fahrplan fertigstellen und in den Postausgang legen ────────────────────
   // Speichert den aktuellen Stand SOFORT (nicht entprellt) und legt einen
@@ -1379,7 +1384,9 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                   <strong>{t('crm.sim.credTitle', 'Finanzierungsbedarf')}:</strong>{' '}
                   {credit.firstCreditYm == null
                     ? (credit.steps.some(s => s.fromSurplus > 0.5)
-                      ? t('crm.sim.credNoneSurplus', 'Eigenkapital, Miete und MwSt-Erstattung decken alle Kaufraten, kein Kredit nötig.')
+                      ? (active?.liquidity?.vatIntoPot === false
+                        ? t('crm.sim.credNoneRent', 'Eigenkapital und Miete decken alle Kaufraten, kein Kredit nötig.')
+                        : t('crm.sim.credNoneSurplus', 'Eigenkapital, Miete und MwSt-Erstattung decken alle Kaufraten, kein Kredit nötig.'))
                       : t('crm.sim.credNone', 'Das Eigenkapital deckt alle Kaufraten, kein Kredit nötig.'))
                     : t('crm.sim.credText', 'Eigenkapital reicht bis {{until}}. Kredit nötig ab {{from}}, insgesamt {{total}}.', {
                       until: credit.equityLastYm != null ? mmYYYY(credit.equityLastYm) : t('crm.sim.credFirst', 'vor der ersten Rate'),
@@ -1394,6 +1401,8 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                   <p className="mt-1">
                     {credit.loans.map(l => l.open
                       ? t('crm.sim.credLoanOpen', '{{name}}: {{amount}} offener Kredit (Eigenkapital reicht nicht für den Barkauf)', { name: l.name, amount: eur(l.amount) })
+                      : l.sold
+                        ? t('crm.sim.credLoanSold', '{{name}}: {{amount}} abgerufen, beim Verkauf aus dem Erlös abgelöst', { name: l.name, amount: eur(l.amount) })
                       : l.afterEnd
                         ? t('crm.sim.credLoanAfter', '{{name}}: {{amount}} abgerufen bis Planende, Monatsrate erst ab {{start}}', { name: l.name, amount: eur(l.amount), start: mmYYYY(l.startYm) })
                         : t('crm.sim.credLoan', '{{name}}: {{amount}} ab {{start}} ({{monthly}}/M.)', {
@@ -1719,7 +1728,10 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                       [t('crm.sim.exDebt', 'Restschuld ablösen'), -exit.debt, true],
                       [t('crm.sim.exSell', 'Makler und Anwalt inkl. MwSt'), -exit.sellCost, true],
                       [t('crm.sim.exLevy', 'Übertragungsabgabe 0,4 %'), -exit.levy, true],
-                      [t('crm.sim.exVat', 'MwSt-Rückzahlung (Restjahre)'), -exit.vatClawback, true],
+                      // Negativ = Erstattung beim Verkauf noch nicht da: Forderung, kein Abzug
+                      exit.vatClawback < 0
+                        ? [t('crm.sim.exVatOpen', 'MwSt-Erstattung noch offen (abzüglich Berichtigung)'), -exit.vatClawback, true]
+                        : [t('crm.sim.exVat', 'MwSt-Rückzahlung (Restjahre)'), -exit.vatClawback, true],
                       [t('crm.sim.exCgt', 'Veräußerungsgewinnsteuer Zypern'), -exit.cgt, true],
                       ...(exit.taxDE ? [[t('crm.sim.exDe', 'Steuer Deutschland nach Anrechnung'), -exit.taxDE, true]] : []),
                       ...(exit.divTax ? [[t('crm.sim.exDiv', 'Steuer auf die Ausschüttung'), -exit.divTax, true]] : []),
@@ -1727,7 +1739,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                       <tr key={label} className="border-b border-gray-50">
                         <td className="py-1.5 text-gray-600">{label}</td>
                         <td className={`py-1.5 text-right ${minus ? 'text-gray-900' : 'font-semibold'}`}>
-                          {val === 0 ? '–' : `${val < 0 ? '−' : ''}${eur(Math.abs(val))}`}
+                          {val === 0 ? '–' : `${val < 0 ? '−' : minus ? '+' : ''}${eur(Math.abs(val))}`}
                         </td>
                       </tr>
                     ))}
@@ -1735,6 +1747,12 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                       <td className="pt-2 font-semibold text-gray-900">{t('crm.sim.exNet', 'Nettoerlös')}</td>
                       <td className="pt-2 text-right text-lg font-bold text-orange-600">{eur(exit.net)}</td>
                     </tr>
+                    {(agg.rows[agg.rows.length - 1]?.held ?? 0) > 0.5 && (
+                      <tr>
+                        <td className="pt-1 text-xs text-gray-500">{t('crm.sim.exEquityBack', 'Dazu: für die restlichen Raten reserviertes Eigenkapital, nicht mehr gebraucht')}</td>
+                        <td className="pt-1 text-right text-xs font-semibold text-green-700">+{eur(agg.rows[agg.rows.length - 1].held ?? 0)}</td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
                 <p className="text-[11px] text-gray-500 mt-2">

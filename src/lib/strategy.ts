@@ -372,6 +372,8 @@ export interface BankLoanInfo {
   afterEnd?: boolean
   // Barkauf mit zu wenig Eigenkapital: offener Kredit ohne Monatsrate
   open?: boolean
+  // Wohnung wird vor dem Start der Monatsrate verkauft: Kredit aus dem Erloes abgeloest
+  sold?: boolean
 }
 export interface FinancingPath {
   equity: number
@@ -381,7 +383,7 @@ export interface FinancingPath {
   creditTotal: number
   loans: BankLoanInfo[]
 }
-export function financingPath(outcomes: UnitOutcome[], endYmOf?: (o: UnitOutcome) => number, liq?: LiquidityResult): FinancingPath {
+export function financingPath(outcomes: UnitOutcome[], endYmOf?: (o: UnitOutcome) => number, liq?: LiquidityResult, soldOf?: (o: UnitOutcome) => boolean): FinancingPath {
   const own = outcomes.filter(o => !o.unit.model)
   const equity = own.reduce((a, o) => a + o.ekAlloc, 0)
   // Bei Raten nach der Uebergabe kommt die Aufteilung aus der Liquiditaetsrechnung
@@ -431,7 +433,11 @@ export function financingPath(outcomes: UnitOutcome[], endYmOf?: (o: UnitOutcome
     .map(o => {
       const startYm = loanReadyYm(o.unit)
       const end = endYmOf ? endYmOf(o) : Infinity
-      return { key: o.unit.key, name: o.unit.name, amount: o.loan, startYm, monthly: o.annuityMonthly, ...(startYm > end ? { afterEnd: true } : {}) }
+      // Nur in der Liquiditaetsrechnung ist o.loan dann der bis Planende abgerufene
+      // Kredit; sonst bleibt die Zeile wie bisher (geplantes Darlehen mit Rate).
+      const after = !!liq && startYm > end
+      return { key: o.unit.key, name: o.unit.name, amount: o.loan, startYm, monthly: o.annuityMonthly,
+        ...(after ? { afterEnd: true } : {}), ...(after && soldOf?.(o) ? { sold: true } : {}) }
     })
   for (const [k, v] of liq?.cashCredit ?? []) {
     const o = own.find(x => x.unit.key === k)
@@ -1118,15 +1124,41 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams, extras?: Aggre
       // Fuer kommende Raten gehaltener Ueberschuss: Geld des Kunden, zaehlt zum Vermoegen
       r.held = liq!.held.get(r.year) ?? 0
     }
+    if (liq!.unspentEnd > 0 && out.length) {
+      const last = out[out.length - 1]
+      last.held = (last.held ?? 0) + liq!.unspentEnd
+    }
     return { rows: out, firstYear, lastYear, bridgeNeeded: liq!.peak > 0.5, bridgePeak: liq!.peak, liquidity: liq! }
   }
 
   const bridge = fixedBridge(outcomes, p, lastYear)
   finish(rows, bridge.byYear)
+  // Eigenkapital fuer Raten nach dem Planende bzw. Verkauf (Review 7.10.26):
+  // Der Verkauf loest die offenen Raten als Schuld ab, das dafuer reservierte
+  // Eigenkapital wurde nie gezahlt und bleibt beim Kunden. Vorher verschwand
+  // es aus Vermoegen und Rendite. Bei vollstaendig bezahlten Plaenen 0.
+  if (p && !extras && !p.reinvestEnabled && rows.length) {
+    const unspent = unspentEquityAtEnd(outcomes, lastYear)
+    if (unspent > 0) rows[rows.length - 1].held = unspent
+  }
   return { rows, firstYear, lastYear, bridgeNeeded: bridge.peak > 0.5, bridgePeak: bridge.peak }
 }
 
 type BridgeByYear = Map<number, { interest: number; debt: number }>
+
+// Eigenkapital-Anteil der Kaufpreise, der bis Ende lastYear nicht gezahlt ist:
+// Kaufpreis-Eigenkapital minus (bis dahin faellige Raten minus ausgezahlte
+// Bankdarlehen). Gleiche Reihenfolge wie die Zwischenfinanzierung: erst
+// Eigenkapital, dann Bank.
+function unspentEquityAtEnd(outcomes: UnitOutcome[], lastYear: number): number {
+  const own = outcomes.filter(o => !o.unit.model)
+  const endYm = ymOf(lastYear, 12)
+  const paid = own.reduce((a, o) => a + o.payments.filter(x => x.ym <= endYm).reduce((b, x) => b + x.amount, 0), 0)
+  const loansReady = own.filter(o => loanReadyYm(o.unit) <= endYm).reduce((a, o) => a + o.loan, 0)
+  const ek = own.reduce((a, o) => a + o.ekAlloc, 0)
+  const v = ek - Math.max(0, paid - loansReady)
+  return v > 1 ? v : 0
+}
 
 // ── Zwischenfinanzierung in der Bauzeit ─────────────────────────────────────
 // Monat für Monat: Was ist bis hier zu zahlen, und was ist gedeckt? Gedeckt
@@ -1205,6 +1237,11 @@ export interface LiquidityResult {
   vatIntoPot: boolean
   // Barkaeufe mit zu wenig Eigenkapital: offener Kredit je Wohnung
   cashCredit: Map<string, number>
+  // Eigenkapital, das am Planende noch nicht in Raten geflossen ist (Raten nach
+  // dem Verkauf bzw. dem Zeitraum): bleibt beim Kunden
+  unspentEnd: number
+  // Abgerufener Kredit ohne Monatsrate je Wohnung, Stand Jahresende
+  openByYear: Map<number, Map<string, number>>
 }
 export function liquidityMode(outcomes: UnitOutcome[], p?: SimParams): boolean {
   return !!p && !p.reinvestEnabled && outcomes.some(o => !o.unit.model && o.unit.fin && devAfterMonths(o.unit) > 0)
@@ -1299,6 +1336,7 @@ function liquiditySim(outcomes: UnitOutcome[], rows: YearRow[], p: SimParams, la
   const bridge: BridgeByYear = new Map()
   const freeCash = new Map<number, number>()
   const held = new Map<number, number>()
+  const openByYear = new Map<number, Map<string, number>>()
   const sumOpen = () => [...open.values()].reduce((a, b) => a + b, 0)
   const addFree = (y: number, v: number) => { if (rowYears.has(y)) freeCash.set(y, (freeCash.get(y) ?? 0) + v) }
   const startYm = Math.min(ymOf(rows[0]?.year ?? lastYear, 1), ...pays.map(x => x.ym))
@@ -1355,12 +1393,14 @@ function liquiditySim(outcomes: UnitOutcome[], rows: YearRow[], p: SimParams, la
     if (ym === endYm && surplus > 0) { addFree(y, surplus); surplus = 0 }
     held.set(y, surplus)
     cur.debt = sumOpen()
+    openByYear.set(y, new Map(open))
   }
   // Wohnungen, deren Umwandlung nach dem Zeitraum liegt: abgerufener Stand
   for (const k of convYm.keys()) if (!loans.has(k)) loans.set(k, Math.round(open.get(k) ?? 0))
   // Barkauf mit weniger Eigenkapital als Kaufpreis: offener Kredit (nur Zinsen)
   const cashCredit = new Map(cashUnits.map(o => [o.unit.key, open.get(o.unit.key) ?? 0] as const).filter(([, v]) => v > 0.5))
-  return { records, loans, bridge, freeCash, held, peak, vatReturned, vatIntoPot, cashCredit }
+  const unspentEnd = finPool + [...cashLeft.values()].reduce((a, v) => a + Math.max(0, v), 0)
+  return { records, loans, bridge, freeCash, held, peak, vatReturned, vatIntoPot, cashCredit, openByYear, unspentEnd: unspentEnd > 1 ? unspentEnd : 0 }
 }
 
 
@@ -1425,7 +1465,7 @@ export function runScenario(units: SimUnit[], p: SimParams, key: ScenarioKey): S
   const su = factor === 1 ? units : units.map(u => ({ ...u, rent: Math.round(u.rent * factor) }))
   const outcomes = allocate(su, sp)
   const agg = aggregate(outcomes, sp)
-  const exit = computeExit(outcomes, sp, agg.firstYear, agg.rows)
+  const exit = computeExit(outcomes, sp, agg.firstYear, agg.rows, agg.liquidity)
   const totals = totalsOf(outcomes, agg.rows, sp, exit, agg.liquidity)
   return { key, params: sp, units: su, outcomes, rows: agg.rows, firstYear: agg.firstYear, lastYear: agg.lastYear, bridgeNeeded: agg.bridgeNeeded, bridgePeak: agg.bridgePeak, exit, totals,
     ...(agg.liquidity ? { liquidity: agg.liquidity } : {}) }
@@ -1454,8 +1494,9 @@ export function assessRisk(sc: Record<ScenarioKey, ScenarioResult>, breakEven: n
   const items: RiskItem[] = []
 
   // Wertentwicklung: Wie viel Vermoegen kostet die vorsichtige Welt?
-  const wBase = base.exit ? base.exit.net : base.totals.netWorth
-  const wKons = kons.exit ? kons.exit.net : kons.totals.netWorth
+  const heldEnd = (r: ScenarioResult) => r.rows[r.rows.length - 1]?.held ?? 0
+  const wBase = base.exit ? base.exit.net + heldEnd(base) : base.totals.netWorth
+  const wKons = kons.exit ? kons.exit.net + heldEnd(kons) : kons.totals.netWorth
   const drop = wBase > 0 ? (wBase - wKons) / wBase : 1
   items.push({
     key: 'wert',
@@ -1646,24 +1687,28 @@ export function computeSale(
 // Anteil einer Wohnung am offenen Zwischenkredit zum Jahresende - nur fuer
 // Wohnungen mit Bautraeger-Raten nach der Uebergabe, deren Bankdarlehen noch
 // aussteht (aufgeteilt nach Darlehenshoehe). Alle anderen: 0, wie bisher.
-export function bridgeShareOf(outcomes: UnitOutcome[], o: UnitOutcome, year: number, rows: YearRow[]): number {
-  // Nur Strategien mit Bautraeger-Raten nach der Uebergabe - alle anderen
-  // rechnen unveraendert wie vorher.
-  if (o.unit.model || !outcomes.some(x => !x.unit.model && devAfterMonths(x.unit))) return 0
+export function bridgeShareOf(outcomes: UnitOutcome[], o: UnitOutcome, year: number, rows: YearRow[], liq?: LiquidityResult): number {
+  if (o.unit.model) return 0
+  // Mit Liquiditaetsrechnung ist bekannt, welcher Wohnung der offene Kredit
+  // gehoert (auch der Kredit eines Barkaufs ohne genug Eigenkapital).
+  if (liq) return Math.round(liq.openByYear.get(year)?.get(o.unit.key) ?? 0)
+  // Sonst (Review 7.10.26, Altfehler): Der offene Zwischenkredit muss beim
+  // Verkauf ebenfalls abgeloest werden - vorher blieb er stehen und der Erloes
+  // enthielt Geld der Bank. Verteilt auf die Wohnungen, deren Bankdarlehen noch
+  // aussteht (nach Darlehenshoehe), sonst auf Barkaeufe bzw. alle nach Preis.
   const bridge = rows.find(r => r.year === year)?.bridgeDebt ?? 0
   if (!(bridge > 0)) return 0
-  // Der ganze Zwischenkredit muss beim Verkauf abgeloest werden: verteilt auf
-  // alle Wohnungen, deren Bankdarlehen noch aussteht, nach Darlehenshoehe.
-  // Ohne ausstehendes Darlehen (Barkauf mit zu wenig Eigenkapital) nach Preis.
-  const pending = outcomes.filter(x => !x.unit.model && x.loan > 0 && loanReadyYm(x.unit) > ymOf(year, 12))
-  const pool = pending.length ? pending : outcomes.filter(x => !x.unit.model)
+  const own = outcomes.filter(x => !x.unit.model)
+  const pending = own.filter(x => x.loan > 0 && loanReadyYm(x.unit) > ymOf(year, 12))
+  const cash = own.filter(x => !x.unit.fin)
+  const pool = pending.length ? pending : cash.length ? cash : own
   if (!pool.includes(o)) return 0
   const weight = (x: UnitOutcome) => pending.length ? x.loan : x.gross
   const total = pool.reduce((a, x) => a + weight(x), 0)
   return total > 0 ? Math.round(bridge * weight(o) / total) : 0
 }
 
-export function computeExit(outcomes: UnitOutcome[], p: SimParams, firstYear: number, rows?: YearRow[]): ExitResult | null {
+export function computeExit(outcomes: UnitOutcome[], p: SimParams, firstYear: number, rows?: YearRow[], liq?: LiquidityResult): ExitResult | null {
   if (!outcomes.length || !p.exitAfterYears) return null
   const year = firstYear + p.exitAfterYears - 1
   const lines = outcomes.map(o => saleLineOf(o, year, p))
@@ -1672,7 +1717,7 @@ export function computeExit(outcomes: UnitOutcome[], p: SimParams, firstYear: nu
   // Erloes abgeloest werden. Aufgeteilt auf die Wohnungen, deren Darlehen noch
   // aussteht, nach Darlehenshoehe. Nur fuer Wohnungen mit Raten nach der
   // Uebergabe - alle anderen Faelle rechnen wie bisher.
-  if (rows) outcomes.forEach((o, i) => { lines[i].debt += bridgeShareOf(outcomes, o, year, rows) })
+  if (rows) outcomes.forEach((o, i) => { lines[i].debt += bridgeShareOf(outcomes, o, year, rows, liq) })
   const sum = (f: (l: ExitUnitLine) => number) => lines.reduce((a, l) => a + f(l), 0)
   const value = sum(l => l.value), debt = sum(l => l.debt)
   const sellCost = sum(l => l.sellCost), vatClawback = sum(l => l.vatClawback)
@@ -1806,7 +1851,8 @@ export function totalsOf(outcomes: UnitOutcome[], rows: YearRow[], p?: SimParams
   const sum = (f: (r: YearRow) => number) => rows.reduce((a, r) => a + f(r), 0)
   const ekTotal = outcomes.reduce((a, o) => a + o.ekUsed, 0)
   const last = rows[rows.length - 1]
-  const netWorth = last ? last.value + last.committed - last.debt : 0
+  // inkl. Geld auf dem Konto (fuer Raten gehalten bzw. nicht benoetigtes Eigenkapital)
+  const netWorth = last ? last.value + last.committed - last.debt + (last.held ?? 0) : 0
   const rents = sum(r => r.rents), taxes = sum(r => r.taxes), vat = sum(r => r.vat)
   const interest = sum(r => r.interest), cashflow = sum(r => r.cashflow)
   const totalReturn = netWorth - ekTotal + cashflow
@@ -1839,10 +1885,11 @@ export function breakEvenGrowth(units: SimUnit[], p: SimParams): number {
     const pp = { ...p, growth }
     const outs = allocate(units, pp)
     const agg = aggregate(outs, pp)
-    const ex = computeExit(outs, pp, agg.firstYear, agg.rows)
+    const ex = computeExit(outs, pp, agg.firstYear, agg.rows, agg.liquidity)
     const cash = agg.rows.filter(r => !ex || r.year <= ex.year).reduce((a, r) => a + r.cashflow, 0)
     const ekTotal = outs.reduce((a, o) => a + o.ekUsed, 0)
-    const end = ex ? ex.net : (agg.rows.length ? agg.rows[agg.rows.length - 1].value - agg.rows[agg.rows.length - 1].debt : 0)
+    const lastRow = agg.rows[agg.rows.length - 1]
+    const end = (ex ? ex.net : (lastRow ? lastRow.value - lastRow.debt : 0)) + (lastRow?.held ?? 0)
     return end + cash - ekTotal
   }
   let lo = -10, hi = 25

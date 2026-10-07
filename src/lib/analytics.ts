@@ -179,7 +179,14 @@ export interface CustomerAnalytics {
     gesy: number; si: number; de: number
   }
   scenarios: ScenarioSummary[]
-  exits: Array<{ name: string; year: number; value: number; debt: number; costs: number; tax: number; net: number }>
+  // Verkauf je Wohnung. Beim gemeinsamen Verkauf (ohne Reinvestment) gibt es
+  // Steuer und Erloes nur fuer alle zusammen: dann null je Zeile und die Summe
+  // in exitTotal (vorher stand je Wohnung „Steuern 0 €, Erlös 0 €"). vat:
+  // positiv = MwSt-Rueckzahlung, negativ = noch offene Erstattung (Forderung).
+  exits: Array<{ name: string; year: number; value: number; debt: number; costs: number; vat: number; tax: number | null; net: number | null }>
+  // equityBack: fuer Raten nach dem Verkauf reserviertes Eigenkapital, das nie
+  // gezahlt wurde und beim Kunden bleibt (der Verkauf loest die Raten ab)
+  exitTotal: { value: number; debt: number; costs: number; vat: number; tax: number; net: number; equityBack: number } | null
   risks: RiskItem[]
   balance: BalanceLine[]
   cost: CostOverview
@@ -213,7 +220,7 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
   const agg = ri
     ? { rows: ri.rows, firstYear: ri.firstYear, lastYear: ri.lastYear }
     : (() => { const a = aggregate(outcomes, params); return { rows: a.rows, firstYear: a.firstYear, lastYear: a.lastYear, liquidity: a.liquidity } })()
-  const exit: ExitResult | null = ri ? null : computeExit(outcomes, params, agg.firstYear, agg.rows)
+  const exit: ExitResult | null = ri ? null : computeExit(outcomes, params, agg.firstYear, agg.rows, 'liquidity' in agg ? agg.liquidity : undefined)
   // Im Reinvestment-Modus rechnet der Motor die Rendite aus Sicht des Investors
   // (Einzahlungen raus, Endwert rein). Diese Zahl gilt fuer die ganze Seite -
   // sonst stuenden in Kennzahl und Szenariovergleich zwei verschiedene Renditen.
@@ -376,7 +383,7 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
     // passen Karte, Verkauf und Endbilanz nicht zusammen. Ohne Raten: 0.
     const yEnd = sold ?? agg.lastYear
     const devDebt = yEnd >= o.unit.readyY
-      ? devBalanceAt(o, yEnd) + bridgeShareOf(outcomes, o, yEnd, agg.rows) : 0
+      ? devBalanceAt(o, yEnd) + bridgeShareOf(outcomes, o, yEnd, agg.rows, liqRes) : 0
     const debtEndRaw = o.res.restL[idxEnd] + devDebt
     return {
       key: o.unit.key, name: o.unit.name,
@@ -389,13 +396,14 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
         const end = unitEndYm(o)
         const conv = Math.max(loanReadyYm(o.unit), ...o.payments.map(x => x.ym))
         const extra: Partial<PropertyCard> = {}
-        if (o.unit.fin && conv > end) {
-          const rest = o.gross - (o.ekUsed - o.res.costs) - (o.funding?.surplus ?? 0) - o.loan
+        if (conv > end) {
+          // Raten nach dem Planende bzw. Verkauf (gilt auch fuer Barkaeufe)
+          const rest = o.payments.filter(x => x.ym > end).reduce((a, x) => a + x.amount, 0)
           if (rest > 0.5) {
             extra.openRest = r0(rest)
             extra.openRestFromSale = (ri?.saleYears.get(o.unit.key) ?? o.unit.saleYear ?? (exit ? exit.year : null)) != null
           }
-          if (o.loan > 0) extra.creditSoFar = true
+          if (o.unit.fin && o.loan > 0) extra.creditSoFar = true
         }
         const cc = liqRes.cashCredit.get(o.unit.key)
         if (cc) extra.openCredit = r0(cc)
@@ -483,16 +491,26 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
   })
 
   // ── Verkaeufe ──────────────────────────────────────────────────────────────
-  const exits = ri
+  const exits: CustomerAnalytics['exits'] = ri
     ? ri.sales.map(s => ({
       name: s.name, year: s.year, value: r0(s.line.value), debt: r0(s.line.debt),
-      costs: r0(s.line.sellCost + s.levy + s.line.vatClawback), tax: r0(s.cgt + s.taxDE),
+      costs: r0(s.line.sellCost + s.levy), vat: r0(s.line.vatClawback), tax: r0(s.cgt + s.taxDE),
       net: r0(s.netProceeds),
     }))
-    : (exit ? exit.lines.map(l => ({
-      name: l.name, year: exit.year, value: r0(l.value), debt: r0(l.debt),
-      costs: r0(l.sellCost + l.vatClawback), tax: 0, net: 0,
-    })) : [])
+    : (exit ? exit.lines.map((l, i) => {
+      // Uebertragungsabgabe anteilig nach Wert, damit die Zeilen die Summe ergeben
+      const shares = exit.lines.map(x => exit.value > 0 ? Math.round(exit.levy * x.value / exit.value) : 0)
+      const levy = i === exit.lines.length - 1 ? exit.levy - shares.slice(0, -1).reduce((a, v) => a + v, 0) : shares[i]
+      return {
+        name: l.name, year: exit.year, value: r0(l.value), debt: r0(l.debt),
+        costs: r0(l.sellCost + levy), vat: r0(l.vatClawback), tax: null, net: null,
+      }
+    }) : [])
+  const exitTotal = !ri && exit ? {
+    value: r0(exit.value), debt: r0(exit.debt), costs: r0(exit.sellCost + exit.levy), vat: r0(exit.vatClawback),
+    tax: r0(exit.cgt + exit.taxDE + exit.divTax), net: r0(exit.net),
+    equityBack: r0(agg.rows[agg.rows.length - 1]?.held ?? 0),
+  } : null
 
   // ── Risiko: bestehende Logik, aber auf DENSELBEN Zahlen ───────────────────
   // Im Reinvestment-Modus muss die Risikobewertung die Reinvestment-Ergebnisse
@@ -551,7 +569,9 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
       ? [{ label: 'In der Bauphase gebundenes Kapital', amount: lastWealth.committed, kind: 'plus' as const,
         hint: 'Bereits gezahlte Kaufraten für Wohnungen, die noch nicht übergeben sind.' }]
       : []),
-    { label: 'Liquidität', amount: lastWealth.cash, kind: 'plus' },
+    { label: 'Liquidität', amount: lastWealth.cash, kind: 'plus',
+      ...(!ri && (lastRow?.held ?? 0) > 0.5 && !(liqRes?.held.get(agg.lastYear))
+        ? { hint: 'Eigenkapital, das für Raten nach dem Verkauf bzw. nach dem Zeitraum reserviert war und nicht mehr gebraucht wird.' } : {}) },
     { label: 'Netto-Vermögen', amount: lastWealth.netWorth, kind: 'sum' },
   ] : []
 
@@ -674,7 +694,9 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
             : ` Die restlichen ${eur(cut)} an den Bauträger fallen nach dem Betrachtungszeitraum an.`)
           : '')
         + (o.loan > 0 && devAfterMonths(o.unit) && loanReadyYm(o.unit) <= endYm ? ` Das Bankdarlehen läuft ab ${mmYYYY(loanReadyYm(o.unit))}.` : '')
-      : 'Ab hier fließt Miete, und Zins und Tilgung laufen.'
+      : o.loan > 0 ? 'Ab hier fließt Miete, und Zins und Tilgung laufen.'
+        : 'Ab hier fließt Miete.' + (liqRes?.cashCredit.get(o.unit.key)
+          ? ` Für den Barkauf fehlen insgesamt ${eur(liqRes.cashCredit.get(o.unit.key)!)} Eigenkapital; dieser Kredit läuft nur mit Zinsen.` : '')
     if (o.unit.readyY !== o.unit.buyY || afterAll.length) {
       timeline.push({
         year: o.unit.readyY, kind: 'handover', label: `Übergabe ${o.unit.name}`,
@@ -692,7 +714,7 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
   // als Markierung (schedule) bei plan 'luma'.
   const realPlan = outcomes.some(o => !o.unit.model && !!o.unit.schedule && (o.unit.plan === 'dev' || o.unit.plan === 'luma'))
   const creditPath: FinancingPath | null = realPlan
-    ? financingPath(outcomes, endYmOf, 'liquidity' in agg ? agg.liquidity : undefined) : null
+    ? financingPath(outcomes, endYmOf, 'liquidity' in agg ? agg.liquidity : undefined, o => saleYearOf(o) != null && saleYearOf(o)! <= agg.lastYear) : null
   for (const e of events) {
     if (e.kind === 'refinance') {
       timeline.push({
@@ -746,7 +768,7 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
     liquidity, minimumReserve: reserve, liquidityWarning,
     financing, financingKpis, capitalSteps, recyclingRows, opportunity,
     properties, tax, taxKpis, scenarios, exits, risks, insights, drivers, sensitivity,
-    balance, cost, moneyFlow, journey, timeline, creditPath, keyInsights, events,
+    balance, cost, moneyFlow, journey, timeline, creditPath, keyInsights, events, exitTotal,
     vatReturned: creditPath && liqRes
       ? liqRes.vatReturned.map(v => ({ name: outcomes.find(o => o.unit.key === v.key)?.unit.name ?? '', ym: v.ym, amount: r0(v.amount) }))
       : [],

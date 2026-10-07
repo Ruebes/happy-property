@@ -815,7 +815,9 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                           <tr key={l.key} style={{ borderBottom: '1px solid #f5f3f0' }}>
                             <td style={{ ...td, textAlign: 'left', fontWeight: 600 }}>{l.name}</td>
                             <td style={{ ...td, fontWeight: 700 }}>{eur(l.amount)}</td>
-                            <td style={td}>{l.open ? t('strategie.credLoanOpen', 'offen, nur Zinsen') : l.afterEnd ? t('strategie.credLoanAfter', 'nach dem Zeitraum ({{d}})', { d: mm(l.startYm) }) : mm(l.startYm)}</td>
+                            <td style={td}>{l.open ? t('strategie.credLoanOpen', 'offen, nur Zinsen')
+                              : l.sold ? t('strategie.credLoanSold', 'beim Verkauf aus dem Erlös abgelöst')
+                                : l.afterEnd ? t('strategie.credLoanAfter', 'nach dem Zeitraum ({{d}})', { d: mm(l.startYm) }) : mm(l.startYm)}</td>
                             <td style={td}>{l.open || l.afterEnd ? '' : eur(l.monthly)}</td>
                           </tr>
                         ))}
@@ -852,28 +854,56 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                   <th style={th}>{t('strategie.eValue', 'Wert')}</th>
                   <th style={th}>{t('strategie.eDebt', 'Kredit')}</th>
                   <th style={th}>{t('strategie.eCosts', 'Kosten')}</th>
+                  {a.exits.some(e => e.vat) && <th style={th}>{t('strategie.eVat', 'MwSt')}</th>}
                   <th style={th}>{t('strategie.eTax', 'Steuern')}</th>
                   <th style={th}>{t('strategie.eNet', 'Erlös')}</th>
                 </tr></thead>
                 <tbody>
-                  {a.exits.map((e, i) => (
-                    <tr key={`${e.name}-${i}`} style={{ borderBottom: '1px solid #f5f3f0' }}>
-                      <td style={{ ...td, textAlign: 'left' }}>{e.name}</td>
-                      <td style={td}>{e.year}</td>
-                      <td style={td}>{eur(e.value)}</td>
-                      <td style={td}>−{eur(e.debt)}</td>
-                      <td style={td}>−{eur(e.costs)}</td>
-                      <td style={{ ...td, color: e.tax < 0 ? '#1d7a4f' : undefined }}>
-                        {e.tax < 0 ? `+${eur(-e.tax)}` : `−${eur(e.tax)}`}
-                      </td>
-                      <td style={{ ...td, fontWeight: 700, color: CORAL }}>{eur(e.net)}</td>
-                    </tr>
-                  ))}
+                  {(() => {
+                    const withVat = a.exits.some(e => e.vat)
+                    // MwSt: positiv = Rückzahlung (−), negativ = noch offene Erstattung (+)
+                    const vatCell = (v: number) => v === 0 ? '' : v > 0 ? `−${eur(v)}` : `+${eur(-v)}`
+                    const taxCell = (v: number | null) => v == null ? '' : v === 0 ? eur(0) : v < 0 ? `+${eur(-v)}` : `−${eur(v)}`
+                    return (<>
+                      {a.exits.map((e, i) => (
+                        <tr key={`${e.name}-${i}`} style={{ borderBottom: '1px solid #f5f3f0' }}>
+                          <td style={{ ...td, textAlign: 'left' }}>{e.name}</td>
+                          <td style={td}>{e.year}</td>
+                          <td style={td}>{eur(e.value)}</td>
+                          <td style={td}>−{eur(e.debt)}</td>
+                          <td style={td}>−{eur(e.costs)}</td>
+                          {withVat && <td style={{ ...td, color: e.vat < 0 ? '#1d7a4f' : undefined }}>{vatCell(e.vat)}</td>}
+                          <td style={{ ...td, color: e.tax != null && e.tax < 0 ? '#1d7a4f' : undefined }}>{taxCell(e.tax)}</td>
+                          <td style={{ ...td, fontWeight: 700, color: CORAL }}>{e.net == null ? '' : eur(e.net)}</td>
+                        </tr>
+                      ))}
+                      {a.exitTotal && (
+                        <tr style={{ borderTop: '2px solid #eee' }}>
+                          <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{t('strategie.eTotal', 'Zusammen')}</td>
+                          <td style={td} />
+                          <td style={{ ...td, fontWeight: 700 }}>{eur(a.exitTotal.value)}</td>
+                          <td style={{ ...td, fontWeight: 700 }}>−{eur(a.exitTotal.debt)}</td>
+                          <td style={{ ...td, fontWeight: 700 }}>−{eur(a.exitTotal.costs)}</td>
+                          {withVat && <td style={{ ...td, fontWeight: 700, color: a.exitTotal.vat < 0 ? '#1d7a4f' : undefined }}>{vatCell(a.exitTotal.vat)}</td>}
+                          <td style={{ ...td, fontWeight: 700 }}>{taxCell(a.exitTotal.tax)}</td>
+                          <td style={{ ...td, fontWeight: 800, color: CORAL }}>{eur(a.exitTotal.net)}</td>
+                        </tr>
+                      )}
+                      {a.exitTotal && a.exitTotal.equityBack > 0 && (
+                        <tr>
+                          <td style={{ ...td, textAlign: 'left' }} colSpan={withVat ? 7 : 6}>
+                            {t('strategie.eEquityBack', 'Dazu: Eigenkapital, das für die restlichen Raten reserviert war und nicht mehr gebraucht wird')}
+                          </td>
+                          <td style={{ ...td, fontWeight: 700, color: '#1d7a4f' }}>+{eur(a.exitTotal.equityBack)}</td>
+                        </tr>
+                      )}
+                    </>)
+                  })()}
                 </tbody>
               </table>
             </ScrollBox>
             <p style={{ fontSize: 12, color: '#777', margin: '10px 0 0', lineHeight: 1.6 }}>
-              {t('strategie.exNote2', 'Der Verkauf ist eine Modellannahme. Verkaufspreis, Kosten und Steuern können abweichen. Die bei Kurzzeitvermietung erstattete Mehrwertsteuer ist innerhalb der ersten zehn Jahre anteilig zurückzuzahlen; das ist in den Kosten enthalten.')}
+              {t('strategie.exNote3', 'Der Verkauf ist eine Modellannahme. Verkaufspreis, Kosten und Steuern können abweichen. Kosten sind Makler, Anwalt und Übertragungsabgabe. Die bei Kurzzeitvermietung erstattete Mehrwertsteuer ist innerhalb der ersten zehn Jahre anteilig zurückzuzahlen (Spalte MwSt); ist sie beim Verkauf noch nicht erstattet, steht dort die verbleibende Erstattung mit Plus. Steuern und Erlös gelten für den Verkauf aller Wohnungen zusammen.')}
             </p>
           </Section>
         )}

@@ -401,5 +401,62 @@ T('Einzelrechnung unverändert (ohne Schalter Monate/12)', compute({ ...DEFAULT_
 // Reinvestment: Liquiditaetsrechnung aus (eigener Kassen-Motor)
 T('Reinvest: keine Liquiditätsrechnung', !aggregate(allocate(LU, { ...LP, reinvestEnabled: true }), { ...LP, reinvestEnabled: true }).liquidity)
 
+// ── 15. Review Runde 3 (7.10.26): Verkauf, Zwischenkredit, Anzeige ──────────
+const { bridgeShareOf, runScenario } = await import('/tmp/strategy.mjs')
+// (1) Verkaufstabelle: Steuern und Erloes nur fuer alle zusammen, Summe = Nettoerloes
+const an15 = buildCustomerAnalytics(LU, LP)
+const ex15 = computeExit(lo, LP, la.firstYear, la.rows, la.liquidity)
+T('Verkaufstabelle: je Wohnung keine „Steuern 0 €, Erlös 0 €" mehr', an15.exits.length === 2 && an15.exits.every(e => e.tax === null && e.net === null))
+T('Verkaufstabelle: Summenzeile = Nettoerlös des Verkaufs', an15.exitTotal && near(an15.exitTotal.net, ex15.net, 1)
+  && near(an15.exitTotal.value, an15.exits.reduce((a, e) => a + e.value, 0), 2) && near(an15.exitTotal.debt, an15.exits.reduce((a, e) => a + e.debt, 0), 2),
+  `netto ${eur(an15.exitTotal?.net ?? 0)}`)
+// (2) Verkauf zahlt alle Schulden des Verkaufsjahres ab (auch einen offenen Zwischenkredit)
+const legacyCases = [
+  ['Luma, Verkauf im Bau', [kuu({ key: 'L1', plan: 'luma', schedule: { ...LUMA_SCHEDULE }, buyY: 2026, buyM: 3, readyY: 2029, readyM: 6 })], { ...P, ek: 150000, exitAfterYears: 2 }],
+  ['Barkauf ohne genug EK', [kuu({ key: 'C1', fin: false }), kuu({ key: 'F1', priceNet: 300000 })], { ...P, ek: 250000, exitAfterYears: 2 }],
+  ['Mito, Liquiditaet', LU, LP],
+  ['Mito, Verkauf in den Raten', [mamba()], { ...P, ek: 300000, exitAfterYears: 3 }],
+]
+for (const [name, us, pp] of legacyCases) {
+  const o = allocate(us, pp), g = aggregate(o, pp), ex = computeExit(o, pp, g.firstYear, g.rows, g.liquidity)
+  const row = g.rows.find(r => r.year === ex.year)
+  T(`Verkauf löst alle Schulden des Jahres ab: ${name}`, near(ex.debt, row.debt, 2), `Verkauf ${eur(ex.debt)} / Zeile ${eur(row.debt)} (Zwischenkredit ${eur(row.bridgeDebt)})`)
+}
+// (3) Kredit je Wohnung (Liquiditaet) = offener Kredit dieser Wohnung
+const y15 = 2028
+const share15 = lo.reduce((a, o) => a + bridgeShareOf(lo, o, y15, la.rows, la.liquidity), 0)
+const open15 = [...(la.liquidity.openByYear.get(y15)?.values() ?? [])].reduce((a, v) => a + v, 0)
+T('Zwischenkredit je Wohnung summiert sich auf den offenen Kredit', near(share15, open15, 1), `${eur(share15)} / ${eur(open15)}`)
+// (4) Darlehen, das beim Verkauf abgeloest wird: ohne Monatsrate, als abgelöst markiert
+T('Verkauf in den Raten: Darlehen als „beim Verkauf abgelöst"', cp9.loans.length > 0 && cp9.loans.every(l => l.sold))
+// (5) Barkauf mit Mito-Plan, Verkauf in den Raten: Das fuer die restlichen
+//     Raten reservierte Eigenkapital bleibt beim Kunden (vorher verschwand es:
+//     EK-Rendite -50 % statt ca. -2 %)
+const P15 = { ...P, ek: 700000, exitAfterYears: 3 }
+const cashDev = mamba({ fin: false }), cashNow = mamba({ fin: false, plan: 'sofort', schedule: null })
+const sDev = runScenario([cashDev], P15, 'basis'), sNow = runScenario([cashNow], P15, 'basis')
+const o15b = allocate([cashDev], P15)[0]
+const rest15b = o15b.payments.filter(x => x.ym > ymOf(2028, 12)).reduce((a, x) => a + x.amount, 0)
+T('Barkauf, Verkauf in den Raten: reserviertes EK zählt zum Vermögen', rest15b > 0 && near(sDev.rows[sDev.rows.length - 1].held ?? 0, rest15b, 2)
+  && sDev.totals.totalReturn > -0.05 * sDev.totals.ekTotal, `Rest ${eur(rest15b)}, Gesamtergebnis ${eur(sDev.totals.totalReturn)} (sofort bezahlt: ${eur(sNow.totals.totalReturn)})`)
+const an15b = buildCustomerAnalytics([cashDev], P15)
+T('Kundenseite: Verkauf + zurückbleibendes EK = Netto-Vermögen', near(an15b.exitTotal.equityBack, rest15b, 2) && near(an15b.summary.netWorth, an15b.wealth[an15b.wealth.length - 1].netWorth, 1)
+  && an15b.summary.netWorth > 0.9 * o15b.gross, `zurück ${eur(an15b.exitTotal.equityBack)}, Vermögen ${eur(an15b.summary.netWorth)}`)
+T('Vollständig bezahlter Plan: kein reserviertes EK am Ende', !(runScenario([cashDev], { ...P15, exitAfterYears: 0 }, 'basis').rows.at(-1).held > 0)
+  && !(la.rows.at(-1).held > 0))
+// Liquiditaet: Barkauf neben Mito-Finanzierung, Verkauf in den Raten
+const P15l = { ...P, ek: 900000, exitAfterYears: 3 }
+const U15l = [mamba({ key: 'A1' }), mamba({ key: 'C1', fin: false })]
+const g15l = aggregate(allocate(U15l, P15l), P15l)
+const c15l = buildCustomerAnalytics(U15l, P15l).properties.find(pc => pc.key === 'C1')
+const restC1 = allocate(U15l, P15l).find(o => o.unit.key === 'C1').payments.filter(x => x.ym > ymOf(2028, 12)).reduce((a, x) => a + x.amount, 0)
+T('Liquidität: Barkauf-Karte zeigt offene Raten, reserviertes EK im Vermögen', !!g15l.liquidity && near(c15l.openRest ?? 0, restC1, 1) && (g15l.rows.at(-1).held ?? 0) >= restC1 - 2,
+  `offen ${eur(c15l.openRest ?? 0)}, gehalten ${eur(g15l.rows.at(-1).held ?? 0)}`)
+// (6) Uebergabe eines Barkaufs ohne Raten danach: kein „Zins und Tilgung"
+const ho15 = buildCustomerAnalytics([kuu({ fin: false })], { ...P, ek: 800000 }).timeline.find(e => e.kind === 'handover')?.detail ?? ''
+T('Übergabe Barkauf: kein „Zins und Tilgung"', ho15.startsWith('Ab hier fließt Miete') && !/Tilgung/.test(ho15), ho15)
+// (7) Verkauf vor der MwSt-Erstattung: Forderung (negativ), nicht als Rückzahlung
+T('Verkauf vor der Erstattung: MwSt als offene Forderung', an4.exits[0].vat < 0 && an4.exitTotal.vat < 0, `${eur(an4.exits[0].vat)}`)
+
 console.log(`\n${fail ? '❌' : '🎉'}  ${pass} PASS, ${fail} FAIL`)
 process.exit(fail ? 1 : 0)
