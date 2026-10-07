@@ -173,12 +173,12 @@ const baia = { key: 'B', name: 'BAIA 9', priceNet: 584000, furnNet: 25000, rent:
   buyM: 10, buyY: 2026, readyM: 12, readyY: 2027, plan: 'luma', calc: {} }
 const CP = { ...DEFAULT_SIM_PARAMS, ek: 720000, deTaxPct: 30, interest: 3.8, buyerStructure: 'couple' }
 const early = buildCustomerAnalytics([mamba(), baia], { ...CP, exitAfterYears: 4 })
-T('Verkauf 2029: keine Raten-Zeile 2030', !early.purchasePayments.some(r => r.year > 2029),
-  early.purchasePayments.map(r => r.year).join(', '))
+T('Verkauf 2029: keine Rate nach 2029', !early.creditPath.steps.some(r => r.ym > ymOf(2029, 12)),
+  [...new Set(early.creditPath.steps.map(r => Math.floor(r.ym / 12)))].join(', '))
 const hoText = early.timeline.find(e => e.kind === 'handover' && e.label.includes('Mamba')).detail
 T('Verkauf 2029: Rest aus dem Erlös, kein Bankstart 2030', /beim Verkauf aus dem Erlös/.test(hoText) && !/Bankdarlehen läuft ab/.test(hoText), hoText)
 const full = buildCustomerAnalytics([mamba(), baia], { ...CP, exitAfterYears: 7 })
-const eqSum = full.purchasePayments.reduce((a, r) => a + r.equity, 0)
+const eqSum = full.creditPath.steps.reduce((a, r) => a + r.fromEquity, 0)
 T('Tabelle: Eigenkapital = Eigenkapital der Wohnungskarten ohne Nebenkosten', near(eqSum, full.properties.reduce((a, p) => a + p.equity, 0) - allocate([mamba(), baia], CP).reduce((a, o) => a + o.res.costs, 0), 2), eur(eqSum))
 // Wohnungskarte: offene Raten + Zwischenkredit wie im Verkauf
 const mEarly = early.properties.find(p => p.key === 'M'), mExit = early.exits.find(e => e.name === 'Mamba')
@@ -192,9 +192,14 @@ const neText = noExit.timeline.find(e => e.kind === 'handover' && e.label.includ
 T('Ohne Verkauf: „nach dem Betrachtungszeitraum"', /nach dem Betrachtungszeitraum/.test(neText) && !/Erlös/.test(neText), neText)
 // Nur Platzhalter-Plan: keine neue Tabelle (verschickte Seiten bleiben gleich)
 const onlyLuma = buildCustomerAnalytics([mamba({ plan: 'luma', schedule: null }), baia], CP)
-T('Nur alter Plan: Tabelle „Wann du was zahlst" entfällt', onlyLuma.purchasePayments.length === 0)
+T('Nur alter Plan: Finanzierungsbedarf entfällt (verschickte Seiten gleich)', onlyLuma.creditPath === null)
+// Finanzierungsbedarf: Kredit gesamt = Summe der Bankdarlehen, Start wie im Plan
+const cpF = full.creditPath
+T('Kredit gesamt = Summe der Bankdarlehen', near(cpF.creditTotal, cpF.loans.reduce((a, l) => a + l.amount, 0), 2), `${eur(cpF.creditTotal)}`)
+T('Kredit nötig ab: erste Rate über dem Eigenkapital', cpF.firstCreditYm != null && cpF.steps.find(s => s.ym === cpF.firstCreditYm).credit > 0 && cpF.steps.filter(s => s.ym < cpF.firstCreditYm).every(s => s.credit < 0.5))
+T('Bankdarlehen Mamba ab 12/2030', cpF.loans.find(l => l.name === 'Mamba').startYm === ymOf(2030, 12))
 const reinv = buildCustomerAnalytics([baia, kuu({ key: 'K2', name: 'K2', buyY: 2027, buyM: 1 })], { ...CP, ek: 350000, reinvestEnabled: true, horizonYears: 20 })
-const fin = reinv.purchasePayments.reduce((a, r) => a + r.financed, 0)
+const fin = reinv.creditPath.creditTotal
 const loans = reinv.properties.filter(p => !p.model).reduce((a, p) => a + p.loan, 0)
 T('Reinvest: finanziert = Darlehen der Wohnungen', near(fin, loans, 3), `${eur(fin)} / ${eur(loans)}`)
 

@@ -12,7 +12,7 @@ import { runReinvest } from '../../lib/reinvest'
 import {
   roeMeaningful, migrateConfig, ymOf, rentFromSeason, runScenarios, assessRisk,
   breakEvenGrowth, defaultDivTaxPct, DEFAULT_SIM_PARAMS, SCENARIO_KEYS,
-  scheduleFromProject, normalizeSchedule, afterInstalments, isLumaStandard, pctSum, LUMA_SCHEDULE, loanReadyYm, devAfterMonths, DEV_AFTER_MONTHS, DEV_AFTER_PER_YEAR, DEV_AFTER_RATE_PCT,
+  scheduleFromProject, normalizeSchedule, afterInstalments, isLumaStandard, pctSum, LUMA_SCHEDULE, loanReadyYm, devAfterMonths, financingPath, DEV_AFTER_MONTHS, DEV_AFTER_PER_YEAR, DEV_AFTER_RATE_PCT,
   type SimUnit, type SimParams, type ScenarioKey, type ScenarioResult, type DevSchedule, purchaseGrowthOf } from '../../lib/strategy'
 import { defaultMgmtPct, seasonBreakdown, vatSplit, normalizeMonthPlan, monthPlanCounts, MONTH_PLAN_ALL_LET,
   type CalcParams, type CalcItem, type MonthPlan, type VatMode } from '../../lib/rechner'
@@ -488,7 +488,9 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
         rent: Math.round(gross * 0.055 / 12), letType, fin: true,
         buyM: now.getMonth() + 1, buyY: now.getFullYear(), readyM, readyY,
         plan: offPlan ? (devPlan ? 'dev' : 'luma') : 'sofort',
-        ...(offPlan && devPlan ? { schedule: devPlan } : {}),
+        // Luma-Standard: plan 'luma' rechnet wie bisher, der Plan steht nur als
+        // Markierung dabei (Kundenseite zeigt dann den Finanzierungsbedarf).
+        ...(offPlan && sched ? { schedule: devPlan ?? sched } : {}),
         ...(shared ? { calc: { monthPlan: shared, selfUseMonths: monthPlanCounts(shared).self } } : {}),
       }]
     })
@@ -516,6 +518,9 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
     : { rows: [], firstYear: now.getFullYear(), lastYear: now.getFullYear(), bridgeNeeded: false, bridgePeak: 0 }, [active])
   const exit = active?.exit ?? null
   const totals = active?.totals ?? null
+  // Ab wann und in welcher Hoehe ein Kredit noetig ist (Sven 7.10.26)
+  const credit = useMemo(() => outcomes.length ? financingPath(outcomes) : null, [outcomes])
+  const mmYYYY = (ym: number) => `${String(ym % 12 + 1).padStart(2, '0')}/${Math.floor(ym / 12)}`
   // Break-even rechnet die ganze Strategie mehrfach durch - nur bei Bedarf.
   const [beOpen, setBeOpen] = useState(false)
   const breakEven = useMemo(() => beOpen && units.length ? breakEvenGrowth(units, params) : NaN, [beOpen, units, params])
@@ -1326,10 +1331,53 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
               </div>
             </div>
 
-            {agg.bridgeNeeded && (
-              <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 text-sm text-orange-900">
-                ⚠️ <strong>{t('crm.sim.bridgeTitle', 'Zwischenfinanzierung nötig')}:</strong>{' '}
-                {t('crm.sim.bridgeText', 'Die Kaufraten übersteigen das Eigenkapital in der Spitze um {{peak}}. Die Bauzeitzinsen darauf sind in den Zinsen enthalten.', { peak: eur(agg.bridgePeak) })}
+            {/* Finanzierungsbedarf: ab wann, wie viel, welche Bankdarlehen ab wann */}
+            {credit && credit.steps.length > 0 && (
+              <div className={`rounded-xl px-4 py-3 text-sm border ${credit.firstCreditYm != null ? 'bg-orange-50 border-orange-200 text-orange-900' : 'bg-green-50 border-green-200 text-green-900'}`}>
+                <p>
+                  <strong>{t('crm.sim.credTitle', 'Finanzierungsbedarf')}:</strong>{' '}
+                  {credit.firstCreditYm == null
+                    ? t('crm.sim.credNone', 'Das Eigenkapital deckt alle Kaufraten, kein Kredit nötig.')
+                    : t('crm.sim.credText', 'Eigenkapital reicht bis {{until}}. Kredit nötig ab {{from}}, insgesamt {{total}}.', {
+                      until: credit.equityLastYm != null ? mmYYYY(credit.equityLastYm) : t('crm.sim.credFirst', 'vor der ersten Rate'),
+                      from: mmYYYY(credit.firstCreditYm), total: eur(credit.creditTotal),
+                    })}
+                  {agg.bridgeNeeded && ` ${t('crm.sim.credBridge', 'Davon vor Auszahlung der Bankdarlehen als Zwischenkredit: in der Spitze {{peak}}, Zinsen im Cashflow enthalten.', { peak: eur(agg.bridgePeak) })}`}
+                </p>
+                {credit.loans.length > 0 && (
+                  <p className="mt-1">
+                    {credit.loans.map(l => t('crm.sim.credLoan', '{{name}}: {{amount}} ab {{start}} ({{monthly}}/M.)', {
+                      name: l.name, amount: eur(l.amount), start: mmYYYY(l.startYm), monthly: eur(l.monthly),
+                    })).join(' · ')}
+                  </p>
+                )}
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-xs font-medium">{t('crm.sim.credShow', 'Alle Kaufraten anzeigen')}</summary>
+                  <div className="overflow-x-auto mt-2">
+                    <table className="w-full text-xs tabular-nums">
+                      <thead><tr className="text-left text-[10px] uppercase tracking-wide text-gray-500 border-b border-orange-100">
+                        <th className="px-2 py-1">{t('crm.sim.credDate', 'Fällig')}</th>
+                        <th className="px-2 py-1">{t('crm.sim.credRate', 'Wohnung · Rate')}</th>
+                        <th className="px-2 py-1 text-right">{t('crm.sim.credAmount', 'Betrag')}</th>
+                        <th className="px-2 py-1 text-right">{t('crm.sim.credEquity', 'aus EK')}</th>
+                        <th className="px-2 py-1 text-right">{t('crm.sim.credCredit', 'Kredit')}</th>
+                        <th className="px-2 py-1 text-right">{t('crm.sim.credCumul', 'Kredit gesamt')}</th>
+                      </tr></thead>
+                      <tbody>
+                        {credit.steps.map((r, i) => (
+                          <tr key={`${r.ym}-${r.unit}-${i}`} className="border-b border-orange-100/60 last:border-0">
+                            <td className="px-2 py-1 font-semibold">{mmYYYY(r.ym)}</td>
+                            <td className="px-2 py-1">{r.unit} <span className="text-gray-500">· {r.label}</span></td>
+                            <td className="px-2 py-1 text-right">{eur(r.amount)}{r.interest > 0.5 ? <span className="text-gray-500"> + {eur(r.interest)} {t('crm.sim.credInterestShort', 'Zins')}</span> : ''}</td>
+                            <td className="px-2 py-1 text-right">{r.fromEquity > 0.5 ? eur(r.fromEquity) : ''}</td>
+                            <td className="px-2 py-1 text-right font-semibold">{r.credit > 0.5 ? eur(r.credit) : ''}</td>
+                            <td className="px-2 py-1 text-right">{r.creditTotal > 0.5 ? eur(r.creditTotal) : ''}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
               </div>
             )}
 
@@ -1656,15 +1704,15 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                     <th className="px-2 py-2">{t('crm.sim.year', 'Jahr')}</th>
                     <th className="px-2 py-2 text-right">{t('crm.sim.colInvest', 'Kaufraten')}</th>
                     <th className="px-2 py-2 text-right">{t('crm.sim.colRents', 'Mieten')}</th>
-                    <th className="px-2 py-2 text-right">{t('crm.sim.colMgmt', 'Verwaltung')}</th>
-                    <th className="px-2 py-2 text-right">{t('crm.sim.colOpex', 'Kosten')}</th>
+                    <th className="px-2 py-2 text-right cursor-help" title={t('crm.sim.colMgmtHint', 'Verwaltungsgebühr in Prozent der Miete (bei Kurzzeit meist 25 %, mit Hotelkonzept 40 %)')}>{t('crm.sim.colMgmt', 'Verwaltung')}</th>
+                    <th className="px-2 py-2 text-right cursor-help" title={t('crm.sim.colOpexHint', 'Gemeinschaftskosten und Instandhaltungsrücklage, fallen ab Übergabe auch bei Leerstand an')}>{t('crm.sim.colOpex', 'Kosten')}</th>
                     <th className="px-2 py-2 text-right">{t('crm.sim.colInterest', 'Zinsen')}</th>
                     <th className="px-2 py-2 text-right">{t('crm.sim.colPrincipal', 'Tilgung')}</th>
                     <th className="px-2 py-2 text-right">{t('crm.sim.colTaxes', 'Steuern')}</th>
                     <th className="px-2 py-2 text-right">{t('crm.sim.colVat', 'MwSt-Erst.')}</th>
                     <th className="px-2 py-2 text-right">{t('crm.sim.colCashflow', 'Cashflow')}</th>
                     <th className="px-2 py-2 text-right">{t('crm.sim.colDebt', 'Restschuld')}</th>
-                    <th className="px-2 py-2 text-right">{t('crm.sim.colCommitted', 'gebunden')}</th>
+                    <th className="px-2 py-2 text-right cursor-help" title={t('crm.sim.colCommittedHint', 'Bereits gezahlte Kaufraten für Wohnungen, die noch nicht übergeben sind (ohne Wertzuwachs). Ab Übergabe zählt der Wert der Wohnung.')}>{t('crm.sim.colCommitted', 'gebunden')}</th>
                     <th className="px-2 py-2 text-right">{t('crm.sim.colWorth', 'Netto-Vermögen')}</th>
                   </tr></thead>
                   <tbody>
@@ -1677,7 +1725,8 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                         <td className="px-2 py-1.5 text-right">{r.opex ? `−${eur(r.opex)}` : ''}</td>
                         <td className="px-2 py-1.5 text-right">{r.interest ? `−${eur(r.interest)}` : ''}</td>
                         <td className="px-2 py-1.5 text-right">{r.principal ? `−${eur(r.principal)}` : ''}</td>
-                        <td className="px-2 py-1.5 text-right">{r.taxes ? `−${eur(r.taxes)}` : ''}</td>
+                        {/* Negative Steuer ist eine Erstattung (Zufluss), sonst stand dort „−-1.867 €" */}
+                        <td className={`px-2 py-1.5 text-right ${r.taxes < 0 ? 'text-green-700' : ''}`}>{r.taxes ? (r.taxes < 0 ? `+${eur(-r.taxes)}` : `−${eur(r.taxes)}`) : ''}</td>
                         <td className="px-2 py-1.5 text-right text-green-700">{r.vat ? `+${eur(r.vat)}` : ''}</td>
                         <td className={`px-2 py-1.5 text-right font-semibold ${r.cashflow >= 0 ? 'text-green-700' : 'text-amber-700'}`}>{r.rents || r.cashflow ? eur(r.cashflow) : ''}</td>
                         <td className="px-2 py-1.5 text-right">{r.debt ? eur(r.debt) : ''}</td>

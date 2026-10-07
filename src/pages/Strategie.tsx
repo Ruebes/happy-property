@@ -708,37 +708,92 @@ export default function Strategie() {
           </div>
         </Section>
 
-        {/* 9c — Kaufpreiszahlungen nach dem Zahlungsplan der Bauträger (Sven 6.10.26) */}
-        {a.purchasePayments.length > 0 && (
-          <Section title={t('strategie.payTitle', 'Wann du was zahlst')}
-            sub={t('strategie.paySub', 'Die Kaufpreisraten nach dem Zahlungsplan der Bauträger. Dein Eigenkapital fließt in zeitlicher Reihenfolge in die Raten, über alle Wohnungen zusammen. Was darüber hinausgeht, finanziert die Bank, bis zur Auszahlung des Darlehens als Zwischenkredit.')}>
-            <ScrollBox>
-              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560 }}>
-                <thead><tr style={{ borderBottom: '1px solid #eee' }}>
-                  <th style={{ ...th, textAlign: 'left' }}>{t('strategie.tYear', 'Jahr')}</th>
-                  <th style={th}>{t('strategie.payTotal', 'An die Bauträger')}</th>
-                  <th style={th}>{t('strategie.payEquity', 'aus Eigenkapital')}</th>
-                  <th style={th}>{t('strategie.payFinanced', 'finanziert')}</th>
-                  {a.purchasePayments.some(r => r.interest) && <th style={th}>{t('strategie.payInterest', 'Zinsen Bauträger-Raten')}</th>}
-                </tr></thead>
-                <tbody>
-                  {a.purchasePayments.map(r => (
-                    <tr key={r.year} style={{ borderBottom: '1px solid #f5f3f0' }}>
-                      <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{r.year}</td>
-                      <td style={{ ...td, fontWeight: 700 }}>{eur(r.total)}</td>
-                      <td style={td}>{r.equity ? eur(r.equity) : ''}</td>
-                      <td style={{ ...td, color: r.financed ? '#b45309' : undefined }}>{r.financed ? eur(r.financed) : ''}</td>
-                      {a.purchasePayments.some(x => x.interest) && <td style={td}>{r.interest ? eur(r.interest) : ''}</td>}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </ScrollBox>
-            <p style={{ fontSize: 12, color: '#777', margin: '10px 0 0', lineHeight: 1.6 }}>
-              {t('strategie.payShift', 'Die Bauraten sind vom Übergabetermin zurückgerechnet. Sie werden fällig, wenn der jeweilige Bauabschnitt fertig ist, und verschieben sich, wenn der Bau schneller oder langsamer vorankommt.')}
-            </p>
-          </Section>
-        )}
+        {/* 9c — Finanzierungsbedarf nach dem Zahlungsplan der Bauträger (Sven 7.10.26:
+            „Der Kunde soll genau sehen, an welchem Punkt er eine Finanzierung benötigt.") */}
+        {a.creditPath && a.creditPath.steps.length > 0 && (() => {
+          const cp = a.creditPath
+          const mm = (ym: number) => `${String(ym % 12 + 1).padStart(2, '0')}/${Math.floor(ym / 12)}`
+          const withInterest = cp.steps.some(s => s.interest > 0.5)
+          return (
+            <Section title={t('strategie.credTitle', 'Wann du einen Kredit brauchst')}
+              sub={t('strategie.credSub', 'Jede Kaufpreisrate nach dem Zahlungsplan der Bauträger. Dein Eigenkapital deckt die Raten der Reihe nach, über alle Wohnungen zusammen. Ab dem Punkt, an dem es aufgebraucht ist, brauchst du einen Kredit.')}>
+              <div style={kpiGrid}>
+                {[
+                  { l: t('strategie.credEqUntil', 'Eigenkapital reicht bis'), v: cp.firstCreditYm == null ? t('strategie.credAllCovered', 'alle Raten') : cp.equityLastYm != null ? mm(cp.equityLastYm) : '–' },
+                  { l: t('strategie.credFrom', 'Kredit nötig ab'), v: cp.firstCreditYm != null ? mm(cp.firstCreditYm) : t('strategie.credNone', 'kein Kredit nötig'), hero: cp.firstCreditYm != null },
+                  { l: t('strategie.credTotal', 'Kredit insgesamt'), v: eur(cp.creditTotal) },
+                ].map(k => (
+                  <div key={k.l} style={{ ...card, padding: isMobile ? 12 : 16, borderTop: `3px solid ${k.hero ? CORAL : '#e6e3dd'}` }}>
+                    <div style={{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.05em', color: '#8a8a8a' }}>{k.l}</div>
+                    <div style={{ fontFamily: SERIF, fontSize: isMobile ? 17 : 20, fontWeight: 800, color: k.hero ? CORAL : DARK, marginTop: 4 }}>{k.v}</div>
+                  </div>
+                ))}
+              </div>
+              <ScrollBox>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
+                  <thead><tr style={{ borderBottom: '1px solid #eee' }}>
+                    <th style={{ ...th, textAlign: 'left' }}>{t('strategie.credDate', 'Fällig')}</th>
+                    <th style={{ ...th, textAlign: 'left' }}>{t('strategie.credRate', 'Rate')}</th>
+                    <th style={th}>{t('strategie.credAmount', 'Betrag')}</th>
+                    <th style={th}>{t('strategie.credEquity', 'aus Eigenkapital')}</th>
+                    <th style={th}>{t('strategie.credCredit', 'Kredit')}</th>
+                    <th style={th}>{t('strategie.credCumul', 'Kredit gesamt')}</th>
+                    {withInterest && <th style={th}>{t('strategie.credInterest', 'zzgl. Zinsen')}</th>}
+                  </tr></thead>
+                  <tbody>
+                    {cp.steps.map((r, i) => (
+                      <tr key={`${r.ym}-${r.unit}-${i}`} style={{ borderBottom: '1px solid #f5f3f0', background: r.ym === cp.firstCreditYm && r.credit > 0.5 ? '#fff4ec' : undefined }}>
+                        <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{mm(r.ym)}</td>
+                        <td style={{ ...td, textAlign: 'left', whiteSpace: 'normal' }}>
+                          <div style={{ fontWeight: 600, color: DARK }}>{r.unit}</div>
+                          <div style={{ fontSize: 11.5, color: '#888' }}>{r.label}</div>
+                        </td>
+                        <td style={{ ...td, fontWeight: 700 }}>{eur(r.amount)}</td>
+                        <td style={td}>{r.fromEquity > 0.5 ? eur(r.fromEquity) : ''}</td>
+                        <td style={{ ...td, color: r.credit > 0.5 ? '#b45309' : undefined, fontWeight: r.credit > 0.5 ? 700 : undefined }}>{r.credit > 0.5 ? eur(r.credit) : ''}</td>
+                        <td style={td}>{r.creditTotal > 0.5 ? eur(r.creditTotal) : ''}</td>
+                        {withInterest && <td style={td}>{r.interest > 0.5 ? eur(r.interest) : ''}</td>}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </ScrollBox>
+              {cp.loans.length > 0 && (
+                <div style={{ ...card, marginTop: 12 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: DARK, marginBottom: 8 }}>
+                    {t('strategie.credLoans', 'Daraus werden diese Bankdarlehen')}
+                  </div>
+                  <ScrollBox>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 460 }}>
+                      <thead><tr style={{ borderBottom: '1px solid #eee' }}>
+                        <th style={{ ...th, textAlign: 'left' }}>{t('strategie.eObj', 'Wohnung')}</th>
+                        <th style={th}>{t('strategie.credLoan', 'Darlehen')}</th>
+                        <th style={th}>{t('strategie.credStart', 'Monatsrate ab')}</th>
+                        <th style={th}>{t('strategie.credMonthly', 'Monatsrate')}</th>
+                      </tr></thead>
+                      <tbody>
+                        {cp.loans.map(l => (
+                          <tr key={l.key} style={{ borderBottom: '1px solid #f5f3f0' }}>
+                            <td style={{ ...td, textAlign: 'left', fontWeight: 600 }}>{l.name}</td>
+                            <td style={{ ...td, fontWeight: 700 }}>{eur(l.amount)}</td>
+                            <td style={td}>{mm(l.startYm)}</td>
+                            <td style={td}>{eur(l.monthly)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </ScrollBox>
+                  <p style={{ fontSize: 12, color: '#777', margin: '10px 0 0', lineHeight: 1.6 }}>
+                    {t('strategie.credBridgeNote', 'Bis das Darlehen einer Wohnung ausgezahlt ist, finanziert die Bank die fälligen Raten als Zwischenkredit. Darauf fallen nur Zinsen an, sie sind im Cashflow enthalten. Ab dem genannten Monat läuft die normale Monatsrate.')}
+                  </p>
+                </div>
+              )}
+              <p style={{ fontSize: 12, color: '#777', margin: '10px 0 0', lineHeight: 1.6 }}>
+                {t('strategie.payShift', 'Die Bauraten sind vom Übergabetermin zurückgerechnet. Sie werden fällig, wenn der jeweilige Bauabschnitt fertig ist, und verschieben sich, wenn der Bau schneller oder langsamer vorankommt.')}
+              </p>
+            </Section>
+          )
+        })()}
 
         {/* 10 — Verkauf */}
         {a.exits.length > 0 && (

@@ -115,7 +115,8 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       fin: (pu.fin ?? calcParams.fin) === 'yes',
       buyM: nowD.getMonth() + 1, buyY: nowD.getFullYear(), readyM, readyY,
       plan: monthsAway > 2 ? (sched ? 'dev' as const : 'luma' as const) : 'sofort' as const,
-      ...(monthsAway > 2 && sched ? { schedule: sched } : {}),
+      // Luma-Standard bleibt plan 'luma', der Plan steht als Markierung dabei.
+      ...(monthsAway > 2 && sched0 ? { schedule: sched ?? sched0 } : {}),
       // Die im Wizard eingestellten Werte dieser Wohnung 1:1 weitergeben, damit
       // die Strategie mit denselben Zahlen rechnet wie die Einzelberechnung.
       calc: {

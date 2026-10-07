@@ -340,6 +340,60 @@ export interface UnitOutcome {
   roe10: number
 }
 
+// ── Finanzierungsbedarf (Sven 7.10.26) ──────────────────────────────────────
+// „Der Kunde soll genau sehen, an welchem Punkt er eine Finanzierung benoetigt.
+// Wie hoch ist der Kredit, den man nehmen muss, und wann?" Jede Kaufpreiszahlung
+// in zeitlicher Reihenfolge: zuerst deckt sie das Eigenkapital (was in die
+// Kaufpreise fliesst, wie in der Zwischenfinanzierung), danach der Kredit. Bis
+// ein Bankdarlehen ausgezahlt ist, laeuft der Kredit als Zwischenfinanzierung.
+export interface FinancingStep {
+  ym: number; unit: string; label: string
+  amount: number          // Zahlung an den Bautraeger (Tilgungsanteil)
+  interest: number        // Zins auf Raten nach der Uebergabe (zusaetzlich)
+  fromEquity: number; credit: number
+  creditTotal: number     // Kredit insgesamt bis hierher
+}
+export interface BankLoanInfo { key: string; name: string; amount: number; startYm: number; monthly: number }
+export interface FinancingPath {
+  equity: number
+  steps: FinancingStep[]
+  equityLastYm: number | null   // letzte Zahlung, die das Eigenkapital noch ganz deckt
+  firstCreditYm: number | null  // ab hier braucht der Kunde einen Kredit
+  creditTotal: number
+  loans: BankLoanInfo[]
+}
+export function financingPath(outcomes: UnitOutcome[], endYmOf?: (o: UnitOutcome) => number): FinancingPath {
+  const own = outcomes.filter(o => !o.unit.model)
+  const equity = own.reduce((a, o) => a + o.res.ekAbs, 0)
+  // Zahlungen derselben Wohnung im selben Monat zusammenfassen (Reservierung + Vertrag).
+  const merged = new Map<string, { ym: number; unit: string; labels: string[]; amount: number; interest: number }>()
+  for (const o of own) {
+    const end = endYmOf ? endYmOf(o) : Infinity
+    for (const pay of o.payments) {
+      if (pay.ym > end) continue
+      const k = `${pay.ym}|${o.unit.key}`
+      const m = merged.get(k) ?? { ym: pay.ym, unit: o.unit.name, labels: [], amount: 0, interest: 0 }
+      m.labels.push(pay.label); m.amount += pay.amount; m.interest += pay.interest ?? 0
+      merged.set(k, m)
+    }
+  }
+  let left = equity, total = 0
+  let equityLastYm: number | null = null, firstCreditYm: number | null = null
+  const steps: FinancingStep[] = [...merged.values()].sort((a, b) => a.ym - b.ym).map(m => {
+    const fromEquity = Math.min(Math.max(0, left), m.amount)
+    left -= fromEquity
+    const credit = m.amount - fromEquity
+    total += credit
+    if (credit <= 0.5) equityLastYm = m.ym
+    else if (firstCreditYm == null) firstCreditYm = m.ym
+    return { ym: m.ym, unit: m.unit, label: m.labels.join(' + '), amount: m.amount, interest: m.interest, fromEquity, credit, creditTotal: total }
+  })
+  const loans = own.filter(o => o.loan > 0)
+    .map(o => ({ key: o.unit.key, name: o.unit.name, amount: o.loan, startYm: loanReadyYm(o.unit), monthly: o.annuityMonthly }))
+    .sort((a, b) => a.startYm - b.startYm)
+  return { equity, steps, equityLastYm, firstCreditYm, creditTotal: total, loans }
+}
+
 // Beim Bautraeger noch offene Summe nach der Uebergabe, Stand Jahresende.
 export function devBalanceAt(o: UnitOutcome, year: number): number {
   if (year < Math.floor(afterAnchorYm(o.unit) / 12)) return 0

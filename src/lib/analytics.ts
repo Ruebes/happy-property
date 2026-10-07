@@ -6,6 +6,7 @@
 import {
   allocate, aggregate, totalsOf, computeExit, runScenarios, roeMeaningful, assessRisk,
   breakEvenGrowth, SCENARIO_KEYS, describeSchedule, devAfterMonths, loanReadyYm, ymOf, devBalanceAt, bridgeShareOf,
+  financingPath, type FinancingPath,
   type SimUnit, type SimParams, type ScenarioKey, type RiskItem, type ExitResult,
   type ScenarioResult,
 } from './strategy'
@@ -120,10 +121,6 @@ export interface JourneyStep { label: string; value: string; note: string }
 // ── Was wann passiert ────────────────────────────────────────────────────────
 export interface TimelineEntry { year: number; kind: 'buy' | 'handover' | 'refinance' | 'purchase' | 'sale'; label: string; detail: string }
 
-// Kaufpreiszahlungen je Jahr nach dem Zahlungsplan der Bautraeger (Sven 6.10.26):
-// was an die Bautraeger geht, wie viel davon das Eigenkapital deckt und wie viel
-// finanziert werden muss. Zins = Zins auf Bautraeger-Raten nach der Uebergabe.
-export interface PurchasePaymentRow { year: number; total: number; equity: number; financed: number; interest: number }
 
 export interface CustomerSummary {
   firstYear: number; lastYear: number
@@ -176,7 +173,8 @@ export interface CustomerAnalytics {
   moneyFlow: MoneyFlowRow[]
   journey: JourneyStep[]
   timeline: TimelineEntry[]
-  purchasePayments: PurchasePaymentRow[]
+  // Finanzierungsbedarf je Zahlung (nur mit Zahlungsplan des Bautraegers)
+  creditPath: FinancingPath | null
   keyInsights: Insight[]
   insights: Insight[]
   drivers: string[]
@@ -626,36 +624,15 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
     }
   }
 
-  // ── Kaufpreiszahlungen je Jahr ────────────────────────────────────────────
-  // Gleiche Reihenfolge wie die Zwischenfinanzierung in aggregate(): zuerst das
-  // Eigenkapital, was darueber hinausgeht, finanziert die Bank. Eigenkapital =
-  // was wirklich in die Kaufpreise fliesst (ekAbs je Wohnung): Im Reinvestment-
-  // Modus bleiben Reserve und Kaufnebenkosten draussen, sonst passte die Tabelle
-  // nicht zu den Wohnungskarten. Raten nach dem Verkauf entfallen.
-  const buyUnits = outcomes.filter(o => !o.unit.model)
-  // Nur mit echtem Bautraeger-Plan: Der alte Platzhalter-Plan ('luma' fuer alle)
-  // ist kein Zahlungsplan des Bautraegers, und schon verschickte Seiten bleiben so
-  // unveraendert.
-  const hasDevPlan = buyUnits.some(o => o.unit.plan === 'dev' && !!o.unit.schedule)
-  const pays = (hasDevPlan ? buyUnits : [])
-    .flatMap(o => { const end = endYmOf(o); return o.payments.filter(x => x.ym <= end) })
-    .sort((x, y) => x.ym - y.ym)
-  const payByYear = new Map<number, PurchasePaymentRow>()
-  let ekLeft = buyUnits.reduce((a, o) => a + o.res.ekAbs, 0)
-  for (const pay of pays) {
-    const year = Math.floor(pay.ym / 12)
-    const row = payByYear.get(year) ?? { year, total: 0, equity: 0, financed: 0, interest: 0 }
-    const fromEk = Math.min(Math.max(0, ekLeft), pay.amount)
-    ekLeft -= fromEk
-    row.total += pay.amount; row.equity += fromEk; row.financed += pay.amount - fromEk
-    row.interest += pay.interest ?? 0
-    payByYear.set(year, row)
-  }
-  const purchasePayments: PurchasePaymentRow[] = [...payByYear.values()]
-    .sort((x, y) => x.year - y.year)
-    // Finanziert = Summe minus Eigenkapital aus den GERUNDETEN Werten, damit
-    // die Zeile auf der Seite aufgeht.
-    .map(r => ({ year: r.year, total: r0(r.total), equity: r0(r.equity), financed: r0(r.total) - r0(r.equity), interest: r0(r.interest) }))
+  // ── Finanzierungsbedarf ───────────────────────────────────────────────────
+  // Jede Kaufpreiszahlung: wie viel deckt das Eigenkapital, ab wann und in
+  // welcher Hoehe braucht der Kunde einen Kredit (Sven 7.10.26). Raten nach dem
+  // Verkauf entfallen. Nur mit echtem Bautraeger-Plan: Der alte Platzhalter-Plan
+  // ('luma' fuer alle) ist kein Zahlungsplan des Bautraegers, und schon
+  // verschickte Seiten bleiben so unveraendert. Luma-Wohnungen tragen den Plan
+  // als Markierung (schedule) bei plan 'luma'.
+  const realPlan = outcomes.some(o => !o.unit.model && !!o.unit.schedule && (o.unit.plan === 'dev' || o.unit.plan === 'luma'))
+  const creditPath: FinancingPath | null = realPlan ? financingPath(outcomes, endYmOf) : null
   for (const e of events) {
     if (e.kind === 'refinance') {
       timeline.push({
@@ -709,7 +686,7 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
     liquidity, minimumReserve: reserve, liquidityWarning,
     financing, financingKpis, capitalSteps, recyclingRows, opportunity,
     properties, tax, taxKpis, scenarios, exits, risks, insights, drivers, sensitivity,
-    balance, cost, moneyFlow, journey, timeline, purchasePayments, keyInsights, events,
+    balance, cost, moneyFlow, journey, timeline, creditPath, keyInsights, events,
   }
 }
 
