@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { CustomSelect } from '../CustomSelect'
 import { NumberStepper } from '../NumberStepper'
 import { MonthPlanPicker } from './MonthPlanPicker'
+import { StrategieView } from '../../pages/Strategie'
 import { createStrategyOutboxDraft } from '../../lib/calcOutbox'
 import { leadProfileIds } from '../../lib/detachProperty'
 import { unitNet } from '../../lib/price'
@@ -139,6 +140,9 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   const [shareToken, setShareToken] = useState('')
   const [sharedAt, setSharedAt] = useState<string | null>(null)
   const [releasing, setReleasing] = useState(false)
+  // Vorschau aus Kundensicht während der Erstellung (Sven 7.10.26): dieselbe
+  // Seite wie /strategie/:token, live mit dem aktuellen Stand hier.
+  const [preview, setPreview] = useState<null | 'desktop' | 'mobile'>(null)
 
   // Gespeichertes Szenario laden, wenn der Wizard nichts mitgibt
   useEffect(() => { void (async () => {
@@ -612,7 +616,15 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
               {t('crm.sim.subtitle2', 'Zeitachse über mehrere Käufe - gerechnet mit derselben Engine wie die Einzelrechnungen (Annuität, Kurz-/Langzeit, Steuern, MwSt).')}
             </p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none px-2">✕</button>
+          <div className="flex items-center gap-2">
+            {units.length > 0 && (
+              <button onClick={() => setPreview('desktop')}
+                className="px-3 py-1.5 rounded-lg text-sm font-medium border border-orange-300 text-orange-700 hover:bg-orange-50">
+                👁 {t('crm.sim.previewBtn', 'Kundenansicht')}
+              </button>
+            )}
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none px-2">✕</button>
+          </div>
         </div>
 
         <div className="p-5 space-y-5">
@@ -1827,7 +1839,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
             </div>
 
             <p className="text-[11px] text-gray-400">
-              {t('crm.sim.engineNote2', 'Gerechnet mit der Engine der Einzelrechnungen: Annuitätendarlehen ab Übergabe, Miete und Steuern nach der oben gewählten Struktur ab Übergabe, MwSt-Erstattung bei Kurzzeitvermietung nach 24 Monaten. Kaufraten laufen vor der Übergabe aus dem Eigenkapital. Die Einzelrechnungen für den Kunden erstellst du wie gewohnt über den Haken "Mit Rendite-Berechnung" - gleiche Zahlen, gleiche Engine.')}
+              {t('crm.sim.engineNote3', 'Gerechnet mit der Engine der Einzelrechnungen: Annuitätendarlehen ab Übergabe, Miete und Steuern nach der oben gewählten Struktur ab Übergabe, MwSt-Erstattung bei Kurzzeitvermietung 18 Monate nach Übergabe. Kaufraten nach dem Zahlungsplan des Bauträgers: zuerst aus dem Eigenkapital; bei Raten nach der Übergabe zahlen Miete und MwSt-Erstattung mit, den Rest finanziert die Bank. Die Einzelrechnungen für den Kunden erstellst du wie gewohnt über den Haken "Mit Rendite-Berechnung" - gleiche Zahlen, gleiche Engine.')}
             </p>
           </>)}
           {units.length === 0 && (
@@ -1835,6 +1847,35 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
           )}
         </div>
       </div>
+      {preview && (
+        <div className="fixed inset-0 z-[70] bg-black/60 flex flex-col">
+          <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-white border-b border-gray-200 shadow-sm">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-gray-900">👁 {t('crm.sim.previewTitle', 'Vorschau aus Kundensicht')}</p>
+              <p className="text-[11px] text-gray-500 truncate">{t('crm.sim.previewHint', 'Live mit dem aktuellen Stand im Simulator. Nicht freigegeben, nicht verschickt.')}</p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="flex rounded-lg overflow-hidden border border-gray-200">
+                {(['desktop', 'mobile'] as const).map(v => (
+                  <button key={v} onClick={() => setPreview(v)}
+                    className={`px-3 py-1.5 text-xs font-medium ${preview === v ? 'bg-orange-500 text-white' : 'bg-white text-gray-600'}`}>
+                    {v === 'desktop' ? t('crm.sim.previewDesktop', 'Desktop') : t('crm.sim.previewMobile', 'Handy')}
+                  </button>
+                ))}
+              </div>
+              <button onClick={() => setPreview(null)} className="px-3 py-1.5 rounded-lg text-sm border border-gray-200 text-gray-600 hover:bg-gray-50">
+                {t('common.close', 'Schließen')}
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto bg-[#e9e7e3]">
+            <div className={preview === 'mobile' ? 'mx-auto my-4 w-[390px] max-w-full rounded-2xl overflow-hidden shadow-xl' : ''}>
+              <StrategieView units={units} params={params} recipientName={lead ? `${lead.first_name} ${lead.last_name}`.trim() : null}
+                forceMobile={preview === 'mobile'} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

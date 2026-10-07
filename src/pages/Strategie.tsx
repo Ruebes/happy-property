@@ -109,8 +109,6 @@ export default function Strategie() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [draft, setDraft] = useState(false)
-  const [showYears, setShowYears] = useState(false)
-  const isMobile = useIsMobile()
 
   useEffect(() => { void (async () => {
     if (!token) return
@@ -171,14 +169,38 @@ export default function Strategie() {
     })()
   }, [token])
 
+  if (loading) return <Centered>{t('strategie.loading', 'Lädt…')}</Centered>
+  if (err || !units.length) return <Centered>{err || t('strategie.empty', 'Dieser Fahrplan enthält noch keine Wohnungen.')}</Centered>
+  return (
+    <StrategieView units={units} params={params} recipientName={meta?.recipient_name}
+      banner={draft ? {
+        title: t('strategie.previewTag', 'Interne Vorschau.'),
+        text: t('strategie.previewNote', 'Der Kunde kann diesen Link noch nicht öffnen. Er wird freigeschaltet, sobald der Eintrag im Postausgang tatsächlich hinausgeht. Bitte den Link nicht selbst weiterschicken.'),
+      } : null} />
+  )
+}
+
+// ── Die Kundenansicht selbst ─────────────────────────────────────────────────
+// Getrennt vom Laden, damit der Simulator dieselbe Seite live als Vorschau aus
+// Kundensicht zeigen kann (Sven 7.10.26) - ohne Speichern, ohne Versand, und
+// garantiert identisch mit dem, was der Kunde später sieht.
+export function StrategieView({ units, params, recipientName, banner, forceMobile }: {
+  units: SimUnit[]; params: SimParams; recipientName?: string | null
+  banner?: { title: string; text: string } | null
+  // Vorschau im Simulator: Handy-Ansicht unabhängig von der Fensterbreite
+  forceMobile?: boolean
+}) {
+  const { t } = useTranslation()
+  const [showYears, setShowYears] = useState(false)
+  const viewportMobile = useIsMobile()
+  const isMobile = forceMobile ?? viewportMobile
+
   // EINE Berechnung für die ganze Seite.
   const a: CustomerAnalytics | null = useMemo(
     () => units.length ? buildCustomerAnalytics(units, params) : null,
     [units, params],
   )
-
-  if (loading) return <Centered>{t('strategie.loading', 'Lädt…')}</Centered>
-  if (err || !units.length || !a) return <Centered>{err || t('strategie.empty', 'Dieser Fahrplan enthält noch keine Wohnungen.')}</Centered>
+  if (!a) return <Centered>{t('strategie.empty', 'Dieser Fahrplan enthält noch keine Wohnungen.')}</Centered>
 
   const years = a.wealth.map(w => w.year)
   const today = new Date().toLocaleDateString('de-DE')
@@ -196,10 +218,9 @@ export default function Strategie() {
 
   return (
     <div style={{ background: '#f4f3f1', minHeight: '100vh', fontFamily: SANS, color: '#1a1a1a' }}>
-      {draft && (
+      {banner && (
         <div style={{ background: '#7c2d12', color: '#fff', padding: isMobile ? '10px 14px' : '11px 22px', fontSize: 13, lineHeight: 1.5 }}>
-          <strong>{t('strategie.previewTag', 'Interne Vorschau.')}</strong>{' '}
-          {t('strategie.previewNote', 'Der Kunde kann diesen Link noch nicht öffnen. Er wird freigeschaltet, sobald der Eintrag im Postausgang tatsächlich hinausgeht. Bitte den Link nicht selbst weiterschicken.')}
+          <strong>{banner.title}</strong>{' '}{banner.text}
         </div>
       )}
       <div style={{ maxWidth: 1080, margin: '0 auto', padding: isMobile ? '18px 14px 48px' : '28px 22px 64px' }}>
@@ -212,7 +233,7 @@ export default function Strategie() {
               {t('strategie.title2', 'Deine persönliche Investmentstrategie')}
             </div>
             <div style={{ fontSize: 12.5, color: '#666', marginTop: 2 }}>
-              {meta?.recipient_name && <>{t('strategie.customer', 'Für')}: <b>{meta.recipient_name}</b> · </>}
+              {recipientName && <>{t('strategie.customer', 'Für')}: <b>{recipientName}</b> · </>}
               {t('strategie.periodShort', '{{from}} bis {{to}}', { from: a.summary.firstYear, to: a.summary.lastYear })}
             </div>
             <div style={{ fontSize: 11, color: '#aaa' }}>{t('strategie.generatedOn', 'Stand {{date}}', { date: today })}</div>
