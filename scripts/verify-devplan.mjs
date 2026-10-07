@@ -19,9 +19,10 @@ import { compute, DEFAULT_PARAMS } from '/tmp/rechner.mjs'
 import {
   DEFAULT_SIM_PARAMS, allocate, aggregate, computeExit, paymentPlan, scheduleFromProject,
   normalizeSchedule, describeSchedule, devBalanceAt, loanReadyYm, pledgeableFromYear, ymOf,
-  MITO_SCHEDULE, LUMA_SCHEDULE, KUUTIO_SCHEDULE, isLumaStandard,
+  MITO_SCHEDULE, LUMA_SCHEDULE, KUUTIO_SCHEDULE, isLumaStandard, totalsOf,
 } from '/tmp/strategy.mjs'
 import { runReinvest } from '/tmp/reinvest.mjs'
+const st_ready = o => loanReadyYm(o.unit)
 
 const eur = n => Math.round(n).toLocaleString('de-DE')
 let pass = 0, fail = 0
@@ -87,7 +88,7 @@ T('Bank startet 24 Monate nach Übergabe', loanReadyYm(om.unit) === ymOf(2030, 1
 T('keine Bankrestschuld vor dem Start', om.res.restL[0] === 0 && om.res.restL[1] === 0 && delayIdx === 2,
   `restL ${om.res.restL.slice(0, 4).map(eur).join(' / ')}`)
 T('keine Bankzinsen vor dem Start', om.res.intC[0] === 0 && om.res.intC[1] === 0 && om.res.intC[2] > 0)
-T('Darlehensbetrag bleibt gleich', om.loan === allocate([mamba({ plan: 'luma', schedule: null })], P)[0].loan)
+T('Darlehen höchstens Kaufpreis minus Eigenkapital-Anteil', om.loan <= om.gross - om.ekAlloc + 1, `${eur(om.loan)} / ${eur(om.gross - om.ekAlloc)}`)
 T('Monatsrate wird trotzdem ausgewiesen', om.annuityMonthly > 0, eur(om.annuityMonthly))
 
 const agg = aggregate([om], P)
@@ -255,6 +256,37 @@ const rAgg = aggregate([rio], RP)
 const paid29 = rio.payments.filter(x => Math.floor(x.ym / 12) <= 2029).reduce((a, x) => a + x.amount, 0)
 T('Reinvest: Zwischenkredit = Raten minus eingesetztes Eigenkapital', near(rAgg.rows.find(r => r.year === 2029).bridgeDebt, paid29 - rio.res.ekAbs, 2),
   `${eur(rAgg.rows.find(r => r.year === 2029).bridgeDebt)} / ${eur(paid29 - rio.res.ekAbs)}`)
+
+// ── 11. Liquiditaet wie im Deal Ilic (Sven 7.10.26) ──────────────────────────
+// Miete und MwSt-Erstattung zahlen die Mito-Raten mit, die Bank nur die Luecke.
+const LP = { ...DEFAULT_SIM_PARAMS, ek: 720000, deTaxPct: 30, interest: 3.8, buyerStructure: 'couple', exitAfterYears: 7 }
+const LU = [mamba({ calc: { mgmtPct: 25, bedrooms: 2, hotelConcept: true, season: { totalOcc: 70, adrHigh: 400 } }, rent: 6265 }),
+  kuu({ key: 'B9', priceNet: 585000, furnNet: 25000 })]
+const lo = allocate(LU, LP), la = aggregate(lo, LP)
+const lm = lo.find(o => o.unit.key === 'M'), lb = lo.find(o => o.unit.key === 'B9')
+T('Liquidität aktiv', !!la.liquidity)
+T('Mito-Kredit deutlich kleiner als 70 % (Miete/MwSt zahlen mit)', lm.loan < 0.5 * (lm.gross - lm.ekAlloc), `Mamba ${eur(lm.loan)} statt ${eur(lm.gross - lm.ekAlloc)}`)
+T('Kuutio-Darlehen unverändert bei Übergabe', lb.loan === lb.res.loan && st_ready(lb) === ymOf(2027, 12))
+const recOk = la.liquidity.records.every(r => near(r.amount, r.fromEquity + r.fromSurplus + r.credit, 0.05))
+T('jede Rate = Eigenkapital + Überschuss + Kredit', recOk)
+const surSum = la.liquidity.records.reduce((a, r) => a + r.fromSurplus, 0)
+const retSum = la.rows.reduce((a, r) => a + (r.retained ?? 0), 0)
+T('einbehaltener Cashflow = aus Überschuss bezahlte Raten', near(surSum, retSum, 3), `${eur(surSum)} / ${eur(retSum)}`)
+const credSum = la.liquidity.records.reduce((a, r) => a + r.credit, 0)
+T('Kredit gesamt = Summe der Bankdarlehen', near(credSum, lm.loan + lb.loan, 3), `${eur(credSum)} / ${eur(lm.loan + lb.loan)}`)
+T('Mito-Kredit = abgerufener Kredit bis zur letzten Rate', near(lm.loan, la.liquidity.records.filter(r => r.key === 'M').reduce((a, r) => a + r.credit, 0), 2))
+const debtOk = la.rows.every(r => near(r.debt, lo.reduce((a, o) => {
+  const i = r.year - o.unit.readyY
+  return a + (i >= 0 ? o.res.restL[Math.min(i, o.res.restL.length - 1)] : 0) + devBalanceAt(o, r.year)
+}, 0) + r.bridgeDebt, 2))
+T('Restschuld = Bankdarlehen + offene Mito-Raten + abgerufener Kredit', debtOk, la.rows.map(r => `${r.year}:${eur(r.debt)}`).join(' '))
+T('Eigenkapital des Kunden bleibt der Verteilungsanteil', near(lo.reduce((a, o) => a + o.ekAlloc, 0), 720000, 2))
+const lt = totalsOf(lo, la.rows, LP, computeExit(lo, LP, la.firstYear, la.rows))
+T('Rendite und Vermögen rechenbar', Number.isFinite(lt.irr) && lt.netWorth > 0, `IRR ${(lt.irr * 100).toFixed(1)} %`)
+const lcp = buildCustomerAnalytics(LU, LP).creditPath
+T('Kundenseite zeigt Spalte aus Miete/MwSt', lcp.steps.some(x => x.fromSurplus > 0) && near(lcp.creditTotal, lm.loan + lb.loan, 3))
+// Reinvestment: Liquiditaetsrechnung aus (eigener Kassen-Motor)
+T('Reinvest: keine Liquiditätsrechnung', !aggregate(allocate(LU, { ...LP, reinvestEnabled: true }), { ...LP, reinvestEnabled: true }).liquidity)
 
 console.log(`\n${fail ? '❌' : '🎉'}  ${pass} PASS, ${fail} FAIL`)
 process.exit(fail ? 1 : 0)

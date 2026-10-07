@@ -471,6 +471,7 @@ export default function Strategie() {
                 <th style={th}>{t('strategie.tAmort', 'Tilgung')}</th>
                 <th style={th}>{t('strategie.tTax', 'Steuern')}</th>
                 <th style={th}>{t('strategie.tVat', 'MwSt-Erstattung')}</th>
+                {a.cashflowRows.some(r => r.toPayments) && <th style={th}>{t('strategie.tToPay', 'für Kaufraten')}</th>}
                 <th style={th}>{t('strategie.tNet', 'Cashflow')}</th>
               </tr></thead>
               <tbody>
@@ -487,6 +488,7 @@ export default function Strategie() {
                       {r.tax ? (r.tax < 0 ? `+${eur(-r.tax)}` : `−${eur(r.tax)}`) : ''}
                     </td>
                     <td style={{ ...td, color: '#1d7a4f' }}>{r.vatRefund ? `+${eur(r.vatRefund)}` : ''}</td>
+                    {a.cashflowRows.some(x => x.toPayments) && <td style={td}>{r.toPayments ? (r.toPayments > 0 ? `−${eur(r.toPayments)}` : `+${eur(-r.toPayments)}`) : ''}</td>}
                     <td style={{ ...td, fontWeight: 700, color: r.net >= 0 ? '#1d7a4f' : '#b45309' }}>{eur(r.net)}</td>
                   </tr>
                 ))}
@@ -714,9 +716,12 @@ export default function Strategie() {
           const cp = a.creditPath
           const mm = (ym: number) => `${String(ym % 12 + 1).padStart(2, '0')}/${Math.floor(ym / 12)}`
           const withInterest = cp.steps.some(s => s.interest > 0.5)
+          const withSurplus = cp.steps.some(s => s.fromSurplus > 0.5)
           return (
             <Section title={t('strategie.credTitle', 'Wann du einen Kredit brauchst')}
-              sub={t('strategie.credSub', 'Jede Kaufpreisrate nach dem Zahlungsplan der Bauträger. Dein Eigenkapital deckt die Raten der Reihe nach, über alle Wohnungen zusammen. Ab dem Punkt, an dem es aufgebraucht ist, brauchst du einen Kredit.')}>
+              sub={withSurplus
+                ? t('strategie.credSubSurplus', 'Jede Kaufpreisrate nach dem Zahlungsplan der Bauträger. Dein Eigenkapital deckt die Raten der Reihe nach, über alle Wohnungen zusammen. Danach zahlen Miete und MwSt-Erstattung mit. Nur was dann noch fehlt, finanziert die Bank.')
+                : t('strategie.credSub', 'Jede Kaufpreisrate nach dem Zahlungsplan der Bauträger. Dein Eigenkapital deckt die Raten der Reihe nach, über alle Wohnungen zusammen. Ab dem Punkt, an dem es aufgebraucht ist, brauchst du einen Kredit.')}>
               <div style={kpiGrid}>
                 {[
                   { l: t('strategie.credEqUntil', 'Eigenkapital reicht bis'), v: cp.firstCreditYm == null ? t('strategie.credAllCovered', 'alle Raten') : cp.equityLastYm != null ? mm(cp.equityLastYm) : '–' },
@@ -736,6 +741,7 @@ export default function Strategie() {
                     <th style={{ ...th, textAlign: 'left' }}>{t('strategie.credRate', 'Rate')}</th>
                     <th style={th}>{t('strategie.credAmount', 'Betrag')}</th>
                     <th style={th}>{t('strategie.credEquity', 'aus Eigenkapital')}</th>
+                    {withSurplus && <th style={th}>{t('strategie.credSurplus', 'aus Miete/MwSt')}</th>}
                     <th style={th}>{t('strategie.credCredit', 'Kredit')}</th>
                     <th style={th}>{t('strategie.credCumul', 'Kredit gesamt')}</th>
                     {withInterest && <th style={th}>{t('strategie.credInterest', 'zzgl. Zinsen')}</th>}
@@ -750,6 +756,7 @@ export default function Strategie() {
                         </td>
                         <td style={{ ...td, fontWeight: 700 }}>{eur(r.amount)}</td>
                         <td style={td}>{r.fromEquity > 0.5 ? eur(r.fromEquity) : ''}</td>
+                        {withSurplus && <td style={{ ...td, color: r.fromSurplus > 0.5 ? '#1d7a4f' : undefined }}>{r.fromSurplus > 0.5 ? eur(r.fromSurplus) : ''}</td>}
                         <td style={{ ...td, color: r.credit > 0.5 ? '#b45309' : undefined, fontWeight: r.credit > 0.5 ? 700 : undefined }}>{r.credit > 0.5 ? eur(r.credit) : ''}</td>
                         <td style={td}>{r.creditTotal > 0.5 ? eur(r.creditTotal) : ''}</td>
                         {withInterest && <td style={td}>{r.interest > 0.5 ? eur(r.interest) : ''}</td>}
@@ -784,7 +791,7 @@ export default function Strategie() {
                     </table>
                   </ScrollBox>
                   <p style={{ fontSize: 12, color: '#777', margin: '10px 0 0', lineHeight: 1.6 }}>
-                    {t('strategie.credBridgeNote', 'Bis das Darlehen einer Wohnung ausgezahlt ist, finanziert die Bank die fälligen Raten als Zwischenkredit. Darauf fallen nur Zinsen an, sie sind im Cashflow enthalten. Ab dem genannten Monat läuft die normale Monatsrate.')}
+                    {t('strategie.credBridgeNote2', 'Bis die Monatsrate eines Darlehens beginnt, rufst du den Kredit in Stufen ab, so wie die Raten fällig werden. Darauf fallen nur Zinsen an, sie sind im Cashflow enthalten. Ab dem genannten Monat läuft die normale Monatsrate.')}
                   </p>
                 </div>
               )}

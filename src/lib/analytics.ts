@@ -38,6 +38,9 @@ export interface CashflowRow {
   // diese Spalte ging die Tabelle nicht auf: der Cashflow sprang um einen
   // fuenfstelligen Betrag, den keine der gezeigten Positionen erklaerte.
   vatRefund: number
+  // Nur bei Bautraeger-Raten nach der Uebergabe: Ueberschuss, der die Raten
+  // bezahlt (net ist dann der frei verfuegbare Rest).
+  toPayments?: number
   net: number
 }
 export interface LiquidityPoint { year: number; cash: number }
@@ -195,7 +198,7 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
   const outcomes = ri ? ri.outcomes : allocate(units, params)
   const agg = ri
     ? { rows: ri.rows, firstYear: ri.firstYear, lastYear: ri.lastYear }
-    : (() => { const a = aggregate(outcomes, params); return { rows: a.rows, firstYear: a.firstYear, lastYear: a.lastYear } })()
+    : (() => { const a = aggregate(outcomes, params); return { rows: a.rows, firstYear: a.firstYear, lastYear: a.lastYear, liquidity: a.liquidity } })()
   const exit: ExitResult | null = ri ? null : computeExit(outcomes, params, agg.firstYear, agg.rows)
   // Im Reinvestment-Modus rechnet der Motor die Rendite aus Sicht des Investors
   // (Einzahlungen raus, Endwert rein). Diese Zahl gilt fuer die ganze Seite -
@@ -257,6 +260,7 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
     amortization: r0(row.principal),
     tax: r0(row.taxes),
     vatRefund: r0(row.vat),
+    ...(row.retained ? { toPayments: r0(row.retained) } : {}),
     net: r0(row.cashflow),
   }))
 
@@ -609,6 +613,12 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
         + (after.length
           ? ` ${eur(after.reduce((a, x) => a + x.amount, 0))} zahlst du ${raten(after.length)} bis ${mmYYYY(after[after.length - 1].ym)} an den Bauträger, zuzüglich ${eur(after.reduce((a, x) => a + (x.interest ?? 0), 0))} Zinsen.`
           : '')
+        + (() => {
+          // Bei Raten nach der Uebergabe: wie viel davon Miete und MwSt-Erstattung tragen
+          const liq = 'liquidity' in agg ? agg.liquidity : undefined
+          const sur = (liq?.records ?? []).filter(r => r.key === o.unit.key && r.ym <= endYm).reduce((a, r) => a + r.fromSurplus, 0)
+          return sur > 0.5 ? ` Davon zahlen Miete und MwSt-Erstattung ${eur(sur)}, nur den Rest finanziert die Bank.` : ''
+        })()
         + (cut > 0
           ? (saleYearOf(o) != null && saleYearOf(o)! <= agg.lastYear
             ? ` Die restlichen ${eur(cut)} an den Bauträger werden beim Verkauf aus dem Erlös bezahlt.`
@@ -632,7 +642,8 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
   // verschickte Seiten bleiben so unveraendert. Luma-Wohnungen tragen den Plan
   // als Markierung (schedule) bei plan 'luma'.
   const realPlan = outcomes.some(o => !o.unit.model && !!o.unit.schedule && (o.unit.plan === 'dev' || o.unit.plan === 'luma'))
-  const creditPath: FinancingPath | null = realPlan ? financingPath(outcomes, endYmOf) : null
+  const creditPath: FinancingPath | null = realPlan
+    ? financingPath(outcomes, endYmOf, 'liquidity' in agg ? agg.liquidity : undefined) : null
   for (const e of events) {
     if (e.kind === 'refinance') {
       timeline.push({

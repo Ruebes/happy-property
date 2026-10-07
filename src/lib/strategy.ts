@@ -338,6 +338,10 @@ export interface UnitOutcome {
   annuityMonthly: number
   // EK-Rendite 10 J. je Wohnung fuer die Anzeige (siehe runUnit)
   roe10: number
+  // Eigenkapital-Anteil am Kaufpreis aus der Verteilung (ohne Nebenkosten). Bei
+  // Raten nach der Uebergabe weicht er vom Engine-Eigenkapital ab, weil dort
+  // auch die aus Miete und MwSt-Erstattung bezahlten Raten stecken.
+  ekAlloc: number
 }
 
 // ── Finanzierungsbedarf (Sven 7.10.26) ──────────────────────────────────────
@@ -350,7 +354,9 @@ export interface FinancingStep {
   ym: number; unit: string; label: string
   amount: number          // Zahlung an den Bautraeger (Tilgungsanteil)
   interest: number        // Zins auf Raten nach der Uebergabe (zusaetzlich)
-  fromEquity: number; credit: number
+  fromEquity: number
+  fromSurplus: number     // aus Miete und MwSt-Erstattung (nur bei Raten nach Uebergabe)
+  credit: number
   creditTotal: number     // Kredit insgesamt bis hierher
 }
 export interface BankLoanInfo { key: string; name: string; amount: number; startYm: number; monthly: number }
@@ -362,17 +368,26 @@ export interface FinancingPath {
   creditTotal: number
   loans: BankLoanInfo[]
 }
-export function financingPath(outcomes: UnitOutcome[], endYmOf?: (o: UnitOutcome) => number): FinancingPath {
+export function financingPath(outcomes: UnitOutcome[], endYmOf?: (o: UnitOutcome) => number, liq?: LiquidityResult): FinancingPath {
   const own = outcomes.filter(o => !o.unit.model)
-  const equity = own.reduce((a, o) => a + o.res.ekAbs, 0)
+  const equity = own.reduce((a, o) => a + o.ekAlloc, 0)
+  // Bei Raten nach der Uebergabe kommt die Aufteilung aus der Liquiditaetsrechnung
+  // (Eigenkapital, Miete/MwSt-Erstattung, Kredit), sonst Eigenkapital vor Kredit.
+  const recs = new Map<string, { fromEquity: number; fromSurplus: number; credit: number }>()
+  for (const r of liq?.records ?? []) {
+    const k = `${r.ym}|${r.key}`
+    const c = recs.get(k) ?? { fromEquity: 0, fromSurplus: 0, credit: 0 }
+    c.fromEquity += r.fromEquity; c.fromSurplus += r.fromSurplus; c.credit += r.credit
+    recs.set(k, c)
+  }
   // Zahlungen derselben Wohnung im selben Monat zusammenfassen (Reservierung + Vertrag).
-  const merged = new Map<string, { ym: number; unit: string; labels: string[]; amount: number; interest: number }>()
+  const merged = new Map<string, { k: string; ym: number; unit: string; labels: string[]; amount: number; interest: number }>()
   for (const o of own) {
     const end = endYmOf ? endYmOf(o) : Infinity
     for (const pay of o.payments) {
       if (pay.ym > end) continue
       const k = `${pay.ym}|${o.unit.key}`
-      const m = merged.get(k) ?? { ym: pay.ym, unit: o.unit.name, labels: [], amount: 0, interest: 0 }
+      const m = merged.get(k) ?? { k, ym: pay.ym, unit: o.unit.name, labels: [], amount: 0, interest: 0 }
       m.labels.push(pay.label); m.amount += pay.amount; m.interest += pay.interest ?? 0
       merged.set(k, m)
     }
@@ -380,13 +395,15 @@ export function financingPath(outcomes: UnitOutcome[], endYmOf?: (o: UnitOutcome
   let left = equity, total = 0
   let equityLastYm: number | null = null, firstCreditYm: number | null = null
   const steps: FinancingStep[] = [...merged.values()].sort((a, b) => a.ym - b.ym).map(m => {
-    const fromEquity = Math.min(Math.max(0, left), m.amount)
+    const rec = liq ? recs.get(m.k) : undefined
+    const fromEquity = rec ? rec.fromEquity : Math.min(Math.max(0, left), m.amount)
     left -= fromEquity
-    const credit = m.amount - fromEquity
+    const fromSurplus = rec ? rec.fromSurplus : 0
+    const credit = rec ? rec.credit : m.amount - fromEquity
     total += credit
-    if (credit <= 0.5) equityLastYm = m.ym
+    if (credit <= 0.5) { if (firstCreditYm == null) equityLastYm = m.ym }
     else if (firstCreditYm == null) firstCreditYm = m.ym
-    return { ym: m.ym, unit: m.unit, label: m.labels.join(' + '), amount: m.amount, interest: m.interest, fromEquity, credit, creditTotal: total }
+    return { ym: m.ym, unit: m.unit, label: m.labels.join(' + '), amount: m.amount, interest: m.interest, fromEquity, fromSurplus, credit, creditTotal: total }
   })
   const loans = own.filter(o => o.loan > 0)
     .map(o => ({ key: o.unit.key, name: o.unit.name, amount: o.loan, startYm: loanReadyYm(o.unit), monthly: o.annuityMonthly }))
@@ -435,6 +452,9 @@ export interface YearRow {
   // Zinslast sein"). bridgeDebt = offener Zwischenkredit am Jahresende.
   bridgeInterest: number
   bridgeDebt: number
+  // Nur bei Bautraeger-Raten nach der Uebergabe: Teil des Cashflows, der bis zur
+  // letzten Rate auf dem Konto bleibt und die Raten bezahlt (nicht frei verfuegbar).
+  retained?: number
 }
 
 export interface StrategyConfig { unitsV2?: SimUnit[]; paramsV2?: SimParams; units?: LegacyUnit[]; params?: LegacyParams }
@@ -686,12 +706,38 @@ export function runUnit(u: SimUnit, ekForUnit: number, p: SimParams): UnitOutcom
   // laufen nur in der Strategie). Die Kennzahl je Wohnung rechnet deshalb wie
   // mit Bankdarlehen ab Uebergabe - sonst stiege sie mit dem teureren Plan.
   const roe10 = params.loanDelayMonths ? compute({ ...params, loanDelayMonths: 0 }).roe10 : res.roe10
-  return { unit: u, res, ekUsed: res.ekStart, loan: res.loan, gross, payments: paymentPlan(u, gross), annuityMonthly, roe10 }
+  return { unit: u, res, ekUsed: res.ekStart, loan: res.loan, gross, payments: paymentPlan(u, gross), annuityMonthly, roe10, ekAlloc: res.ekAbs }
 }
 
 // Bundlekauf: EK in ÜBERGABE-Reihenfolge verteilen (die zuerst fertige Wohnung
 // wird zuerst bedient); ohne Bundle bekommt jede Wohnung denselben EK-Anteil.
 export function allocate(units: SimUnit[], p: SimParams): UnitOutcome[] {
+  const base = allocateBase(units, p)
+  if (!liquidityMode(base, p)) return base
+  // Bautraeger-Raten nach der Uebergabe (Sven 7.10.26): Das Bankdarlehen dieser
+  // Wohnungen ist der Kredit, den die Liquiditaetsrechnung wirklich braucht -
+  // nicht Kaufpreis minus Eigenkapital-Anteil. Vor dem Start der Monatsrate
+  // haengt der Bedarf nicht vom Darlehen ab; zwei Runden genuegen, vier sind Reserve.
+  let outs = base
+  for (let round = 0; round < 4; round++) {
+    const need = aggregate(outs, p).liquidity?.devLoans
+    if (!need) break
+    let changed = false
+    outs = outs.map(o => {
+      const L = need.get(o.unit.key)
+      if (L == null || Math.abs(L - o.loan) < 1) return o
+      changed = true
+      const r = runUnit(o.unit, o.res.pGross + o.res.furnGross - L, p)
+      // Eigenkapital des Kunden bleibt der Anteil aus der Verteilung; der Rest
+      // des Kaufpreises kommt aus Miete und MwSt-Erstattung bzw. dem Kredit.
+      return { ...r, ekAlloc: o.ekAlloc, ekUsed: o.ekAlloc + r.res.costs }
+    })
+    if (!changed) break
+  }
+  return outs
+}
+
+function allocateBase(units: SimUnit[], p: SimParams): UnitOutcome[] {
   const order = [...units].sort((a, b) => ymOf(a.readyY, a.readyM) - ymOf(b.readyY, b.readyM))
   const out = new Map<string, UnitOutcome>()
   const probes = new Map<string, UnitOutcome>()
@@ -898,7 +944,7 @@ export interface AggregateExtras {
   untilYear?: number
 }
 
-export function aggregate(outcomes: UnitOutcome[], p?: SimParams, extras?: AggregateExtras): { rows: YearRow[]; firstYear: number; lastYear: number; bridgeNeeded: boolean; bridgePeak: number } {
+export function aggregate(outcomes: UnitOutcome[], p?: SimParams, extras?: AggregateExtras): { rows: YearRow[]; firstYear: number; lastYear: number; bridgeNeeded: boolean; bridgePeak: number; liquidity?: LiquidityResult } {
   if (!outcomes.length) { const y = new Date().getFullYear(); return { rows: [], firstYear: y, lastYear: y, bridgeNeeded: false, bridgePeak: 0 } }
   const firstYear = Math.min(...outcomes.map(o => o.unit.buyY))
   // Zehn Jahre ab dem ERSTEN Kauf, hart (Sven 5.9.26): „Zeitraum endet nach 10
@@ -957,81 +1003,258 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams, extras?: Aggre
     rows.push(row)
   }
 
-  // ── Zwischenfinanzierung in der Bauzeit ───────────────────────────────────
-  // Monat für Monat: Was ist bis hier zu zahlen, und was ist gedeckt? Gedeckt
-  // sind das Eigenkapital und die Enddarlehen der bereits ÜBERGEBENEN Wohnungen.
-  // Alles darüber muss die Bank vorfinanzieren - darauf laufen Zinsen ab dem
-  // Monat der Entstehung, nicht erst ab Übergabe.
+  // Zinsen der Zwischenfinanzierung zaehlen wie jede andere Zinslast: in die
+  // Zinsspalte, in den Cashflow und in die Restschuld-Betrachtung. Danach die
+  // Refinanzierungstranchen und zum Schluss die Steuer, die alle fertigen
+  // Bemessungsgrundlagen braucht.
+  const finish = (rs: YearRow[], bridge: BridgeByYear) => {
+    for (const r of rs) {
+      const b = bridge.get(r.year)
+      r.bridgeInterest = b?.interest ?? 0
+      r.bridgeDebt = b?.debt ?? 0
+      // Ohne Zins und ohne Stand gibt es nichts zu buchen. (Ein im Dezember
+      // abgerufener Kredit hat im selben Jahr noch keinen Zins, ist aber Schuld.)
+      if (!r.bridgeInterest && !r.bridgeDebt) continue
+      r.interest += r.bridgeInterest
+      r.cashflow -= r.bridgeInterest
+      r.debt += r.bridgeDebt
+    }
+    // ── Refinanzierungstranchen ─────────────────────────────────────────────
+    // Wirken ab ihrem Startjahr wie jedes andere Darlehen: Zins und Tilgung
+    // belasten den Cashflow, die Restschuld erhoeht die Verschuldung, und die
+    // Zinsen mindern die Steuerbemessung - aber nur, wenn das Geld in eine
+    // vermietete Immobilie geflossen ist.
+    for (const t of extras?.tranches ?? []) {
+      for (const ty of trancheSchedule(t, lastYear)) {
+        const row = rs.find(r => r.year === ty.year)
+        if (!row) continue
+        row.interest += ty.interest
+        row.principal += ty.principal
+        row.debt += ty.rest
+        row.cashflow -= ty.rate
+        if (t.deductible) { row.baseCY -= ty.interest; row.baseDE -= ty.interest }
+      }
+    }
+    if (p) applyPortfolioTax(rs, p, outcomes.some(o => o.unit.letType === 'short'))
+    // Operativer Cashflow: derselbe Cashflow ohne die MwSt-Erstattung.
+    for (const r of rs) r.operating = r.cashflow - r.vat
+  }
+
+  // ── Liquiditaet bei Bautraeger-Raten nach der Uebergabe (Sven 7.10.26) ────
+  // Wie im Deal Ilic: Eigenkapital, Miete und MwSt-Erstattung zahlen die Raten,
+  // die Bank finanziert nur die Luecke. Nur fuer solche Strategien - alle
+  // anderen rechnen unveraendert mit der Zwischenfinanzierung unten.
+  if (p && liquidityMode(outcomes, p)) {
+    const base = rows.map(r => ({ ...r }))
+    let liq: LiquidityResult | null = null
+    // Steuer und Kreditzinsen haengen voneinander ab: wiederholen, bis sich die
+    // Zinsen um weniger als einen Cent je Jahr aendern (meist 3-4 Runden).
+    for (let pass = 0; pass < 12; pass++) {
+      const trial = base.map(r => ({ ...r }))
+      finish(trial, liq?.bridge ?? new Map())
+      const next = liquiditySim(outcomes, trial, p, lastYear)
+      const settled = !!liq && [...next.bridge].every(([y, b]) => Math.abs(b.interest - (liq!.bridge.get(y)?.interest ?? 0)) < 0.01)
+        && [...next.freeCash].every(([y, f]) => Math.abs(f - (liq!.freeCash.get(y) ?? 0)) < 0.01)
+      liq = next
+      if (settled) break
+    }
+    const out = base.map(r => ({ ...r }))
+    finish(out, liq!.bridge)
+    // Ueberschuss, der bis zur letzten Rate auf dem Konto bleibt und die Raten
+    // bezahlt, ist kein frei verfuegbarer Cashflow (sonst doppelt gezaehlt:
+    // einmal als Cashflow, einmal als getilgte Bautraeger-Schuld).
+    for (const r of out) {
+      const free = liq!.freeCash.get(r.year)
+      if (free == null) continue
+      r.retained = r.cashflow - free
+      r.cashflow = free
+    }
+    return { rows: out, firstYear, lastYear, bridgeNeeded: liq!.peak > 0.5, bridgePeak: liq!.peak, liquidity: liq! }
+  }
+
+  const bridge = fixedBridge(outcomes, p, lastYear)
+  finish(rows, bridge.byYear)
+  return { rows, firstYear, lastYear, bridgeNeeded: bridge.peak > 0.5, bridgePeak: bridge.peak }
+}
+
+type BridgeByYear = Map<number, { interest: number; debt: number }>
+
+// ── Zwischenfinanzierung in der Bauzeit ─────────────────────────────────────
+// Monat für Monat: Was ist bis hier zu zahlen, und was ist gedeckt? Gedeckt
+// sind das Eigenkapital und die Enddarlehen der bereits ÜBERGEBENEN Wohnungen.
+// Alles darüber muss die Bank vorfinanzieren - darauf laufen Zinsen ab dem
+// Monat der Entstehung, nicht erst ab Übergabe.
+function fixedBridge(outcomes: UnitOutcome[], p: SimParams | undefined, lastYear: number): { byYear: BridgeByYear; peak: number } {
   // Mit Bautraeger-Raten nach der Uebergabe zaehlt das Eigenkapital, das
   // wirklich in die Kaufpreise fliesst (ohne Reserve und Nebenkosten im
-  // Reinvestment-Modus) - wie die Tabelle „Wann du was zahlst". Ohne solche
-  // Raten bleibt es bei p.ek, damit gespeicherte Fahrplaene gleich rechnen.
+  // Reinvestment-Modus). Ohne solche Raten bleibt es bei p.ek, damit
+  // gespeicherte Fahrplaene gleich rechnen.
   const hasDevAfter = outcomes.some(o => !o.unit.model && devAfterMonths(o.unit))
-  const ek = hasDevAfter ? outcomes.filter(o => !o.unit.model).reduce((a, o) => a + o.res.ekAbs, 0) : (p?.ek ?? 0)
+  const ek = hasDevAfter ? outcomes.filter(o => !o.unit.model).reduce((a, o) => a + o.ekAlloc, 0) : (p?.ek ?? 0)
   const iMon = (p?.interest ?? 0) / 100 / 12
-  let bridgePeak = 0
+  const byYear: BridgeByYear = new Map()
+  let peak = 0
   // Modellobjekte des Reinvestment-Motors bleiben hier aussen vor: Sie werden
   // aus der Kasse und aus Refinanzierungstranchen bezahlt, und beides ist
   // bereits verzinst modelliert. Wuerde die Bauzeitrechnung sie mitzaehlen,
   // entstuende eine Phantom-Zwischenfinanzierung und die Restschuld waere
   // doppelt so hoch wie die tatsaechlichen Darlehen.
   const bridgeUnits = outcomes.filter(o => !o.unit.model)
-  if (iMon > 0 && bridgeUnits.length) {
-    const pays = bridgeUnits.flatMap(o => o.payments)
-    const startYm = Math.min(...pays.map(x => x.ym))
-    const endYm = ymOf(lastYear, 12)
-    let paid = 0
-    for (let ym = startYm; ym <= endYm; ym++) {
-      paid += pays.filter(x => x.ym === ym).reduce((a, x) => a + x.amount, 0)
-      // Enddarlehen stehen ab der Übergabe der jeweiligen Wohnung zur Verfügung,
-      // bei Bautraeger-Raten nach der Uebergabe erst nach der letzten Rate.
-      const loansReady = bridgeUnits
-        .filter(o => loanReadyYm(o.unit) <= ym)
-        .reduce((a, o) => a + o.loan, 0)
-      const bridge = Math.max(0, paid - ek - loansReady)
-      if (bridge > bridgePeak) bridgePeak = bridge
-      const row = rows.find(r => r.year === Math.floor(ym / 12))
-      if (row) {
-        if (bridge > 0) row.bridgeInterest += bridge * iMon
-        // IMMER setzen (auch 0): sonst bliebe der Höchststand aus der Bauzeit
-        // stehen, obwohl das Enddarlehen die Zwischenfinanzierung bei der
-        // Übergabe ablöst - die Restschuld wäre doppelt gezählt.
-        row.bridgeDebt = bridge
+  if (!(iMon > 0) || !bridgeUnits.length) return { byYear, peak }
+  const pays = bridgeUnits.flatMap(o => o.payments)
+  const startYm = Math.min(...pays.map(x => x.ym))
+  const endYm = ymOf(lastYear, 12)
+  let paid = 0
+  for (let ym = startYm; ym <= endYm; ym++) {
+    paid += pays.filter(x => x.ym === ym).reduce((a, x) => a + x.amount, 0)
+    // Enddarlehen stehen ab der Übergabe der jeweiligen Wohnung zur Verfügung,
+    // bei Bautraeger-Raten nach der Uebergabe erst nach der letzten Rate.
+    const loansReady = bridgeUnits
+      .filter(o => loanReadyYm(o.unit) <= ym)
+      .reduce((a, o) => a + o.loan, 0)
+    const bridge = Math.max(0, paid - ek - loansReady)
+    if (bridge > peak) peak = bridge
+    const y = Math.floor(ym / 12)
+    const cur = byYear.get(y) ?? { interest: 0, debt: 0 }
+    if (bridge > 0) cur.interest += bridge * iMon
+    // IMMER setzen (auch 0): sonst bliebe der Höchststand aus der Bauzeit
+    // stehen, obwohl das Enddarlehen die Zwischenfinanzierung bei der
+    // Übergabe ablöst - die Restschuld wäre doppelt gezählt.
+    cur.debt = bridge
+    byYear.set(y, cur)
+  }
+  return { byYear, peak }
+}
+
+// ── Liquiditaetsrechnung bei Bautraeger-Raten nach der Uebergabe ────────────
+// Monat fuer Monat ein Konto: Eigenkapital zuerst, dann ueberschuessige
+// Bankauszahlungen, dann der einbehaltene Ueberschuss aus Miete und
+// MwSt-Erstattung. Was dann noch fehlt, ruft der Kunde als Kredit ab - nur
+// Zinsen bis zum Start der Monatsrate. Bei Wohnungen mit Raten nach der
+// Uebergabe wird der abgerufene Kredit nach der letzten Rate zum
+// Bankdarlehen; die Darlehen der uebrigen Wohnungen kommen wie bisher bei der
+// Uebergabe und loesen deren Zwischenfinanzierung ab. Bis zur letzten Rate
+// bleibt der Ueberschuss auf dem Konto, danach steht der Rest frei zur Verfuegung.
+export interface FundingRecord {
+  ym: number; key: string; amount: number
+  fromEquity: number; fromSurplus: number
+  credit: number            // Kredit fuer diese Zahlung (abgerufen oder aus Bankauszahlung)
+}
+export interface LiquidityResult {
+  records: FundingRecord[]
+  devLoans: Map<string, number>     // Bankdarlehen je Wohnung mit Raten nach Uebergabe
+  bridge: BridgeByYear              // abgerufener Kredit ohne Monatsrate: Zinsen + Stand Jahresende
+  freeCash: Map<number, number>     // frei verfuegbarer Cashflow je Jahr
+  peak: number
+}
+export function liquidityMode(outcomes: UnitOutcome[], p?: SimParams): boolean {
+  return !!p && !p.reinvestEnabled && outcomes.some(o => !o.unit.model && o.unit.fin && devAfterMonths(o.unit) > 0)
+}
+function liquiditySim(outcomes: UnitOutcome[], rows: YearRow[], p: SimParams, lastYear: number): LiquidityResult {
+  const own = outcomes.filter(o => !o.unit.model)
+  const isDev = (o: UnitOutcome) => o.unit.fin && devAfterMonths(o.unit) > 0
+  const devUnits = own.filter(isDev)
+  const retainUntil = Math.max(...devUnits.map(o => loanReadyYm(o.unit)))
+  const iMon = Math.max(0, p.interest) / 100 / 12
+  // Ueberschuss je Monat ohne MwSt-Erstattung und ohne Kreditzinsen (die rechnet
+  // diese Simulation selbst). Verteilt auf die Monate, in denen Wohnungen schon
+  // uebergeben sind - vor der Uebergabe gibt es keine Miete.
+  const readyYms = own.map(o => ymOf(o.unit.readyY, o.unit.readyM))
+  const weight = (ym: number) => readyYms.filter(r => r <= ym).length
+  const opYear = new Map(rows.map(r => [r.year, r.cashflow + r.bridgeInterest - r.vat]))
+  const opMonthOf = (ym: number) => {
+    const y = Math.floor(ym / 12)
+    const total = opYear.get(y) ?? 0
+    let wSum = 0
+    for (let m = 1; m <= 12; m++) wSum += weight(ymOf(y, m))
+    return wSum > 0 ? total * weight(ym) / wSum : total / 12
+  }
+  const rowYears = new Set(rows.map(r => r.year))
+  // MwSt-Erstattung im Monat der Erstattung (Frist ab Uebergabe, im Jahr der Engine)
+  const vatAt = new Map<number, number>()
+  for (const o of own) {
+    o.res.vatA.forEach((v, i) => {
+      if (!v) return
+      const y = o.unit.readyY + i
+      const ym = Math.min(ymOf(y, 12), Math.max(ymOf(y, 1), ymOf(o.unit.readyY, o.unit.readyM) + VAT_REFUND_MONTHS_STRATEGY))
+      vatAt.set(ym, (vatAt.get(ym) ?? 0) + v)
+    })
+  }
+  const pays = own.flatMap(o => o.payments.map(x => ({ ...x, key: o.unit.key })))
+  const fixedLoans = own.filter(o => !isDev(o) && o.loan > 0).map(o => ({ key: o.unit.key, ym: loanReadyYm(o.unit), amount: o.loan }))
+  // Ab Januar des ersten Jahres, damit kein Monatsueberschuss verloren geht.
+  const startYm = Math.min(ymOf(rows[0]?.year ?? lastYear, 1), ...pays.map(x => x.ym))
+  const endYm = ymOf(lastYear, 12)
+  let ekLeft = own.reduce((a, o) => a + o.ekAlloc, 0)
+  let loanCash = 0, surplus = 0, peak = 0
+  const open = new Map<string, number>()      // abgerufener Kredit je Wohnung, noch ohne Monatsrate
+  const records: FundingRecord[] = []
+  const devLoans = new Map<string, number>()
+  const bridge: BridgeByYear = new Map()
+  const freeCash = new Map<number, number>()
+  const sumOpen = () => [...open.values()].reduce((a, b) => a + b, 0)
+  for (let ym = startYm; ym <= endYm; ym++) {
+    const y = Math.floor(ym / 12)
+    const retaining = ym <= retainUntil
+    // 1) Zinsen auf den abgerufenen Kredit, Ueberschuss des Monats
+    const interest = sumOpen() * iMon
+    const cur = bridge.get(y) ?? { interest: 0, debt: 0 }
+    cur.interest += interest
+    bridge.set(y, cur)
+    const flow = (rowYears.has(y) ? opMonthOf(ym) : 0) + (vatAt.get(ym) ?? 0) - interest
+    if (rowYears.has(y)) {
+      // Jedes Jahr im Zeitraum bekommt einen Eintrag, auch wenn alles einbehalten wird.
+      if (!freeCash.has(y)) freeCash.set(y, 0)
+      if (retaining) {
+        surplus += flow
+        // Reicht der Ueberschuss nicht, legt der Kunde wie bisher selbst zu.
+        if (surplus < 0) { freeCash.set(y, (freeCash.get(y) ?? 0) + surplus); surplus = 0 }
+      } else {
+        freeCash.set(y, (freeCash.get(y) ?? 0) + flow)
       }
     }
-    // Bauzeitzinsen zählen wie jede andere Zinslast: in die Zinsspalte, in den
-    // Cashflow und in die Restschuld-Betrachtung.
-    for (const r of rows) {
-      if (!r.bridgeInterest) { r.bridgeDebt = 0; continue }
-      r.interest += r.bridgeInterest
-      r.cashflow -= r.bridgeInterest
-      r.debt += r.bridgeDebt
+    // 2) Bankdarlehen der uebrigen Wohnungen: loesen deren Zwischenfinanzierung ab
+    for (const fl of fixedLoans) {
+      if (fl.ym !== ym) continue
+      let cash = fl.amount
+      for (const [k, v] of open) {
+        if (devUnits.some(o => o.unit.key === k) || cash <= 0) continue
+        const use = Math.min(v, cash)
+        cash -= use
+        if (v - use > 0.005) open.set(k, v - use); else open.delete(k)
+      }
+      loanCash += cash
     }
-  }
-  // ── Refinanzierungstranchen ───────────────────────────────────────────────
-  // Wirken ab ihrem Startjahr wie jedes andere Darlehen: Zins und Tilgung
-  // belasten den Cashflow, die Restschuld erhoeht die Verschuldung, und die
-  // Zinsen mindern die Steuerbemessung - aber nur, wenn das Geld in eine
-  // vermietete Immobilie geflossen ist.
-  for (const t of extras?.tranches ?? []) {
-    for (const ty of trancheSchedule(t, lastYear)) {
-      const row = rows.find(r => r.year === ty.year)
-      if (!row) continue
-      row.interest += ty.interest
-      row.principal += ty.principal
-      row.debt += ty.rest
-      row.cashflow -= ty.rate
-      if (t.deductible) { row.baseCY -= ty.interest; row.baseDE -= ty.interest }
+    // 3) Kaufpreiszahlungen dieses Monats
+    for (const pay of pays) {
+      if (pay.ym !== ym) continue
+      let need = pay.amount
+      const fromEquity = Math.min(Math.max(0, ekLeft), need); ekLeft -= fromEquity; need -= fromEquity
+      const fromLoan = Math.min(loanCash, need); loanCash -= fromLoan; need -= fromLoan
+      const fromSurplus = Math.min(Math.max(0, surplus), need); surplus -= fromSurplus; need -= fromSurplus
+      if (need > 0.005) open.set(pay.key, (open.get(pay.key) ?? 0) + need)
+      records.push({ ym, key: pay.key, amount: pay.amount, fromEquity, fromSurplus, credit: fromLoan + Math.max(0, need) })
     }
+    const nowOpen = sumOpen()
+    if (nowOpen > peak) peak = nowOpen
+    // 4) Nach der letzten Rate wird der abgerufene Kredit zum Bankdarlehen
+    for (const o of devUnits) {
+      if (loanReadyYm(o.unit) !== ym) continue
+      devLoans.set(o.unit.key, Math.round(open.get(o.unit.key) ?? 0))
+      open.delete(o.unit.key)
+    }
+    // 5) Ende der Einbehalt-Phase: der Rest des Ueberschusses ist frei
+    if (ym === retainUntil || (ym === endYm && retaining)) {
+      if (rowYears.has(y)) freeCash.set(y, (freeCash.get(y) ?? 0) + surplus)
+      surplus = 0
+    }
+    cur.debt = sumOpen()
   }
-
-  // Steuer zum Schluss: sie braucht die fertigen Bemessungsgrundlagen inklusive
-  // der Bauzeitzinsen und der Refinanzierungstranchen.
-  if (p) applyPortfolioTax(rows, p, outcomes.some(o => o.unit.letType === 'short'))
-  // Operativer Cashflow: derselbe Cashflow ohne die MwSt-Erstattung.
-  for (const r of rows) r.operating = r.cashflow - r.vat
-  return { rows, firstYear, lastYear, bridgeNeeded: bridgePeak > 0.5, bridgePeak }
+  // Wohnungen, deren letzte Rate nach dem Zeitraum liegt: abgerufener Stand
+  for (const o of devUnits) if (!devLoans.has(o.unit.key)) devLoans.set(o.unit.key, Math.round(open.get(o.unit.key) ?? 0))
+  return { records, devLoans, bridge, freeCash, peak }
 }
+
 
 // ── Drei Szenarien ───────────────────────────────────────────────────────────
 // Eine Zahl mit zwei Nachkommastellen suggeriert eine Genauigkeit, die es bei
@@ -1066,6 +1289,8 @@ export interface ScenarioResult {
   bridgeNeeded: boolean; bridgePeak: number
   exit: ExitResult | null
   totals: StrategyTotals
+  // Liquiditaetsrechnung bei Bautraeger-Raten nach der Uebergabe (sonst fehlt sie)
+  liquidity?: LiquidityResult
 }
 
 export function scenarioParams(p: SimParams, key: ScenarioKey): SimParams {
@@ -1094,7 +1319,8 @@ export function runScenario(units: SimUnit[], p: SimParams, key: ScenarioKey): S
   const agg = aggregate(outcomes, sp)
   const exit = computeExit(outcomes, sp, agg.firstYear, agg.rows)
   const totals = totalsOf(outcomes, agg.rows, sp, exit)
-  return { key, params: sp, units: su, outcomes, rows: agg.rows, firstYear: agg.firstYear, lastYear: agg.lastYear, bridgeNeeded: agg.bridgeNeeded, bridgePeak: agg.bridgePeak, exit, totals }
+  return { key, params: sp, units: su, outcomes, rows: agg.rows, firstYear: agg.firstYear, lastYear: agg.lastYear, bridgeNeeded: agg.bridgeNeeded, bridgePeak: agg.bridgePeak, exit, totals,
+    ...(agg.liquidity ? { liquidity: agg.liquidity } : {}) }
 }
 
 export const SCENARIO_KEYS: ScenarioKey[] = ['basis', 'konservativ', 'optimistisch']
