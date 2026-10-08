@@ -228,6 +228,19 @@ export function channelBadgeFor(source: string | null | undefined): ChannelBadge
   }
 }
 
+// Ursprung eines Newsletter-Bucher: aus welcher Empfängerliste kam die Adresse?
+// Sven will auf der Kachel „Webinar → Newsletter" sehen statt nur „Newsletter".
+// Die Liste „Newsletter" selbst ist kein Ursprung (da landen alle Opt-ins).
+export function originFromListName(name: string | null | undefined): string | null {
+  if (!name) return null
+  const n = name.trim()
+  if (/^newsletter$/i.test(n)) return null
+  if (/masterclass|webinar/i.test(n)) return 'Webinar'
+  if (/guide/i.test(n)) return 'Immobilienguide'
+  if (/rechner/i.test(n)) return 'Rendite-Rechner'
+  return n
+}
+
 // Phase → n8n webhook event mapping
 export const PHASE_WEBHOOK_EVENTS: Partial<Record<DealPhase, string>> = {
   no_show:            'deal.no_show',
