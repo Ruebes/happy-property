@@ -228,14 +228,17 @@ export function channelBadgeFor(source: string | null | undefined): ChannelBadge
   }
 }
 
-// Ursprung eines Newsletter-Bucher: aus welcher Empfängerliste kam die Adresse?
-// Sven will auf der Kachel „Webinar → Newsletter" sehen statt nur „Newsletter".
+// Ursprung eines Newsletter-Buchers: aus welcher Empfängerliste kam die Adresse?
+// Steht im Lead unter „Fragebogen (eigener Funnel)", z.B. „Webinar 13.04.2026".
 // Die Liste „Newsletter" selbst ist kein Ursprung (da landen alle Opt-ins).
 export function originFromListName(name: string | null | undefined): string | null {
   if (!name) return null
   const n = name.trim()
   if (/^newsletter$/i.test(n)) return null
-  if (/masterclass|webinar/i.test(n)) return 'Webinar'
+  if (/masterclass|webinar/i.test(n)) {
+    const date = n.match(/\d{1,2}\.\d{1,2}\.\d{2,4}/)?.[0]
+    return date ? `Webinar ${date}` : 'Webinar'
+  }
   if (/guide/i.test(n)) return 'Immobilienguide'
   if (/rechner/i.test(n)) return 'Rendite-Rechner'
   return n

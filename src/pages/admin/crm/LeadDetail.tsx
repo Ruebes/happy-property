@@ -21,6 +21,7 @@ import LeadAngebote from '../../../components/crm/LeadAngebote'
 import LeadRegistrations from '../../../components/crm/LeadRegistrations'
 import { sendWhatsApp } from '../../../lib/whatsapp'
 import LeadQuickSend from '../../../components/crm/LeadQuickSend'
+import FunnelNotes from '../../../components/crm/FunnelNotes'
 import type { CrmAppointment } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
 import { detachPropertyFromOwner, detachConfirmText, dealInPortal, fetchUnitPropertyId, isForeignOwnedProperty, leadProfileIds } from '../../../lib/detachProperty'
@@ -3002,7 +3003,7 @@ export default function LeadDetail() {
                       {lead.notes && (
                         <div className="flex gap-2">
                           <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.notes', 'Notizen')}</dt>
-                          <dd className="text-gray-900 whitespace-pre-wrap">{lead.notes}</dd>
+                          <dd className="text-gray-900 whitespace-pre-wrap"><FunnelNotes notes={lead.notes} email={lead.email} firstName={lead.first_name} /></dd>
                         </div>
                       )}
                     </dl>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
@@ -11,7 +11,6 @@ import {
   PHASE_ICONS,
   SOURCE_BADGE_STYLE,
   channelBadgeFor,
-  originFromListName,
   PHASE_WEBHOOK_EVENTS,
 } from '../../../lib/crmTypes'
 import ProjectSelectionModal from '../../../components/crm/ProjectSelectionModal'
@@ -333,14 +332,13 @@ function LeadModal({ onClose, onSaved, staff }: LeadModalProps) {
 
 interface DealCardProps {
   deal: Deal
-  origin?: string | null     // Ursprung vor dem Kanal (z.B. Webinar-Liste vor dem Newsletter)
   apptDate?: string | null   // frühester kommender Termin (Folgetermin) → Kachel hervorheben
   onDragStart: (e: React.DragEvent, id: string) => void
   onClick: (leadId: string) => void
   onContextMenu: (e: React.MouseEvent, deal: Deal) => void
 }
 
-function DealCard({ deal, origin, apptDate, onDragStart, onClick, onContextMenu }: DealCardProps) {
+function DealCard({ deal, apptDate, onDragStart, onClick, onContextMenu }: DealCardProps) {
   const { t } = useTranslation()
   const lead = deal.lead
   // Buchungs-Kanal (Newsletter, YouTube, …): Herkunft schlägt die Lead-Quelle —
@@ -386,7 +384,7 @@ function DealCard({ deal, origin, apptDate, onDragStart, onClick, onContextMenu 
           className="text-xs px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap"
           style={badgeStyle}
         >
-          {channel ? `${origin ? `${origin} → ` : ''}${channel.icon} ${channel.label}` : t(`crm.sources.${source}`, source)}
+          {channel ? `${channel.icon} ${channel.label}` : t(`crm.sources.${source}`, source)}
         </span>
       </div>
 
@@ -538,7 +536,6 @@ export default function Pipeline() {
   const { profile } = useAuth()
 
   const [deals, setDeals] = useState<Deal[]>([])
-  const [originByEmail, setOriginByEmail] = useState<Record<string, string>>({})   // E-Mail → Ursprung (Empfängerliste)
   const [apptByLead, setApptByLead] = useState<Record<string, string>>({})   // lead_id → frühester kommender Termin
   const [loading, setLoading] = useState(true)
   const [dragId, setDragId] = useState<string | null>(null)
@@ -631,29 +628,6 @@ export default function Pipeline() {
       console.error('[Pipeline] fetchAppointments:', err)
     }
   }, [])
-
-  // Newsletter-Bucher: Ursprungsliste (Webinar, Guide, …) über die Abonnenten-Adresse.
-  const newsletterEmails = useMemo(() => [...new Set(deals
-    .filter(d => d.source === 'newsletter' && d.lead?.email)
-    .map(d => d.lead!.email!.toLowerCase()))].sort().join(','), [deals])
-  useEffect(() => {
-    if (!newsletterEmails) return
-    void (async () => {
-      const { data, error } = await supabase
-        .from('newsletter_subscribers')
-        .select('email, newsletter_list_members(newsletter_lists(name))')
-        .in('email', newsletterEmails.split(','))
-      if (error) { console.error('[Pipeline] fetchOrigins:', error.message); return }
-      const map: Record<string, string> = {}
-      for (const s of (data as unknown as { email: string; newsletter_list_members: { newsletter_lists: { name: string } | null }[] }[]) ?? []) {
-        const labels = [...new Set((s.newsletter_list_members ?? [])
-          .map(m => originFromListName(m.newsletter_lists?.name))
-          .filter((x): x is string => !!x))]
-        if (labels.length) map[s.email.toLowerCase()] = labels.join(' + ')
-      }
-      setOriginByEmail(map)
-    })()
-  }, [newsletterEmails])
 
   const fetchStaff = useCallback(async () => {
     try {
@@ -1132,7 +1106,6 @@ export default function Pipeline() {
                           <DealCard
                             key={deal.id}
                             deal={deal}
-                            origin={deal.source === 'newsletter' && deal.lead?.email ? originByEmail[deal.lead.email.toLowerCase()] : null}
                             apptDate={deal.lead_id ? apptByLead[deal.lead_id] : undefined}
                             onDragStart={(e, id) => {
                               e.dataTransfer.effectAllowed = 'move'
