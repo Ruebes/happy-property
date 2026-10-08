@@ -5,6 +5,9 @@ import { supabase } from '../lib/supabase'
 import { DECK_LOGO } from '../lib/deckTypes'
 import { migrateConfig, DEFAULT_SIM_PARAMS, type SimUnit, type SimParams, type StrategyConfig, purchaseGrowthOf } from '../lib/strategy'
 import { buildCustomerAnalytics, type CustomerAnalytics, type ScenarioSummary } from '../lib/analytics'
+import { buildGuides } from '../lib/guides'
+import { ensureGuideTexts } from '../lib/guides/texts'
+import type { Guide } from '../lib/guides/types'
 import {
   ChartCard, Legend, LineChart, BarChart, StepChart,
   C_VALUE, C_DEBT, C_EQUITY,
@@ -77,21 +80,39 @@ function Term({ children, hint }: { children: React.ReactNode; hint: string }) {
   )
 }
 
-// Erklaerung zum Aufklappen. Wer nur die Zahlen sehen will, wird nicht
-// zugetextet; wer wissen will, wie sie entstehen, klickt einmal.
-function Explain({ title, children }: { title?: string; children: React.ReactNode }) {
-  const [open, setOpen] = useState(false)
+// Erklärung unter jeder Tabelle (Sven 8.10.26: „so dass jeder versteht, was
+// das ist"). Immer sichtbar: was die Tabelle zeigt, jede Spalte in einfachen
+// Worten, ein Beispiel aus den eigenen Zahlen, was das bedeutet und typische
+// Missverständnisse. Inhalt aus lib/guides.
+function GuideBox({ g, isMobile }: { g: Guide | null | undefined; isMobile: boolean }) {
+  const { t } = useTranslation()
+  if (!g) return null
+  const sub: React.CSSProperties = { fontWeight: 700, color: DARK, fontSize: 12.5, margin: '10px 0 3px' }
   return (
-    <div style={{ marginTop: 10 }}>
-      <button onClick={() => setOpen(v => !v)}
-        style={{ background: 'none', border: 0, color: CORAL, fontSize: 12.5, cursor: 'pointer', padding: 0, fontFamily: SANS }}>
-        {open ? '− ' : '+ '}{title ?? 'Wie kommt diese Zahl zustande?'}
-      </button>
-      {open && (
-        <div style={{ fontSize: 13, color: '#555', lineHeight: 1.8, marginTop: 8, paddingLeft: 2, maxWidth: 760 }}>
-          {children}
+    <div style={{ marginTop: 12, background: '#fbfaf7', border: '1px solid #ebe7e0', borderRadius: 14, padding: isMobile ? 14 : '16px 20px', fontSize: 13, color: '#4a4a4a', lineHeight: 1.75 }}>
+      <div style={{ fontWeight: 700, fontSize: 14, color: DARK, marginBottom: 4 }}>{g.heading}</div>
+      <p style={{ margin: 0 }}>{g.intro}</p>
+      {g.items.length > 0 && (
+        <div style={{ display: 'grid', gap: 5, marginTop: 10 }}>
+          {g.items.map((it, i) => (
+            <div key={i}><b style={{ color: DARK }}>{it.label}:</b> {it.text}</div>
+          ))}
         </div>
       )}
+      {g.example && (
+        <div style={{ background: '#fff', borderLeft: `3px solid ${CORAL}`, borderRadius: 8, padding: '10px 14px', marginTop: 12 }}>
+          <div style={{ ...sub, marginTop: 0 }}>{t('strategie.guide.exampleTitle')}</div>
+          {g.example}
+        </div>
+      )}
+      {g.meaning.length > 0 && (<>
+        <div style={sub}>{t('strategie.guide.meaningTitle')}</div>
+        {g.meaning.map((m, i) => <p key={i} style={{ margin: '0 0 6px' }}>{m}</p>)}
+      </>)}
+      {g.pitfalls.length > 0 && (<>
+        <div style={sub}>{t('strategie.guide.pitfallsTitle')}</div>
+        <ul style={{ margin: 0, paddingLeft: 18 }}>{g.pitfalls.map((p, i) => <li key={i}>{p}</li>)}</ul>
+      </>)}
     </div>
   )
 }
@@ -190,7 +211,8 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
   // Vorschau im Simulator: Handy-Ansicht unabhängig von der Fensterbreite
   forceMobile?: boolean
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  ensureGuideTexts(i18n)
   const [showYears, setShowYears] = useState(false)
   const viewportMobile = useIsMobile()
   const isMobile = forceMobile ?? viewportMobile
@@ -200,6 +222,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
     () => units.length ? buildCustomerAnalytics(units, params) : null,
     [units, params],
   )
+  const guides = useMemo(() => a ? buildGuides({ a, params, t }) : {}, [a, params, t])
   if (!a) return <Centered>{t('strategie.empty', 'Dieser Fahrplan enthält noch keine Wohnungen.')}</Centered>
 
   const years = a.wealth.map(w => w.year)
@@ -267,6 +290,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
           <div style={{ ...card }}>
             <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.8, color: '#3a3a3a' }}>{a.summary.text}</p>
           </div>
+          <GuideBox g={guides.kpis} isMobile={isMobile} />
         </Section>
 
         {/* 1b — Wie sich das Vermögen zusammensetzt */}
@@ -296,15 +320,8 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                 ))}
               </tbody>
             </table>
-            <Explain title={t('strategie.exBalance', 'Warum das nicht dein Kontostand ist')}>
-              <p style={{ margin: '0 0 8px' }}>
-                {t('strategie.exBalance1', 'Netto-Vermögen und Liquidität sind zwei verschiedene Dinge. Der Immobilienwert abzüglich der Kredite gehört dir wirtschaftlich, ist aber im Stein gebunden. Verfügbar ist nur die Liquidität in der letzten Zeile.')}
-              </p>
-              <p style={{ margin: 0 }}>
-                {t('strategie.exBalance2', 'Um an das Eigenkapital in den Wohnungen zu kommen, müsstest du verkaufen oder refinanzieren. Beides ist im Modell abgebildet, beides kostet Steuern beziehungsweise erhöht die Schuld.')}
-              </p>
-            </Explain>
           </div>
+          <GuideBox g={guides.balance} isMobile={isMobile} />
         </Section>
 
         {/* 2 — Vermögen */}
@@ -328,12 +345,13 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                 { key: 'n', color: '#8a8a8a', label: t('strategie.lNet', 'Netto-Vermögen'), values: a.wealth.map(w => w.netWorth), dashed: true },
               ]} />
           </ChartCard>
+          <GuideBox g={guides.wealth} isMobile={isMobile} />
         </Section>
 
         {/* 3 — Portfolio */}
         {a.reinvest && (
           <Section title={t('strategie.s3', 'Wie dein Portfolio wächst')}
-            sub={t('strategie.s3sub', 'Jede Stufe ist ein weiterer Kauf, der aus Wertzuwachs und Tilgung finanziert wird.')}>
+            sub={t('strategie.s3sub2', 'Jede Stufe ist eine Übergabe: eine deiner Wohnungen oder eine weitere, die das Modell gekauft hat.')}>
             <ChartCard title={t('strategie.c2', 'Anzahl der Wohnungen')}>
               <StepChart years={years} values={a.portfolio.map(p => p.units)} height={isMobile ? 150 : 180}
                 markers={[
@@ -372,6 +390,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
               style={{ marginTop: 8, background: 'none', border: 0, color: CORAL, fontSize: 12.5, cursor: 'pointer', padding: 0, fontFamily: SANS }}>
               {showYears ? t('strategie.less', 'Nur die wichtigen Jahre zeigen') : t('strategie.more', 'Alle Jahre anzeigen')}
             </button>
+            <GuideBox g={guides.portfolio} isMobile={isMobile} />
           </Section>
         )}
 
@@ -385,7 +404,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                   {a.summary.recyclingMultiple.toFixed(1).replace('.', ',')}×
                 </div>
                 <div style={{ fontSize: 13, color: '#666', marginTop: 8, maxWidth: 560, margin: '8px auto 0', lineHeight: 1.7 }}>
-                  <Term hint={t('strategie.hRecycle', 'Zeigt, wie oft Kapital aus Refinanzierungen und Verkäufen im Modell erneut für Immobilienkäufe eingesetzt wird.')}>
+                  <Term hint={t('strategie.hRecycle2', 'Zeigt, wie viel eigenes Geld aus der Kasse (Überschüsse, MwSt-Erstattungen, Verkaufserlöse) im Modell erneut als Eigenkapital in Immobilien fließt, im Verhältnis zum Startkapital. Geld aus Refinanzierungen zählt nicht mit.')}>
                     {t('strategie.recycleLabel', 'Kapital-Recycling-Faktor')}
                   </Term>
                   {': '}
@@ -448,6 +467,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                 </table>
               </ScrollBox>
             )}
+            <GuideBox g={guides.recycling} isMobile={isMobile} />
             {a.opportunity && (
               <div style={{ ...card, marginTop: 12, borderLeft: `4px solid ${CORAL}` }}>
                 <div style={{ fontWeight: 700, fontSize: 14, color: DARK, marginBottom: 6 }}>
@@ -467,12 +487,13 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                 </p>
               </div>
             )}
+            <GuideBox g={guides.opportunity} isMobile={isMobile} />
           </Section>
         )}
 
         {/* 5 — Cashflow */}
         <Section title={t('strategie.s5', 'Was das Portfolio laufend abwirft')}
-          sub={t('strategie.s5sub', 'Positiv bedeutet: Die Mieten tragen Rate, Kosten und Steuern. Negativ bedeutet: Du legst in diesem Jahr etwas zu.')}>
+          sub={t('strategie.s5sub2', 'Positiv bedeutet: In diesem Jahr bleibt nach allen Zahlungen Geld übrig. Negativ bedeutet: Du legst in diesem Jahr etwas zu.')}>
           <ChartCard title={t('strategie.c4', 'Cashflow je Jahr')}
             foot={<Legend items={[
               { c: C_EQUITY, l: t('strategie.lPos', 'Überschuss') },
@@ -516,6 +537,13 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
               </tbody>
             </table>
           </ScrollBox>
+          {!a.reinvest && a.cashflowRows.length > a.cashflowRows.filter(r => keyYears.has(r.year) || r.rent > 0).slice(0, 12).length && (
+            <button onClick={() => setShowYears(v => !v)}
+              style={{ marginTop: 8, background: 'none', border: 0, color: CORAL, fontSize: 12.5, cursor: 'pointer', padding: 0, fontFamily: SANS }}>
+              {showYears ? t('strategie.less', 'Nur die wichtigen Jahre zeigen') : t('strategie.more', 'Alle Jahre anzeigen')}
+            </button>
+          )}
+          <GuideBox g={guides.cashflow} isMobile={isMobile} />
 
           {a.reinvest && a.liquidity.length > 0 && (
             <div style={{ marginTop: 12 }}>
@@ -531,12 +559,17 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                     {t('strategie.liqTitle', 'Hinweis zur Liquidität')}
                   </div>
                   <div style={{ fontSize: 13, color: '#555', lineHeight: 1.7 }}>
-                    {t('strategie.liqText', 'Zwischen {{from}} und {{to}} unterschreitet das Modell die vorgesehene Reserve, im Tiefpunkt bei {{low}}. In dieser Zeit wäre zusätzliches Eigenkapital nötig, oder ein weiterer Kauf müsste später erfolgen.', {
-                      from: a.liquidityWarning.from, to: a.liquidityWarning.to, low: eur(a.liquidityWarning.lowest),
-                    })}
+                    {a.liquidityWarning.from === a.liquidityWarning.to
+                      ? t('strategie.liqTextOne', 'Im Jahr {{from}} unterschreitet das Modell die vorgesehene Reserve, im Tiefpunkt bei {{low}}. Dann wäre zusätzliches Eigenkapital nötig, oder ein weiterer Kauf müsste später erfolgen.', {
+                        from: a.liquidityWarning.from, low: eur(a.liquidityWarning.lowest),
+                      })
+                      : t('strategie.liqText', 'Zwischen {{from}} und {{to}} unterschreitet das Modell die vorgesehene Reserve, im Tiefpunkt bei {{low}}. In dieser Zeit wäre zusätzliches Eigenkapital nötig, oder ein weiterer Kauf müsste später erfolgen.', {
+                        from: a.liquidityWarning.from, to: a.liquidityWarning.to, low: eur(a.liquidityWarning.lowest),
+                      })}
                   </div>
                 </div>
               )}
+              <GuideBox g={guides.liquidity} isMobile={isMobile} />
             </div>
           )}
         </Section>
@@ -571,15 +604,8 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                   ? [{ key: 'c', color: C_EQUITY, label: t('strategie.lCap', 'Zusätzliche Beleihungskapazität'), values: a.financing.map(f => f.capacity) }]
                   : []),
               ]} />
-            <Explain title={t('strategie.exLtvTitle', 'Was der Beleihungsgrad bedeutet')}>
-              <p style={{ margin: '0 0 8px' }}>
-                {t('strategie.exLtv1', 'Der Beleihungsgrad ist das Verhältnis von Kredit zu Immobilienwert. 600.000 € Kredit bei 1.000.000 € Wert sind 60 Prozent.')}
-              </p>
-              <p style={{ margin: 0 }}>
-                {t('strategie.exLtv2', 'Im Modell wird mit einem maximalen Beleihungsauslauf von {{l}} Prozent gerechnet. Das ist eine Annahme für die Rechnung, keine Zusage einer Bank. Sinkt der Kredit und steigt der Wert, wächst der Abstand zu dieser Grenze - und genau dieser Abstand ist die zusätzliche Beleihungskapazität.', { l: String(params.refinanceLtv).replace('.', ',') })}
-              </p>
-            </Explain>
           </ChartCard>
+          <GuideBox g={guides.financing} isMobile={isMobile} />
         </Section>
 
         {/* 7 — Immobilien */}
@@ -624,6 +650,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
               </div>
             ))}
           </div>
+          <GuideBox g={guides.properties} isMobile={isMobile} />
         </Section>
 
         {/* 8 — Steuern */}
@@ -647,10 +674,29 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
           {a.taxKpis.incomeTax === 0 && (
             <div style={{ ...card }}>
               <p style={{ margin: 0, fontSize: 13, color: '#555', lineHeight: 1.75 }}>
-                {t('strategie.xNone', 'Im modellierten Zeitraum entsteht keine Einkommensteuer: Verwaltung, laufende Kosten, Darlehenszinsen und die Abschreibung übersteigen die Mieteinnahmen in der steuerlichen Rechnung. Was bleibt, sind der Gesundheitsbeitrag und gegebenenfalls die Steuer beim Verkauf.')}
+                {/* Review 8.10.26: Der feste Text nannte immer „Kosten übersteigen die
+                    Mieten" und den Gesundheitsbeitrag - bei Svens Plan falsch (Steuer 0
+                    wegen des Grundfreibetrags, kein GESY, aber Steuer in Deutschland). */}
+                {params.holder === 'firma'
+                  ? [t('strategie.xNoneFirm', 'Im modellierten Zeitraum zahlt die Firma keine Körperschaftsteuer: Nach Kosten, Darlehenszinsen und Abschreibung bleibt kein steuerpflichtiger Gewinn, oder Verluste aus früheren Jahren werden damit verrechnet.'),
+                    a.taxKpis.exit > 0 ? t('strategie.xNoneExit', 'Beim Verkauf kommt die Steuer auf den Verkaufsgewinn dazu (Kachel „Steuer beim Verkauf“).') : '',
+                  ].filter(Boolean).join(' ')
+                  : [
+                    a.taxKpis.cyBaseMax > 0
+                      ? t('strategie.xNoneAllowance2', 'Im modellierten Zeitraum entsteht in Zypern keine Einkommensteuer. Die Mieteinkünfte bleiben nach Abzug der Kosten (bei Langzeitvermietung pauschal 20 % der Miete), der Darlehenszinsen und der Abschreibung{{other}} jedes Jahr unter dem steuerfreien Grundbetrag von {{allowance}}.', {
+                        other: params.res === 'cy' && params.cyBI > 0 ? t('strategie.xNoneOther', ' zusammen mit deinen übrigen Einkünften in Zypern') : '',
+                        allowance: params.buyerStructure === 'couple' ? t('strategie.xNoneCouple', '22.000 € je Person (bei zwei Personen zusammen 44.000 €)') : t('strategie.xNoneSingle', '22.000 €'),
+                      })
+                      : t('strategie.xNoneLoss2', 'Im modellierten Zeitraum entsteht in Zypern keine Einkommensteuer: Die Kosten (bei Langzeitvermietung pauschal 20 % der Miete), Darlehenszinsen und Abschreibung sind in der steuerlichen Rechnung jedes Jahr mindestens so hoch wie die Mieteinnahmen.'),
+                    a.taxKpis.de > 0 ? t('strategie.xNoneDe', 'In Deutschland fallen trotzdem {{v}} Steuer an: Deutschland besteuert die Mieteinkünfte mit dem angenommenen Steuersatz von {{p}} % und rechnet die zyprische Steuer an, die hier 0 € beträgt.', { v: eur(a.taxKpis.de), p: String(params.deTaxPct).replace('.', ',') }) : '',
+                    a.taxKpis.gesy > 0 ? t('strategie.xNoneGesy2', 'Der zyprische Gesundheitsbeitrag (GESY) fällt trotzdem an.') : '',
+                    a.taxKpis.si > 0 ? t('strategie.xNoneSi', 'Auch die zyprische Sozialversicherung fällt an.') : '',
+                    a.taxKpis.exit > 0 ? t('strategie.xNoneExit', 'Beim Verkauf kommt die Steuer auf den Verkaufsgewinn dazu (Kachel „Steuer beim Verkauf“).') : '',
+                  ].filter(Boolean).join(' ')}
               </p>
             </div>
           )}
+          <GuideBox g={guides.taxes} isMobile={isMobile} />
         </Section>
 
         {/* 9 — Szenarien */}
@@ -688,6 +734,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
               </tbody>
             </table>
           </ScrollBox>
+          <GuideBox g={guides.scenarios} isMobile={isMobile} />
 
           {a.sensitivity.length > 0 && (
             <div style={{ ...card, marginTop: 12 }}>
@@ -708,6 +755,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
               </p>
             </div>
           )}
+          <GuideBox g={guides.sensitivity} isMobile={isMobile} />
         </Section>
 
         {/* 9b — Zeitachse aus den tatsächlichen Ereignissen des Modells */}
@@ -732,6 +780,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
               )
             })}
           </div>
+          <GuideBox g={guides.timeline} isMobile={isMobile} />
         </Section>
 
         {/* 9c — Finanzierungsbedarf nach dem Zahlungsplan der Bauträger (Sven 7.10.26:
@@ -797,6 +846,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                   </tbody>
                 </table>
               </ScrollBox>
+              <GuideBox g={guides.creditPath} isMobile={isMobile} />
               {cp.loans.length > 0 && (
                 <div style={{ ...card, marginTop: 12 }}>
                   <div style={{ fontWeight: 700, fontSize: 14, color: DARK, marginBottom: 8 }}>
@@ -829,6 +879,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                   </p>
                 </div>
               )}
+              <GuideBox g={guides.loans} isMobile={isMobile} />
               {a.vatReturned.length > 0 && (
                 <p style={{ fontSize: 12.5, color: '#555', margin: '10px 0 0', lineHeight: 1.6 }}>
                   {a.vatReturned.map(v => t('strategie.vatReturned', 'Die MwSt-Erstattung von {{name}} ({{amount}}, {{date}}) geht an dich zurück und wird nicht für Kaufraten verwendet.', {
@@ -837,7 +888,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                 </p>
               )}
               <p style={{ fontSize: 12, color: '#777', margin: '10px 0 0', lineHeight: 1.6 }}>
-                {t('strategie.payShift', 'Die Bauraten sind vom Übergabetermin zurückgerechnet. Sie werden fällig, wenn der jeweilige Bauabschnitt fertig ist, und verschieben sich, wenn der Bau schneller oder langsamer vorankommt.')}
+                {t('strategie.payShift2', 'Die Monate der Bauraten sind geschätzt: vom Übergabetermin zurückgerechnet oder gleichmäßig über die Bauzeit verteilt. Sie werden fällig, wenn der jeweilige Bauabschnitt fertig ist, und verschieben sich, wenn der Bau schneller oder langsamer vorankommt.')}
               </p>
             </Section>
           )
@@ -903,8 +954,12 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
               </table>
             </ScrollBox>
             <p style={{ fontSize: 12, color: '#777', margin: '10px 0 0', lineHeight: 1.6 }}>
-              {t('strategie.exNote3', 'Der Verkauf ist eine Modellannahme. Verkaufspreis, Kosten und Steuern können abweichen. Kosten sind Makler, Anwalt und Übertragungsabgabe. Die bei Kurzzeitvermietung erstattete Mehrwertsteuer ist innerhalb der ersten zehn Jahre anteilig zurückzuzahlen (Spalte MwSt); ist sie beim Verkauf noch nicht erstattet, steht dort die verbleibende Erstattung mit Plus. Steuern und Erlös gelten für den Verkauf aller Wohnungen zusammen.')}
+              {t('strategie.exNote4', 'Der Verkauf ist eine Modellannahme. Verkaufspreis, Kosten und Steuern können abweichen. Kosten sind Makler, Anwalt und Übertragungsabgabe. Die bei Kurzzeitvermietung erstattete Mehrwertsteuer ist innerhalb der ersten zehn Jahre anteilig zurückzuzahlen (Spalte MwSt); ist sie beim Verkauf noch nicht erstattet, steht dort die verbleibende Erstattung mit Plus.')}{' '}
+              {a.exitTotal
+                ? t('strategie.exNoteJoint', 'Steuern und Erlös gelten für den Verkauf aller Wohnungen zusammen.')
+                : t('strategie.exNoteSingle', 'Jede Wohnung wird einzeln verkauft, Steuern und Erlös stehen in jeder Zeile.')}
             </p>
+            <GuideBox g={guides.exit} isMobile={isMobile} />
           </Section>
         )}
 
@@ -926,6 +981,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
               </div>
             ))}
           </div>
+          <GuideBox g={guides.costKpis} isMobile={isMobile} />
 
           <ScrollBox>
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 620 }}>
@@ -947,6 +1003,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
               </tbody>
             </table>
           </ScrollBox>
+          <GuideBox g={guides.moneyFlow} isMobile={isMobile} />
 
           <div style={{ ...card, marginTop: 12 }}>
             <div style={{ fontWeight: 700, fontSize: 14, color: DARK, marginBottom: 8 }}>

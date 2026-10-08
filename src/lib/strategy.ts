@@ -1596,7 +1596,9 @@ export function saleLineOf(o: UnitOutcome, year: number, p: SimParams, tranches:
   const n = o.res.rents.length
   const delivered = i >= 0
   const paid = o.payments.filter(x => Math.floor(x.ym / 12) <= year).reduce((a, x) => a + x.amount, 0)
-  const value = delivered ? o.res.propV[Math.min(i, n - 1)] : paid
+  // Ganze Euro wie der Wert nach der Uebergabe, damit die Verkaufszeilen auf
+  // der Kundenseite genau die Summenzeile ergeben (Review 8.10.26)
+  const value = delivered ? o.res.propV[Math.min(i, n - 1)] : Math.round(paid)
   const cost = o.res.pGross + o.res.costs
   const heldYears = Math.max(0, year - o.unit.buyY)
   const costIndexed = Math.round(cost * Math.pow(1 + p.cpiPct / 100, heldYears))

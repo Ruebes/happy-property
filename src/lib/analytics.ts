@@ -177,6 +177,7 @@ export interface CustomerAnalytics {
     total: number; perYear: number; exit: number
     incomeTax: number    // reine Einkommensteuer, ohne GESY und Sozialversicherung
     gesy: number; si: number; de: number
+    cyBaseMax: number
   }
   scenarios: ScenarioSummary[]
   // Verkauf je Wohnung. Beim gemeinsamen Verkauf (ohne Reinvestment) gibt es
@@ -208,6 +209,22 @@ export interface CustomerAnalytics {
 
 const r0 = (n: number) => Math.round(n)
 const eur = (n: number) => new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 }).format(Math.round(n)) + ' €'
+
+// Text „Deine Liquidität" ohne Reinvestment: Zuzahlungsjahre und tiefster
+// Punkt des aufsummierten Cashflows (dieselbe Zahl wie die Kachel
+// „Zusätzlich nötiges Kapital").
+function liquidityTextClassic(cashflow: CashflowPoint[]): string {
+  const neg = cashflow.filter(c => c.cashflow < 0)
+  const total = cashflow.length ? cashflow[cashflow.length - 1].cumulative : 0
+  const lowest = Math.min(0, ...cashflow.map(c => c.cumulative))
+  if (!neg.length) return `Der Cashflow ist in keinem Jahr negativ. Über den ganzen Zeitraum bleiben ${eur(total)} übrig.`
+  const sumNeg = neg.reduce((a, c) => a + c.cashflow, 0)
+  return `In ${neg.length === 1 ? 'einem Jahr' : `${neg.length} Jahren`} legst du zu, zusammen ${eur(-sumNeg)}. `
+    + (lowest < 0
+      ? `Auch wenn du die Überschüsse der Jahre davor zurücklegst, fehlen am tiefsten Punkt ${eur(-lowest)}. `
+      : 'Legst du die Überschüsse der Jahre davor zurück, decken sie diese Zuzahlungen. ')
+    + `Über den ganzen Zeitraum ${total >= 0 ? `bleiben ${eur(total)} übrig` : `legst du ${eur(-total)} zu`}.`
+}
 
 // ── Hauptfunktion ────────────────────────────────────────────────────────────
 export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): CustomerAnalytics | null {
@@ -444,6 +461,9 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
     gesy: r0(totals.gesy),
     si: r0(totals.si),
     de: r0(totals.taxDE),
+    // Hoechste zyprische Bemessungsgrundlage eines Jahres (Miete nach allen
+    // Abzuegen). > 0 heisst: Einkommensteuer 0 nur wegen des Grundfreibetrags.
+    cyBaseMax: r0(Math.max(0, ...agg.rows.map(r => r.baseCY - r.bridgeInterest))),
   }
 
   // ── Szenarien ──────────────────────────────────────────────────────────────
@@ -556,7 +576,7 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
     irr: totals.irr,
     recyclingMultiple: ri ? ri.kpis.capitalRecyclingMultiple : null,
     exitNet: exit ? r0(exit.net) : null,
-    additionalEquityNeeded: ri ? r0(Math.abs(Math.min(0, ...ri.flows.map(fl => fl.endingCash)))) : 0,
+    additionalEquityNeeded: r0(Math.abs(ri ? Math.min(0, ...ri.flows.map(fl => fl.endingCash)) : Math.min(0, ...cashflow.map(c => c.cumulative)))),
     text: buildSummaryText(params, agg, unitsEnd, lastRow?.value ?? 0, ri),
   }
 
@@ -578,8 +598,10 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
   // ── Was die Strategie gekostet hat ────────────────────────────────────────
   const ownEquity = outcomes.filter(o => !o.unit.model).reduce((a, o) => a + o.ekUsed, 0)
   // Zusaetzlicher Kapitalbedarf: der tiefste Punkt, an dem die Kasse ins Minus
-  // laeuft. Genau so viel muesste der Kunde nachlegen.
-  const lowestCash = ri ? Math.min(0, ...ri.flows.map(fl => fl.endingCash)) : 0
+  // laeuft. Genau so viel muesste der Kunde nachlegen. Ohne Reinvestment ist
+  // die Kasse der aufsummierte Cashflow (Review 8.10.26: vorher immer 0, die
+  // Seite sagte „nein", obwohl einzelne Jahre eine Zuzahlung zeigen).
+  const lowestCash = ri ? Math.min(0, ...ri.flows.map(fl => fl.endingCash)) : Math.min(0, ...cashflow.map(c => c.cumulative))
   const runningCosts = agg.rows.reduce((a, r) => a + r.mgmt + r.opex, 0)
   const vatSum = agg.rows.reduce((a, r) => a + r.vat, 0)
   const cost: CostOverview = {
@@ -592,7 +614,12 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
     vatRefund: r0(vatSum),
     refinancing: ri ? ri.kpis.totalRefinancingProceeds : 0,
     saleProceeds: ri ? ri.kpis.totalSaleProceeds : (exit ? r0(exit.net) : 0),
-    wealthGain: r0(netWorthEnd - params.ek),
+    // Ohne Reinvestment bleibt nicht gebrauchtes Startkapital ausserhalb des
+    // Modells (kein Vermoegen, keine Liquiditaet) - dann nur das eingesetzte
+    // abziehen, sonst waere der Zuwachs zu klein (Review 8.10.26). In der
+    // Liquiditaetsrechnung zaehlt ekUsed nur gezahltes Eigenkapital, das fuer
+    // spaetere Raten zurueckgehaltene steht als Liquiditaet im Vermoegen.
+    wealthGain: r0(netWorthEnd - (ri ? params.ek : Math.min(params.ek, ownEquity + (liqRes ? (lastWealth?.cash ?? 0) : 0)))),
   }
 
   // ── Wohin das Geld geht ───────────────────────────────────────────────────
@@ -757,7 +784,10 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
     { title: 'Deine Liquidität',
       text: ri && !ri.kpis.selfSupporting
         ? `Mit dem aktuell eingeplanten Kapital entsteht im Modell ${ri.kpis.selfFundingBreaks ? `ab ${ri.kpis.selfFundingBreaks} ` : ''}zwischenzeitlich eine Liquiditätslücke. Die Strategie benötigt an diesem Punkt zusätzliches Kapital oder eine Anpassung der Finanzierung beziehungsweise des Kaufzeitpunkts. Am Ende verbleiben ${eur(lastWealth?.cash ?? 0)}.`
-        : `Die Liquiditätsreserve bleibt durchgehend erhalten. Am Ende verbleiben ${eur(lastWealth?.cash ?? 0)}.` },
+        : ri ? `Die Liquiditätsreserve bleibt durchgehend erhalten. Am Ende verbleiben ${eur(lastWealth?.cash ?? 0)}.`
+          // Ohne Reinvestment gibt es keine Reserve im Modell (Review 8.10.26:
+          // vorher „Reserve bleibt erhalten, am Ende 0 €" trotz Zuzahlungsjahren).
+          : liquidityTextClassic(cashflow) },
   ]
 
   const insights = buildInsights({ params, wealth, portfolio, cashflow, ri, sensitivity, risks, liquidityWarning })
@@ -789,7 +819,11 @@ function buildSummaryText(
   ri: ReinvestResult | null,
 ): string {
   const kern = `Mit einem Startkapital von ${eur(p.ek)} entsteht in dieser Modellrechnung bis ${agg.lastYear} ein Portfolio von ${unitsEnd} ${unitsEnd === 1 ? 'Wohnung' : 'Wohnungen'} mit einem Wert von ${eur(value)}.`
-  if (!ri || ri.kpis.additionalPurchases === 0) {
+  // Ohne Reinvestment rechnet das Modell keine weiteren Kaeufe - der Satz
+  // „ein weiterer Kauf ergibt sich nicht" klang nach geprueft und verworfen
+  // (Review 8.10.26). Ein eingerechneter Verkauf wird genannt.
+  if (!ri) return p.exitAfterYears ? `${kern} Am Ende des Zeitraums ist der Verkauf aller Wohnungen eingerechnet.` : kern
+  if (ri.kpis.additionalPurchases === 0) {
     return `${kern} Ein weiterer Kauf aus Wertzuwachs und Tilgung ergibt sich unter diesen Annahmen im Betrachtungszeitraum nicht.`
   }
   // Eine Refinanzierung ist ein NEUER KREDIT, kein freigewordenes Eigenkapital
