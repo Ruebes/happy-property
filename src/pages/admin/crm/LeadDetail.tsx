@@ -51,6 +51,9 @@ const AI_STATUS_CLS: Record<string, string> = {
   pending:   'bg-amber-100 text-amber-700',
 }
 
+// Telefonnummer öffnet WhatsApp-App (Chat mit Anruf-Knopf) statt tel:-Wähler.
+const waHref = (phone: string) => `whatsapp://send?phone=${phone.replace(/\D/g, '').replace(/^00/, '')}`
+
 export default function LeadDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -2281,7 +2284,7 @@ export default function LeadDetail() {
                     {lead.email}
                   </a>
                   {lead.phone && (
-                    <a href={`tel:${lead.phone}`} className="hover:text-orange-500">
+                    <a href={waHref(lead.phone)} className="hover:text-green-600" title="In WhatsApp öffnen">
                       {lead.phone}
                     </a>
                   )}
@@ -2948,7 +2951,7 @@ export default function LeadDetail() {
                       {lead.phone && (
                         <div className="flex gap-2">
                           <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.phone', 'Telefon')}</dt>
-                          <dd><a href={`tel:${lead.phone}`} className="text-orange-500 hover:underline">{lead.phone}</a></dd>
+                          <dd><a href={waHref(lead.phone)} className="text-orange-500 hover:underline" title="In WhatsApp öffnen">{lead.phone}</a></dd>
                         </div>
                       )}
                       {lead.whatsapp && (
