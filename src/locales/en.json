@@ -1155,6 +1155,7 @@
       "uploadFailed": "Upload failed.",
       "downloadFailed": "Download failed.",
       "deleteEntryConfirm": "Delete this installment? Uploaded files will also be removed.",
+      "removeFileConfirm": "Really remove this file?",
       "noLinkedUnit": "No linked CRM unit found. Please link it in the CRM first.",
       "paymentAdded": "Installment added ✓",
       "saveFailed": "Failed to save: {{error}}",

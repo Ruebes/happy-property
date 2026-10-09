@@ -50,7 +50,7 @@ function Toast({ msg, type = 'success', onClose }: {
 }) {
   useEffect(() => { const t = setTimeout(onClose, 3500); return () => clearTimeout(t) }, [onClose])
   return (
-    <div className={`fixed bottom-6 right-6 z-50 px-5 py-3 rounded-2xl shadow-xl text-sm
+    <div className={`fixed bottom-24 xl:bottom-6 left-4 right-4 sm:left-auto sm:right-6 z-50 px-5 py-3 rounded-2xl shadow-xl text-sm
                     font-body flex items-center gap-3
                     ${type === 'error' ? 'bg-red-600 text-white' : 'bg-hp-black text-white'}`}>
       {type === 'success' ? '✓' : '✕'} {msg}

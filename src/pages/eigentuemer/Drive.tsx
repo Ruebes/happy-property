@@ -139,7 +139,7 @@ export default function EigentuemerDrive() {
 
   return (
     <DashboardLayout basePath="/eigentuemer/dashboard">
-      {toast && <div className="fixed bottom-6 right-6 z-50 bg-gray-900 text-white text-sm px-4 py-3 rounded-xl shadow-lg max-w-sm">{toast}</div>}
+      {toast && <div className="fixed bottom-24 xl:bottom-6 left-4 right-4 sm:left-auto sm:right-6 z-50 bg-gray-900 text-white text-sm px-4 py-3 rounded-xl shadow-lg sm:max-w-sm">{toast}</div>}
       <div className="max-w-3xl mx-auto space-y-6">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>

@@ -529,7 +529,7 @@ export default function EigentuemerDashboard() {
         </button>
       </div>
       {showBug && <BugModal onClose={() => setShowBug(false)} onDone={m => { setShowBug(false); setBugToast(m); setTimeout(() => setBugToast(''), 8000) }} />}
-      {bugToast && <div className="fixed bottom-6 right-6 bg-gray-900 text-white text-sm px-4 py-3 rounded-xl shadow-lg z-50 max-w-sm">{bugToast}</div>}
+      {bugToast && <div className="fixed bottom-24 xl:bottom-6 left-4 right-4 sm:left-auto sm:right-6 bg-gray-900 text-white text-sm px-4 py-3 rounded-xl shadow-lg z-50 sm:max-w-sm">{bugToast}</div>}
 
     </DashboardLayout>
   )

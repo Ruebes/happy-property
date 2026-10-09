@@ -128,3 +128,13 @@ select option { color: #1a1a1a; }
     @apply rounded-2xl border border-gray-100 bg-white shadow-sm;
   }
 }
+
+/* iPhone-Safari zoomt bei Eingabefeldern unter 16px hinein und die Seite bleibt
+   vergrößert. Nur im Portal-Layout (Eigentümer, Verwalter), nicht im Admin-CRM. */
+@media (max-width: 767px) {
+  .hp-legacy input:not([type='checkbox']):not([type='radio']):not([type='file']),
+  .hp-legacy textarea,
+  .hp-legacy select {
+    font-size: 16px !important;
+  }
+}

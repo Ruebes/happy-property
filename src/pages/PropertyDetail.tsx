@@ -125,7 +125,7 @@ function Toast({ msg, type = 'success', onClose }: {
 }) {
   useEffect(() => { const t = setTimeout(onClose, 4000); return () => clearTimeout(t) }, [onClose])
   return (
-    <div className={`fixed bottom-6 right-6 z-50 text-sm font-body px-5 py-3 rounded-xl shadow-lg max-w-sm
+    <div className={`fixed bottom-24 xl:bottom-6 left-4 right-4 sm:left-auto sm:right-6 z-50 text-sm font-body px-5 py-3 rounded-xl shadow-lg sm:max-w-sm
       ${type === 'error' ? 'bg-red-600 text-white' : 'bg-hp-black text-white'}`}>
       {msg}
     </div>
@@ -734,6 +734,10 @@ export default function PropertyDetail() {
   const [uploadingPayType, setUploadingPayType] = useState<'invoice' | 'receipt' | null>(null)
   const payInvoiceRef = useRef<Record<string, HTMLInputElement | null>>({})
   const payReceiptRef = useRef<Record<string, HTMLInputElement | null>>({})
+  // Reiterleiste: am Handy passen nicht alle Reiter auf den Bildschirm. Solange
+  // rechts noch Reiter versteckt sind, zeigt ein Verlauf mit Pfeil das Wischen an.
+  const tabBarRef = useRef<HTMLDivElement>(null)
+  const [tabsMoreRight, setTabsMoreRight] = useState(false)
   // Payment Plan: neue Rate hinzufügen
   const [showAddPayForm,  setShowAddPayForm]  = useState(false)
   const [addPayDesc,      setAddPayDesc]      = useState('')
@@ -1395,6 +1399,16 @@ export default function PropertyDetail() {
     return <span className="ml-1" style={{ color: 'var(--color-highlight)' }}>{invoiceSortDir === 'asc' ? '↑' : '↓'}</span>
   }
 
+  useEffect(() => {
+    const el = tabBarRef.current
+    if (!el) return
+    const update = () => setTabsMoreRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4)
+    update()
+    el.addEventListener('scroll', update, { passive: true })
+    window.addEventListener('resize', update)
+    return () => { el.removeEventListener('scroll', update); window.removeEventListener('resize', update) }
+  }, [loading, property?.id])
+
   // ── Loading / not found ───────────────────────────────────
   if (loading) {
     return (
@@ -1480,6 +1494,8 @@ export default function PropertyDetail() {
   async function handleRemovePaymentFile(payId: string, type: 'invoice' | 'receipt') {
     const pay = unitPayments.find(p => p.id === payId)
     if (!pay) return
+    // Am Handy liegt ✕ direkt neben ↓: ein Fehltipp darf die Datei nicht sofort löschen.
+    if (!window.confirm(t('propertyDetail.purchases.removeFileConfirm', 'Datei wirklich entfernen?'))) return
     const path = type === 'invoice' ? pay.invoice_path : pay.receipt_path
     // ERST die DB-Zeile (mit Ergebnis-Prüfung), DANN die Datei — sonst zeigt die
     // Rate bei einem geblockten Update auf eine bereits gelöschte Datei.
@@ -3237,19 +3253,19 @@ export default function PropertyDetail() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <div className="rounded-2xl border border-green-200 bg-green-50 px-5 py-4">
             <p className="text-xs uppercase tracking-wide text-green-700 font-body">{t('propertyDetail.income.kpiIncome', 'Einnahmen {{year}}', { year })}</p>
-            <p className="text-2xl font-bold text-green-700 font-body mt-1">{fmtCurrency(totalIncome)}</p>
+            <p className="text-lg sm:text-2xl font-bold text-green-700 font-body mt-1 break-words">{fmtCurrency(totalIncome)}</p>
           </div>
-          <div className="rounded-2xl border border-red-100 bg-red-50 px-5 py-4">
+          <div className="rounded-2xl border border-red-100 bg-red-50 px-4 sm:px-5 py-4">
             <p className="text-xs uppercase tracking-wide text-red-600 font-body">{t('propertyDetail.income.kpiExpenses', 'Ausgaben {{year}}', { year })}</p>
-            <p className="text-2xl font-bold text-red-600 font-body mt-1">{fmtCurrency(totalExp)}</p>
+            <p className="text-lg sm:text-2xl font-bold text-red-600 font-body mt-1 break-words">{fmtCurrency(totalExp)}</p>
           </div>
-          <div className="rounded-2xl border border-gray-200 bg-white px-5 py-4">
+          <div className="rounded-2xl border border-gray-200 bg-white px-4 sm:px-5 py-4">
             <p className="text-xs uppercase tracking-wide text-gray-500 font-body">{t('propertyDetail.income.kpiResult', 'Ergebnis')}</p>
-            <p className={`text-2xl font-bold font-body mt-1 ${result >= 0 ? 'text-hp-black' : 'text-red-600'}`}>{fmtCurrency(result)}</p>
+            <p className={`text-lg sm:text-2xl font-bold font-body mt-1 break-words ${result >= 0 ? 'text-hp-black' : 'text-red-600'}`}>{fmtCurrency(result)}</p>
           </div>
-          <div className="rounded-2xl border border-gray-200 bg-white px-5 py-4">
+          <div className="rounded-2xl border border-gray-200 bg-white px-4 sm:px-5 py-4">
             <p className="text-xs uppercase tracking-wide text-gray-500 font-body">{t('propertyDetail.income.kpiOccupancy', 'Auslastung')}</p>
-            <p className="text-2xl font-bold text-hp-black font-body mt-1">{validBookings.length ? `${Math.min(100, occupancy)} %` : '–'}</p>
+            <p className="text-lg sm:text-2xl font-bold text-hp-black font-body mt-1">{validBookings.length ? `${Math.min(100, occupancy)} %` : '–'}</p>
             <p className="text-xs text-gray-400 font-body">{t('propertyDetail.income.nights', '{{n}} Nächte · {{b}} Buchungen', { n: nightsYear, b: validBookings.filter(b => monthOf(b.check_in) != null).length })}</p>
           </div>
         </div>
@@ -3286,8 +3302,9 @@ export default function PropertyDetail() {
               </div>
             </div>
 
-            {/* Monatstabelle */}
-            <div className="rounded-2xl border border-gray-100 bg-white overflow-hidden">
+            {/* Monatstabelle: am Handy seitlich wischbar statt fünf gequetschte Spalten */}
+            <div className="rounded-2xl border border-gray-100 bg-white overflow-x-auto">
+              <div className="min-w-[560px]">
               <div className="grid grid-cols-5 gap-2 px-5 py-2.5 bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500 font-body">
                 <span>{t('propertyDetail.income.colMonth', 'Monat')}</span>
                 <span className="text-right">{t('propertyDetail.income.colShort', 'Kurzzeit')}</span>
@@ -3310,6 +3327,7 @@ export default function PropertyDetail() {
                 <span className="text-right">{fmtCurrency(sum(rentIncome))}</span>
                 <span className="text-right text-red-500">{totalExp ? `−${fmtCurrency(totalExp)}` : '–'}</span>
                 <span className={`text-right ${result >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtCurrency(result)}</span>
+              </div>
               </div>
             </div>
 
@@ -3713,17 +3731,17 @@ export default function PropertyDetail() {
         <div className="flex items-center gap-1.5 flex-wrap">
           <button
             onClick={() => openUnitPaymentFile(path)}
-            className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium font-body truncate max-w-[130px]"
+            className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium font-body truncate min-w-0 max-w-full sm:max-w-[160px] py-1"
             title={filename}>
             📄 <span className="truncate">{filename}</span>
           </button>
           <button
             onClick={() => handleDownloadPaymentFile(path, filename)}
-            className="text-gray-400 hover:text-gray-600 text-xs" title={t('propertyDetail.contracts.download', 'Download')}>↓</button>
+            className="text-gray-400 hover:text-gray-600 text-sm px-2 py-1" title={t('propertyDetail.contracts.download', 'Download')}>↓</button>
           {canRemove && (
             <button
               onClick={onRemove}
-              className="text-gray-300 hover:text-red-500 text-xs" title={t('propertyDetail.purchases.remove', 'Entfernen')}>✕</button>
+              className="text-gray-300 hover:text-red-500 text-sm px-2 py-1" title={t('propertyDetail.purchases.remove', 'Entfernen')}>✕</button>
           )}
         </div>
       )
@@ -3763,17 +3781,19 @@ export default function PropertyDetail() {
         {/* KPI cards — immer sichtbar wenn CRM-Unit verknüpft */}
         {grossTotal > 0 && (
           <>
-            <div className="grid grid-cols-3 gap-4">
-              <div className="bg-blue-50 rounded-2xl p-4 text-center">
-                <p className="text-xs text-blue-500 font-medium font-body mb-1">{t('propertyDetail.purchases.totalAmount', 'Gesamtbetrag')}</p>
+            {/* Am Handy untereinander (Label links, Betrag rechts): drei Kacheln
+                nebeneinander sind dort zu schmal für Beträge wie 749.064,00 €. */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-4">
+              <div className="bg-blue-50 rounded-2xl px-4 py-3 sm:p-4 flex items-center justify-between sm:block sm:text-center">
+                <p className="text-xs text-blue-500 font-medium font-body sm:mb-1">{t('propertyDetail.purchases.totalAmount', 'Gesamtbetrag')}</p>
                 <p className="text-lg font-bold text-blue-800">{fmtCurrency(grossTotal)}</p>
               </div>
-              <div className="bg-green-50 rounded-2xl p-4 text-center">
-                <p className="text-xs text-green-500 font-medium font-body mb-1">{t('propertyDetail.purchases.paid', 'Bezahlt')}</p>
+              <div className="bg-green-50 rounded-2xl px-4 py-3 sm:p-4 flex items-center justify-between sm:block sm:text-center">
+                <p className="text-xs text-green-500 font-medium font-body sm:mb-1">{t('propertyDetail.purchases.paid', 'Bezahlt')}</p>
                 <p className="text-lg font-bold text-green-800">{fmtCurrency(totalPaid)}</p>
               </div>
-              <div className={`rounded-2xl p-4 text-center ${outstanding > 0 ? 'bg-red-50' : 'bg-gray-50'}`}>
-                <p className={`text-xs font-medium font-body mb-1 ${outstanding > 0 ? 'text-red-500' : 'text-gray-400'}`}>
+              <div className={`rounded-2xl px-4 py-3 sm:p-4 flex items-center justify-between sm:block sm:text-center ${outstanding > 0 ? 'bg-red-50' : 'bg-gray-50'}`}>
+                <p className={`text-xs font-medium font-body sm:mb-1 ${outstanding > 0 ? 'text-red-500' : 'text-gray-400'}`}>
                   {t('propertyDetail.purchases.outstanding', 'Ausstehend')}
                 </p>
                 <p className={`text-lg font-bold ${outstanding > 0 ? 'text-red-800' : 'text-gray-600'}`}>
@@ -3812,7 +3832,7 @@ export default function PropertyDetail() {
                  className={`rounded-2xl border overflow-hidden ${pay.is_paid ? 'border-green-200' : 'border-gray-100'}`}>
 
               {/* ── Header: Titel + Betrag ─────────────────── */}
-              <div className={`flex items-center justify-between gap-3 px-4 py-3
+              <div className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3
                 ${pay.is_paid ? 'bg-green-50' : 'bg-white'}`}>
                 <p className="text-sm font-semibold text-hp-black font-body">{cleanDesc(pay.description)}</p>
 
@@ -3853,7 +3873,7 @@ export default function PropertyDetail() {
                         </span>
                         <button
                           onClick={() => { setEditingPayId(pay.id); setEditingAmount(String(pay.amount)) }}
-                          className="opacity-0 group-hover:opacity-100 text-gray-400 text-xs transition-opacity" title={t('propertyDetail.purchases.editAmount', 'Betrag bearbeiten')}>✎</button>
+                          className="md:opacity-0 md:group-hover:opacity-100 text-gray-400 text-sm px-1.5 py-1 transition-opacity" title={t('propertyDetail.purchases.editAmount', 'Betrag bearbeiten')}>✎</button>
                       </div>
                     )
                   )}
@@ -3861,15 +3881,15 @@ export default function PropertyDetail() {
                   {(canEdit || (isEigentuemer && pay.uploaded_by === profile?.id)) && (
                     <button
                       onClick={() => handleDeletePaymentEntry(pay.id)}
-                      className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 text-xs transition-opacity ml-1" title={t('propertyDetail.purchases.deleteEntry', 'Eintrag löschen')}>🗑</button>
+                      className="md:opacity-0 md:group-hover:opacity-100 text-gray-300 hover:text-red-400 text-sm px-1.5 py-1 transition-opacity" title={t('propertyDetail.purchases.deleteEntry', 'Eintrag löschen')}>🗑</button>
                   )}
                 </div>
               </div>
 
               {/* ── Dokumente: Rechnung + Zahlungsbeleg ─────── */}
-              <div className="grid grid-cols-2 gap-0 border-t border-gray-100">
-                <div className="px-4 py-3 border-r border-gray-100">
-                  <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide mb-1.5 font-body">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-0 border-t border-gray-100">
+                <div className="px-4 py-3 min-w-0 border-b sm:border-b-0 sm:border-r border-gray-100">
+                  <p className="text-[11px] text-gray-400 font-semibold uppercase tracking-wide mb-1.5 font-body">
                     {t('propertyDetail.purchases.invoice', 'Rechnung')}
                   </p>
                   {pay.invoice_path ? (
@@ -3885,8 +3905,8 @@ export default function PropertyDetail() {
                     <span className="text-xs text-gray-300 font-body">—</span>
                   )}
                 </div>
-                <div className="px-4 py-3">
-                  <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide mb-1.5 font-body">
+                <div className="px-4 py-3 min-w-0">
+                  <p className="text-[11px] text-gray-400 font-semibold uppercase tracking-wide mb-1.5 font-body">
                     {t('propertyDetail.purchases.receipt', 'Zahlungsbeleg')}
                   </p>
                   {pay.receipt_path ? (
@@ -3945,12 +3965,12 @@ export default function PropertyDetail() {
                     /* DATUM EINGEBEN */
                     <div className="space-y-2">
                       <p className="text-xs font-semibold text-gray-600 font-body">{t('propertyDetail.purchases.whenWasPaymentTransferred', 'Wann wurde die Zahlung überwiesen?')}</p>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <input
                           type="date" autoFocus
                           value={markingPaidDate}
                           onChange={e => setMarkingPaidDate(e.target.value)}
-                          className="flex-1 text-sm border border-green-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-300 font-body"
+                          className="flex-1 min-w-[160px] text-sm border border-green-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-300 font-body"
                         />
                         <button
                           onClick={() => handleMarkAsPaid(pay.id, markingPaidDate)}
@@ -4166,11 +4186,16 @@ export default function PropertyDetail() {
       </div>
 
       {/* Tab bar */}
-      <div className="flex gap-1 border-b border-gray-100 mb-6 overflow-x-auto">
+      <div className="relative mb-6">
+      <div ref={tabBarRef} className="flex gap-1 border-b border-gray-100 overflow-x-auto">
         {tabs.map(tab => (
           <button
             key={tab.key}
-            onClick={() => setActiveTab(tab.key)}
+            onClick={e => {
+              setActiveTab(tab.key)
+              // Angetippten Reiter ganz ins Bild holen (am Handy liegen die hinteren außerhalb)
+              e.currentTarget.scrollIntoView({ inline: 'nearest', block: 'nearest', behavior: 'smooth' })
+            }}
             className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium font-body
                        border-b-2 transition-colors whitespace-nowrap shrink-0
                        ${activeTab === tab.key
@@ -4187,6 +4212,13 @@ export default function PropertyDetail() {
             )}
           </button>
         ))}
+      </div>
+      {tabsMoreRight && (
+        <div aria-hidden className="pointer-events-none absolute right-0 top-0 bottom-px w-12 flex items-center justify-end pr-1 md:hidden"
+             style={{ background: 'linear-gradient(to left, var(--color-bg) 45%, transparent)' }}>
+          <span className="text-lg text-gray-400 leading-none">›</span>
+        </div>
+      )}
       </div>
 
       {/* Tab content */}

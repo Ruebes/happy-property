@@ -236,7 +236,7 @@ export default function LegacyDashboardLayout({ children, basePath }: Props) {
     }`
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ backgroundColor: 'var(--color-bg)' }}>
+    <div className="hp-legacy min-h-screen flex flex-col" style={{ backgroundColor: 'var(--color-bg)' }}>
 
       {/* ── Topbar ── */}
       <header className="bg-white border-b border-gray-100 shadow-sm">
@@ -638,8 +638,8 @@ export default function LegacyDashboardLayout({ children, basePath }: Props) {
       </header>
 
       {/* ── Content ── */}
-      {/* pb-24 = Platz für die mobile Bottom-Nav (md:pb-8 = kein Bottom-Nav sichtbar) */}
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 md:py-8 pb-24 md:pb-8">
+      {/* pb-24 = Platz für die mobile Bottom-Nav; die ist bis xl sichtbar (iPad, Handy quer) */}
+      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 md:py-8 pb-24 xl:pb-8">
         {children}
       </main>
 

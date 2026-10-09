@@ -1155,6 +1155,7 @@
       "uploadFailed": "Upload fehlgeschlagen.",
       "downloadFailed": "Download fehlgeschlagen.",
       "deleteEntryConfirm": "Rate löschen? Hochgeladene Dateien werden ebenfalls entfernt.",
+      "removeFileConfirm": "Datei wirklich entfernen?",
       "noLinkedUnit": "Kein verknüpftes CRM-Objekt gefunden. Bitte erst im CRM verknüpfen.",
       "paymentAdded": "Rate hinzugefügt ✓",
       "saveFailed": "Fehler beim Speichern: {{error}}",
