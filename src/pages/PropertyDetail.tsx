@@ -4095,10 +4095,6 @@ export default function PropertyDetail() {
 
   const tabs: { key: TabKey; label: string; count?: number }[] = [
     { key: 'overview',    label: t('propertyDetail.tabs.overview') },
-    // Zahlungen direkt nach der Übersicht: als letzter Reiter lag er am Handy
-    // außerhalb des Bildschirms und Eigentümer fanden ihre Belege nicht.
-    { key: 'purchases',  label: t('propertyDetail.tabs.paymentPlan', 'Zahlungen & Belege'),
-      count: unitPayments.length || undefined },
     { key: 'verwaltung',  label: t('propertyDetail.tabs.verwaltung', 'Verwaltung') },
     { key: 'contracts',   label: t('propertyDetail.tabs.contracts'),
       count: (contracts.length + mietvertragCount + unitKaufvertraege.length) || undefined },
@@ -4109,6 +4105,8 @@ export default function PropertyDetail() {
       // Zähler = was die Rolle wirklich sieht: "Sonstige Fotos" (p.images) nur für
       // canEdit; Baustellenfotos sehen alle.
       count: ((canEdit ? (p.images?.length || 0) : 0) + crmProjectImages.length + crmUnitImages.length + constructionPhotos.length) || undefined },
+    { key: 'purchases',  label: t('propertyDetail.tabs.paymentPlan', 'Payment Plan'),
+      count: unitPayments.length || undefined },
   ]
 
   return (
