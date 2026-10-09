@@ -5,9 +5,6 @@ import { supabase } from '../lib/supabase'
 import { DECK_LOGO } from '../lib/deckTypes'
 import { migrateConfig, DEFAULT_SIM_PARAMS, type SimUnit, type SimParams, type StrategyConfig, purchaseGrowthOf } from '../lib/strategy'
 import { buildCustomerAnalytics, type CustomerAnalytics, type ScenarioSummary } from '../lib/analytics'
-import { buildGuides } from '../lib/guides'
-import { ensureGuideTexts } from '../lib/guides/texts'
-import type { Guide } from '../lib/guides/types'
 import {
   ChartCard, Legend, LineChart, BarChart, StepChart,
   C_VALUE, C_DEBT, C_EQUITY,
@@ -80,41 +77,10 @@ function Term({ children, hint }: { children: React.ReactNode; hint: string }) {
   )
 }
 
-// Erklärung unter jeder Tabelle (Sven 8.10.26: „so dass jeder versteht, was
-// das ist"). Immer sichtbar: was die Tabelle zeigt, jede Spalte in einfachen
-// Worten, ein Beispiel aus den eigenen Zahlen, was das bedeutet und typische
-// Missverständnisse. Inhalt aus lib/guides.
-function GuideBox({ g, isMobile }: { g: Guide | null | undefined; isMobile: boolean }) {
-  const { t } = useTranslation()
-  if (!g) return null
-  const sub: React.CSSProperties = { fontWeight: 700, color: DARK, fontSize: 12.5, margin: '10px 0 3px' }
-  return (
-    <div style={{ marginTop: 12, background: '#fbfaf7', border: '1px solid #ebe7e0', borderRadius: 14, padding: isMobile ? 14 : '16px 20px', fontSize: 13, color: '#4a4a4a', lineHeight: 1.75 }}>
-      <div style={{ fontWeight: 700, fontSize: 14, color: DARK, marginBottom: 4 }}>{g.heading}</div>
-      <p style={{ margin: 0 }}>{g.intro}</p>
-      {g.items.length > 0 && (
-        <div style={{ display: 'grid', gap: 5, marginTop: 10 }}>
-          {g.items.map((it, i) => (
-            <div key={i}><b style={{ color: DARK }}>{it.label}:</b> {it.text}</div>
-          ))}
-        </div>
-      )}
-      {g.example && (
-        <div style={{ background: '#fff', borderLeft: `3px solid ${CORAL}`, borderRadius: 8, padding: '10px 14px', marginTop: 12 }}>
-          <div style={{ ...sub, marginTop: 0 }}>{t('strategie.guide.exampleTitle')}</div>
-          {g.example}
-        </div>
-      )}
-      {g.meaning.length > 0 && (<>
-        <div style={sub}>{t('strategie.guide.meaningTitle')}</div>
-        {g.meaning.map((m, i) => <p key={i} style={{ margin: '0 0 6px' }}>{m}</p>)}
-      </>)}
-      {g.pitfalls.length > 0 && (<>
-        <div style={sub}>{t('strategie.guide.pitfallsTitle')}</div>
-        <ul style={{ margin: 0, paddingLeft: 18 }}>{g.pitfalls.map((p, i) => <li key={i}>{p}</li>)}</ul>
-      </>)}
-    </div>
-  )
+// Kurze Erklärung unter einer Tabelle oder Grafik (Sven 9.10.26: „zu jedem
+// Diagramm 2-3 Zeilen Erklärung, mehr nicht").
+function Note({ children }: { children: React.ReactNode }) {
+  return <p style={{ fontSize: 12.5, color: '#666', margin: '10px 0 0', lineHeight: 1.65, maxWidth: 760 }}>{children}</p>
 }
 
 function ScrollBox({ children }: { children: React.ReactNode }) {
@@ -211,8 +177,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
   // Vorschau im Simulator: Handy-Ansicht unabhängig von der Fensterbreite
   forceMobile?: boolean
 }) {
-  const { t, i18n } = useTranslation()
-  ensureGuideTexts(i18n)
+  const { t } = useTranslation()
   const [showYears, setShowYears] = useState(false)
   const viewportMobile = useIsMobile()
   const isMobile = forceMobile ?? viewportMobile
@@ -222,7 +187,6 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
     () => units.length ? buildCustomerAnalytics(units, params) : null,
     [units, params],
   )
-  const guides = useMemo(() => a ? buildGuides({ a, params, t }) : {}, [a, params, t])
   if (!a) return <Centered>{t('strategie.empty', 'Dieser Fahrplan enthält noch keine Wohnungen.')}</Centered>
 
   const years = a.wealth.map(w => w.year)
@@ -290,7 +254,6 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
           <div style={{ ...card }}>
             <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.8, color: '#3a3a3a' }}>{a.summary.text}</p>
           </div>
-          <GuideBox g={guides.kpis} isMobile={isMobile} />
         </Section>
 
         {/* 1b — Wie sich das Vermögen zusammensetzt */}
@@ -321,7 +284,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
               </tbody>
             </table>
           </div>
-          <GuideBox g={guides.balance} isMobile={isMobile} />
+          <Note>{t('strategie.nBalance', 'Wert der Wohnungen minus offene Kredite ergibt dein Eigenkapital in den Wohnungen. Dazu kommen Geld auf dem Konto und gegebenenfalls schon gezahlte Raten für Wohnungen im Bau. Das ist dein Vermögen, aber kein Kontostand: Der größte Teil steckt in den Wohnungen.')}</Note>
         </Section>
 
         {/* 2 — Vermögen */}
@@ -345,7 +308,6 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                 { key: 'n', color: '#8a8a8a', label: t('strategie.lNet', 'Netto-Vermögen'), values: a.wealth.map(w => w.netWorth), dashed: true },
               ]} />
           </ChartCard>
-          <GuideBox g={guides.wealth} isMobile={isMobile} />
         </Section>
 
         {/* 3 — Portfolio */}
@@ -390,7 +352,6 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
               style={{ marginTop: 8, background: 'none', border: 0, color: CORAL, fontSize: 12.5, cursor: 'pointer', padding: 0, fontFamily: SANS }}>
               {showYears ? t('strategie.less', 'Nur die wichtigen Jahre zeigen') : t('strategie.more', 'Alle Jahre anzeigen')}
             </button>
-            <GuideBox g={guides.portfolio} isMobile={isMobile} />
           </Section>
         )}
 
@@ -467,7 +428,6 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                 </table>
               </ScrollBox>
             )}
-            <GuideBox g={guides.recycling} isMobile={isMobile} />
             {a.opportunity && (
               <div style={{ ...card, marginTop: 12, borderLeft: `4px solid ${CORAL}` }}>
                 <div style={{ fontWeight: 700, fontSize: 14, color: DARK, marginBottom: 6 }}>
@@ -487,7 +447,6 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                 </p>
               </div>
             )}
-            <GuideBox g={guides.opportunity} isMobile={isMobile} />
           </Section>
         )}
 
@@ -543,7 +502,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
               {showYears ? t('strategie.less', 'Nur die wichtigen Jahre zeigen') : t('strategie.more', 'Alle Jahre anzeigen')}
             </button>
           )}
-          <GuideBox g={guides.cashflow} isMobile={isMobile} />
+          <Note>{t('strategie.nCashflow', 'Jede Zeile ist ein Jahr: Mieten minus Kosten, Zinsen, Tilgung und Steuern, plus MwSt-Erstattung, ergibt den Cashflow. Ein Minus heißt, dass du in diesem Jahr Geld dazulegst. Die Tilgung ist kein Verlust, sie senkt deinen Kredit.')}{a.cashflowRows.some(r => r.toPayments) && ` ${t('strategie.nCashflowPay', 'Was in der Spalte „für Kaufraten“ steht, fließt aus Miete und MwSt-Erstattung direkt in die Raten an den Bauträger und ist vom Cashflow schon abgezogen.')}`}</Note>
 
           {a.reinvest && a.liquidity.length > 0 && (
             <div style={{ marginTop: 12 }}>
@@ -569,7 +528,6 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                   </div>
                 </div>
               )}
-              <GuideBox g={guides.liquidity} isMobile={isMobile} />
             </div>
           )}
         </Section>
@@ -605,7 +563,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                   : []),
               ]} />
           </ChartCard>
-          <GuideBox g={guides.financing} isMobile={isMobile} />
+          <Note>{t('strategie.nFinancing', 'Die Linie zeigt, was du am Jahresende insgesamt schuldest: Bankdarlehen, offene Raten an den Bauträger und Kredit für Kaufraten. Der Beleihungsgrad ist dieser Kredit geteilt durch den Wert der Wohnungen.')}{a.reinvest && ` ${t('strategie.nFinancingCap', 'Die zusätzliche Beleihungskapazität ist der Kredit, der rechnerisch noch möglich wäre, keine Zusage der Bank.')}`}</Note>
         </Section>
 
         {/* 7 — Immobilien */}
@@ -650,7 +608,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
               </div>
             ))}
           </div>
-          <GuideBox g={guides.properties} isMobile={isMobile} />
+          <Note>{t('strategie.nProperties', 'Jede Karte ist eine Wohnung: woraus der Kaufpreis bezahlt wird, die Miete und der Wert am Ende. „davon dir gehörend“ ist der Wert abzüglich des Kredits, der auf dieser Wohnung liegt. Die Miete im 1. Jahr zählt nur die Monate ab der Übergabe.')}</Note>
         </Section>
 
         {/* 8 — Steuern */}
@@ -696,7 +654,6 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
               </p>
             </div>
           )}
-          <GuideBox g={guides.taxes} isMobile={isMobile} />
         </Section>
 
         {/* 9 — Szenarien */}
@@ -734,7 +691,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
               </tbody>
             </table>
           </ScrollBox>
-          <GuideBox g={guides.scenarios} isMobile={isMobile} />
+          <Note>{t('strategie.nScenarios', 'Vorsichtig heißt: 2 Prozentpunkte weniger Wertsteigerung pro Jahr, Mieten steigen langsamer, Zinsen 1 Prozentpunkt höher. Freundlich rechnet mit mehr Wertsteigerung, schneller steigenden Mieten und niedrigeren Zinsen. So siehst du, wie stark das Ergebnis vom Markt abhängt.')}</Note>
 
           {a.sensitivity.length > 0 && (
             <div style={{ ...card, marginTop: 12 }}>
@@ -755,7 +712,6 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
               </p>
             </div>
           )}
-          <GuideBox g={guides.sensitivity} isMobile={isMobile} />
         </Section>
 
         {/* 9b — Zeitachse aus den tatsächlichen Ereignissen des Modells */}
@@ -780,7 +736,6 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
               )
             })}
           </div>
-          <GuideBox g={guides.timeline} isMobile={isMobile} />
         </Section>
 
         {/* 9c — Finanzierungsbedarf nach dem Zahlungsplan der Bauträger (Sven 7.10.26:
@@ -846,7 +801,6 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                   </tbody>
                 </table>
               </ScrollBox>
-              <GuideBox g={guides.creditPath} isMobile={isMobile} />
               {cp.loans.length > 0 && (
                 <div style={{ ...card, marginTop: 12 }}>
                   <div style={{ fontWeight: 700, fontSize: 14, color: DARK, marginBottom: 8 }}>
@@ -879,7 +833,6 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                   </p>
                 </div>
               )}
-              <GuideBox g={guides.loans} isMobile={isMobile} />
               {a.vatReturned.length > 0 && (
                 <p style={{ fontSize: 12.5, color: '#555', margin: '10px 0 0', lineHeight: 1.6 }}>
                   {a.vatReturned.map(v => t('strategie.vatReturned', 'Die MwSt-Erstattung von {{name}} ({{amount}}, {{date}}) geht an dich zurück und wird nicht für Kaufraten verwendet.', {
@@ -959,7 +912,6 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                 ? t('strategie.exNoteJoint', 'Steuern und Erlös gelten für den Verkauf aller Wohnungen zusammen.')
                 : t('strategie.exNoteSingle', 'Jede Wohnung wird einzeln verkauft, Steuern und Erlös stehen in jeder Zeile.')}
             </p>
-            <GuideBox g={guides.exit} isMobile={isMobile} />
           </Section>
         )}
 
@@ -981,7 +933,6 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
               </div>
             ))}
           </div>
-          <GuideBox g={guides.costKpis} isMobile={isMobile} />
 
           <ScrollBox>
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 620 }}>
@@ -1003,7 +954,6 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
               </tbody>
             </table>
           </ScrollBox>
-          <GuideBox g={guides.moneyFlow} isMobile={isMobile} />
 
           <div style={{ ...card, marginTop: 12 }}>
             <div style={{ fontWeight: 700, fontSize: 14, color: DARK, marginBottom: 8 }}>

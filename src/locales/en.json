@@ -11134,7 +11134,14 @@
     "assumptionsPrice": "Later purchases are not calculated at today's price: the model property's purchase price rises by {{g}} % per year, the rent only with rent growth. The initial yield of later purchases is therefore lower than today.",
     "notShared": "This plan has not been released to the client yet. It is released as soon as the outbox entry actually goes out. To view it, append ?preview=1 to the address.",
     "previewTag": "Internal preview.",
-    "previewNote": "The client cannot open this link yet. It is released as soon as the outbox entry actually goes out. Please do not forward the link yourself."
+    "previewNote": "The client cannot open this link yet. It is released as soon as the outbox entry actually goes out. Please do not forward the link yourself.",
+    "nBalance": "The value of the apartments minus open loans gives your equity in the apartments. Add money in the account and, where applicable, instalments already paid for apartments under construction. That is your net worth, not a bank balance: most of it is tied up in the apartments.",
+    "nCashflow": "Each row is one year: rents minus costs, interest, repayment and taxes, plus the VAT refund, gives the cash flow. A minus means you put money in that year. Repayment is not a loss, it reduces your loan.",
+    "nCashflowPay": "Whatever is in the column “for instalments” goes from rent and VAT refund straight into the instalments to the developer and is already deducted from the cash flow.",
+    "nFinancing": "The line shows what you owe in total at the end of each year: bank loans, open instalments to the developer and credit for purchase instalments. The loan to value (LTV) is this debt divided by the value of the apartments.",
+    "nFinancingCap": "The additional borrowing capacity is the loan that would still be possible on paper, not a commitment from the bank.",
+    "nProperties": "Each card is one apartment: how the purchase price is paid, the rent and the value at the end. “of which yours” is the value minus the loan on this apartment. Rent in the first year only counts the months from handover.",
+    "nScenarios": "Cautious means: 2 percentage points less appreciation per year, rents rise more slowly, interest 1 percentage point higher. Favourable assumes more appreciation, faster rising rents and lower interest. This shows how much the result depends on the market."
   },
   "months": {
     "jan": "Jan",

@@ -10947,7 +10947,14 @@
     "assumptionsPrice": "Spätere Käufe werden nicht zum heutigen Preis gerechnet: Der Kaufpreis des Modellobjekts steigt mit {{g}} % pro Jahr, die Miete nur mit der Mietsteigerung. Die Anfangsrendite späterer Käufe fällt dadurch niedriger aus als heute.",
     "notShared": "Dieser Fahrplan ist noch nicht für den Kunden freigegeben. Er wird freigeschaltet, sobald der Eintrag im Postausgang tatsächlich hinausgeht. Zum Ansehen hänge ?preview=1 an die Adresse.",
     "previewTag": "Interne Vorschau.",
-    "previewNote": "Der Kunde kann diesen Link noch nicht öffnen. Er wird freigeschaltet, sobald der Eintrag im Postausgang tatsächlich hinausgeht. Bitte den Link nicht selbst weiterschicken."
+    "previewNote": "Der Kunde kann diesen Link noch nicht öffnen. Er wird freigeschaltet, sobald der Eintrag im Postausgang tatsächlich hinausgeht. Bitte den Link nicht selbst weiterschicken.",
+    "nBalance": "Wert der Wohnungen minus offene Kredite ergibt dein Eigenkapital in den Wohnungen. Dazu kommen Geld auf dem Konto und gegebenenfalls schon gezahlte Raten für Wohnungen im Bau. Das ist dein Vermögen, aber kein Kontostand: Der größte Teil steckt in den Wohnungen.",
+    "nCashflow": "Jede Zeile ist ein Jahr: Mieten minus Kosten, Zinsen, Tilgung und Steuern, plus MwSt-Erstattung, ergibt den Cashflow. Ein Minus heißt, dass du in diesem Jahr Geld dazulegst. Die Tilgung ist kein Verlust, sie senkt deinen Kredit.",
+    "nCashflowPay": "Was in der Spalte „für Kaufraten“ steht, fließt aus Miete und MwSt-Erstattung direkt in die Raten an den Bauträger und ist vom Cashflow schon abgezogen.",
+    "nFinancing": "Die Linie zeigt, was du am Jahresende insgesamt schuldest: Bankdarlehen, offene Raten an den Bauträger und Kredit für Kaufraten. Der Beleihungsgrad ist dieser Kredit geteilt durch den Wert der Wohnungen.",
+    "nFinancingCap": "Die zusätzliche Beleihungskapazität ist der Kredit, der rechnerisch noch möglich wäre, keine Zusage der Bank.",
+    "nProperties": "Jede Karte ist eine Wohnung: woraus der Kaufpreis bezahlt wird, die Miete und der Wert am Ende. „davon dir gehörend“ ist der Wert abzüglich des Kredits, der auf dieser Wohnung liegt. Die Miete im 1. Jahr zählt nur die Monate ab der Übergabe.",
+    "nScenarios": "Vorsichtig heißt: 2 Prozentpunkte weniger Wertsteigerung pro Jahr, Mieten steigen langsamer, Zinsen 1 Prozentpunkt höher. Freundlich rechnet mit mehr Wertsteigerung, schneller steigenden Mieten und niedrigeren Zinsen. So siehst du, wie stark das Ergebnis vom Markt abhängt."
   },
   "months": {
     "jan": "Jan",
