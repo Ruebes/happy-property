@@ -226,6 +226,9 @@ export function removeFurniture(blocks: Block[], sink: ScrubEvent[]): Block[] {
 // ausser reservationVat ist ausdruecklich false (MITO: 20.000 EUR glatt).
 export function buildPaymentBlock(sched: PaySchedule, basis?: { net: number; gross: number } | null, lang: 'de' | 'en' = 'de'): Block {
   const EN = lang === 'en'
+  // MITO: Reservierung mit der letzten Rate verrechnet, Raten nach der Uebergabe
+  // statt nach Baufortschritt. Ohne Schalter bleibt alles wie bisher.
+  const resLast = sched.reservationCredit === 'last'
   const stages = sched.stages ?? []
   const half = Math.ceil(stages.length / 2)
   const fmt = (n: number) => Math.round(n).toLocaleString('de-DE') + ' €'
@@ -265,16 +268,29 @@ export function buildPaymentBlock(sched: PaySchedule, basis?: { net: number; gro
     type: 'payment',
     kicker: EN ? 'Payment plan' : 'Zahlungsplan',
     headline: EN ? 'The payment plan at a glance' : 'Der Zahlungsplan im Überblick',
-    intro: EN
+    intro: resLast
+      ? (EN ? 'In clear stages, with a large part paid only after handover - transparent and easy to follow.'
+        : 'In klaren Stufen, ein großer Teil erst nach der Übergabe - transparent und nachvollziehbar.')
+      : EN
       ? 'Spread in clear stages across the construction phases - transparent and easy to follow.'
       : 'In klaren Stufen über die Bauphasen verteilt - transparent und nachvollziehbar.',
-    phase1: { label: EN ? 'Start' : 'Start', title: EN ? 'Reservation & contract' : 'Reservierung & Vertrag', rows: p1 },
-    phase2: { label: EN ? 'Construction & handover' : 'Bauphase & Übergabe', title: EN ? 'Instalments by construction progress' : 'Raten nach Baufortschritt', rows: p2 },
+    phase1: { label: EN ? 'Start' : 'Start', title: resLast ? (EN ? 'Reservation, contract & handover' : 'Reservierung, Vertrag & Übergabe') : (EN ? 'Reservation & contract' : 'Reservierung & Vertrag'), rows: p1 },
+    phase2: resLast
+      ? { label: EN ? 'After handover' : 'Nach Übergabe', title: EN ? 'Instalments after handover' : 'Raten nach Übergabe', rows: p2 }
+      : { label: EN ? 'Construction & handover' : 'Bauphase & Übergabe', title: EN ? 'Instalments by construction progress' : 'Raten nach Baufortschritt', rows: p2 },
     note: hasBasis
-      ? (EN
+      ? (resLast
+        ? (EN
+          ? 'The reservation and the full first instalment on signing are due immediately; the reservation is credited against the last instalment. Main amounts gross (incl. VAT); the net amount is shown in addition.'
+          : 'Reservierung und die volle erste Rate bei Vertragsunterzeichnung sind sofort fällig; die Reservierung wird mit der letzten Rate verrechnet. Hauptbeträge brutto (inkl. MwSt); der jeweilige Nettobetrag ist zusätzlich ausgewiesen.')
+        : EN
         ? 'The reservation and the first instalment on signing are due immediately; further instalments follow the construction progress. The reservation is credited against the first instalment. Main amounts gross (incl. VAT); the net amount is shown in addition.'
         : 'Reservierung und die erste Rate bei Vertragsunterzeichnung sind sofort fällig; weitere Raten folgen mit dem Baufortschritt. Die Reservierung wird auf die erste Rate angerechnet. Hauptbeträge brutto (inkl. MwSt); der jeweilige Nettobetrag ist zusätzlich ausgewiesen.')
-      : (EN
+      : (resLast
+        ? (EN
+          ? 'The reservation amount is credited against the last instalment. Percentages refer to the purchase price; final amounts according to the developer terms.'
+          : 'Der Reservierungsbetrag wird mit der letzten Rate verrechnet. Prozentsätze bezogen auf den Kaufpreis; finale Beträge gemäß Bauträger-Konditionen.')
+        : EN
         ? 'The reservation amount is credited on signing the contract. Percentages refer to the purchase price; final amounts according to the developer terms.'
         : 'Der Reservierungsbetrag wird bei Vertragsunterzeichnung angerechnet. Prozentsätze bezogen auf den Kaufpreis; finale Beträge gemäß Bauträger-Konditionen.'),
   }

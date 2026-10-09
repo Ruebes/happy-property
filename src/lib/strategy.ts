@@ -138,8 +138,10 @@ export interface SimParams {
 export interface DevSchedule {
   reservation: number     // EUR, wird bei Vertrag gezahlt und auf eine Rate angerechnet
   // Auf welche Rate die Reservierung angerechnet wird: Standard die
-  // Vertragsrate (Mito, Luma), bei Kuutio die letzte Rate bei Uebergabe.
-  reservationAt?: 'contract' | 'handover'
+  // Vertragsrate (Luma), bei Kuutio die Rate bei Uebergabe, bei Mito die
+  // letzte Rate nach der Uebergabe ('last', Sven 9.10.26; Schalter
+  // payment_schedule.reservationCredit = 'last').
+  reservationAt?: 'contract' | 'handover' | 'last'
   contractPct: number     // % bei Vertrag
   build: number[]         // Bauraten in % je Bauabschnitt
   // Faelligkeit je Baurate in Monaten VOR der Uebergabe (Sven 6.10.26: „Du musst
@@ -241,10 +243,12 @@ export function scheduleFromProject(raw: unknown, developer?: string | null): De
         : null
   const zahl = (s: string) => Number(String(s).replace(/\./g, '').replace(',', '.').replace(/[^\d.]/g, '')) || 0
   let reservation = 0
+  let resCredit: string | undefined
   const stages: Array<{ text: string; label: string; pct: number; monthsBefore?: number }> = []
   if (raw && !Array.isArray(raw) && typeof raw === 'object') {
-    const o = raw as { reservation?: number; stages?: Array<{ label?: string; sub?: string; pct?: number; monthsBefore?: number }> }
+    const o = raw as { reservation?: number; reservationCredit?: string; stages?: Array<{ label?: string; sub?: string; pct?: number; monthsBefore?: number }> }
     reservation = Number(o.reservation) || 0
+    resCredit = o.reservationCredit
     for (const s of o.stages ?? []) {
       if (Number(s.pct) > 0) stages.push({ text: `${s.label ?? ''} ${s.sub ?? ''}`, label: `${s.label ?? ''} ${s.sub ?? ''}`.trim(), pct: Number(s.pct),
         ...(Number.isFinite(s.monthsBefore) ? { monthsBefore: Number(s.monthsBefore) } : {}) })
@@ -293,6 +297,9 @@ export function scheduleFromProject(raw: unknown, developer?: string | null): De
       s.buildLabels!.push(st.label)
     }
   }
+  // Mito: Reservierung wird mit der letzten Rate nach der Uebergabe verrechnet.
+  // Nur ueber den ausdruecklichen Schalter, nie aus dem Beschriftungstext.
+  if (resCredit === 'last' && s.afterPct > 0) s.reservationAt = 'last'
   return normalizeSchedule(s)
 }
 
@@ -620,8 +627,16 @@ function devPayments(raw: DevSchedule, buy: number, ready: number, gross: number
   const share = (pct: number) => gross * pct / 100
   // Reservierung auf die letzte Rate angerechnet (Kuutio): bei Vertrag zusaetzlich
   // faellig, bei Uebergabe entsprechend weniger. Nie mehr, als die letzte Rate hergibt.
-  const resAtHandover = s.reservationAt === 'handover' ? Math.min(Math.max(0, s.reservation || 0), share(s.handoverPct)) : 0
+  // Reservierung auf die letzte Rate nach Uebergabe (Mito): bei Vertrag zusaetzlich
+  // faellig, die Vertragsrate bleibt der volle Prozentsatz; die letzten Raten nach
+  // Uebergabe werden entsprechend kleiner. Zins und Annuitaet bleiben auf den vollen
+  // Anteil gerechnet. Ohne Raten nach Uebergabe wirkt 'last' wie 'handover'.
+  const res = Math.max(0, s.reservation || 0)
+  const lastOk = s.reservationAt === 'last' && s.afterPct > 0
+  const resAtHandover = (s.reservationAt === 'handover' || (s.reservationAt === 'last' && !lastOk)) ? Math.min(res, share(s.handoverPct)) : 0
+  const resAtLast = lastOk ? Math.min(res, share(s.afterPct)) : 0
   if (resAtHandover > 0) out.push({ ym: buy, amount: resAtHandover, label: 'Reservierung' })
+  if (resAtLast > 0) out.push({ ym: buy, amount: resAtLast, label: 'Reservierung' })
   if (s.contractPct > 0) out.push({ ym: buy, amount: share(s.contractPct), label: `${fmtPct(s.contractPct)} bei Vertrag` })
   const span = ready - buy
   s.build.forEach((pct, k) => {
@@ -656,6 +671,14 @@ function devPayments(raw: DevSchedule, buy: number, ready: number, gross: number
         label: `Rate ${k}/${n} nach Übergabe`,
       })
     }
+    // Reservierung von hinten mit den Raten verrechnen (reicht die letzte nicht,
+    // auch mit der vorletzten usw.).
+    let rest = resAtLast
+    for (let i = out.length - 1; i >= 0 && rest > 0.005 && out[i].after; i--) {
+      const d = Math.min(rest, out[i].amount)
+      out[i] = { ...out[i], amount: out[i].amount - d, label: `${out[i].label} abzüglich Reservierung` }
+      rest -= d
+    }
   }
   return out
 }
@@ -668,10 +691,12 @@ export function describeSchedule(raw: DevSchedule): string {
   if (s.contractPct > 0) parts.push(`${fmtPct(s.contractPct)} bei Vertrag`)
   const build = s.build.filter(b => b > 0)
   if (build.length) parts.push(`${build.map(fmtPct).join(' / ')} nach Baufortschritt`)
-  if (s.handoverPct > 0) parts.push(`${fmtPct(s.handoverPct)} bei Übergabe${s.reservationAt === 'handover' && s.reservation > 0 ? ' abzüglich Reservierung' : ''}`)
+  // 'last' ohne Raten nach Uebergabe rechnet wie 'handover' (siehe devPayments)
+  const resHo = s.reservation > 0 && (s.reservationAt === 'handover' || (s.reservationAt === 'last' && !(s.afterPct > 0)))
+  if (s.handoverPct > 0) parts.push(`${fmtPct(s.handoverPct)} bei Übergabe${resHo ? ' abzüglich Reservierung' : ''}`)
   if (s.afterPct > 0) {
     const { n, termMonths } = afterInstalments(s)
-    parts.push(`${fmtPct(s.afterPct)} ${n === 1 ? 'in einer Rate' : `in ${n} Raten bis`} ${termMonths} Monate nach Übergabe (${fmtPct(s.afterRatePct)} Zins)`)
+    parts.push(`${fmtPct(s.afterPct)} ${n === 1 ? 'in einer Rate' : `in ${n} Raten bis`} ${termMonths} Monate nach Übergabe (${fmtPct(s.afterRatePct)} Zins)${s.reservationAt === 'last' && s.reservation > 0 ? ', letzte Rate abzüglich Reservierung' : ''}`)
   }
   return parts.join(', ')
 }

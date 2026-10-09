@@ -160,6 +160,27 @@ const baseBlocks = (specs) => {
   ok('Ratensumme (ohne Reservierung) = Bruttopreis 403.410 €', summe === 403410, String(summe))
 }
 
+// ── MITO: Reservierung mit der letzten Rate verrechnet (Sven 9.10.26) ───────
+{
+  const M = { reservation: 20000, reservationVat: false, stages: [
+    { pct: 30, label: 'Bei Vertragsunterzeichnung' },
+    { pct: 20, label: 'Bei Übergabe' },
+    { pct: 50, label: 'Nach Übergabe · flexible Raten', sub: '12 Monate nach Übergabe, monatlich oder quartalsweise, 2,7 % Zins · letzte Rate abzüglich Reservierung' } ] }
+  const last = buildPaymentBlock({ ...M, reservationCredit: 'last' }, { net: 339000, gross: 403410 }, 'de')
+  ok('MITO last: Vertragsrate volle 30 % = 121.023 €, 50 % = 201.705 €', last.phase1.rows[1].value === '121.023 €' && last.phase2.rows[0].value === '201.705 €', JSON.stringify([last.phase1.rows[1].value, last.phase2.rows[0].value]))
+  ok('MITO last: Hinweis „letzten Rate", nie „erste Rate angerechnet"', /letzten Rate verrechnet/.test(last.note) && !/erste Rate angerechnet/.test(last.note), last.note)
+  ok('MITO last: Phase 2 = Raten nach Übergabe', last.phase2.title === 'Raten nach Übergabe' && !/Baufortschritt/.test(last.note), last.phase2.title)
+  const lastNo = buildPaymentBlock({ ...M, reservationCredit: 'last' }, null, 'de')
+  ok('MITO last ohne Preis: Hinweis letzte Rate', /mit der letzten Rate verrechnet/.test(lastNo.note), lastNo.note)
+  const lastEn = buildPaymentBlock({ ...M, reservationCredit: 'last' }, { net: 339000, gross: 403410 }, 'en')
+  ok('MITO last EN: credited against the last instalment', /credited against the last instalment/.test(lastEn.note) && !/credited against the first/.test(lastEn.note), lastEn.note)
+  const old = buildPaymentBlock(M, { net: 339000, gross: 403410 }, 'de')
+  ok('Ohne Schalter: Hinweis wie bisher (erste Rate)', /Die Reservierung wird auf die erste Rate angerechnet\./.test(old.note) && old.phase2.title === 'Raten nach Baufortschritt', old.note)
+  const lumaNow = buildPaymentBlock(schedule, { net: 339000, gross: 403410 }, 'de')
+  ok('Luma-Block: Hinweis und Phasen exakt wie vorher', lumaNow.note === 'Reservierung und die erste Rate bei Vertragsunterzeichnung sind sofort fällig; weitere Raten folgen mit dem Baufortschritt. Die Reservierung wird auf die erste Rate angerechnet. Hauptbeträge brutto (inkl. MwSt); der jeweilige Nettobetrag ist zusätzlich ausgewiesen.'
+    && lumaNow.intro === 'In klaren Stufen über die Bauphasen verteilt - transparent und nachvollziehbar.' && lumaNow.phase2.label === 'Bauphase & Übergabe' && lumaNow.phase1.title === 'Reservierung & Vertrag', lumaNow.note)
+}
+
 // ── Test E: Villa-Bild im Apartment-Deck ─────────────────────────────────────
 {
   const gal = [

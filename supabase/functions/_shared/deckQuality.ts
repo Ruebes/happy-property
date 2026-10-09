@@ -212,8 +212,8 @@ export async function checkClaims(blocks: Block[], facts: string, ctx: DeckConte
     ? [
         resNet != null
           ? (sched.reservationVat !== false
-              ? `Reservierung ${resNet.toLocaleString('de-DE')} € netto zzgl. 19 % MwSt = ${resGross!.toLocaleString('de-DE')} € brutto, wird auf die erste Rate angerechnet`
-              : `Reservierung ${resNet.toLocaleString('de-DE')} € pauschal (Bruttobetrag, keine MwSt zusätzlich; "${resNet.toLocaleString('de-DE')} € brutto" und "${resNet.toLocaleString('de-DE')} €" meinen dasselbe), wird auf die erste Rate angerechnet`)
+              ? `Reservierung ${resNet.toLocaleString('de-DE')} € netto zzgl. 19 % MwSt = ${resGross!.toLocaleString('de-DE')} € brutto, wird ${sched.reservationCredit === 'last' ? 'mit der letzten Rate nach der Übergabe verrechnet (die Rate bei Vertragsunterzeichnung ist der volle Prozentsatz ohne Abzug)' : 'auf die erste Rate angerechnet'}`
+              : `Reservierung ${resNet.toLocaleString('de-DE')} € pauschal (Bruttobetrag, keine MwSt zusätzlich; "${resNet.toLocaleString('de-DE')} € brutto" und "${resNet.toLocaleString('de-DE')} €" meinen dasselbe), wird ${sched.reservationCredit === 'last' ? 'mit der letzten Rate nach der Übergabe verrechnet (die Rate bei Vertragsunterzeichnung ist der volle Prozentsatz ohne Abzug)' : 'auf die erste Rate angerechnet'}`)
           : 'keine Reservierung hinterlegt',
         ...sched.stages.map(s => `${s.label}${s.sub ? ` (${s.sub})` : ''}: ${s.pct} %`),
         'Raten werden brutto (inkl. 19 % MwSt) auf den Bruttopreis gerechnet; die Netto-Unterzeile bezieht sich auf den Nettopreis inkl. Möbelpaket, falls eines dabei ist.',

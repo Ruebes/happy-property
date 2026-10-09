@@ -442,12 +442,13 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
     if (s.contractPct > 0) parts.push(t('crm.sim.descContract', '{{p}} bei Vertrag', { p: f(s.contractPct) }))
     const build = s.build.filter(b => b > 0)
     if (build.length) parts.push(t('crm.sim.descBuild', '{{p}} nach Baufortschritt', { p: build.map(f).join(' / ') }))
-    if (s.handoverPct > 0) parts.push(s.reservationAt === 'handover' && s.reservation > 0
+    if (s.handoverPct > 0) parts.push((s.reservationAt === 'handover' || (s.reservationAt === 'last' && !(s.afterPct > 0))) && s.reservation > 0
       ? t('crm.sim.descHandoverRes', '{{p}} bei Übergabe abzüglich Reservierung', { p: f(s.handoverPct) })
       : t('crm.sim.descHandover', '{{p}} bei Übergabe', { p: f(s.handoverPct) }))
     if (s.afterPct > 0) {
       const { n, termMonths } = afterInstalments(s)
-      parts.push(t('crm.sim.descAfter', '{{p}} in {{count}} Raten bis {{m}} Monate nach Übergabe ({{r}} Zins)', { p: f(s.afterPct), count: n, m: termMonths, r: f(s.afterRatePct) }))
+      parts.push(t('crm.sim.descAfter', '{{p}} in {{count}} Raten bis {{m}} Monate nach Übergabe ({{r}} Zins)', { p: f(s.afterPct), count: n, m: termMonths, r: f(s.afterRatePct) })
+        + (s.reservationAt === 'last' && s.reservation > 0 ? t('crm.sim.descAfterRes', ', letzte Rate abzüglich Reservierung') : ''))
     }
     return parts.join(', ')
   }
@@ -1158,9 +1159,10 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                           <div>
                             <label className={lbl}>{t('crm.sim.schedResAt', 'Reservierung angerechnet auf')}</label>
                             <CustomSelect value={sched.reservationAt ?? 'contract'}
-                              onChange={v => setSched({ reservationAt: v as 'contract' | 'handover' })}
+                              onChange={v => setSched({ reservationAt: v as 'contract' | 'handover' | 'last' })}
                               options={[{ value: 'contract', label: t('crm.sim.schedResContract', 'Vertragsrate') },
-                                { value: 'handover', label: t('crm.sim.schedResHandover', 'letzte Rate') }]} />
+                                { value: 'handover', label: t('crm.sim.schedResHandover', 'Rate bei Übergabe') },
+                                { value: 'last', label: t('crm.sim.schedResLast', 'letzte Rate nach Übergabe') }]} />
                           </div>
                           {num(t('crm.sim.schedContract', '% bei Vertrag'), sched.contractPct, v => setSched({ contractPct: v }))}
                           {num(t('crm.sim.schedHandover', '% bei Übergabe'), sched.handoverPct, v => setSched({ handoverPct: v }))}

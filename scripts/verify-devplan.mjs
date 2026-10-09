@@ -458,5 +458,48 @@ T('Übergabe Barkauf: kein „Zins und Tilgung"', ho15.startsWith('Ab hier flie�
 // (7) Verkauf vor der MwSt-Erstattung: Forderung (negativ), nicht als Rückzahlung
 T('Verkauf vor der Erstattung: MwSt als offene Forderung', an4.exits[0].vat < 0 && an4.exitTotal.vat < 0, `${eur(an4.exits[0].vat)}`)
 
+// ── Mito ab 9.10.2026: Reservierung mit der LETZTEN Rate verrechnet ─────────
+// (Sven 9.10.26, Infinity-Kaufvertrag: Vertragsrate = volle 30 % brutto.)
+{
+  const RAW = { reservation: 20000, reservationVat: false, currency: 'EUR', stages: [
+    { pct: 30, label: 'Bei Vertragsunterzeichnung' },
+    { pct: 20, label: 'Bei Übergabe' },
+    { pct: 50, label: 'Nach Übergabe · flexible Raten', sub: '12 Monate nach Übergabe, monatlich oder quartalsweise, 2,7 % Zins · letzte Rate abzüglich Reservierung' },
+  ] }
+  const sLast = scheduleFromProject({ ...RAW, reservationCredit: 'last' }, 'Mito')
+  const sOld = scheduleFromProject(RAW, 'Mito')
+  T('Mito last: 30/20/50, 12 Monate, 2,7 %, 4/Jahr, reservationAt last',
+    sLast.contractPct === 30 && sLast.handoverPct === 20 && sLast.afterPct === 50 && sLast.afterMonths === 12 && sLast.afterRatePct === 2.7 && sLast.afterPerYear === 4 && sLast.reservationAt === 'last',
+    JSON.stringify({ c: sLast.contractPct, a: sLast.afterMonths, r: sLast.afterRatePct, at: sLast.reservationAt }))
+  T('Mito ohne Schalter: reservationAt bleibt leer (alter Weg)', sOld.reservationAt === undefined)
+  const G = 755412
+  const u = (sched) => ({ key: 'X', name: 'X', plan: 'dev', schedule: sched, buyY: 2026, buyM: 10, readyY: 2027, readyM: 12 })
+  const pl = paymentPlan(u(sLast), G), po = paymentPlan(u(sOld), G)
+  const sum = a => a.reduce((x, y) => x + y.amount, 0)
+  // Unabhaengige Nachrechnung der Annuitaet (nicht derselbe Code)
+  const n = 4, r = 0.027 / 4, P50 = G * 0.5, rate = P50 * r / (1 - Math.pow(1 + r, -n))
+  let open = P50; const tilg = []
+  for (let k = 1; k <= n; k++) { const i = open * r; const t = k === n ? open : rate - i; tilg.push(t); open -= t }
+  const resRow = pl.find(x => x.label === 'Reservierung'), conRow = pl.find(x => /bei Vertrag/.test(x.label))
+  const aft = pl.filter(x => x.after), aftOld = po.filter(x => x.after)
+  T('Mito last: Reservierung 20.000 im Kaufmonat + volle 30 % brutto', !!resRow && near(resRow.amount, 20000, 0.01) && resRow.ym === ymOf(2026, 10) && near(conRow.amount, G * 0.3, 0.01),
+    `Res ${resRow && eur(resRow.amount)}, Vertrag ${eur(conRow.amount)}`)
+  T('Mito last: Raten 1..3 unverändert, letzte = Tilgung - 20.000', aft.length === 4 && [0, 1, 2].every(k => near(aft[k].amount, tilg[k], 0.01) && near(aft[k].amount, aftOld[k].amount, 0.01)) && near(aft[3].amount, tilg[3] - 20000, 0.01) && /abzüglich Reservierung/.test(aft[3].label),
+    `letzte ${eur(aft[3].amount)} statt ${eur(tilg[3])}`)
+  T('Mito last: Zins unverändert auf vollen 50 %', aft.every((x, k) => near(x.interest, aftOld[k].interest, 0.01)))
+  T('Mito last: Summe = Bruttopreis, alt ebenso', near(sum(pl), G, 0.01) && near(sum(po), G, 0.01), `${eur(sum(pl))} / ${eur(sum(po))}`)
+  // kleine Wohnung, Monatsraten: letzte Rate kleiner als die Reservierung
+  const sM = { ...sLast, afterPerYear: 12 }
+  const pm = paymentPlan(u(sM), 100000)
+  T('Mito last, Monatsraten 100k: nie negative Rate, Summe = Preis', pm.every(x => x.amount >= -0.005) && near(sum(pm), 100000, 0.01) && pm.filter(x => x.after && /abzüglich/.test(x.label)).length >= 2,
+    pm.filter(x => x.after).map(x => Math.round(x.amount)).join('/'))
+  // 'last' ohne Raten nach Uebergabe wirkt wie 'handover'
+  const noAfter = { ...sLast, afterPct: 0, handoverPct: 70 }
+  const ph = paymentPlan(u({ ...noAfter, reservationAt: 'handover' }), G), pq = paymentPlan(u(noAfter), G)
+  T('last ohne Raten nach Übergabe = handover', JSON.stringify(ph) === JSON.stringify(pq))
+  T('last ohne Raten nach Übergabe: Text nennt Abzug bei Übergabe', describeSchedule(noAfter) === describeSchedule({ ...noAfter, reservationAt: 'handover' }) && /bei Übergabe abzüglich Reservierung/.test(describeSchedule(noAfter)), describeSchedule(noAfter))
+  T('Beschreibung nennt Reservierung an der letzten Rate', /letzte Rate abzüglich Reservierung/.test(describeSchedule(sLast)) && !/Reservierung/.test(describeSchedule(sOld)), describeSchedule(sLast))
+}
+
 console.log(`\n${fail ? '❌' : '🎉'}  ${pass} PASS, ${fail} FAIL`)
 process.exit(fail ? 1 : 0)

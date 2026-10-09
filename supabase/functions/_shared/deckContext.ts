@@ -24,7 +24,10 @@ export interface PayStage { label: string; sub?: string; pct: number }
 /** reservationVat: Reservierung wird netto angegeben und mit 19 % MwSt gezahlt
  *  (Sven 19.9.26: gilt bei allen Bautraegern; einzige Ausnahme MITO mit 20.000 EUR
  *  glatt). Fehlt das Feld, gilt true. */
-export interface PaySchedule { reservation?: number; reservationVat?: boolean; currency?: string; stages: PayStage[] }
+/** reservationCredit 'last': Reservierung wird mit der letzten Rate (nach der
+ *  Uebergabe) verrechnet, die Vertragsrate ist der volle Prozentsatz (MITO, Sven
+ *  9.10.26). Fehlt das Feld, gilt wie bisher die erste Rate. */
+export interface PaySchedule { reservation?: number; reservationVat?: boolean; reservationCredit?: 'first' | 'last'; currency?: string; stages: PayStage[] }
 
 export interface DeckUnitCtx {
   unitId: string | null
