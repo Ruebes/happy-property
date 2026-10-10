@@ -663,8 +663,11 @@ function devPayments(raw: DevSchedule, buy: number, ready: number, gross: number
     const rate = r === 0 ? principal / n : principal * r / (1 - Math.pow(1 + r, -n))
     let open = principal
     for (let k = 1; k <= n; k++) {
-      const interest = open * r
-      const tilg = k === n ? open : rate - interest
+      // Tilgungsplan wie gehabt; bei Mito ('last') laeuft der Zins nur auf den
+      // offenen Betrag abzueglich der schon gezahlten Reservierung (Sven 10.10.26).
+      const interestFull = open * r
+      const interest = lastOk ? Math.max(0, open - resAtLast) * r : interestFull
+      const tilg = k === n ? open : rate - interestFull
       open -= tilg
       out.push({
         ym: ready + Math.round(k * step), amount: tilg, interest, after: true,

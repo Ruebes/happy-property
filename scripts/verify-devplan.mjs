@@ -486,7 +486,12 @@ T('Verkauf vor der Erstattung: MwSt als offene Forderung', an4.exits[0].vat < 0 
     `Res ${resRow && eur(resRow.amount)}, Vertrag ${eur(conRow.amount)}`)
   T('Mito last: Raten 1..3 unverändert, letzte = Tilgung - 20.000', aft.length === 4 && [0, 1, 2].every(k => near(aft[k].amount, tilg[k], 0.01) && near(aft[k].amount, aftOld[k].amount, 0.01)) && near(aft[3].amount, tilg[3] - 20000, 0.01) && /abzüglich Reservierung/.test(aft[3].label),
     `letzte ${eur(aft[3].amount)} statt ${eur(tilg[3])}`)
-  T('Mito last: Zins unverändert auf vollen 50 %', aft.every((x, k) => near(x.interest, aftOld[k].interest, 0.01)))
+  // Zins nur auf offenen Betrag minus Reservierung (Sven 10.10.26), unabhaengig nachgerechnet
+  let o2 = P50; const zins = []
+  for (let k = 0; k < n; k++) { zins.push(Math.max(0, o2 - 20000) * r); o2 -= tilg[k] }
+  T('Mito last: Zins auf offenen Betrag minus Reservierung', aft.every((x, k) => near(x.interest, zins[k], 0.01)) && aft[0].interest < aftOld[0].interest,
+    aft.map(x => Math.round(x.interest)).join('/') + ' statt ' + aftOld.map(x => Math.round(x.interest)).join('/'))
+  T('Mito last: Zinsersparnis = Reservierung × Zins je Rate', near(aftOld.reduce((a, x) => a + x.interest, 0) - aft.reduce((a, x) => a + x.interest, 0), 20000 * r * n, 0.01))
   T('Mito last: Summe = Bruttopreis, alt ebenso', near(sum(pl), G, 0.01) && near(sum(po), G, 0.01), `${eur(sum(pl))} / ${eur(sum(po))}`)
   // kleine Wohnung, Monatsraten: letzte Rate kleiner als die Reservierung
   const sM = { ...sLast, afterPerYear: 12 }
