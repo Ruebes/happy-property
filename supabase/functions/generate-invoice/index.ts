@@ -70,21 +70,26 @@ function defaultTreatment(countryMode: string | null | undefined): Treatment {
 // ── Schriften laden (CI: Montserrat + Playfair). Bei Netzfehler → Standard-Fonts. ─
 let _fontCache: Uint8Array[] | null = null
 async function loadFonts(): Promise<{ mont?: Uint8Array; montSemi?: Uint8Array; playfair?: Uint8Array }> {
-  const urls = {
-    mont:     'https://raw.githubusercontent.com/google/fonts/main/ofl/montserrat/static/Montserrat-Regular.ttf',
-    montSemi: 'https://raw.githubusercontent.com/google/fonts/main/ofl/montserrat/static/Montserrat-SemiBold.ttf',
-    playfair: 'https://raw.githubusercontent.com/google/fonts/main/ofl/playfairdisplay/static/PlayfairDisplay-Bold.ttf',
+  // Statische TTFs über die Google-Fonts-CSS-API (alter User-Agent liefert .ttf-URLs),
+  // wie info-paket/datenblatt.ts. Der frühere raw.githubusercontent-Pfad antwortet mit 404.
+  const holen = async (u: string, headers?: Record<string, string>) => {
+    const ctrl = new AbortController()
+    const to = setTimeout(() => ctrl.abort(), 8000)
+    try {
+      const r = await fetch(u, { signal: ctrl.signal, headers })
+      if (!r.ok) throw new Error(String(r.status))
+      return new Uint8Array(await r.arrayBuffer())
+    } finally { clearTimeout(to) }
   }
   try {
-    const [a, b, c] = await Promise.all(Object.values(urls).map(async (u) => {
-      const ctrl = new AbortController()
-      const to = setTimeout(() => ctrl.abort(), 8000)
-      try {
-        const r = await fetch(u, { signal: ctrl.signal })
-        if (!r.ok) throw new Error(String(r.status))
-        return new Uint8Array(await r.arrayBuffer())
-      } finally { clearTimeout(to) }
-    }))
+    const css = new TextDecoder().decode(await holen('https://fonts.googleapis.com/css?family=Montserrat:400,600,700|Playfair+Display:700', { 'User-Agent': 'Mozilla/4.0' }))
+    const url: Record<string, string> = {}
+    for (const blk of css.split('@font-face').slice(1)) {
+      const fam = blk.match(/font-family:\s*'([^']+)'/)?.[1], wt = blk.match(/font-weight:\s*(\d+)/)?.[1], u = blk.match(/url\((https:[^)]+\.ttf)\)/)?.[1]
+      if (fam && wt && u) url[`${fam}:${wt}`] = u
+    }
+    const [a, b, c] = await Promise.all(['Montserrat:400', 'Montserrat:600', 'Playfair Display:700']
+      .map((k) => url[k] ? holen(url[k]) : Promise.reject(new Error(`Schrift ${k} fehlt`))))
     return { mont: a, montSemi: b, playfair: c }
   } catch {
     return {}  // Fallback auf StandardFonts
