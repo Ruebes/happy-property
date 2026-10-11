@@ -411,26 +411,52 @@ async function infoRequest(body: Record<string, unknown>): Promise<{ status: num
   } else if (!d.lead_id && person) herkunft = 'Newsletter'
 
   const wer = name || 'Unbekannt'
+
+  // Infopaket automatisch per Mail (info-paket entscheidet selbst: Schalter
+  // off | test | on, Wohnung frei, Preis wie im Deck, Kontaktsperre).
+  let paket: { sent?: boolean; reason?: string; calc_url?: string } = {}
+  if (email) {
+    try {
+      const { data } = await sb.functions.invoke('info-paket', { body: {
+        token, lead_id: leadId, subscriber_id: subId, email: person ? null : email, name: wer, question: frage,
+      } })
+      paket = (data ?? {}) as typeof paket
+    } catch (e) { console.warn('[track-engagement] info-paket:', e) }
+  }
+  const PAKET_GRUND: Record<string, string> = {
+    testmodus: 'Testmodus, geht nur an Sven', keine_mail: 'keine E-Mail-Adresse', kontaktsperre: 'Kontaktsperre am Lead',
+    mehrere_wohnungen: 'Deck mit mehreren Wohnungen', wohnung_fehlt: 'Wohnung nicht gefunden', wohnung_vergeben: 'Wohnung nicht mehr frei',
+    mwst_sonderfall: 'MwSt-Sonderfall', preis_geaendert: 'Preis hat sich seit dem Deck geändert', rechnung_fehler: 'Rechnung ließ sich nicht anlegen',
+    versand_fehler: 'Mailversand fehlgeschlagen', deck_fehlt: 'Deck nicht gefunden', fehler: 'technischer Fehler',
+  }
+  const paketZeile = paket.sent
+    ? `Infopaket: automatisch per Mail verschickt (Rechnung, Wohnung als PDF, Guide, Baufotos). Rechnung: ${paket.calc_url ?? ''}`
+    : paket.reason && paket.reason !== 'automatik_aus'
+      ? `Infopaket: NICHT automatisch verschickt (${PAKET_GRUND[paket.reason] ?? paket.reason}), bitte selbst schicken.`
+      : ''
+
   const zeilen = [
     `Wer: ${[wer, email, phone].filter(Boolean).join(' · ')}${person ? '' : ' (selbst eingetragen)'}`,
     `Möchte: ${wuensche.length ? wuensche.map(k => WUNSCH[k]).join(', ') : 'mehr Infos (nichts Bestimmtes angekreuzt)'}`,
     ...(frage ? [`Frage: „${frage}“`] : []),
     `Herkunft: ${herkunft}`,
     `Deck: ${PORTAL_URL}/deck/${token}?preview=1`,
-    'Versprochen auf der Seite: persönliche Antwort von Sven, in der Regel innerhalb von 24 Stunden.',
+    ...(paketZeile ? [paketZeile] : []),
+    paket.sent ? 'Nächster Schritt: anrufen oder schreiben, solange das Interesse frisch ist.'
+      : 'Versprochen auf der Seite: persönliche Antwort von Sven, in der Regel innerhalb von 24 Stunden.',
     ...(wuensche.includes('rechnung') && leadId ? ['Tipp: Rechnung im Lead über „📊 Rechnung erstellen“, der Mail-Entwurf liegt dann im Postausgang.'] : []),
   ]
   const beschreibung = zeilen.join('\n')
 
   await sb.from('engagement_events').insert({
     type: 'info_request', token, lead_id: leadId, subscriber_id: subId, label: objekt.slice(0, 120),
-    meta: { wants: wuensche, question: frage || null, name: wer, email, phone, campaign: UUID_RE.test(campaign) ? campaign : null, internal: intern },
+    meta: { wants: wuensche, question: frage || null, name: wer, email, phone, campaign: UUID_RE.test(campaign) ? campaign : null, internal: intern, paket: paket.sent ? "sent" : (paket.reason ?? null) },
   })
 
   const { data: admin } = await sb.from('profiles').select('id').eq('role', 'admin').order('created_at').limit(1).maybeSingle()
   const adminId = (admin as { id: string } | null)?.id ?? null
   const { data: task, error: tErr } = await sb.from('crm_tasks').insert({
-    title: `${intern ? '[Test] ' : ''}📩 ${wer}: möchte mehr Infos zu ${objekt}`.slice(0, 200),
+    title: `${intern ? '[Test] ' : ''}📩 ${wer}: ${paket.sent ? `Infopaket zu ${objekt} verschickt, bitte nachfassen` : `möchte mehr Infos zu ${objekt}`}`.slice(0, 200),
     description: beschreibung, created_by: adminId, assigned_to: adminId, status: 'offen',
     due_date: cyDate(new Date()),
     // Zustellung laeuft ueber die Zustaendigen-Zeile (wie Tasks.tsx), alten Pfad stumm.
@@ -454,7 +480,7 @@ async function infoRequest(body: Record<string, unknown>): Promise<{ status: num
     await sb.functions.invoke('task-notify', { body: { mode: 'dispatch', task_id: taskId } })
       .catch((e: unknown) => console.warn('[track-engagement] info_request dispatch:', e))
   }
-  return { status: 200, body: { ok: true } }
+  return { status: 200, body: { ok: true, sent: !!paket.sent } }
 }
 
 const jsonRes = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })

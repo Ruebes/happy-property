@@ -24,6 +24,11 @@ verify_jwt = false
 [functions.track-engagement]
 verify_jwt = false
 
+# Infopaket nach „Mehr Infos“ auf der Wohnungs-Seite: nur intern aus
+# track-engagement (Service-Role, eigener Guard gateCaller).
+[functions.info-paket]
+verify_jwt = false
+
 # Termin-Bot: wird server-zu-server aus track-engagement / schedule-message /
 # timelines-webhook aufgerufen (Service-Role, kein User-JWT).
 [functions.booking-bot]
