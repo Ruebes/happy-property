@@ -9,6 +9,7 @@
 // Duplikate ueber wa_processed (message_uid) abgefangen.
 
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
+import { maybeUpdateEmailFromWa } from './waMailUpdate.ts'
 
 export type WaEvent = {
   uid:    string | null      // Message-ID des Anbieters (Dedupe)
@@ -161,7 +162,17 @@ export async function processWaEvent(sb: SupabaseClient, ev: WaEvent, tag: strin
     }
   }
 
-  if (!lead) return { outcome: 'no-lead' }
+  if (!lead) {
+    // Kein Lead, vielleicht ein Newsletter-Abonnent, der auf die WhatsApp-Fassung
+    // mit seiner neuen Mailadresse antwortet (waMailUpdate.ts).
+    if (digits.length >= 7 && !ev.mediaOnly && !detectsStopIntent(text)) {
+      const { data: subs } = await sb.from('newsletter_subscribers').select('id')
+        .ilike('phone', `%${digits.slice(-8)}`).order('created_at').limit(1)
+      const sub = (subs as { id: string }[] | null)?.[0]
+      if (sub) await maybeUpdateEmailFromWa(sb, { subscriber_id: sub.id }, ev.phone, text, tag)
+    }
+    return { outcome: 'no-lead' }
+  }
 
   await sb.from('activities').insert({
     lead_id:              lead.id,
@@ -204,6 +215,10 @@ export async function processWaEvent(sb: SupabaseClient, ev: WaEvent, tag: strin
       })
     }
   }
+
+  // Antwort auf die Newsletter-WhatsApp mit neuer Mailadresse → am Lead speichern
+  // und Danke-WhatsApp (waMailUpdate.ts, greift nur in diesem engen Fall).
+  if (!stop) await maybeUpdateEmailFromWa(sb, { lead_id: lead.id }, ev.phone, text, tag)
 
   // ── Termin-Bot: eingehende Antwort in ein laufendes Bot-Gespräch geben ──
   // Nur wenn KEINE Abmeldung (die schließt das Gespräch bereits) und ein aktives
