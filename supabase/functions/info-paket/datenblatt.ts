@@ -115,8 +115,37 @@ export function faellig(label?: string, sub?: string, u?: Uebergabe | null): str
   return null
 }
 
+// Für die Mail (Sven 11.10.26): „Es muss aus der Mail rauskommen, dass jetzt nur
+// die 20k und die 30 % fällig werden." Jetzt = Reservierung + Kaufvertrag; alles
+// andere ist „später" und wird nur als Summe mit Zeitpunkten genannt.
+const betrag = (v?: string) => { const n = Number(String(v ?? '').replace(/[^\d,]/g, '').replace(',', '.')); return Number.isFinite(n) ? n : 0 }
+export function zahlungsUebersicht(blocks: DeckBlockLite[], uebergabe?: string | null): {
+  jetzt: { label: string; value: string; pct: string | null; wann: string }[]; spaeterSumme: number; spaeterWann: string[]
+  spaeter: { value: string; wann: string | null }[]
+} | null {
+  const pay = blocks.find(b => b.type === 'payment')
+  const rows = [...(pay?.phase1?.rows ?? []), ...(pay?.phase2?.rows ?? [])]
+  if (!rows.length) return null
+  const u = uebergabeAus(uebergabe)
+  const jetzt: { label: string; value: string; pct: string | null; wann: string }[] = []
+  let spaeterSumme = 0; const spaeterWann: string[] = []; const spaeter: { value: string; wann: string | null }[] = []
+  for (const r of rows) {
+    const wann = faellig(r.label, r.sub, u)
+    if (wann === 'jetzt' || (wann ?? '').startsWith('in ca. 2 bis 4 Wochen')) {
+      jetzt.push({ label: stripHtml(r.label), value: stripHtml(r.value), pct: (r.sub ?? '').match(/(\d+(?:,\d+)?)\s*%/)?.[1] ?? null, wann: wann! })
+    } else {
+      spaeterSumme += betrag(r.value)
+      spaeter.push({ value: stripHtml(r.value), wann })
+      if (wann && !spaeterWann.includes(wann)) spaeterWann.push(wann)
+    }
+  }
+  return jetzt.length ? { jetzt, spaeterSumme, spaeterWann, spaeter } : null
+}
+
 export async function baueDatenblatt(o: {
   blocks: DeckBlockLite[]; lage: string; nr: string; stand: Date; uebergabe?: string | null
+  /** Nur die Seite Zahlungsplan (eigenes PDF „Zahlungsplan" für die Mail). */
+  nurZahlungsplan?: boolean
 }): Promise<Uint8Array> {
   const ueb = uebergabeAus(o.uebergabe)
   const pdf = await PDFDocument.create()
@@ -156,7 +185,8 @@ export async function baueDatenblatt(o: {
     page = pdf.addPage([W, H]); seiten.push(page)
     page.drawRectangle({ x: 0, y: H - 64, width: W, height: 64, color: NAVY })
     if (logo) { const s = 40 / logo.height; page.drawImage(logo, { x: M, y: H - 52, width: logo.width * s, height: 40 }) }
-    const rechts = t(o.nr ? `Wohnung ${o.nr} · Datenblatt` : 'Datenblatt')
+    const art = o.nurZahlungsplan ? 'Zahlungsplan' : 'Datenblatt'
+    const rechts = t(o.nr ? `Wohnung ${o.nr} · ${art}` : art)
     page.drawText(rechts, { x: W - M - semi.widthOfTextAtSize(rechts, 9), y: H - 37, size: 9, font: semi, color: GOLD })
     y = H - 64 - 34
     if (titel) { page.drawText(t(titel), { x: M, y, size: 20, font: head, color: NAVY }); y -= 10; page.drawRectangle({ x: M, y, width: 34, height: 2.5, color: GOLD }); y -= 22 }
@@ -174,6 +204,7 @@ export async function baueDatenblatt(o: {
   const cover = o.blocks.find(b => b.type === 'cover')
 
   // ── Seite 1: Titel, Bild, Eckdaten, Preis ────────────────────────────────
+  if (!o.nurZahlungsplan) {
   neueSeite()
   page.drawText(t(o.nr ? `Wohnung ${o.nr}` : 'Wohnung'), { x: M, y, size: 30, font: head, color: NAVY }); y -= 20
   page.drawText(t([o.lage, unit?.kicker?.split('·').slice(1).join('·').trim()].filter(Boolean).join(' · ')), { x: M, y, size: 11, font: reg, color: MUTE }); y -= 18
@@ -203,9 +234,10 @@ export async function baueDatenblatt(o: {
     y -= sz + 8
   }
   y = Math.min(y, yLinks) - 10
+  }
 
   // ── Grundriss ────────────────────────────────────────────────────────────
-  if (fp) {
+  if (fp && !o.nurZahlungsplan) {
     neueSeite('Grundriss')
     if (fp.image) {
       const fonts = [f.reg, f.semi, f.bold, f.head].filter((x): x is Uint8Array => !!x)
@@ -241,6 +273,9 @@ export async function baueDatenblatt(o: {
   // ── Zahlungsplan: wann wird wie viel fällig ─────────────────────────────
   if (pay && (pay.phase1 || pay.phase2)) {
     neueSeite('Zahlungsplan')
+    if (o.nurZahlungsplan) {
+      page.drawText(t([o.nr ? `Wohnung ${o.nr}` : '', o.lage].filter(Boolean).join(' · ')), { x: M, y, size: 11, font: semi, color: MUTE }); y -= 20
+    }
     if (pay.intro) { absatz(pay.intro, 10.5); y -= 6 }
     page.drawText(t('Wann wird wie viel fällig'), { x: M, y, size: 9, font: semi, color: GOLD }); y -= 14
     // Zeitstrahl: je Zahlung ein Kasten mit Zeitpunkt, Betrag, Bezeichnung.
@@ -306,7 +341,7 @@ export async function baueDatenblatt(o: {
 
   // ── Ausstattung / Spezifikation ─────────────────────────────────────────
   const gruppen = inv.flatMap(b => b.groups ?? []).filter(g => (g.items ?? []).length)
-  if (gruppen.length) {
+  if (gruppen.length && !o.nurZahlungsplan) {
     neueSeite('Ausstattung')
     const cw = (W - 2 * M - 20) / 2
     let col = 0, yTop = y, yCol = [y, y]
@@ -334,7 +369,7 @@ export async function baueDatenblatt(o: {
 
   // ── Bilder ───────────────────────────────────────────────────────────────
   const auswahl = gal.slice(1, 5)
-  if (auswahl.length) {
+  if (auswahl.length && !o.nurZahlungsplan) {
     neueSeite('Bilder')
     const bw = (W - 2 * M - 14) / 2, bh = bw * 0.66
     for (let i = 0; i < auswahl.length; i++) {

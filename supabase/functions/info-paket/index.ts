@@ -24,7 +24,7 @@ import { resolveLang } from '../_shared/recipientLang.ts'
 import { CI } from '../_shared/brand.ts'
 import { callAnthropic, textOf } from '../_shared/anthropic.ts'
 import { encodeBase64 } from 'jsr:@std/encoding@1/base64'
-import { baueDatenblatt, type DeckBlockLite } from './datenblatt.ts'
+import { baueDatenblatt, zahlungsUebersicht, type DeckBlockLite } from './datenblatt.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -320,21 +320,32 @@ async function handle(sb: SupabaseClient, b: Record<string, unknown>): Promise<R
   //     Scheitert es, geht die Mail ohne PDF raus - mit der Druckansicht als Ersatz.
   let pdfB64: string | null = null
   let pdfUrl: string | null = null
+  let zahlplanUrl: string | null = null
   const pdfName = `${nr ? `Wohnung-${nr.replace(/[^\w-]/g, '')}` : 'Wohnung'}-Datenblatt.pdf`
-  try {
-    // Übergabe: wie im Deck (deck_context.completion), sonst Projekt-Fertigstellung.
-    let uebergabe = typeof ctx.completion === 'string' ? ctx.completion : null
-    if (!uebergabe && d.project_id) {
-      const { data: pc } = await sb.from('crm_projects').select('completion_date').eq('id', d.project_id).maybeSingle()
-      uebergabe = ((pc as { completion_date?: string } | null)?.completion_date) ?? null
-    }
-    const bytes = await baueDatenblatt({ blocks: (d.content?.blocks ?? []) as DeckBlockLite[], lage, nr, stand: new Date(), uebergabe })
-    pdfB64 = encodeBase64(bytes)
+  // Übergabe: wie im Deck (deck_context.completion), sonst Projekt-Fertigstellung.
+  let uebergabe = typeof ctx.completion === 'string' ? ctx.completion : null
+  if (!uebergabe && d.project_id) {
+    const { data: pc } = await sb.from('crm_projects').select('completion_date').eq('id', d.project_id).maybeSingle()
+    uebergabe = ((pc as { completion_date?: string } | null)?.completion_date) ?? null
+  }
+  const deckBlocks = (d.content?.blocks ?? []) as DeckBlockLite[]
+  const hochladen = async (bytes: Uint8Array): Promise<string | null> => {
     const pfad = `datenblatt/${crypto.randomUUID()}.pdf`
     const { error: upErr } = await sb.storage.from('deck-assets').upload(pfad, bytes, { contentType: 'application/pdf', upsert: false })
-    if (!upErr) pdfUrl = `${PORTAL_URL}/unterlagen/${pfad.split('/').pop()}`
-    else console.warn('[info-paket] PDF-Upload:', upErr.message)
+    if (upErr) { console.warn('[info-paket] PDF-Upload:', upErr.message); return null }
+    return `${PORTAL_URL}/unterlagen/${pfad.split('/').pop()}`
+  }
+  try {
+    const bytes = await baueDatenblatt({ blocks: deckBlocks, lage, nr, stand: new Date(), uebergabe })
+    pdfB64 = encodeBase64(bytes)
+    pdfUrl = await hochladen(bytes)
   } catch (e) { console.error('[info-paket] Datenblatt:', e) }
+  // Eigener Zahlungsplan (nur diese Seite) für den Link in der Zahlungsplan-Karte.
+  const zahlung = zahlungsUebersicht(deckBlocks, uebergabe)
+  if (zahlung) {
+    try { zahlplanUrl = await hochladen(await baueDatenblatt({ blocks: deckBlocks, lage, nr, stand: new Date(), uebergabe, nurZahlungsplan: true })) }
+    catch (e) { console.error('[info-paket] Zahlungsplan:', e) }
+  }
 
   // 8) Mail bauen
   const lang = await resolveLang(sb, { email: p.email, lead_id: p.kind === 'lead' ? p.id : null })
@@ -345,7 +356,7 @@ async function handle(sb: SupabaseClient, b: Record<string, unknown>): Promise<R
   const frage = typeof b.question === 'string' ? b.question.trim().slice(0, 500) : ''
   const html = mailHtml({
     first: p.first, objekt, lage, gross: grossGesamt, calcUrl, calcUrlCash, deckUrl, printUrl, terminUrl, fotos, fotoStand, frage,
-    guide: lang !== 'en', std, markt, pdfUrl, pdfAnhang: !!pdfB64,
+    guide: lang !== 'en', std, markt, pdfUrl, pdfAnhang: !!pdfB64, zahlung, zahlplanUrl,
   })
   const subject = `${p.first ? `${p.first}, d` : 'D'}eine Unterlagen zur ${objekt}`
   const { data: sent, error: sErr } = await sb.functions.invoke('send-email', { body: {
@@ -401,10 +412,42 @@ function rechnungKarte(m: { gross: number; calcUrl: string; calcUrlCash: string;
 </td></tr>`
 }
 
+// Zahlungsplan als eigener Punkt (Sven 11.10.26): fett, dass jetzt nur Reservierung
+// und Kaufvertrag fällig sind, darunter der Link zum kompletten Zahlungsplan.
+function zahlungKarte(z: ReturnType<typeof zahlungsUebersicht>, url: string | null): string {
+  if (!z) return ''
+  // Zeitpunkt als Satzteil: „bei Übergabe, geplant Ende 2027" -> „bei Übergabe (geplant Ende 2027)",
+  // „im Laufe von 2028, in Raten" -> „in Raten im Laufe von 2028".
+  const satz = (w: string | null) => !w ? 'später' : w
+    .replace(/^im Laufe von (\d{4}), in Raten$/, 'in Raten im Laufe von $1')
+    .replace(/, geplant (.+)$/, ' (geplant $1)')
+  const jetzt = z.jetzt.map(j => /reserv/i.test(j.label)
+    ? `${esc(j.value)} für die Reservierung`
+    : /vertrag/i.test(j.label)
+      ? `in ca. 2 bis 4 Wochen ${esc(j.value)}${j.pct ? ` (${esc(j.pct)} %)` : ''} bei Vertragsunterzeichnung`
+      : `${esc(j.value)} ${esc(j.label)}`)
+  const liste = (xs: string[]) => xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} und ${xs[xs.length - 1]}`
+  const fett = jetzt.length === 1 ? `Jetzt fällig ist nur ${jetzt[0]}.`
+    : jetzt.length === 2 ? `Jetzt fällig sind nur zwei Zahlungen: ${jetzt[0]} und ${jetzt[1]}.`
+    : `Jetzt fällig sind nur: ${liste(jetzt)}.`
+  const rest = z.spaeter.length ? `Alles Weitere kommt erst später: ${liste(z.spaeter.map(r => `${esc(r.value)} ${esc(satz(r.wann))}`))}.` : ''
+  return `<tr><td style="padding:0 0 14px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${CI.white};border:1px solid ${CI.line};border-radius:12px;">
+    <tr><td class="px" style="padding:20px 22px;">
+      <p style="margin:0 0 8px;font-family:${SERIF};font-size:19px;font-weight:700;color:${CI.navy};">💶 Dein Zahlungsplan</p>
+      <p style="margin:0 0 10px;font-family:${SANS};font-size:15px;line-height:1.6;color:${CI.ink};"><strong>${fett}</strong></p>
+      ${rest ? `<p style="margin:0 0 14px;font-family:${SANS};font-size:14px;line-height:1.6;color:${CI.ink};">${rest}</p>` : ''}
+      ${url ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>${knopf('Kompletten Zahlungsplan ansehen', url, CI.coral)}</tr></table>` : ''}
+    </td></tr>
+  </table>
+</td></tr>`
+}
+
 function mailHtml(m: {
   first: string; objekt: string; lage: string; gross: number; calcUrl: string; calcUrlCash: string; deckUrl: string; printUrl: string
   terminUrl: string; fotos: string[]; fotoStand: string; frage: string; guide: boolean; std: CalcStandard; markt: Markt
   pdfUrl: string | null; pdfAnhang: boolean
+  zahlung: ReturnType<typeof zahlungsUebersicht>; zahlplanUrl: string | null
 }): string {
   const fotosHtml = m.fotos.length ? `<tr><td style="padding:0 0 14px;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${CI.white};border:1px solid ${CI.line};border-radius:12px;">
@@ -432,6 +475,7 @@ function mailHtml(m: {
   </td></tr>
   <tr><td class="px" style="padding:6px 26px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
     ${rechnungKarte(m)}
+    ${zahlungKarte(m.zahlung, m.zahlplanUrl)}
     ${m.pdfUrl || m.pdfAnhang
       ? karte('📎', 'Datenblatt zur Wohnung', `Grundriss, Eckdaten, Ausstattung, Bilder und der Zahlungsplan: wann wird wie viel fällig. ${m.pdfAnhang ? 'Liegt dieser Mail als PDF bei, ideal' : 'Ideal'} zum Weiterleiten, zum Beispiel an deinen Partner oder Steuerberater.`, 'Datenblatt öffnen', m.pdfUrl ?? m.printUrl)
       : karte('📄', 'Die Wohnung zum Weiterleiten', 'Grundriss, Ausstattung und Zahlungsplan auf einen Blick. Öffne die Druckansicht und speichere sie als PDF, zum Beispiel für deinen Partner oder Steuerberater.', 'Als PDF speichern', m.printUrl)}
