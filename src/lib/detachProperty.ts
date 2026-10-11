@@ -41,7 +41,7 @@ export interface DetachResult {
  * archiviert nur, wenn aus „Provision erhalten" archiviert). Gleiche Regel wie
  * hp_deal_in_portal() in der Datenbank.
  */
-export const PORTAL_PHASES: readonly string[] = ['reservierung', 'kaufvertrag', 'anzahlung', 'provision_erhalten']
+export const PORTAL_PHASES: readonly string[] = ['reservierung', 'kaufvertrag', 'anzahlung', 'provisionsrechnung', 'provision_erhalten']
 
 export function dealInPortal(d: { phase?: string | null; archived_from_phase?: string | null } | null | undefined): boolean {
   if (!d?.phase) return false

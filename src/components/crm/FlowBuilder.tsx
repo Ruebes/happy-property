@@ -208,7 +208,7 @@ export default function FlowBuilder({ workflowId, onClose }: Props) {
   const inp = 'w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-100 focus:border-orange-400'
 
   const PHASES = useMemo(() => [
-    'neu', 'erstkontakt', 'immobilienauswahl', 'reservierung', 'finanzierung_de', 'finanzierung_cy', 'kaufvertrag', 'anzahlung', 'provision_erhalten',
+    'neu', 'erstkontakt', 'immobilienauswahl', 'reservierung', 'finanzierung_de', 'finanzierung_cy', 'kaufvertrag', 'anzahlung', 'provisionsrechnung', 'provision_erhalten',
   ].map(p => ({ value: p, label: p })), [])
 
   return (

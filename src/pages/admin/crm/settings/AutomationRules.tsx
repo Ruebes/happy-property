@@ -28,6 +28,7 @@ const EVENT_TYPES: { value: string; labelKey: string; labelDefault: string; icon
   { value: 'reservierung',      labelKey: 'eventReservierung',     labelDefault: 'Reservierung',       icon: '🔖' },
   { value: 'kaufvertrag',       labelKey: 'eventKaufvertrag',      labelDefault: 'Kaufvertrag',        icon: '📝' },
   { value: 'anzahlung',         labelKey: 'eventAnzahlung',        labelDefault: 'Anzahlung',          icon: '✅' },
+  { value: 'provisionsrechnung',labelKey: 'eventProvisionsrechnung',labelDefault: 'Provisionsrechnung', icon: '🧾' },
   { value: 'provision_erhalten',labelKey: 'eventProvisionErhalten',labelDefault: 'Provision erhalten', icon: '🎉' },
   { value: 'deal_verloren',     labelKey: 'eventDealVerloren',     labelDefault: 'Deal verloren',      icon: '🚫' },
 ]

@@ -550,7 +550,7 @@ export default function Pipeline() {
   const [unitPickState, setUnitPickState] = useState<{ deal: Deal; target: DealPhase } | null>(null)
   const [holdDeal,     setHoldDeal]     = useState<Deal | null>(null)
   const [handoverDeal, setHandoverDeal] = useState<Deal | null>(null)
-  const [depositDeal,  setDepositDeal]  = useState<Deal | null>(null)   // Anzahlung → Rechnungs-Modal
+  const [depositDeal,  setDepositDeal]  = useState<Deal | null>(null)   // Provisionsrechnung → Rechnungs-Modal
   const [phaseRun, setPhaseRun] = useState<{ deal: Deal; phase: DealPhase; since: string } | null>(null)  // grüne Live-Meldung
   const [holdContact,  setHoldContact]  = useState(true)
   const [handoverText, setHandoverText] = useState('')
@@ -589,6 +589,7 @@ export default function Pipeline() {
         .from('deals')
         .select(`
           id, lead_id, property_id, unit_id, phase, source, developer, created_at, updated_at,
+          deposit_paid_at, commission_amount,
           registration_notes, finanzierung_de_notes, finanzierung_cy_notes,
           immobilien_notes, kaufvertrag_notes, provision_notes,
           lead:leads(id, first_name, last_name, email, phone, whatsapp, source, assigned_to,
@@ -724,9 +725,10 @@ export default function Pipeline() {
     if (targetPhase === 'hold') { setHoldDeal({ ...deal }); return }
     // Kontakt übergeben: Popup mit Freitext → sofort an Burkhard + Ioulia
     if (targetPhase === 'kontakt_uebergeben') { setHandoverDeal({ ...deal }); return }
-    // Anzahlung: Rechnungs-Modal (Netto eingeben → Rechnung an Burkhard). Phase wird
-    // erst nach Erstellung im Modal gesetzt.
-    if (targetPhase === 'anzahlung') { setDepositDeal({ ...deal }); return }
+    // Provisionsrechnung: Rechnungs-Modal (Netto eingeben → Rechnung an Burkhard). Phase
+    // wird erst nach Erstellung im Modal gesetzt. Anzahlung selbst läuft normal durch
+    // (Automatik: WhatsApp an Burkhard, Provision beim Bauträger beantragen).
+    if (targetPhase === 'provisionsrechnung') { setDepositDeal({ ...deal }); return }
     // Finanzierung Deutschland: Popup für Bemerkungen zum Kunden → landen zusätzlich in
     // Christofs Mail (Kundendaten + Google-Drive-Zugang). Phase erst im Modal setzen.
     if (targetPhase === 'finanzierung_de') { setFinancingDeal({ ...deal }); return }
@@ -736,9 +738,12 @@ export default function Pipeline() {
       prev.map(d => (d.id === deal.id ? { ...d, phase: targetPhase } : d))
     )
 
+    // Anzahlung: Datum festhalten (Werbe-Auswertung zählt Verkäufe auch darüber)
+    const depositPatch = targetPhase === 'anzahlung' && !deal.deposit_paid_at
+      ? { deposit_paid_at: new Date().toISOString() } : {}
     const { error } = await supabase
       .from('deals')
-      .update({ phase: targetPhase })
+      .update({ phase: targetPhase, ...depositPatch })
       .eq('id', deal.id)
 
     if (error) {
@@ -1162,7 +1167,7 @@ export default function Pipeline() {
         />
       )}
 
-      {/* Registrierung Modal */}
+      {/* Provisionsrechnung Modal */}
       {depositDeal && (
         <DepositInvoiceModal
           deal={depositDeal}

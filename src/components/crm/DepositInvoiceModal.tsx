@@ -1,5 +1,5 @@
 /**
- * DepositInvoiceModal — öffnet sich, wenn ein Deal auf „Anzahlung" geschoben wird.
+ * DepositInvoiceModal — öffnet sich, wenn ein Deal auf „Provisionsrechnung" geschoben wird.
  * Sven gibt nur den Netto-Betrag ein, sieht direkt die fertige Rechnung als Vorschau
  * (Posten, MwSt, Brutto) und erstellt sie mit einem Klick — optional sofort an den
  * Kunden (Burkhard / Reeaals) versendet. Posten = „Leadgenerierung Vorname Name,
@@ -71,15 +71,25 @@ export default function DepositInvoiceModal({ deal, onClose, onDone }: Props) {
       const res = data as { ok?: boolean; invoice_number?: string; sent?: boolean; error?: string }
       if (!res?.ok) throw new Error(res?.error || t('depositInvoiceModal.errInvoiceCreationFailed', 'Rechnung konnte nicht erstellt werden.'))
 
-      // Deal auf Anzahlung setzen (die Pipeline hatte den Wechsel ausgesetzt) - muss vor dem
-      // Schliessen fertig sein, damit der Pipeline-Refresh im Parent die neue Phase sieht
-      await supabase.from('deals').update({ phase: 'anzahlung', deposit_paid_at: new Date().toISOString() }).eq('id', deal.id)
+      // Deal auf Provisionsrechnung setzen (die Pipeline hatte den Wechsel ausgesetzt) - muss
+      // vor dem Schliessen fertig sein, damit der Pipeline-Refresh im Parent die neue Phase sieht.
+      // Anzahlungsdatum und Provision nur nachtragen, wenn sie noch fehlen (Netto = Provision).
+      const { error: phErr } = await supabase.from('deals').update({
+        phase: 'provisionsrechnung',
+        ...(deal.deposit_paid_at ? {} : { deposit_paid_at: new Date().toISOString() }),
+        ...(deal.commission_amount ? {} : { commission_amount: net }),
+      }).eq('id', deal.id)
+      if (phErr) console.error('[DepositInvoiceModal] Phase:', phErr.message)
 
       // Fenster sofort schliessen, Toast + Reload macht der Parent (onDone);
-      // das Aktivitaets-Log ist Nacharbeit und laeuft danach im Hintergrund weiter
-      onDone(send && res.sent
+      // das Aktivitaets-Log ist Nacharbeit und laeuft danach im Hintergrund weiter.
+      // Phasen-Fehler nur melden, nicht erneut versuchen lassen (Rechnung ist schon raus).
+      const doneMsg = send && res.sent
         ? t('depositInvoiceModal.doneCreatedAndSent', 'Rechnung {{number}} erstellt & gesendet', { number: res.invoice_number })
-        : t('depositInvoiceModal.doneCreatedDraft', 'Rechnung {{number}} als Entwurf erstellt', { number: res.invoice_number }))
+        : t('depositInvoiceModal.doneCreatedDraft', 'Rechnung {{number}} als Entwurf erstellt', { number: res.invoice_number })
+      onDone(phErr
+        ? `${doneMsg} · ${t('depositInvoiceModal.phaseNotSet', '⚠️ Phase nicht gesetzt: {{error}}', { error: phErr.message })}`
+        : doneMsg)
 
       await supabase.from('activities').insert({
         lead_id: deal.lead_id, deal_id: deal.id, type: 'note', direction: 'outbound',
@@ -108,7 +118,7 @@ export default function DepositInvoiceModal({ deal, onClose, onDone }: Props) {
         {/* Kopf */}
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
           <div>
-            <h3 className="font-heading text-lg text-hp-black">{t('depositInvoiceModal.title', 'Anzahlungs-Rechnung')}</h3>
+            <h3 className="font-heading text-lg text-hp-black">{t('depositInvoiceModal.title', 'Provisionsrechnung')}</h3>
             <p className="text-xs text-gray-500 mt-0.5">{fullName || t('depositInvoiceModal.leadFallback', 'Lead')}{project ? ` · ${project}${unit ? ` ${unit}` : ''}` : ''}</p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>

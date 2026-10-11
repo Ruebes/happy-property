@@ -577,7 +577,7 @@ async function capiRueckspielen(sb: Sb, summary: Summary): Promise<void> {
   // Sale (Anzahlung/Provision) -> Purchase mit Provisionswert
   const sales = await sb.from('deals')
     .select(`id, lead_id, commission_amount, updated_at, lead:leads(${felder})`)
-    .in('phase', ['anzahlung', 'provision_erhalten'])
+    .in('phase', ['anzahlung', 'provisionsrechnung', 'provision_erhalten'])
     .gte('updated_at', winStart)
     .limit(1000)
   if (sales.error) throw new Error(`Deals lesen: ${fehlerText(sales.error)}`)

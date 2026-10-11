@@ -10,6 +10,7 @@ import { PHASE_ICONS, SOURCE_BADGE_STYLE, PHASE_WEBHOOK_EVENTS, adChannelLabel }
 import ProjectSelectionModal from '../../../components/crm/ProjectSelectionModal'
 import UnitPickerModal from '../../../components/crm/UnitPickerModal'
 import RegistrationModal from '../../../components/crm/RegistrationModal'
+import DepositInvoiceModal from '../../../components/crm/DepositInvoiceModal'
 import { deleteGoogleEvent } from '../../../lib/googleCalendar'
 import AppointmentModal from '../../../components/crm/AppointmentModal'
 import DeckWizard from '../../../components/crm/DeckWizard'
@@ -106,6 +107,7 @@ export default function LeadDetail() {
   const dealProjectsRef = useRef<DealProject[]>([])
   const [showProjectModal, setShowProjectModal] = useState(false)
   const [showRegistrationModal, setShowRegistrationModal] = useState(false)
+  const [showDepositInvoice, setShowDepositInvoice] = useState(false)   // Provisionsrechnung → Rechnungs-Modal
   const [savingReg, setSavingReg] = useState(false)
   const [appointments, setAppointments] = useState<CrmAppointment[]>([])
   const [showApptModal, setShowApptModal] = useState(false)
@@ -833,10 +835,17 @@ export default function LeadDetail() {
       setShowRegistrationModal(true)
       return
     }
+    // Provisionsrechnung: Rechnungs-Modal, Phase setzt erst das Modal (wie in der Pipeline)
+    if (phase === 'provisionsrechnung') {
+      setShowDepositInvoice(true)
+      return
+    }
     setSaving(true)
     const oldPhase = deal.phase
     try {
-      await supabase.from('deals').update({ phase }).eq('id', deal.id).throwOnError()
+      const depositPatch = phase === 'anzahlung' && !deal.deposit_paid_at
+        ? { deposit_paid_at: new Date().toISOString() } : {}
+      await supabase.from('deals').update({ phase, ...depositPatch }).eq('id', deal.id).throwOnError()
       await supabase.from('activities').insert({
         lead_id: id,
         deal_id: deal.id,
@@ -2404,7 +2413,7 @@ export default function LeadDetail() {
 
               {/* Pipeline phase selector */}
               <div className="flex flex-wrap gap-2 mb-4">
-                {(['erstkontakt','termin_gebucht','no_show','finanzierung_de','finanzierung_cy','registrierung','immobilienauswahl','kaufvertrag','anzahlung','provision_erhalten','deal_verloren'] as DealPhase[]).map((p) => (
+                {(['erstkontakt','termin_gebucht','no_show','finanzierung_de','finanzierung_cy','registrierung','immobilienauswahl','kaufvertrag','anzahlung','provisionsrechnung','provision_erhalten','deal_verloren'] as DealPhase[]).map((p) => (
                   <button
                     key={p}
                     onClick={() => updateDealPhase(p)}
@@ -4507,6 +4516,14 @@ export default function LeadDetail() {
           saving={savingReg}
           onConfirm={handleRegistrationConfirm}
           onCancel={() => setShowRegistrationModal(false)}
+        />
+      )}
+
+      {showDepositInvoice && deal && (
+        <DepositInvoiceModal
+          deal={{ ...deal, lead: lead ?? deal.lead }}
+          onClose={() => setShowDepositInvoice(false)}
+          onDone={(msg) => { setShowDepositInvoice(false); showToast(msg); void fetchAll(true) }}
         />
       )}
 

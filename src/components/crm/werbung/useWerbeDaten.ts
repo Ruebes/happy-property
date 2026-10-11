@@ -22,7 +22,7 @@ import {
 // einzeln in ABFRAGEN; der Zweig t2-2026-10 legt vorbereitet/leitplanken/
 // aktionen mit in das erste Promise.all (gleiche Auswertung danach).
 
-export const SALE_PHASES = new Set(['anzahlung', 'provision_erhalten'])
+export const SALE_PHASES = new Set(['anzahlung', 'provisionsrechnung', 'provision_erhalten'])
 // Gleiche Liste steht in der SQL-Funktion ads_crm_attribution (Migration
 // 20261001100000): bei Änderung beide anpassen, sonst sehen Mitarbeiter andere Zahlen.
 export const META_SOURCES = new Set(['meta', 'facebook', 'fb', 'instagram', 'ig'])
