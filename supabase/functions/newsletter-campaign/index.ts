@@ -588,6 +588,16 @@ Deno.serve(async (req: Request) => {
     // mehr, das kostet nur Plaetze im IONOS-Sendelimit. Mit Nummer geht der
     // Newsletter per WhatsApp, ohne Nummer faellt der Empfaenger raus.
     // stats zaehlt beides fuer die Anzeige im Wizard.
+    // WhatsApp-Ersatz nur an glaubwuerdige Nummern: Test-/Fake-Eintraege
+    // (+491234, +4915123456789, „Test Test", „John Doe") haben oft auch eine
+    // erfundene Nummer, und die gehoert womoeglich einem Fremden.
+    const echteNummer = (tel: string | null | undefined, vor: string | null, nach: string | null): boolean => {
+      const d = (tel ?? '').replace(/\D/g, '')
+      if (d.length < 10 || d.length > 14) return false
+      if (/1234567|2345678|3456789|(\d)\1{4}/.test(d)) return false
+      const name = `${vor ?? ''} ${nach ?? ''}`.trim().toLowerCase()
+      return !/^(test( test)?|john doe|max mustermann)$/.test(name)
+    }
     const combined = async (mode: string, ids: string[], excludeLeadIds: string[] = [], stats?: { per_whatsapp: number; ohne_nummer: number }) => {
       const bounced = await loadBouncedKeys(sb)
       const seenMail = new Set<string>(), seenTel = new Set<string>()
@@ -608,7 +618,7 @@ Deno.serve(async (req: Request) => {
         if (/@(test|example)\./.test(mk) || isDup(mk, tk)) continue
         mark(mk, tk)
         if (bounced.has(mk)) {
-          if (!tk) { if (stats) stats.ohne_nummer++; continue }
+          if (!tk || !echteNummer(l.phone, l.first_name, l.last_name)) { if (stats) stats.ohne_nummer++; continue }
           if (stats) stats.per_whatsapp++
           merged.push({ lead_id: l.id, subscriber_id: null, first_name: l.first_name, last_name: l.last_name, email: '', phone: l.phone ?? null })
           continue
@@ -621,7 +631,7 @@ Deno.serve(async (req: Request) => {
         if (/@(test|example)\./.test(mk) || isDup(mk, tk)) continue
         mark(mk, tk)
         if (bounced.has(mk)) {
-          if (!tk) { if (stats) stats.ohne_nummer++; continue }
+          if (!tk || !echteNummer(s.phone, s.first_name, s.last_name)) { if (stats) stats.ohne_nummer++; continue }
           if (stats) stats.per_whatsapp++
           merged.push({ lead_id: null, subscriber_id: s.subscriber_id, first_name: s.first_name, last_name: s.last_name, email: '', phone: s.phone })
           continue
