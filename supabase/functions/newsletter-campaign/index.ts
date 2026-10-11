@@ -545,7 +545,8 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: CORS })
   try {
     const body = await req.json() as {
-      action: 'draft_text' | 'test_mail' | 'launch' | 'status' | 'audience' | 'preview' | 'unsubscribe' | 'add_recipient' | 'add_subscribers' | 'rebuild_pending'
+      action: 'draft_text' | 'test_mail' | 'launch' | 'status' | 'audience' | 'preview' | 'unsubscribe' | 'add_recipient' | 'add_subscribers' | 'rebuild_pending' | 'whatsapp_nachholen'
+      dry?: boolean
       lead_id?: string
       deck_token?: string
       subscriber_ids?: string[]
@@ -794,6 +795,81 @@ Deno.serve(async (req: Request) => {
         if (ue) skipped++; else rebuilt++
       }
       return json({ ok: true, rebuilt, skipped })
+    }
+
+    // ── Newsletter per WhatsApp nachholen (Sven 11.10.26): an Empfaenger dieser
+    // Kampagne, bei denen die Mail nicht ankam (Versand gescheitert oder Adresse
+    // inzwischen als unzustellbar gemeldet). Nur glaubwuerdige Nummern, keine
+    // Abgemeldeten, keine doppelten WhatsApps. dry (Standard) zeigt nur die Liste.
+    if (body.action === 'whatsapp_nachholen') {
+      if (camp.content_mode !== 'html') return json({ error: 'Nur für Newsletter im HTML-Modus' }, 400)
+      const dry = body.dry !== false
+      const raw = String(camp.html_body ?? '')
+      const bounced = await loadBouncedKeys(sb)
+      const { data: rows } = await sb.from('scheduled_messages')
+        .select('lead_id, subscriber_id, type, status').eq('campaign_id', camp.id).limit(5000)
+      type Stand = { lead_id: string | null; subscriber_id: string | null; sent: boolean; failed: boolean; wa: boolean; storniert: boolean }
+      const per = new Map<string, Stand>()
+      for (const r of (rows ?? []) as Array<{ lead_id: string | null; subscriber_id: string | null; type: string; status: string }>) {
+        const k = r.lead_id ? `l:${r.lead_id}` : r.subscriber_id ? `s:${r.subscriber_id}` : ''
+        if (!k) continue
+        const st = per.get(k) ?? { lead_id: r.lead_id, subscriber_id: r.subscriber_id, sent: false, failed: false, wa: false, storniert: false }
+        if (r.type !== 'email' && !['failed', 'cancelled', 'skipped'].includes(r.status)) st.wa = true
+        if (r.type !== 'whatsapp') {
+          if (r.status === 'sent') st.sent = true
+          if (r.status === 'failed') st.failed = true
+          if (r.status === 'cancelled' || r.status === 'skipped') st.storniert = true
+        }
+        per.set(k, st)
+      }
+      const leadIds = [...per.values()].map(x => x.lead_id).filter(Boolean) as string[]
+      const subIds = [...per.values()].map(x => x.subscriber_id).filter(Boolean) as string[]
+      type Person = { first_name: string | null; last_name: string | null; email: string | null; phone: string | null; optout: boolean }
+      const people = new Map<string, Person>()
+      for (let i = 0; i < leadIds.length; i += 200) {
+        const { data } = await sb.from('leads').select('id, first_name, last_name, email, phone, newsletter_optout_at').in('id', leadIds.slice(i, i + 200))
+        for (const l of (data ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; newsletter_optout_at: string | null }>) {
+          people.set(`l:${l.id}`, { first_name: l.first_name, last_name: l.last_name, email: l.email, phone: l.phone, optout: !!l.newsletter_optout_at })
+        }
+      }
+      for (let i = 0; i < subIds.length; i += 200) {
+        const { data } = await sb.from('newsletter_subscribers').select('id, first_name, last_name, email, phone, optout_at').in('id', subIds.slice(i, i + 200))
+        for (const x of (data ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; optout_at: string | null }>) {
+          people.set(`s:${x.id}`, { first_name: x.first_name, last_name: x.last_name, email: x.email, phone: x.phone, optout: !!x.optout_at })
+        }
+      }
+      const { data: commOpt } = await sb.from('communication_optouts').select('lead_id')
+      const gesperrt = new Set(((commOpt ?? []) as Array<{ lead_id: string }>).map(o => `l:${o.lead_id}`))
+
+      const nextSlot = makePacer(Date.now() + 120e3)
+      const geplant: Array<{ name: string; grund: string; um?: string }> = []
+      const ausgelassen: Array<{ name: string; grund: string }> = []
+      for (const [k, st] of per) {
+        const p = people.get(k)
+        if (!p) continue
+        const unzustellbar = bounced.has(bounceKey(p.email))
+        const nichtAngekommen = (st.failed && !st.sent) || (st.sent && unzustellbar)
+        if (!nichtAngekommen || st.storniert) continue
+        const name = `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim() || (p.email ?? k)
+        const grund = st.sent ? 'Rückläufer' : 'Versand gescheitert'
+        if (p.optout || gesperrt.has(k)) { ausgelassen.push({ name, grund: 'abgemeldet' }); continue }
+        if (st.wa) { ausgelassen.push({ name, grund: 'hat schon eine WhatsApp' }); continue }
+        if (!p.phone || !echteNummer(p.phone, p.first_name, p.last_name)) { ausgelassen.push({ name, grund: 'keine glaubwürdige Nummer' }); continue }
+        if (dry) { geplant.push({ name, grund }); continue }
+        const r = { lead_id: st.lead_id, subscriber_id: st.subscriber_id }
+        const affiliateUrl = await affiliateUrlFor(sb, { ...r, ...p })
+        const slot = nextSlot('whatsapp')
+        const { error: ie } = await sb.from('scheduled_messages').insert({
+          lead_id: st.lead_id, subscriber_id: st.subscriber_id,
+          type: 'whatsapp', event_type: 'newsletter', campaign_id: camp.id,
+          status: 'pending', scheduled_at: slot.toISOString(),
+          whatsapp_text: waNewsletter(camp, raw, firstNameOf(p), { unsubUrl: unsubUrlFor(r), terminUrl: await terminUrlFor(sb, r, String(camp.id)), affiliateUrl }),
+          recipient: 'client', appointment_condition: 'none',
+        })
+        if (ie) { ausgelassen.push({ name, grund: `Fehler: ${ie.message}` }); continue }
+        geplant.push({ name, grund, um: slot.toISOString() })
+      }
+      return json({ ok: true, dry, geplant, ausgelassen })
     }
 
     // ── Einzelnen Empfänger NACHTRÄGLICH aufnehmen (gleiche Behandlung wie beim
