@@ -14,7 +14,7 @@ const CORS = {
 }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
 
-const PROMPT = `Du bekommst PDFs zu einem Immobilien-Projekt auf Zypern (z.B. Developer-Broschüre, Einrichtungspaket, Preisliste). Extrahiere die FAKTEN für ein Verkaufs-Deck — auf Deutsch, VOLLSTÄNDIG statt kompakt: lieber zu lang als zu kurz. Was du hier weglässt, kann später niemand mehr nachschlagen. Struktur:
+const PROMPT = `Du bekommst PDFs zu einem Immobilien-Projekt auf Zypern (z.B. Developer-Broschüre, Einrichtungspaket, Preisliste). Extrahiere die FAKTEN für ein Verkaufs-Deck — auf Deutsch, VOLLSTÄNDIG statt kompakt: lieber zu lang als zu kurz. Was du hier weglässt, kann später niemand mehr nachschlagen. Übersetzung: „covered“ (parking, terrace, veranda, balcony) heißt „überdacht“, nie „gedeckt“; „uncovered“ heißt „nicht überdacht“. Struktur:
 
 PROJEKT: Developer/Bauträger, Lage, Konzept, Anzahl Einheiten, Architektur/Stil, Fertigstellung, Garantie.
 AMENITIES & BESONDERHEITEN: gemeinschaftliche Anlagen (Pool, Gym, Dachterrasse …), Bauqualität, Nachhaltigkeit (PV o.ä.), Sicherheit.

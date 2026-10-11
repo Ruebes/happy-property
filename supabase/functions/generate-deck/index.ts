@@ -484,6 +484,37 @@ function assignMapAndFloorplan(blocks: Array<Record<string, unknown>>, images?: 
   }
 }
 
+// „covered parking" heißt auf Deutsch „überdachter Stellplatz", nicht „gedeckter"
+// (Sven 11.10.26: „Was zum Teufel soll ein gedeckter Stellplatz sein?"). Die KI
+// und die Fakten-Übersetzung schreiben es trotzdem gern so. Deshalb wird jeder
+// Text im fertigen Deck geprüft: nur vor Stellplatz/Parkplatz/Carport/Garage/
+// Terrasse/Veranda/Balkon, damit „Zielgruppen abgedeckt" oder ein „gedeckter
+// Tisch" unangetastet bleiben.
+const DACH_NOMEN = /^\s+(?:einzel)?(?:park|stell|carport|terrass|verand|balkon|tiefgarag|individualstell|außenstell|außenpark|garage)/i
+function dachWort(t: string): string {
+  let out = t.replace(/\b(teils\s+)?(un|Un|halb|Halb)?([Gg])edeckt(e|er|en|em|es)?\b/g, (m, teils: string | undefined, pre: string | undefined, g: string, suf: string | undefined, off: number) => {
+    const nachNomen = DACH_NOMEN.test(t.slice(off + m.length))
+    if (!teils && !nachNomen) return m
+    const kopf = pre && /^un$/i.test(pre) ? (pre[0] === 'U' ? 'Nicht überdacht' : 'nicht überdacht')
+      : pre && /^halb$/i.test(pre) ? (pre[0] === 'H' ? 'Halb überdacht' : 'halb überdacht')
+      : (g === 'G' ? 'Überdacht' : 'überdacht')
+    return `${teils ?? ''}${kopf}${suf ?? ''}`
+  })
+  out = out.replace(/\b([Uu])nbedeckt(e|er|en|em|es)?\b/g, (_m, u: string, suf: string | undefined) => `${u === 'U' ? 'Nicht' : 'nicht'} überdacht${suf ?? ''}`)
+  return out
+}
+function ueberdachtStattGedeckt(x: unknown): number {
+  let n = 0
+  const walk = (v: unknown): unknown => {
+    if (typeof v === 'string') { const w = dachWort(v); if (w !== v) n++; return w }
+    if (Array.isArray(v)) { for (let i = 0; i < v.length; i++) v[i] = walk(v[i]); return v }
+    if (v && typeof v === 'object') { for (const k of Object.keys(v as Record<string, unknown>)) (v as Record<string, unknown>)[k] = walk((v as Record<string, unknown>)[k]); return v }
+    return v
+  }
+  walk(x)
+  return n
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
   // Aufrufer-Schutz (Befund E4-4/I4-13): verify_jwt=true lässt auch den
@@ -932,6 +963,8 @@ Deno.serve(async (req) => {
     // einmal ueber das fertige Deck (Regel: nie —, immer normaler Bindestrich).
     const nachHits = normalizeDashes(blocks)
     if (nachHits) console.log(`[generate-deck] Gedankenstriche nach Injektion ersetzt: ${nachHits}`)
+    const dachHits = ueberdachtStattGedeckt(blocks)
+    if (dachHits) console.log(`[generate-deck] „gedeckt" -> „überdacht" ersetzt: ${dachHits}`)
 
     // Marina-Abschnitte tragen IMMER das Marina-Modell. Die KI baut wegen der
     // gelernten Mamba-Vorgabe einen eigenen feature-Block dazu; ohne diese Regel
