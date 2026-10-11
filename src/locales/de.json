@@ -2165,6 +2165,7 @@
       "engCalc": "hat sich die Berechnung {{x}} angesehen",
       "engOpen": "hat deine E-Mail geöffnet",
       "engInfo": "möchte mehr Infos zu {{x}}",
+      "engInfoPaket": "hat das Infopaket zu {{x}} bekommen",
       "wStats": "Kennzahlen",
       "systemActivity": "Was das System gemacht hat",
       "engagement": "Kunden-Aktivität",

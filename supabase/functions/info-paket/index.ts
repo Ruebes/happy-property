@@ -214,9 +214,12 @@ async function handle(sb: SupabaseClient, b: Record<string, unknown>): Promise<R
     const r = await kundenFotos(sb, b.project_id)
     return { ok: true, fotos: r.fotos.length, stand: r.fotoStand }
   }
-  // 0) Schalter
+  // 0) Schalter. Gezielter Versand durch Sven (erzwingen, z.B. an Newsletter-Klicker
+  //    nach seiner Freigabe 11.10.26) übergeht ihn; alle übrigen Prüfungen bleiben.
+  const erzwingen = b.erzwingen === true
+  const ungefragt = b.quelle === 'newsletter_klick'
   const { data: modeRow } = await sb.from('crm_settings').select('value').eq('key', 'info_paket_mode').maybeSingle()
-  const mode = String((modeRow as { value?: string } | null)?.value ?? 'off').trim()
+  const mode = erzwingen ? 'on' : String((modeRow as { value?: string } | null)?.value ?? 'off').trim()
   if (mode !== 'on' && mode !== 'test') return { ok: true, sent: false, reason: 'automatik_aus' }
 
   const token = typeof b.token === 'string' ? b.token : ''
@@ -232,6 +235,21 @@ async function handle(sb: SupabaseClient, b: Record<string, unknown>): Promise<R
   if (p.kind === 'lead') {
     const { data: opt } = await sb.from('communication_optouts').select('id').eq('lead_id', p.id).limit(1)
     if (opt && opt.length) return { ok: true, sent: false, reason: 'kontaktsperre' }
+  }
+  // Ungefragt (nur geklickt, nichts angefordert): Newsletter-Abmeldung gilt.
+  if (ungefragt) {
+    const { data: ab } = p.kind === 'lead'
+      ? await sb.from('leads').select('newsletter_optout_at').eq('id', p.id).maybeSingle()
+      : p.kind === 'sub' ? await sb.from('newsletter_subscribers').select('optout_at').eq('id', p.id).maybeSingle() : { data: null }
+    const r = ab as { newsletter_optout_at?: string | null; optout_at?: string | null } | null
+    if (r?.newsletter_optout_at || r?.optout_at) return { ok: true, sent: false, reason: 'abgemeldet' }
+  }
+  // Dasselbe Paket nie zweimal an dieselbe Person.
+  if (p.kind !== 'frei') {
+    let dq = sb.from('engagement_events').select('id').eq('type', 'info_paket').eq('token', token).limit(1)
+    dq = p.kind === 'lead' ? dq.eq('lead_id', p.id) : dq.eq('subscriber_id', p.id)
+    const { data: schon } = await dq
+    if (schon && schon.length) return { ok: true, sent: false, reason: 'schon_verschickt' }
   }
 
   // 2) Genau eine Wohnung im Deck
@@ -367,6 +385,12 @@ async function handle(sb: SupabaseClient, b: Record<string, unknown>): Promise<R
     console.error('[info-paket] Versand fehlgeschlagen:', sErr)
     return { ok: false, sent: false, reason: 'versand_fehler', calc_url: calcUrl, calc_url_cash: calcUrlCash }
   }
+  // Merken, dass das Paket raus ist (Doppel-Schutz, Dashboard „hat das Infopaket bekommen").
+  await sb.from('engagement_events').insert({
+    type: 'info_paket', token, label: `Wohnung ${nr}`.trim(),
+    lead_id: p.kind === 'lead' ? p.id : null, subscriber_id: p.kind === 'sub' ? p.id : null,
+    meta: { calc_url: calcUrl, calc_url_cash: calcUrlCash, pdf_url: pdfUrl, quelle: ungefragt ? 'newsletter_klick' : 'anfrage', test: !!INTERN_ADRESSEN.includes(p.email.toLowerCase()) },
+  }).then(({ error }) => { if (error) console.warn('[info-paket] Merker:', error.message) })
   return { ok: true, sent: true, calc_url: calcUrl, calc_url_cash: calcUrlCash, deck_url: deckUrl, pdf_url: pdfUrl, to: p.email, annahmen: markt.quelle }
 }
 

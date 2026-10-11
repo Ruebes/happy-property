@@ -287,9 +287,10 @@ export default function CrmDashboard() {
     if (e.type === 'calc_view')  return t('crm.dashboard.engCalc', 'hat sich die Berechnung {{x}} angesehen', { x: e.label || '' }).trim()
     if (e.type === 'email_open') return t('crm.dashboard.engOpen', 'hat deine E-Mail geöffnet')
     if (e.type === 'info_request') return t('crm.dashboard.engInfo', 'möchte mehr Infos zu {{x}}', { x: e.label || 'einem Objekt' })
+    if (e.type === 'info_paket') return t('crm.dashboard.engInfoPaket', 'hat das Infopaket zu {{x}} bekommen', { x: e.label || 'einem Objekt' })
     return e.type
   }
-  const engageIcon = (type: string) => type === 'email_open' ? '✉️' : type === 'calc_view' ? '📊' : type === 'info_request' ? '📩' : '🏠'
+  const engageIcon = (type: string) => type === 'email_open' ? '✉️' : type === 'calc_view' ? '📊' : type === 'info_request' ? '📩' : type === 'info_paket' ? '📦' : '🏠'
   // Name im Engagement-Widget: Lead zuerst, sonst Newsletter-Abonnent (Name, sonst
   // E-Mail). „Jemand" bleibt nur, wenn wirklich niemand zuzuordnen ist.
   const engageName = (e: EngageEvent) => {
