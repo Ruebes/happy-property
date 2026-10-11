@@ -444,7 +444,7 @@ async function infoRequest(body: Record<string, unknown>): Promise<{ status: num
     ...(paketZeile ? [paketZeile] : []),
     paket.sent ? 'Nächster Schritt: anrufen oder schreiben, solange das Interesse frisch ist.'
       : 'Versprochen auf der Seite: persönliche Antwort von Sven, in der Regel innerhalb von 24 Stunden.',
-    ...(wuensche.includes('rechnung') && leadId ? ['Tipp: Rechnung im Lead über „📊 Rechnung erstellen“, der Mail-Entwurf liegt dann im Postausgang.'] : []),
+    ...(wuensche.includes('rechnung') && leadId && !paket.sent ? ['Tipp: Rechnung im Lead über „📊 Rechnung erstellen“, der Mail-Entwurf liegt dann im Postausgang.'] : []),
   ]
   const beschreibung = zeilen.join('\n')
 
