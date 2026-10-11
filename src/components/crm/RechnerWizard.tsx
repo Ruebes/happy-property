@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import { unitGross } from '../../lib/price'
 import { createCalcOutboxDraft } from '../../lib/calcOutbox'
-import { DEFAULT_PARAMS, compute, vatSplit, type CalcParams, type CalcItem, type VatMode, type MonthPlan, seasonBreakdown, applySeason, effectiveMonthPlan, monthPlanCounts, MONTH_PLAN_ALL_LET } from '../../lib/rechner'
+import { DEFAULT_PARAMS, defaultMgmtPct, compute, vatSplit, type CalcParams, type CalcItem, type VatMode, type MonthPlan, seasonBreakdown, applySeason, effectiveMonthPlan, monthPlanCounts, MONTH_PLAN_ALL_LET } from '../../lib/rechner'
 import { MonthPlanPicker, MonthPlanTable } from './MonthPlanPicker'
 import { CustomSelect } from '../CustomSelect'
 import { NumberStepper } from '../NumberStepper'
@@ -30,7 +30,7 @@ const perObjFrom = (pr?: Partial<CalcParams> | null, fallbackSqm?: number | null
   letType: pr?.letType === 'long' ? 'long' : 'short',
   occ: pr?.season?.totalOcc ?? 0,
   adr: pr?.season?.adrHigh ?? 0,
-  mgmtPct: pr?.mgmtPct ?? 25,
+  mgmtPct: pr?.mgmtPct ?? defaultMgmtPct(pr?.letType === 'long' ? 'long' : 'short', !!pr?.hotelConcept),
   hotel: !!pr?.hotelConcept,
   furnCost: pr?.furnCost ?? 0,
   furnFree: !!pr?.furnFree,
@@ -171,7 +171,12 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
       return n
     })
   }
-  const set = (k: keyof CalcParams, v: number | string | boolean | number[]) => setP(prev => ({ ...prev, [k]: v }) as CalcParams)
+  // Vermietungsart umschalten setzt die Verwaltung auf den Startwert der Art
+  // (Kurzzeit 20 %, Langzeit 4 %, Sven 11.10.26).
+  const set = (k: keyof CalcParams, v: number | string | boolean | number[]) => setP(prev => ({
+    ...prev, [k]: v,
+    ...(k === 'letType' && v !== prev.letType ? { mgmtPct: defaultMgmtPct(v as 'short' | 'long', prev.hotelConcept) } : {}),
+  }) as CalcParams)
 
   // „MwSt-Erstattung als Sondertilgung“: USt.-Betrag im Erstattungsjahr als Sondertilgung setzen
   const applyVatPrepay = () => {
@@ -366,7 +371,7 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
           <span className="text-sm font-medium text-gray-800">{label}</span>
           <div className="flex gap-1">
             {(['short', 'long'] as const).map(lt => (
-              <button key={lt} type="button" onClick={() => upd({ letType: lt })}
+              <button key={lt} type="button" onClick={() => upd(lt === o.letType ? { letType: lt } : { letType: lt, mgmtPct: defaultMgmtPct(lt, o.hotel) })}
                 className={`text-xs px-2.5 py-1 rounded-lg border ${o.letType === lt ? 'text-white border-transparent' : 'bg-white text-gray-600 border-gray-200'}`}
                 style={o.letType === lt ? { backgroundColor: '#ff795d' } : undefined}>
                 {lt === 'short' ? t('rechnerWizard.shortTerm', 'Kurzzeit') : t('rechnerWizard.longTerm', 'Langzeit')}

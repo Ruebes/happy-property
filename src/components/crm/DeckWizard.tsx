@@ -573,7 +573,12 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const inputCls = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 bg-white'
 
   // Kompakte Rechner-Parameter (inline Render-Funktionen — keine verschachtelten Komponenten)
-  const setCp = (k: keyof CalcParams, v: number | string | boolean) => setCalcParams(prev => ({ ...prev, [k]: v }) as CalcParams)
+  // Vermietungsart umschalten setzt die Verwaltung auf den Startwert der Art
+  // (Kurzzeit 20 %, Langzeit 4 %, Sven 11.10.26).
+  const setCp = (k: keyof CalcParams, v: number | string | boolean) => setCalcParams(prev => ({
+    ...prev, [k]: v,
+    ...(k === 'letType' && v !== prev.letType ? { mgmtPct: defaultMgmtPct(v as 'short' | 'long', prev.hotelConcept) } : {}),
+  }) as CalcParams)
   const numF = (label: string, k: keyof CalcParams, step = '1', suffix?: string) => (
     <label key={k} className="block">
       <span className="block text-xs font-medium text-gray-500 mb-1">{label}</span>

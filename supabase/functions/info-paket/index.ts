@@ -82,8 +82,9 @@ async function marktAnnahmen(sb: SupabaseClient, projekt: string, nr: string, be
   const letType: 'short' | 'long' = p.letType === 'long' ? 'long' : 'short'
   const hotel = letType === 'short' && p.hotelConcept === true
   const zahl = (v: unknown, d: number) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : d }
-  // Verwaltung immer der Standard (20 %, Svens Agentur), nie aus alten Rechnungen.
-  const mgmtPct = std.mgmtPct
+  // Verwaltung nie aus alten Rechnungen: Kurzzeit 20 % (Svens Agentur), Langzeit
+  // ca. 4 % (Sven 11.10.26, wie defaultMgmtPct im Rechner).
+  const mgmtPct = letType === 'long' ? 4 : std.mgmtPct
   const season = letType === 'short' && p.season && typeof p.season === 'object' ? p.season as Record<string, unknown> : null
   return {
     letType, yieldPct: zahl(p.yieldPct, std.yieldPct), season, hotelConcept: hotel,

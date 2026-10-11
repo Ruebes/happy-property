@@ -316,13 +316,12 @@ export function vatSplit(net: number, mode: VatMode | undefined, livingSqm?: num
   return { netReduced, netStandard, vatReduced, vatStandard, vat, gross: net + vat }
 }
 
-// Verwaltungskosten unterscheiden sich je Vermietungsart drastisch (Svens
-// echte Berechnungen): Langzeit ~5 % der Miete, Kurzzeit 25 %, mit
-// Hotelkonzept 40 % (Rezeption/Reinigung/Wäsche/Betreuung inklusive).
-// Ein pauschaler Wert rechnet die Kurzzeitvermietung systematisch zu schön.
+// Verwaltungskosten unterscheiden sich je Vermietungsart drastisch. Startwerte
+// laut Sven (11.10.26): Kurzzeit 20 % (seine Agentur), Langzeit ca. 4 % der
+// Miete. Mit Hotelkonzept 40 % (Rezeption/Reinigung/Wäsche/Betreuung inklusive).
 export function defaultMgmtPct(letType: 'short' | 'long', hotelConcept?: boolean): number {
-  if (letType !== 'short') return 5
-  return hotelConcept ? 40 : 25
+  if (letType !== 'short') return 4
+  return hotelConcept ? 40 : 20
 }
 
 // ── Zyprische Steuerfakten (Stand Steuerreform, in Kraft seit 1.1.2026) ──────
@@ -403,7 +402,7 @@ export const DEFAULT_PARAMS: CalcParams = {
   sdInputMode: 'manual', sdUnits: [], sdPrice: 1000000, sdSqm: 250, sdTerr: 60, sdNum: 3,
   sdDiscount: 0, sdVatDrawn: 0, sdVatYears: 0, sdTaxRate: CY_CORP_TAX_PCT,
   fin: 'yes', letType: 'short', mode: 'ann', res: 'de', hotelConcept: false,
-  equity: 75000, cyBI: 0, yieldPct: 5.5, rentGrowth: 5, mgmtPct: 2, interestPct: 4.1,
+  equity: 75000, cyBI: 0, yieldPct: 5.5, rentGrowth: 5, mgmtPct: 20, interestPct: 4.1,
   termYears: 20, amortPct: 2, appreciationPct: 5, deTaxPct: 42, furnCost: 0, furnFree: false,
   ppVals: Array(10).fill(0),
   season: null,
