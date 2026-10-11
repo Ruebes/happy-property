@@ -18,6 +18,7 @@
 // Deployment: supabase functions deploy newsletter-campaign --no-verify-jwt
 
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
+import { bounceKey, loadBouncedKeys } from '../_shared/emailBounce.ts'
 import { htmlToWhatsapp } from '../_shared/htmlToWhatsapp.ts'
 import { gateCaller } from '../_shared/callerGate.ts'
 
@@ -119,6 +120,24 @@ function customEmailHtml(rawHtml: string, first: string, unsubUrl: string, affil
 // Kacheln) ergeben abgeleitet keinen sauberen Chat-Text.
 const waFrom = (camp: { whatsapp_body?: string | null }, raw: string, first: string): string =>
   camp.whatsapp_body?.trim() ? personalize(camp.whatsapp_body, first).trim() : htmlToWhatsapp(personalize(raw, first))
+// Fertige WhatsApp-Nachricht des Newsletters (Empfaenger ohne zustellbare Mail):
+// Platzhalter wie in der Mail fuellen, sonst stuenden {{termin_link}} und
+// {{abmelden}} woertlich im Chat. Tippgeber-Block nur, wenn der Text ihn nicht
+// schon hat; ein Abmelde-Link gehoert immer dazu.
+function waNewsletter(
+  camp: { whatsapp_body?: string | null }, raw: string, first: string,
+  o: { unsubUrl: string; terminUrl: string; affiliateUrl?: string },
+): string {
+  const tipp = o.affiliateUrl ?? AFFILIATE_FALLBACK
+  let text = waFrom(camp, raw, first)
+    .split('{{termin_link}}').join(o.terminUrl.replace('utm_medium=email', 'utm_medium=whatsapp'))
+    .split('{{abmelden}}').join(o.unsubUrl)
+    .split('{{tippgeber_share}}').join(tipp)
+    .split('{{tippgeber_link}}').join(tipp)
+  if (o.affiliateUrl && !/tippgeber|empfehl/i.test(text)) text += `\n\n${affiliateWhatsappBlock(o.affiliateUrl)}`
+  if (!text.includes(o.unsubUrl)) text += `\n\nKeine Nachrichten mehr? Hier abmelden: ${o.unsubUrl}`
+  return text
+}
 // Termin-Link je Empfaenger: Leads kennen wir (booking_token) -> Direkteinstieg
 // in den Kalender. Listen-Abonnenten sind keine Leads -> ohne Fragebogen (?f=none),
 // nur Kontaktformular.
@@ -565,7 +584,12 @@ Deno.serve(async (req: Request) => {
       if (d.startsWith('0')) d = '49' + d.slice(1)
       return d.length >= 8 ? d.slice(-10) : ''
     }
-    const combined = async (mode: string, ids: string[], excludeLeadIds: string[] = []) => {
+    // Unzustellbare Adressen (email_bounces, Sven 11.10.26): dorthin keine Mail
+    // mehr, das kostet nur Plaetze im IONOS-Sendelimit. Mit Nummer geht der
+    // Newsletter per WhatsApp, ohne Nummer faellt der Empfaenger raus.
+    // stats zaehlt beides fuer die Anzeige im Wizard.
+    const combined = async (mode: string, ids: string[], excludeLeadIds: string[] = [], stats?: { per_whatsapp: number; ohne_nummer: number }) => {
+      const bounced = await loadBouncedKeys(sb)
       const seenMail = new Set<string>(), seenTel = new Set<string>()
       if (excludeLeadIds.length) {
         const { data: ex } = await sb.from('leads').select('email, alt_emails, phone').in('id', excludeLeadIds)
@@ -583,6 +607,12 @@ Deno.serve(async (req: Request) => {
         const mk = mailKey(l.email), tk = telKey(l.phone)
         if (/@(test|example)\./.test(mk) || isDup(mk, tk)) continue
         mark(mk, tk)
+        if (bounced.has(mk)) {
+          if (!tk) { if (stats) stats.ohne_nummer++; continue }
+          if (stats) stats.per_whatsapp++
+          merged.push({ lead_id: l.id, subscriber_id: null, first_name: l.first_name, last_name: l.last_name, email: '', phone: l.phone ?? null })
+          continue
+        }
         merged.push({ lead_id: l.id, subscriber_id: null, first_name: l.first_name, last_name: l.last_name, email: l.email, phone: null })
       }
       for (const s of await loadListAudience(sb, mode, ids)) {
@@ -590,6 +620,12 @@ Deno.serve(async (req: Request) => {
         if (!mk && !tk) continue
         if (/@(test|example)\./.test(mk) || isDup(mk, tk)) continue
         mark(mk, tk)
+        if (bounced.has(mk)) {
+          if (!tk) { if (stats) stats.ohne_nummer++; continue }
+          if (stats) stats.per_whatsapp++
+          merged.push({ lead_id: null, subscriber_id: s.subscriber_id, first_name: s.first_name, last_name: s.last_name, email: '', phone: s.phone })
+          continue
+        }
         merged.push({ lead_id: null, subscriber_id: s.subscriber_id, first_name: s.first_name, last_name: s.last_name, email: s.email, phone: s.phone })
       }
       return merged
@@ -602,9 +638,10 @@ Deno.serve(async (req: Request) => {
         const { data: c } = await sb.from('newsletter_campaigns').select('exclude_lead_ids').eq('id', body.campaign_id).maybeSingle()
         excl = ((c as { exclude_lead_ids?: string[] } | null)?.exclude_lead_ids ?? [])
       }
-      const list = await combined(body.list_mode ?? 'all', body.list_ids ?? [], excl)
+      const stats = { per_whatsapp: 0, ohne_nummer: 0 }
+      const list = await combined(body.list_mode ?? 'all', body.list_ids ?? [], excl, stats)
       const nurLeads = list.filter(x => x.lead_id).length
-      return json({ ok: true, total: list.length, leads: nurLeads, abonnenten: list.length - nurLeads })
+      return json({ ok: true, total: list.length, leads: nurLeads, abonnenten: list.length - nurLeads, unzustellbar_per_whatsapp: stats.per_whatsapp, unzustellbar_ohne_nummer: stats.ohne_nummer })
     }
 
     // ── KI-Text aus Stichpunkten ─────────────────────────────────────────────
@@ -685,7 +722,7 @@ Deno.serve(async (req: Request) => {
       if (camp.content_mode === 'html') {
         const raw = String(camp.html_body ?? '')
         const demoUrl = `${SITE}/termin?src=empfehlung&ref=beispiel`
-        return json({ ok: true, subject: personalize(camp.subject, 'Vorname'), html: customEmailHtml(raw, 'Vorname', `${SITE}/abmelden`, demoUrl), whatsapp: `${waFrom(camp, raw, 'Vorname')}\n\n${affiliateWhatsappBlock(demoUrl)}` })
+        return json({ ok: true, subject: personalize(camp.subject, 'Vorname'), html: customEmailHtml(raw, 'Vorname', `${SITE}/abmelden`, demoUrl), whatsapp: waNewsletter(camp, raw, 'Vorname', { unsubUrl: `${SITE}/abmelden`, terminUrl: `${SITE}/termin?src=newsletter`, affiliateUrl: demoUrl }) })
       }
       const properties = (camp.properties ?? []) as CampaignProperty[]
       const deckTokens: Record<string, string> = {}
@@ -718,7 +755,7 @@ Deno.serve(async (req: Request) => {
           const affiliateUrl = await affiliateUrlFor(sb, { lead_id: m.lead_id, subscriber_id: m.subscriber_id, ...r })
           const upd: Record<string, string> = {}
           if (m.email_body) upd.email_body = customEmailHtml(raw, first, unsubUrlFor(m), affiliateUrl, await terminUrlFor(sb, m, String(camp.id)), String(camp.id), m.lead_id ? `l:${m.lead_id}` : (m.subscriber_id ? `s:${m.subscriber_id}` : ''))
-          if (m.whatsapp_text) upd.whatsapp_text = `${waFrom(camp, raw, first)}${affiliateUrl ? `\n\n${affiliateWhatsappBlock(affiliateUrl)}` : ''}`
+          if (m.whatsapp_text) upd.whatsapp_text = waNewsletter(camp, raw, first, { unsubUrl: unsubUrlFor(m), terminUrl: await terminUrlFor(sb, m, String(camp.id)), affiliateUrl })
           const { error: ue } = await sb.from('scheduled_messages').update(upd).eq('id', m.id).eq('status', 'pending')
           if (ue) skipped++; else rebuilt++
         }
@@ -757,6 +794,7 @@ Deno.serve(async (req: Request) => {
       const lead = leadRow as { id: string; first_name: string | null; last_name: string | null; email: string | null; newsletter_optout_at: string | null } | null
       if (!lead?.email) return json({ error: 'Lead hat keine E-Mail' }, 400)
       if (lead.newsletter_optout_at) return json({ error: 'Lead hat den Newsletter abbestellt' }, 409)
+      if ((await loadBouncedKeys(sb)).has(bounceKey(lead.email))) return json({ error: 'Mailadresse ist unzustellbar' }, 409)
       if (((camp.exclude_lead_ids ?? []) as string[]).includes(lead.id)) return json({ error: 'Lead ist von dieser Kampagne ausgeschlossen' }, 409)
       const { data: dup } = await sb.from('scheduled_messages').select('id').eq('lead_id', lead.id).eq('campaign_id', camp.id).limit(1)
       if (dup && dup.length) return json({ error: 'Lead hat diese Kampagne bereits erhalten' }, 409)
@@ -836,6 +874,7 @@ Deno.serve(async (req: Request) => {
 
       let geplant = 0
       const uebersprungen: Array<{ id: string; grund: string }> = []
+      const bounced = await loadBouncedKeys(sb)
       for (const subId of ids) {
         try {
           const { data: subRow } = await sb.from('newsletter_subscribers')
@@ -845,6 +884,7 @@ Deno.serve(async (req: Request) => {
           if (sub.optout_at) { uebersprungen.push({ id: subId, grund: 'abgemeldet' }); continue }
           const mail = (sub.email ?? '').trim()
           if (!mail.includes('@')) { uebersprungen.push({ id: subId, grund: 'keine E-Mail' }); continue }
+          if (bounced.has(bounceKey(mail))) { uebersprungen.push({ id: subId, grund: 'Mail unzustellbar' }); continue }
           const { data: dup } = await sb.from('scheduled_messages').select('id')
             .eq('subscriber_id', sub.id).eq('campaign_id', camp.id).limit(1)
           if (dup && dup.length) { uebersprungen.push({ id: subId, grund: 'hat die Kampagne schon' }); continue }
@@ -959,8 +999,10 @@ Deno.serve(async (req: Request) => {
             for (const lead of audience) {
               try {
                 const first = firstNameOf(lead)
-                const hatMail = !!lead.email, hatTel = !!lead.phone
-                const typ = hatMail && hatTel ? 'both' : hatTel ? 'whatsapp' : 'email'
+                // Newsletter gehen per Mail (Svens Regel seit 2.10.: nie zusaetzlich
+                // WhatsApp). WhatsApp nur, wo es keine zustellbare Mail gibt.
+                const hatMail = !!lead.email, hatTel = !hatMail && !!lead.phone
+                const typ = hatMail ? 'email' : 'whatsapp'
                 const affiliateUrl = await affiliateUrlFor(sb, lead)
                 const slot = nextSlot(typ)
                 const { error: se } = await sb.from('scheduled_messages').insert({
@@ -970,7 +1012,7 @@ Deno.serve(async (req: Request) => {
                   email_subject: hatMail ? personalize(camp.subject, first) : null,
                   email_body: hatMail ? customEmailHtml(raw, first, unsubUrlFor(lead), affiliateUrl, await terminUrlFor(sb, lead, String(camp.id)), String(camp.id), lead.lead_id ? `l:${lead.lead_id}` : `s:${lead.subscriber_id}`) : null,
                   whatsapp_text: hatTel
-                    ? `${waFrom(camp, raw, first)}${affiliateUrl ? `\n\n${affiliateWhatsappBlock(affiliateUrl)}` : ''}`
+                    ? waNewsletter(camp, raw, first, { unsubUrl: unsubUrlFor(lead), affiliateUrl, terminUrl: await terminUrlFor(sb, lead, String(camp.id)) })
                     : null,
                   recipient: 'client', appointment_condition: 'none',
                 })
@@ -1052,9 +1094,11 @@ Deno.serve(async (req: Request) => {
               const subject = personalize(camp.subject, first)
               // Kanal nach dem, was der Empfänger hinterlassen hat: Mail, WhatsApp
               // oder beides. Leads haben hier keine Nummer und bleiben bei E-Mail.
+              // Mail, wenn zustellbar; WhatsApp nur ohne (zustellbare) Mail. Nie beides
+              // (Svens Regel seit 2.10.).
               const hatMail = !!lead.email
-              const hatTel = !!lead.phone
-              const typ = hatMail && hatTel ? 'both' : hatTel ? 'whatsapp' : 'email'
+              const hatTel = !hatMail && !!lead.phone
+              const typ = hatMail ? 'email' : 'whatsapp'
               const waText = hatTel ? buildWhatsappText(camp, first, deckTokens, { campaignId: String(camp.id), affiliateUrl }) : null
               const waBild = hatTel ? properties.map(p => projectImages[p.project_id]).find(Boolean) ?? null : null
               const slot = nextSlot(typ)

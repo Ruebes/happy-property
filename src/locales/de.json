@@ -3549,6 +3549,7 @@
       "errTest": "Test-Mail fehlgeschlagen",
       "subtitle": "Persönliche Einzel-Mails an alle Kontakte ohne aktiven Deal — mit eigenem Deck je Empfänger, zeitversetzt (08–20 Uhr, ~alle 3 Min).",
       "audience": "{{n}} Empfänger",
+      "audienceBounced": "Mail unzustellbar: {{wa}} per WhatsApp, {{raus}} ohne Nummer ausgelassen",
       "s1": "1 · Objekte",
       "addUnit": "+ Wohnung hinzufügen",
       "noUnits": "Noch keine Objekte gewählt.",

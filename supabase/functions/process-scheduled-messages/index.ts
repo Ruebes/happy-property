@@ -28,6 +28,7 @@ import { buildMimeContent } from '../_shared/mimeBody.ts'
 import { withSocialFooter } from '../_shared/socialFooter.ts'
 import { buildIcs, toB64 } from '../_shared/ics.ts'
 import { bookingUrl } from '../_shared/bookingLink.ts'
+import { isHardSmtpBounce, recordBounce } from '../_shared/emailBounce.ts'
 
 // Wiederholung bei TimelinesAI-Kontingent (403 quota_exceeded): 8 x 10 Min = 80 Min,
 // länger als das beobachtete Sperrfenster (~50 Min am 11.9.2026). 10 Min bleibt
@@ -876,6 +877,11 @@ Deno.serve(async (req: Request) => {
               errors.push(`email: ${errMsg}`)
               success = false
               mailLimitHit = /\b450\b|send limit exceeded/i.test(errMsg)
+              // Adresse gibt es nicht (z. B. 550 invalid DNS MX) → merken, der
+              // Newsletter geht dort künftig per WhatsApp statt per Mail.
+              if (isHardSmtpBounce(errMsg)) {
+                try { await recordBounce(supabase, rcpt.email, errMsg, 'smtp') } catch (be) { console.warn('[process-scheduled] Bounce merken:', be) }
+              }
             }
           } else {
             // SMTP nicht konfiguriert → simulieren + loggen

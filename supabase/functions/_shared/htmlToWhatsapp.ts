@@ -28,11 +28,13 @@ export function htmlToWhatsapp(html: string): string {
     // Absätze mit Leerzeile trennen, Listenpunkte nur mit Zeilenumbruch - sonst
     // klebt in WhatsApp alles aneinander bzw. jede Aufzählung hat Luft dazwischen.
     .replace(/<\/(li|tr)>/gi, '\n')
+    .replace(/<\/t[dh]>/gi, ' ')   // Tabellenzellen nicht zusammenkleben („Paphos277.032 €")
     .replace(/<\/(p|div|h[1-6]|ul|ol|table|blockquote)>/gi, '\n\n')
     .replace(/<[^>]+>/g, '')
   s = decodeEntities(s)
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n[ \t]+/g, '\n')   // Einrueckung aus dem HTML-Quelltext
     .replace(/\n{3,}/g, '\n\n')
     .trim()
   if (s.length > WA_MAX) s = s.slice(0, WA_MAX).replace(/\s+\S*$/, '') + ' …'

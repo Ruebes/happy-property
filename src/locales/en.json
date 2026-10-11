@@ -3549,6 +3549,7 @@
       "errTest": "Test email failed",
       "subtitle": "Personal individual emails to all contacts without an active deal — with a dedicated deck per recipient, staggered (08:00–20:00, ~every 3 min).",
       "audience": "{{n}} recipients",
+      "audienceBounced": "Email undeliverable: {{wa}} via WhatsApp, {{raus}} without a number skipped",
       "s1": "1 · Properties",
       "addUnit": "+ Add apartment",
       "noUnits": "No properties selected yet.",

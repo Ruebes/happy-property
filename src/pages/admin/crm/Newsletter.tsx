@@ -115,6 +115,8 @@ export default function Newsletter() {
   const [props, setProps] = useState<WizProperty[]>([])
   const [showPicker, setShowPicker] = useState(false)
   const [audience, setAudience] = useState<number | null>(null)
+  // Unzustellbare Mailadressen (email_bounces): per WhatsApp bzw. ohne Nummer raus
+  const [bounced, setBounced] = useState<{ wa: number; raus: number } | null>(null)
   // Empfaengerlisten (Klaviyo-Import). Standard 'all': normalerweise bekommen alle
   // den Newsletter — Sven schraenkt nur im Ausnahmefall ein.
   const [lists, setLists] = useState<Array<{ id: string; name: string; anzahl: number }>>([])
@@ -160,8 +162,12 @@ export default function Newsletter() {
   // Zielgruppen-Zahl haengt an der Listenauswahl → bei Aenderung neu holen.
   useEffect(() => {
     supabase.functions.invoke('newsletter-campaign', { body: { action: 'audience', list_mode: listMode, list_ids: listIds } })
-      .then(({ data }) => setAudience((data as { total?: number } | null)?.total ?? null))
-      .catch(() => setAudience(null))
+      .then(({ data }) => {
+        const d = data as { total?: number; unzustellbar_per_whatsapp?: number; unzustellbar_ohne_nummer?: number } | null
+        setAudience(d?.total ?? null)
+        setBounced(d ? { wa: d.unzustellbar_per_whatsapp ?? 0, raus: d.unzustellbar_ohne_nummer ?? 0 } : null)
+      })
+      .catch(() => { setAudience(null); setBounced(null) })
   }, [listMode, listIds])
 
   // Kampagne in DB speichern (upsert) — Edge liest daraus
@@ -533,6 +539,7 @@ export default function Newsletter() {
           <p className="text-sm text-gray-500 mt-1">
             {t('crm.newsletter.subtitle', 'Persönliche Einzel-Mails an alle Kontakte ohne aktiven Deal — mit eigenem Deck je Empfänger, zeitversetzt (08–20 Uhr, ~alle 3 Min).')}
             {audience != null && <> · <strong>{t('crm.newsletter.audience', '{{n}} Empfänger', { n: audience })}</strong></>}
+            {bounced && (bounced.wa > 0 || bounced.raus > 0) && <> ({t('crm.newsletter.audienceBounced', 'Mail unzustellbar: {{wa}} per WhatsApp, {{raus}} ohne Nummer ausgelassen', { wa: bounced.wa, raus: bounced.raus })})</>}
           </p>
         </div>
 

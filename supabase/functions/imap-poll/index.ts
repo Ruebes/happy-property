@@ -17,6 +17,8 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { gateCaller } from '../_shared/callerGate.ts'
 import { wantsNewsletterOptout } from './optout.ts'
+import { looksLikeBounce, parseBounces } from './bounce.ts'
+import { recordBounce } from '../_shared/emailBounce.ts'
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
@@ -228,13 +230,44 @@ Deno.serve(async (req) => {
   const imap = new Imap()
   const reqBody = await req.json().catch(() => ({} as Record<string, unknown>))
   const mode = (reqBody.mode as string) || 'poll'
-  const result = { scanned: 0, tasks: 0, leads: 0, skipped: 0, errors: [] as string[], skipped_reasons: {} as Record<string, number>, seen_from: [] as string[] }
+  const result = { scanned: 0, tasks: 0, leads: 0, bounces: 0, skipped: 0, errors: [] as string[], skipped_reasons: {} as Record<string, number>, seen_from: [] as string[] }
   const skip = (grund: string, von?: string) => { result.skipped++; result.skipped_reasons[grund] = (result.skipped_reasons[grund] ?? 0) + 1; if (von && result.seen_from.length < 25) result.seen_from.push(`${von} · ${grund}`) }
   try {
     await imap.connect()
     const li = await imap.login(Deno.env.get('IMAP_USER') ?? '', Deno.env.get('IMAP_PASS') ?? '')
     if (!/OK/m.test(li)) return json({ error: 'IMAP-Login fehlgeschlagen' }, 500)
     const sel = await imap.cmd('SELECT INBOX')
+    // Eigene Adressen tauchen in Rückläufern als Absender/Kopie auf, nie als Ziel werten.
+    const ownAddr = (Deno.env.get('IMAP_USER') ?? '').trim().toLowerCase()
+    const isOwnAddr = (a: string) => a === ownAddr || /@(happy-property\.(com|de)|weblift\.pro)$/i.test(a)
+
+    // ── Rückläufer nachträglich auswerten: unzustellbare Adressen der letzten N
+    // Tage nach email_bounces. dry (Standard) zeigt nur, was eingetragen würde.
+    if (mode === 'bounces') {
+      const days = Math.min(180, Number(reqBody.days) || 60)
+      const limit = Math.min(300, Number(reqBody.limit) || 200)
+      const dry = reqBody.dry !== false
+      const sr = await imap.cmd(`UID SEARCH SINCE ${imapSince(days)} OR FROM "mailer-daemon" FROM "postmaster"`)
+      const bUids = (sr.match(/\* SEARCH([0-9 ]*)/i)?.[1] || '').trim().split(/\s+/).filter(Boolean)
+        .sort((a, b) => Number(b) - Number(a)).slice(0, limit)
+      const found: Array<{ uid: string; date: string; from: string; subject: string; bounces: ReturnType<typeof parseBounces>; text?: string }> = []
+      let recorded = 0
+      for (const uid of bUids) {
+        try {
+          const fetched = await imap.cmd(`UID FETCH ${uid} (BODY.PEEK[])`)
+          const from = fromAddress(fetched)
+          if (!looksLikeBounce(from, fetched)) continue
+          const bounces = parseBounces(fetched, isOwnAddr)
+          // Probelauf oder keine Adresse erkannt: Anfang des Klartexts mitliefern, damit man sieht, warum.
+          found.push({ uid, date: header(fetched, 'Date'), from, subject: decodeMimeWords(header(fetched, 'Subject')).slice(0, 90), bounces, ...(dry || !bounces.length ? { text: extractPlain(fetched).slice(0, 800) } : {}) })
+          if (!dry) for (const b of bounces.filter(x => x.kind !== 'ignore')) {
+            if (await recordBounce(supabase, b.email, `${b.status} ${b.diag}`.trim(), 'ndr', b.kind === 'hard')) recorded++
+          }
+        } catch (e) { result.errors.push(e instanceof Error ? e.message : String(e)) }
+      }
+      await imap.logout()
+      return json({ ok: true, mode: 'bounces', dry, scanned: bUids.length, recorded, found, errors: result.errors })
+    }
 
     // ── Diagnose: welches Postfach, wie viele Mails, letzte Absender/Betreffe ──
     // Kein Import — nur zum Prüfen, ob IMAP_USER wirklich info@ ist und was drin liegt.
@@ -366,6 +399,13 @@ Deno.serve(async (req) => {
         // no-reply-Adressen - deren Rechnungen kamen deshalb nie im CRM an
         // (Sven 25.8.: "Es liegt z.B. eine RE von Claude drin").
         const invoiceSubject = /rechnung|invoice|receipt|quittung|zahlungsbest|payment (confirmation|receipt)|beleg|billing/i.test(`${subject}`)
+        // Rückläufer („Unzustellbar"): dauerhaft gescheiterte Adresse merken, der
+        // Newsletter geht dort nicht mehr per Mail hin (Sven 11.10.).
+        if (looksLikeBounce(addr, fetched)) {
+          const hits = parseBounces(fetched, isOwnAddr).filter(b => b.kind !== 'ignore')
+          for (const b of hits) if (await recordBounce(supabase, b.email, `${b.status} ${b.diag}`.trim(), 'ndr', b.kind === 'hard')) result.bounces++
+          if (hits.length) continue
+        }
         if (addr === own || (!invoiceSubject && /(^|@)(no-?reply|mailer-daemon|postmaster)\b/.test(addr))) { skip(addr === own ? 'eigene_adresse' : 'no_reply_ohne_rechnung', addr); continue }
         const leadId = await findLead(supabase, addr)
         if (!leadId) {
