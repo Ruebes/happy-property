@@ -244,8 +244,8 @@ async function handle(sb: SupabaseClient, b: Record<string, unknown>): Promise<R
     const r = ab as { newsletter_optout_at?: string | null; optout_at?: string | null } | null
     if (r?.newsletter_optout_at || r?.optout_at) return { ok: true, sent: false, reason: 'abgemeldet' }
   }
-  // Dasselbe Paket nie zweimal an dieselbe Person.
-  if (p.kind !== 'frei') {
+  // Dasselbe Paket nie zweimal an dieselbe Person (Svens eigene Testadresse ausgenommen).
+  if (p.kind !== 'frei' && !INTERN_ADRESSEN.includes(p.email.toLowerCase())) {
     let dq = sb.from('engagement_events').select('id').eq('type', 'info_paket').eq('token', token).limit(1)
     dq = p.kind === 'lead' ? dq.eq('lead_id', p.id) : dq.eq('subscriber_id', p.id)
     const { data: schon } = await dq
