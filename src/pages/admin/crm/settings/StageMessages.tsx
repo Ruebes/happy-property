@@ -30,7 +30,7 @@ interface WaTpl {
 // Platzhalter, die die schedule-message Engine ersetzt
 const PLACEHOLDERS = [
   '{{vorname}}', '{{nachname}}', '{{name}}', '{{email}}', '{{phone}}',
-  '{{developers}}', '{{commission_amount}}',
+  '{{developers}}', '{{bautraeger}}', '{{commission_amount}}',
   '{{notiz}}', '{{zoom_link}}', '{{termin_buchen}}', '{{objekt}}', '{{unit}}', '{{kaufpreis}}', '{{drive_link}}',
   '{{doc_vollmacht}}', '{{doc_unterlagen}}',
 ]

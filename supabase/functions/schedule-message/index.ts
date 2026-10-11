@@ -256,6 +256,9 @@ Deno.serve(async (req: Request) => {
       phone:        lead.phone ?? '',
       developers:   regDevelopers,
       developer:    regDevelopers,
+      // Bauträger der verknüpften Wohnung (eindeutig); {{developer}} ist die Registrierungs-
+      // Liste und kann mehrere Bauträger enthalten. Fallback: diese Liste.
+      bautraeger:   unitDevOrg || regDevelopers,
       bemerkung:    regNotes,
       bemerkungen:  regNotes,
       finanzierung_bemerkung: finNotes,   // nur für die Partner-Mail (Christof), nie an den Kunden
