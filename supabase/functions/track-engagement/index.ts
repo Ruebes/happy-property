@@ -414,7 +414,7 @@ async function infoRequest(body: Record<string, unknown>): Promise<{ status: num
 
   // Infopaket automatisch per Mail (info-paket entscheidet selbst: Schalter
   // off | test | on, Wohnung frei, Preis wie im Deck, Kontaktsperre).
-  let paket: { sent?: boolean; reason?: string; calc_url?: string } = {}
+  let paket: { sent?: boolean; reason?: string; calc_url?: string; calc_url_cash?: string } = {}
   if (email) {
     try {
       const { data } = await sb.functions.invoke('info-paket', { body: {
@@ -430,7 +430,7 @@ async function infoRequest(body: Record<string, unknown>): Promise<{ status: num
     versand_fehler: 'Mailversand fehlgeschlagen', deck_fehlt: 'Deck nicht gefunden', fehler: 'technischer Fehler',
   }
   const paketZeile = paket.sent
-    ? `Infopaket: automatisch per Mail verschickt (Rechnung, Wohnung als PDF, Guide, Baufotos). Rechnung: ${paket.calc_url ?? ''}`
+    ? `Infopaket: automatisch per Mail verschickt (2 Rechnungen, Wohnung als PDF, Guide, Baufotos). Finanziert: ${paket.calc_url ?? ''} · Ohne Kredit: ${paket.calc_url_cash ?? ''}`
     : paket.reason && paket.reason !== 'automatik_aus'
       ? `Infopaket: NICHT automatisch verschickt (${PAKET_GRUND[paket.reason] ?? paket.reason}), bitte selbst schicken.`
       : ''

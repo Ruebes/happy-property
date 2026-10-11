@@ -47,22 +47,68 @@ const CALC_STANDARD = {
 }
 type CalcStandard = typeof CALC_STANDARD
 
+// Markt-Annahmen aus Svens eigenen Rechnungen (Sven 11.10.26: „die Zahlen zu Rate
+// ziehen, die wir für diese Projekte und Wohnungen genutzt haben"). Reihenfolge:
+// dieselbe Wohnung, sonst gleiches Projekt mit gleicher Zimmerzahl, sonst Standard.
+// Übernommen wird nur, was an der Wohnung hängt (Vermietungsart, Rendite, Saison,
+// Hotelkonzept, Wertsteigerung, Mietsteigerung, Verwaltung). Finanzierung und
+// Steuer hängen am Kunden und bleiben Standard. Rechnungen aus dem Infopaket
+// selbst zählen nicht, sonst bestätigt sich der Standard immer wieder selbst.
+interface Markt {
+  letType: 'short' | 'long'; yieldPct: number; season: Record<string, unknown> | null; hotelConcept: boolean
+  appreciationPct: number; rentGrowth: number; mgmtPct: number; quelle: 'wohnung' | 'projekt' | 'standard'; datum: string | null
+}
+type CalcItemRow = { project?: string; unit?: string; bedrooms?: number | string | null; params?: Record<string, unknown> }
+async function marktAnnahmen(sb: SupabaseClient, projekt: string, nr: string, bedrooms: number | null, std: CalcStandard): Promise<Markt> {
+  const standard: Markt = {
+    letType: std.letType === 'long' ? 'long' : 'short', yieldPct: std.yieldPct, season: null, hotelConcept: false,
+    appreciationPct: std.appreciationPct, rentGrowth: std.rentGrowth, mgmtPct: std.mgmtPct, quelle: 'standard', datum: null,
+  }
+  if (!projekt) return standard
+  const seit = new Date(Date.now() - 180 * 86400e3).toISOString()
+  const { data } = await sb.from('property_calculations').select('content, created_at')
+    .filter('content->items', 'cs', JSON.stringify([{ project: projekt }]))
+    .gte('created_at', seit).order('created_at', { ascending: false }).limit(60)
+  const rows = (data ?? []) as { content: { source?: string; items?: CalcItemRow[] } | null; created_at: string }[]
+  const alle = rows.filter(r => r.content?.source !== 'info_paket')
+    .flatMap(r => (r.content?.items ?? []).filter(i => i.project === projekt && i.params).map(i => ({ i, datum: r.created_at })))
+  const norm = (x: unknown) => String(x ?? '').trim().toLowerCase()
+  const gleicheWohnung = nr ? alle.find(k => norm(k.i.unit) === norm(nr)) : undefined
+  const gleicheGroesse = bedrooms != null ? alle.find(k => Number(k.i.bedrooms) === bedrooms) : undefined
+  const t = gleicheWohnung ?? gleicheGroesse
+  if (!t) return standard
+  const p = t.i.params ?? {}
+  const letType: 'short' | 'long' = p.letType === 'long' ? 'long' : 'short'
+  const hotel = letType === 'short' && p.hotelConcept === true
+  const zahl = (v: unknown, d: number) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : d }
+  // 2 % Verwaltung ist der unangetastete Rechner-Standard, kein bewusst gesetzter Wert.
+  const mg = Number(p.mgmtPct)
+  const mgmtPct = Number.isFinite(mg) && mg > 2 ? mg : letType === 'long' ? 5 : hotel ? 40 : std.mgmtPct
+  const season = letType === 'short' && p.season && typeof p.season === 'object' ? p.season as Record<string, unknown> : null
+  return {
+    letType, yieldPct: zahl(p.yieldPct, std.yieldPct), season, hotelConcept: hotel,
+    appreciationPct: zahl(p.appreciationPct, std.appreciationPct), rentGrowth: zahl(p.rentGrowth, std.rentGrowth), mgmtPct,
+    quelle: gleicheWohnung ? 'wohnung' : 'projekt', datum: t.datum,
+  }
+}
+
 // Vollständiger Parametersatz wie ihn der Wizard speichert (Rechnung.tsx rechnet
 // item.params direkt, ohne Defaults einzumischen - deshalb ALLE Felder).
 function eigenkapital(s: CalcStandard, gross: number): number {
   return s.fin === 'yes' ? Math.round(gross * Math.max(0, Math.min(100, s.equityPct)) / 100 / 1000) * 1000 : gross
 }
-function calcParams(s: CalcStandard, priceNet: number, furnCost: number, furnFree: boolean, bedrooms: number | null) {
+function calcParams(s: CalcStandard, m: Markt, fin: 'yes' | 'no', priceNet: number, furnCost: number, furnFree: boolean, bedrooms: number | null) {
+  const brutto = Math.round((priceNet + (furnFree ? 0 : furnCost)) * 1.19)
   return {
-    fin: s.fin, res: s.res, cyBI: 0, gesy: true, mode: 'ann', year: new Date().getFullYear(), month: 6,
-    sdNum: 3, sdSqm: 250, years: 10, equity: eigenkapital(s, Math.round((priceNet + (furnFree ? 0 : furnCost)) * 1.19)), holder: 'privat', ppVals: Array(10).fill(0), sdTerr: 60,
-    season: null, letType: s.letType, mgmtFix: 0, mgmtPct: s.mgmtPct, sdPrice: 1000000, sdUnits: [],
+    fin, res: s.res, cyBI: 0, gesy: true, mode: 'ann', year: new Date().getFullYear(), month: 6,
+    sdNum: 3, sdSqm: 250, years: 10, equity: fin === 'yes' ? eigenkapital(s, brutto) : brutto, holder: 'privat', ppVals: Array(10).fill(0), sdTerr: 60,
+    season: m.season, letType: m.letType, mgmtFix: 0, mgmtPct: m.mgmtPct, sdPrice: 1000000, sdUnits: [],
     vatMode: 'standard19', amortPct: s.amortPct, bedrooms: bedrooms ?? 2, deTaxPct: s.deTaxPct, dealType: 'single',
-    furnCost, furnFree, maintPct: 0, mgmtMode: 'pct', priceNet, yieldPct: s.yieldPct, divTaxPct: 26.375,
+    furnCost, furnFree, maintPct: 0, mgmtMode: 'pct', priceNet, yieldPct: m.yieldPct, divTaxPct: 26.375,
     livingSqm: null, monthPlan: null, sdTaxRate: 15, socialIns: true, termYears: s.termYears, corpTaxPct: 15,
-    rentGrowth: s.rentGrowth, sdDiscount: 0, sdVatDrawn: 0, sdVatYears: 0, discountPct: 0,
+    rentGrowth: m.rentGrowth, sdDiscount: 0, sdVatDrawn: 0, sdVatYears: 0, discountPct: 0,
     interestPct: s.interestPct, opexMonthly: 0, sdInputMode: 'manual', divPayoutPct: 100,
-    hotelConcept: false, selfUseMonths: 0, appreciationPct: s.appreciationPct,
+    hotelConcept: m.hotelConcept, selfUseMonths: 0, appreciationPct: m.appreciationPct,
   }
 }
 
@@ -149,8 +195,10 @@ async function handle(sb: SupabaseClient, b: Record<string, unknown>): Promise<R
     ?? blocks.find(x => x.type === 'cover' && x.kicker)?.kicker?.replace(/\s*·\s*/g, ' ')
     ?? 'Neubau in Paphos'
   // Persönliche Decks können den Projektnamen tragen - dann neutral bleiben.
+  let projektName = ''
   if (d.project_id) {
     const { data: pr } = await sb.from('crm_projects').select('name, developer').eq('id', d.project_id).maybeSingle()
+    projektName = String((pr as { name?: string } | null)?.name ?? '').trim()
     const namen = [(pr as { name?: string } | null)?.name, (pr as { developer?: string } | null)?.developer]
       .map(x => String(x ?? '').trim().toLowerCase()).filter(x => x.length >= 3)
     if (namen.some(n => lage.toLowerCase().includes(n))) lage = 'Neubau in Paphos'
@@ -169,21 +217,28 @@ async function handle(sb: SupabaseClient, b: Record<string, unknown>): Promise<R
       for (const k of Object.keys(CALC_STANDARD) as (keyof CalcStandard)[]) if (o[k] !== undefined) (std as Record<string, unknown>)[k] = o[k]
     }
   } catch { /* Standard bleibt */ }
-  const params = calcParams(std, netJetzt, furnCost, furnFree, u.bedrooms)
+  const markt = await marktAnnahmen(sb, projektName, nr, u.bedrooms, std)
   const gross = Math.round(netJetzt * 1.19)
   const grossGesamt = Math.round((netJetzt + furnCost) * 1.19)
   const empfName = p.name || p.first || ''
-  const item = {
-    label, project: lage, unit: nr, bedrooms: u.bedrooms, size_sqm: u.size_sqm, terrace_sqm: u.terrace_sqm, floor: u.floor,
-    price_net: netJetzt, price_gross: gross, params,
+  // Zwei Rechnungen (Sven 11.10.26): finanziert und ohne Kredit. Genau wird es
+  // erst mit seinem Eigenkapital, darauf zielt der Termin.
+  const rechnung = async (fin: 'yes' | 'no', zusatz: string): Promise<string | null> => {
+    const item = {
+      label: `${label} · ${zusatz}`, project: lage, unit: nr, bedrooms: u.bedrooms, size_sqm: u.size_sqm, terrace_sqm: u.terrace_sqm, floor: u.floor,
+      price_net: netJetzt, price_gross: gross, params: calcParams(std, markt, fin, netJetzt, furnCost, furnFree, u.bedrooms),
+    }
+    const { data: row, error } = await sb.from('property_calculations').insert({
+      lead_id: p.kind === 'lead' ? p.id : null, recipient_name: empfName, title: `Rechnung ${label} (${zusatz})`, with_calc: true,
+      content: { with_calc: true, recipient_name: empfName, items: [item], source: 'info_paket', annahmen_quelle: markt.quelle },
+    }).select('token').single()
+    if (error) console.error('[info-paket] Rechnung:', error.message)
+    const tok = (row as { token?: string } | null)?.token
+    return tok ? `${PORTAL_URL}/rechnung/${tok}` : null
   }
-  const { data: calcRow, error: cErr } = await sb.from('property_calculations').insert({
-    lead_id: p.kind === 'lead' ? p.id : null, recipient_name: empfName, title: `Rechnung ${label}`, with_calc: true,
-    content: { with_calc: true, recipient_name: empfName, items: [item], source: 'info_paket' },
-  }).select('token').single()
-  const calcTok = (calcRow as { token?: string } | null)?.token
-  if (cErr || !calcTok) return { ok: false, sent: false, reason: 'rechnung_fehler', error: cErr?.message }
-  const calcUrl = `${PORTAL_URL}/rechnung/${calcTok}`
+  const calcUrl = await rechnung('yes', 'finanziert')
+  const calcUrlCash = await rechnung('no', 'ohne Kredit')
+  if (!calcUrl || !calcUrlCash) return { ok: false, sent: false, reason: 'rechnung_fehler' }
 
   // 7) Baustellenfotos (privater Bucket, Links 180 Tage gültig, verkleinert)
   let fotos: string[] = []
@@ -209,8 +264,8 @@ async function handle(sb: SupabaseClient, b: Record<string, unknown>): Promise<R
   const terminUrl = p.kind === 'lead' ? bookingUrl(p.bookingToken) : `${PORTAL_URL}/termin?f=none&src=infopaket`
   const frage = typeof b.question === 'string' ? b.question.trim().slice(0, 500) : ''
   const html = mailHtml({
-    first: p.first, objekt, lage, gross: grossGesamt, calcUrl, deckUrl, printUrl, terminUrl, fotos, fotoStand, frage,
-    guide: lang !== 'en', std,
+    first: p.first, objekt, lage, gross: grossGesamt, calcUrl, calcUrlCash, deckUrl, printUrl, terminUrl, fotos, fotoStand, frage,
+    guide: lang !== 'en', std, markt,
   })
   const subject = `${p.first ? `${p.first}, d` : 'D'}eine Unterlagen zur ${objekt}`
   const { data: sent, error: sErr } = await sb.functions.invoke('send-email', { body: {
@@ -218,9 +273,9 @@ async function handle(sb: SupabaseClient, b: Record<string, unknown>): Promise<R
   } })
   if (sErr || !(sent as { success?: boolean } | null)?.success) {
     console.error('[info-paket] Versand fehlgeschlagen:', sErr)
-    return { ok: false, sent: false, reason: 'versand_fehler', calc_url: calcUrl }
+    return { ok: false, sent: false, reason: 'versand_fehler', calc_url: calcUrl, calc_url_cash: calcUrlCash }
   }
-  return { ok: true, sent: true, calc_url: calcUrl, deck_url: deckUrl, to: p.email }
+  return { ok: true, sent: true, calc_url: calcUrl, calc_url_cash: calcUrlCash, deck_url: deckUrl, to: p.email, annahmen: markt.quelle }
 }
 
 function karte(icon: string, titel: string, text: string, knopf: string, url: string): string {
@@ -238,12 +293,37 @@ function karte(icon: string, titel: string, text: string, knopf: string, url: st
 </td></tr>`
 }
 
+const pct = (n: number) => `${String(Math.round(n * 10) / 10).replace('.', ',')} %`
+function knopf(text: string, url: string, farbe: string): string {
+  return `<td style="background:${farbe};border-radius:999px;padding:11px 18px;"><a href="${esc(url)}" style="font-family:${SANS};font-size:14px;font-weight:700;color:#ffffff;text-decoration:none;white-space:nowrap;">${esc(text)} &rarr;</a></td>`
+}
+function rechnungKarte(m: { gross: number; calcUrl: string; calcUrlCash: string; terminUrl: string; std: CalcStandard; markt: Markt }): string {
+  const k = m.markt
+  const vermietung = k.letType === 'long' ? 'Langzeitvermietung' : k.hotelConcept ? 'Kurzzeitvermietung mit Hotelkonzept' : 'Kurzzeitvermietung'
+  const rendite = k.season ? 'Mieteinnahmen nach Saisonmodell' : `${pct(k.yieldPct)} Bruttomietrendite`
+  const annahmen = `Annahmen: ${vermietung}, ${rendite}, Verwaltung ${pct(k.mgmtPct)}, Wertsteigerung ${pct(k.appreciationPct)} pro Jahr. Variante mit Finanzierung: ${m.std.equityPct} % Eigenkapital, ${pct(m.std.interestPct)} Zins, ${m.std.termYears} Jahre.`
+  return `<tr><td style="padding:0 0 14px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${CI.white};border:1px solid ${CI.line};border-radius:12px;">
+    <tr><td class="px" style="padding:20px 22px;">
+      <p style="margin:0 0 6px;font-family:${SERIF};font-size:19px;font-weight:700;color:${CI.navy};">📊 Deine persönliche Kosten- und Mietrechnung</p>
+      <p style="margin:0 0 10px;font-family:${SANS};font-size:14px;line-height:1.6;color:${CI.ink};">Bruttokaufpreis ${eur(m.gross)}. Ich habe dir zwei Varianten gerechnet: einmal finanziert, einmal ohne Kredit. Beide mit Nebenkosten, Mieteinnahmen${k.letType === 'short' ? ', MwSt-Erstattung' : ''} und Cashflow über 10 Jahre.</p>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+        ${knopf('Mit Finanzierung', m.calcUrl, CI.coral)}<td style="width:10px;font-size:0;">&nbsp;</td>${knopf('Ohne Kredit', m.calcUrlCash, CI.navy)}
+      </tr></table>
+      <p style="margin:14px 0 0;font-family:${SANS};font-size:12px;line-height:1.6;color:${CI.mute};">${esc(annahmen)}</p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:14px;"><tr>
+        <td style="background:${CI.coralSoft};border-radius:10px;padding:14px 16px;">
+          <p style="margin:0;font-family:${SANS};font-size:14px;line-height:1.6;color:${CI.ink};"><strong>Genauere Zahlen bekommst du, sobald ich dein Eigenkapital und deine Steuersituation kenne.</strong> Das klären wir am besten in einem kurzen Gespräch, dann rechne ich dir deine Variante genau durch. <a href="${esc(m.terminUrl)}" style="color:${CI.navy};font-weight:700;">Termin aussuchen</a></p>
+        </td></tr></table>
+    </td></tr>
+  </table>
+</td></tr>`
+}
+
 function mailHtml(m: {
-  first: string; objekt: string; lage: string; gross: number; calcUrl: string; deckUrl: string; printUrl: string
-  terminUrl: string; fotos: string[]; fotoStand: string; frage: string; guide: boolean; std: CalcStandard
+  first: string; objekt: string; lage: string; gross: number; calcUrl: string; calcUrlCash: string; deckUrl: string; printUrl: string
+  terminUrl: string; fotos: string[]; fotoStand: string; frage: string; guide: boolean; std: CalcStandard; markt: Markt
 }): string {
-  const finTxt = m.std.fin === 'yes' ? `finanziert mit ${m.std.equityPct} % Eigenkapital` : 'ohne Finanzierung'
-  const annahmen = `Gerechnet mit Standardannahmen: Kurzzeitvermietung, ${String(m.std.yieldPct).replace('.', ',')} % Bruttomietrendite, ${finTxt}, Zins ${String(m.std.interestPct).replace('.', ',')} %. Willst du mit anderen Werten rechnen, passe ich die Rechnung gern für dich an.`
   const fotosHtml = m.fotos.length ? `<tr><td style="padding:0 0 14px;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${CI.white};border:1px solid ${CI.line};border-radius:12px;">
     <tr><td class="px" style="padding:20px 22px 8px;">
@@ -269,13 +349,13 @@ function mailHtml(m: {
     ${m.frage ? `<p style="margin:0 0 14px;font-family:${SANS};font-size:15px;line-height:1.65;color:${CI.ink};">Deine Frage („${esc(m.frage)}“) beantworte ich dir persönlich.</p>` : ''}
   </td></tr>
   <tr><td class="px" style="padding:6px 26px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-    ${karte('📊', 'Deine persönliche Kosten- und Mietrechnung', `Bruttokaufpreis ${eur(m.gross)}, Nebenkosten, Mieteinnahmen, MwSt-Erstattung und Cashflow über 10 Jahre. ${esc(annahmen)}`, 'Rechnung ansehen', m.calcUrl)}
+    ${rechnungKarte(m)}
     ${karte('📄', 'Die Wohnung zum Weiterleiten', 'Grundriss, Ausstattung und Zahlungsplan auf einen Blick. Öffne die Druckansicht und speichere sie als PDF, zum Beispiel für deinen Partner oder Steuerberater.', 'Als PDF speichern', m.printUrl)}
     ${m.guide ? karte('📘', 'Immobilienguide Paphos 2026', 'Ablauf beim Kauf, Kaufnebenkosten und Steuern, kompakt erklärt.', 'Guide herunterladen', GUIDE_URL) : ''}
     ${fotosHtml}
   </table></td></tr>
   <tr><td class="px" style="padding:10px 26px 26px;">
-    <p style="margin:0 0 14px;font-family:${SANS};font-size:15px;line-height:1.65;color:${CI.ink};">Am einfachsten gehen wir alles in 20 Minuten gemeinsam durch, deine Fragen inklusive. Such dir einfach einen Termin aus:</p>
+    <p style="margin:0 0 14px;font-family:${SANS};font-size:15px;line-height:1.65;color:${CI.ink};">Am einfachsten gehen wir alles in 20 Minuten gemeinsam durch: dein Eigenkapital, deine Fragen und die Rechnung, die wirklich zu dir passt. Such dir einfach einen Termin aus:</p>
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:${CI.navy};border-radius:999px;padding:13px 24px;">
       <a href="${esc(m.terminUrl)}" style="font-family:${SANS};font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;">Termin mit Sven aussuchen &rarr;</a>
     </td></tr></table>
