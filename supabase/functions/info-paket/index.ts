@@ -444,6 +444,7 @@ function zahlungKarte(z: ReturnType<typeof zahlungsUebersicht>, url: string | nu
   // „im Laufe von 2028, in Raten" -> „in Raten im Laufe von 2028".
   const satz = (w: string | null) => !w ? 'später' : w
     .replace(/^im Laufe von (\d{4}), in Raten$/, 'in Raten im Laufe von $1')
+    .replace(/^nach Baufortschritt, /, 'nach Baufortschritt ')
     .replace(/, geplant (.+)$/, ' (geplant $1)')
   const jetzt = z.jetzt.map(j => /reserv/i.test(j.label)
     ? `${esc(j.value)} für die Reservierung`
@@ -454,7 +455,17 @@ function zahlungKarte(z: ReturnType<typeof zahlungsUebersicht>, url: string | nu
   const fett = jetzt.length === 1 ? `Jetzt fällig ist nur ${jetzt[0]}.`
     : jetzt.length === 2 ? `Jetzt fällig sind nur zwei Zahlungen: ${jetzt[0]} und ${jetzt[1]}.`
     : `Jetzt fällig sind nur: ${liste(jetzt)}.`
-  const rest = z.spaeter.length ? `Alles Weitere kommt erst später: ${liste(z.spaeter.map(r => `${esc(r.value)} ${esc(satz(r.wann))}`))}.` : ''
+  // Gleiche Zeitpunkte zusammenfassen (drei Bauraten = ein Satzteil mit Summe).
+  const zahl = (v: string) => Number(v.replace(/[^\d]/g, '')) || 0
+  const gruppen: { wann: string | null; summe: number; anzahl: number; value: string }[] = []
+  for (const r of z.spaeter) {
+    const g = gruppen.find(x => x.wann === r.wann)
+    if (g) { g.summe += zahl(r.value); g.anzahl++ } else gruppen.push({ wann: r.wann, summe: zahl(r.value), anzahl: 1, value: r.value })
+  }
+  const teil = (g: typeof gruppen[number]) => g.anzahl > 1
+    ? `${eur(g.summe)} in ${g.anzahl} Raten ${esc(satz(g.wann))}`
+    : `${esc(g.value)} ${esc(satz(g.wann))}`
+  const rest = gruppen.length ? `Alles Weitere kommt erst später: ${liste(gruppen.map(teil))}.` : ''
   return `<tr><td style="padding:0 0 14px;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${CI.white};border:1px solid ${CI.line};border-radius:12px;">
     <tr><td class="px" style="padding:20px 22px;">
