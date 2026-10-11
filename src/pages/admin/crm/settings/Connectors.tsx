@@ -99,6 +99,29 @@ export default function Connectors() {
     }
   }
 
+  // ── Dropbox verbinden: dropbox-oauth (PKCE) gibt die Zustimmungs-URL nur
+  // eingeloggten Admins/Verwaltern heraus; Rücksprung landet mit ?dropbox=… hier.
+  const connectDropbox = async () => {
+    const win = window.open('about:blank', '_blank')
+    if (win) win.opener = null
+    try {
+      const { data, error } = await supabase.functions.invoke('dropbox-oauth', { body: { action: 'start' } })
+      const d = (data ?? {}) as { ok?: boolean; error?: string; url?: string }
+      if (error || d.error || !d.ok || !d.url) throw new Error(d.error || error?.message || 'Fehler')
+      if (win) win.location.href = d.url
+      else window.location.href = d.url
+    } catch (e) {
+      win?.close()
+      showToast(`❌ ${e instanceof Error ? e.message : 'Fehler'}`)
+    }
+  }
+  useEffect(() => {
+    const st = new URLSearchParams(window.location.search).get('dropbox')
+    if (!st) return
+    showToast(st === 'ok' ? t('crm.conn.dbxOk', '✅ Dropbox verbunden') : `❌ Dropbox: ${st}`)
+    window.history.replaceState(null, '', window.location.pathname)
+  }, [t])
+
   const [ytOpen, setYtOpen] = useState(false)
   const ytConns = conns.filter(c => c.key.startsWith('YOUTUBE_'))
   const restConns = conns.filter(c => !c.key.startsWith('YOUTUBE_'))
@@ -117,6 +140,12 @@ export default function Connectors() {
                     <button type="button" onClick={() => void connectGoogle('drive')}
                       className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50 shrink-0">
                       🔗 {t('crm.conn.driveConnect', 'Verbinden')}
+                    </button>
+                  )}
+                  {c.key === 'DROPBOX_APP_KEY' && !c.detail.startsWith('App-Key fehlt') && (
+                    <button type="button" onClick={() => void connectDropbox()}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50 shrink-0">
+                      🔗 {t('crm.conn.dbxConnect', 'Verbinden')}
                     </button>
                   )}
                   {(c.key === 'TIMELINES' || c.key === 'EVOLUTION') && !waActive(c.key) && (

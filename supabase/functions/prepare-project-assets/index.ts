@@ -126,29 +126,53 @@ const isGDoc = (m: string) => m === 'application/vnd.google-apps.document'
 
 // ── Dropbox-Helfer (Kuutio Homes liefert per Dropbox statt Google Drive) ─────────
 // Auth: langlebiger Refresh-Token einer Dropbox-App in connector_secrets
-// (DROPBOX_APP_KEY / DROPBOX_APP_SECRET / DROPBOX_REFRESH_TOKEN). Der Refresh-Token
-// rotiert NICHT (anders als Higgsfield) — nur Access-Tokens (4 h) werden gemintet.
+// (DROPBOX_APP_KEY / DROPBOX_REFRESH_TOKEN, verbunden über dropbox-oauth mit PKCE;
+// DROPBOX_APP_SECRET nur noch optional). Der Refresh-Token rotiert NICHT (anders
+// als Higgsfield) — nur Access-Tokens (4 h) werden gemintet.
+// Ordner, die nur als geteilter Link vorliegen (Kuutio „ALL AGENTS", passt nicht
+// in Svens 2-GB-Gratiskonto): crm_settings dropbox_shared_links =
+// {"/ALL AGENTS": "https://www.dropbox.com/scl/fo/..."}. Pfade unter so einer
+// Wurzel werden direkt am Link gelesen (list_folder + get_shared_link_file).
 type DbxEntry = { '.tag': string; name: string; path_lower?: string; path_display?: string; server_modified?: string; size?: number }
+let DBX_LINKS: Array<{ root: string; url: string }> = []
+const dbxListCache = new Map<string, DbxEntry[]>()
+// Dropbox-API-Arg muss reines ASCII sein (Umlaute/Sonderzeichen als \uXXXX).
+const dbxArg = (o: unknown) => JSON.stringify(o).replace(/[\u007f-\uffff]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))
+function dbxLink(path: string): { url: string; rel: string; root: string } | null {
+  const p = path.toLowerCase()
+  for (const l of DBX_LINKS) {
+    const r = l.root.toLowerCase()
+    if (p === r || p.startsWith(r + '/')) return { url: l.url, rel: path.slice(l.root.length), root: path.slice(0, l.root.length) }
+  }
+  return null
+}
 async function dropboxToken(supabase: ReturnType<typeof createClient>): Promise<string | null> {
   const get = async (key: string) => (((await supabase.from('connector_secrets').select('value').eq('key', key).maybeSingle()).data as { value?: string } | null)?.value ?? '').trim()
   const [k, s, r] = await Promise.all([get('DROPBOX_APP_KEY'), get('DROPBOX_APP_SECRET'), get('DROPBOX_REFRESH_TOKEN')])
-  if (!k || !s || !r) return null
+  if (!k || !r) return null
+  dbxListCache.clear()   // je Lauf frisch listen (Isolate kann wiederverwendet werden)
+  try {
+    const raw = ((await supabase.from('crm_settings').select('value').eq('key', 'dropbox_shared_links').maybeSingle()).data as { value?: string } | null)?.value
+    const o = JSON.parse(raw || '{}') as Record<string, string>
+    DBX_LINKS = Object.entries(o).filter(([, u]) => typeof u === 'string' && u.startsWith('https://')).map(([root, url]) => ({ root: root.replace(/\/+$/, ''), url }))
+  } catch { DBX_LINKS = [] }
+  const body = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: r, client_id: k })
+  if (s) body.set('client_secret', s)
   const res = await fetch('https://api.dropbox.com/oauth2/token', {
-    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: r, client_id: k, client_secret: s }),
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body,
   })
   const d = await res.json() as { access_token?: string; error_description?: string }
   if (!d.access_token) throw new Error(`Dropbox-Token: ${d.error_description ?? JSON.stringify(d).slice(0, 120)}`)
   return d.access_token
 }
-async function dropboxList(token: string, path: string, recursive: boolean): Promise<DbxEntry[]> {
+async function dropboxListPage(token: string, first: Record<string, unknown>, label: string): Promise<DbxEntry[]> {
   const out: DbxEntry[] = []
   let res = await fetch('https://api.dropboxapi.com/2/files/list_folder', {
     method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path, recursive, limit: 1000 }),
+    body: JSON.stringify({ ...first, limit: 1000 }),
   })
   let d = await res.json() as { entries?: DbxEntry[]; cursor?: string; has_more?: boolean; error_summary?: string }
-  if (!res.ok) throw new Error(`Dropbox list ${path}: ${d.error_summary ?? res.status}`)
+  if (!res.ok) throw new Error(`Dropbox list ${label}: ${d.error_summary ?? res.status}`)
   out.push(...(d.entries ?? []))
   while (d.has_more && d.cursor) {
     res = await fetch('https://api.dropboxapi.com/2/files/list_folder/continue', {
@@ -161,10 +185,36 @@ async function dropboxList(token: string, path: string, recursive: boolean): Pro
   }
   return out
 }
+// Geteilter Link: list_folder kennt dort kein recursive und liefert keine Pfade -
+// Unterordner selbst ablaufen, Pfade aus Wurzel + relativem Pfad zusammensetzen.
+async function dropboxListLink(token: string, link: { url: string; rel: string; root: string }, recursive: boolean): Promise<DbxEntry[]> {
+  const ck = `${link.url}|${link.rel.toLowerCase()}|${recursive}`
+  const hit = dbxListCache.get(ck)
+  if (hit) return hit
+  const raw = await dropboxListPage(token, { path: link.rel, shared_link: { url: link.url } }, `${link.root}${link.rel}`)
+  const out: DbxEntry[] = []
+  for (const e of raw) {
+    const disp = `${link.root}${link.rel}/${e.name}`
+    out.push({ ...e, path_display: disp, path_lower: disp.toLowerCase() })
+    if (recursive && e['.tag'] === 'folder') out.push(...await dropboxListLink(token, { ...link, rel: `${link.rel}/${e.name}` }, true))
+  }
+  dbxListCache.set(ck, out)
+  return out
+}
+async function dropboxList(token: string, path: string, recursive: boolean): Promise<DbxEntry[]> {
+  const link = dbxLink(path)
+  if (link) return dropboxListLink(token, link, recursive)
+  return dropboxListPage(token, { path, recursive }, path)
+}
 async function dropboxBytes(token: string, path: string): Promise<Uint8Array> {
-  const res = await fetch('https://content.dropboxapi.com/2/files/download', {
-    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Dropbox-API-Arg': JSON.stringify({ path }) },
-  })
+  const link = dbxLink(path)
+  const res = link
+    ? await fetch('https://content.dropboxapi.com/2/sharing/get_shared_link_file', {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Dropbox-API-Arg': dbxArg({ url: link.url, path: link.rel }) },
+    })
+    : await fetch('https://content.dropboxapi.com/2/files/download', {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Dropbox-API-Arg': dbxArg({ path }) },
+    })
   if (!res.ok) throw new Error(`Dropbox download ${res.status}`)
   return new Uint8Array(await res.arrayBuffer())
 }
@@ -858,7 +908,7 @@ Deno.serve(async (req) => {
         let dbx: string | null = null
         try { dbx = await dropboxToken(supabase) } catch (e) { if (pass === 1) errors.push(`Dropbox: ${e instanceof Error ? e.message : String(e)}`) }
         if (!dbx) {
-          if (pass === 1) errors.push(`Dropbox nicht verbunden (connector_secrets DROPBOX_APP_KEY/APP_SECRET/REFRESH_TOKEN fehlen) — ${dbxProjs.length} Projekt(e) mit Dropbox-Quelle werden NICHT ueberwacht.`)
+          if (pass === 1) errors.push(`Dropbox nicht verbunden (CRM → Einstellungen → Connectoren → Dropbox: App-Key eintragen und „Verbinden“) — ${dbxProjs.length} Projekt(e) mit Dropbox-Quelle werden NICHT ueberwacht.`)
         } else {
           // Eltern-Ordner nur EINMAL je Pfad listen (viele Projekte teilen sich die
           // Developer-Masterliste im selben Root-Ordner).
@@ -901,7 +951,7 @@ Deno.serve(async (req) => {
               let syncOk = false
               if (plChanged && synced < MAX_SYNCS) {
                 synced++
-                const bytes = await dropboxBytes(dbx, newest!.path_lower ?? '')
+                const bytes = await dropboxBytes(dbx, newest!.path_display ?? newest!.path_lower ?? '')
                 const mime = /\.pdf$/i.test(newest!.name) ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
                 const url = await uploadBytes(supabase, bytes, mime, `projects/${pr.id}/docs`, newest!.name)
                 const { data: fr } = await supabase.from('crm_projects').select('deck_assets').eq('id', pr.id).maybeSingle()

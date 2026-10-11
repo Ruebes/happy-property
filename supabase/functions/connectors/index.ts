@@ -19,7 +19,7 @@ const CORS = {
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
 
 // Im CRM änderbare Tokens (Ablage in connector_secrets, Env als Fallback).
-const EDITABLE = new Set(['LINKEDIN_ACCESS_TOKEN', 'META_ACCESS_TOKEN', 'YOUTUBE_CLIENT_ID', 'YOUTUBE_CLIENT_SECRET', 'YOUTUBE_REFRESH_TOKEN'])
+const EDITABLE = new Set(['LINKEDIN_ACCESS_TOKEN', 'META_ACCESS_TOKEN', 'YOUTUBE_CLIENT_ID', 'YOUTUBE_CLIENT_SECRET', 'YOUTUBE_REFRESH_TOKEN', 'DROPBOX_APP_KEY'])
 
 async function secretOf(sb: SupabaseClient, key: string): Promise<string> {
   const { data } = await sb.from('connector_secrets').select('value').eq('key', key).maybeSingle()
@@ -116,6 +116,29 @@ const CHECKS: Check[] = [
     const about = await fetch('https://www.googleapis.com/drive/v3/about?fields=user,storageQuota', { headers: { Authorization: `Bearer ${tr.access_token}` }, ...timeout(8000) }).then(r => r.json()).catch(() => ({})) as { user?: { emailAddress?: string }; storageQuota?: { limit?: string; usage?: string } }
     const gb = (x?: string) => x ? (Number(x) / 1073741824).toFixed(1) : '?'
     return { ok: !!about.user, detail: about.user ? `Verbunden als ${about.user.emailAddress} · ${gb(about.storageQuota?.usage)} / ${gb(about.storageQuota?.limit)} GB belegt` : 'Drive-API antwortet nicht.' }
+  } },
+  { key: 'DROPBOX_APP_KEY', label: 'Dropbox (Bauträger-Ordner per Link, z. B. Kuutio)', editable: true, run: async (sb) => {
+    // Eigene Dropbox-App (geht auch im Gratis-Konto), verbunden per dropbox-oauth (PKCE).
+    // Gelesen wird direkt am geteilten Link (crm_settings dropbox_shared_links).
+    const [k, s, r, acc] = await Promise.all([secretOf(sb, 'DROPBOX_APP_KEY'), secretOf(sb, 'DROPBOX_APP_SECRET'), secretOf(sb, 'DROPBOX_REFRESH_TOKEN'), secretOf(sb, 'DROPBOX_ACCOUNT')])
+    if (!k) return { ok: false, detail: 'App-Key fehlt — Dropbox-App anlegen, App-Key über „Ändern" eintragen, dann „Verbinden".' }
+    if (!r) return { ok: false, detail: 'App-Key gespeichert, noch nicht verbunden — „Verbinden" klicken und bei Dropbox zustimmen.' }
+    const body = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: r, client_id: k })
+    if (s) body.set('client_secret', s)
+    const tr = await fetch('https://api.dropbox.com/oauth2/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body, ...timeout(8000) })
+      .then(x => x.json()).catch(() => ({})) as { access_token?: string; error?: string }
+    if (!tr.access_token) return { ok: false, detail: `Token abgelehnt (${tr.error ?? 'unbekannt'}) — bitte neu verbinden.` }
+    const { data: ls } = await sb.from('crm_settings').select('value').eq('key', 'dropbox_shared_links').maybeSingle()
+    let links: string[] = []
+    try { links = Object.values(JSON.parse((ls as { value?: string } | null)?.value || '{}') as Record<string, string>) } catch { links = [] }
+    if (!links.length) return { ok: true, detail: `Verbunden${acc ? ` als ${acc}` : ''} · noch kein Bauträger-Link hinterlegt.` }
+    const res = await fetch('https://api.dropboxapi.com/2/files/list_folder', {
+      method: 'POST', headers: { Authorization: `Bearer ${tr.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: '', shared_link: { url: links[0] } }), ...timeout(8000),
+    })
+    const d = await res.json().catch(() => ({})) as { entries?: unknown[]; error_summary?: string }
+    if (!res.ok) return { ok: false, detail: `Verbunden, aber Bauträger-Ordner nicht lesbar (${d.error_summary ?? res.status}) — Berechtigungen der App prüfen.` }
+    return { ok: true, detail: `Verbunden${acc ? ` als ${acc}` : ''} · ${links.length} Bauträger-Ordner, ${(d.entries ?? []).length} Einträge im ersten lesbar.` }
   } },
   { key: 'GOOGLE_SA', label: 'Google Drive & Kalender (Service-Account)', run: async () => {
     const raw = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_JSON') ?? ''

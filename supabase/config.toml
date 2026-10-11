@@ -67,6 +67,10 @@ verify_jwt = false
 [functions.yt-oauth]
 verify_jwt = false
 
+# Dropbox-Rücksprung (PKCE) + Start aus dem CRM mit User-JWT, den die Function prüft.
+[functions.dropbox-oauth]
+verify_jwt = false
+
 [functions.masterclass-register]
 verify_jwt = false
 
