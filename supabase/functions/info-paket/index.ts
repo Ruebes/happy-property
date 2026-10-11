@@ -147,7 +147,7 @@ async function empfaenger(sb: SupabaseClient, b: Record<string, unknown>): Promi
 type FotoUrteil = { ok: boolean; grund?: string; von?: string; am?: string }
 const FOTO_PROMPT = `Du prüfst ein Baustellenfoto, das an Interessenten für eine Neubauwohnung geht. Svens Regel: Auf dem Foto darf nichts Unschönes zu sehen sein.
 Ungeeignet, sobald etwas davon erkennbar ist: alte, heruntergekommene oder unverputzte Nachbargebäude, Graffiti, Müll, Schutthaufen, Reifen, kaputte Zäune, Planen, fremde Werbeschilder groß im Bild, erkennbare Personen, dunkles, schiefes oder verwackeltes Bild.
-In Ordnung sind normale Baustellenteile: Beton, Bewehrung, Schalung, Kran, Betonpumpe, Gerüst, ordentlich gelagertes Material, moderne oder gepflegte Nachbargebäude, Himmel.
+In Ordnung sind normale Baustellenteile: Erdaushub und Erdhügel, Bagger, Beton, Bewehrung, Schalung, Kran, Betonpumpe, Gerüst, ordentlich gelagertes Material, ein Bauzaun am Rand, moderne oder gepflegte Nachbargebäude, Himmel. Entscheidend ist der Gesamteindruck: sauberer Baufortschritt ja, Verwahrlosung nein.
 Im Zweifel: ungeeignet.
 Antworte nur mit JSON: {"geeignet": true oder false, "grund": "max. 12 Wörter"}`
 async function fotoPruefen(url: string): Promise<FotoUrteil | null> {
