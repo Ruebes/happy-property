@@ -22,6 +22,7 @@ import { gateCaller } from '../_shared/callerGate.ts'
 import { bookingUrl, PORTAL_URL } from '../_shared/bookingLink.ts'
 import { resolveLang } from '../_shared/recipientLang.ts'
 import { CI } from '../_shared/brand.ts'
+import { callAnthropic, textOf } from '../_shared/anthropic.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -51,8 +52,8 @@ type CalcStandard = typeof CALC_STANDARD
 // ziehen, die wir für diese Projekte und Wohnungen genutzt haben"). Reihenfolge:
 // dieselbe Wohnung, sonst gleiches Projekt mit gleicher Zimmerzahl, sonst Standard.
 // Übernommen wird nur, was an der Wohnung hängt (Vermietungsart, Rendite, Saison,
-// Hotelkonzept, Wertsteigerung, Mietsteigerung, Verwaltung). Finanzierung und
-// Steuer hängen am Kunden und bleiben Standard. Rechnungen aus dem Infopaket
+// Hotelkonzept, Wertsteigerung, Mietsteigerung). Finanzierung und Steuer hängen
+// am Kunden und bleiben Standard. Verwaltung immer 20 % (Svens Agentur, 11.10.26). Rechnungen aus dem Infopaket
 // selbst zählen nicht, sonst bestätigt sich der Standard immer wieder selbst.
 interface Markt {
   letType: 'short' | 'long'; yieldPct: number; season: Record<string, unknown> | null; hotelConcept: boolean
@@ -81,9 +82,8 @@ async function marktAnnahmen(sb: SupabaseClient, projekt: string, nr: string, be
   const letType: 'short' | 'long' = p.letType === 'long' ? 'long' : 'short'
   const hotel = letType === 'short' && p.hotelConcept === true
   const zahl = (v: unknown, d: number) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : d }
-  // 2 % Verwaltung ist der unangetastete Rechner-Standard, kein bewusst gesetzter Wert.
-  const mg = Number(p.mgmtPct)
-  const mgmtPct = Number.isFinite(mg) && mg > 2 ? mg : letType === 'long' ? 5 : hotel ? 40 : std.mgmtPct
+  // Verwaltung immer der Standard (20 %, Svens Agentur), nie aus alten Rechnungen.
+  const mgmtPct = std.mgmtPct
   const season = letType === 'short' && p.season && typeof p.season === 'object' ? p.season as Record<string, unknown> : null
   return {
     letType, yieldPct: zahl(p.yieldPct, std.yieldPct), season, hotelConcept: hotel,
@@ -138,10 +138,78 @@ async function empfaenger(sb: SupabaseClient, b: Record<string, unknown>): Promi
   return { kind: 'frei', id: null, first: name.split(' ')[0] ?? '', name, email, bookingToken: null }
 }
 
+// ── Baustellenfotos für Interessenten (Sven 11.10.26, feste Regel) ──────────
+// „Keine hässlichen Dinge auf Fotos an potentielle Kunden. Nimm ein Bild, auf dem
+// das nicht zu sehen ist. IMMER." Nichts wird retuschiert: Ein Foto ist geeignet
+// oder es fällt weg. Urteile stehen in crm_settings.kundenfotos
+// ({ <file_path>: { ok, grund, von, am } }); von = 'sven' | 'claude' schlägt die KI.
+// Neue Fotos prüft die KI einmal (im Zweifel ungeeignet), das Urteil bleibt stehen.
+type FotoUrteil = { ok: boolean; grund?: string; von?: string; am?: string }
+const FOTO_PROMPT = `Du prüfst ein Baustellenfoto, das an Interessenten für eine Neubauwohnung geht. Svens Regel: Auf dem Foto darf nichts Unschönes zu sehen sein.
+Ungeeignet, sobald etwas davon erkennbar ist: alte, heruntergekommene oder unverputzte Nachbargebäude, Graffiti, Müll, Schutthaufen, Reifen, kaputte Zäune, Planen, fremde Werbeschilder groß im Bild, erkennbare Personen, dunkles, schiefes oder verwackeltes Bild.
+In Ordnung sind normale Baustellenteile: Beton, Bewehrung, Schalung, Kran, Betonpumpe, Gerüst, ordentlich gelagertes Material, moderne oder gepflegte Nachbargebäude, Himmel.
+Im Zweifel: ungeeignet.
+Antworte nur mit JSON: {"geeignet": true oder false, "grund": "max. 12 Wörter"}`
+async function fotoPruefen(url: string): Promise<FotoUrteil | null> {
+  const key = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
+  const res = await callAnthropic(key, {
+    model: 'claude-opus-5-5', fallbackModels: ['claude-sonnet-4-6'], max_tokens: 4000, label: 'info-paket-foto',
+    messages: [{ role: 'user', content: [
+      { type: 'image', source: { type: 'url', url } },
+      { type: 'text', text: FOTO_PROMPT },
+    ] }],
+  })
+  if (!res.ok || res.stop_reason === 'refusal') return null
+  const m = textOf(res).match(/\{[\s\S]*\}/)
+  if (!m) return null
+  try {
+    const j = JSON.parse(m[0]) as { geeignet?: boolean; grund?: string }
+    return { ok: j.geeignet === true, grund: String(j.grund ?? '').slice(0, 120), von: 'ki', am: new Date().toISOString() }
+  } catch { return null }
+}
+async function kundenFotos(sb: SupabaseClient, projectId: string): Promise<{ fotos: string[]; fotoStand: string }> {
+  const { data: ph } = await sb.from('construction_photos').select('file_path, photo_date')
+    .eq('project_id', projectId).order('photo_date', { ascending: false, nullsFirst: false }).limit(8)
+  const rows = (ph ?? []) as { file_path: string; photo_date: string | null }[]
+  if (!rows.length) return { fotos: [], fotoStand: '' }
+  const { data: st } = await sb.from('crm_settings').select('value').eq('key', 'kundenfotos').maybeSingle()
+  let urteile: Record<string, FotoUrteil> = {}
+  try { urteile = JSON.parse((st as { value?: string } | null)?.value ?? '{}') } catch { urteile = {} }
+  const signed = async (path: string, w: number, h: number) => (await sb.storage.from('construction-photos')
+    .createSignedUrl(path, 180 * 86400, { transform: { width: w, height: h, resize: 'cover', quality: 75 } })).data?.signedUrl ?? null
+  const gewaehlt: { url: string; datum: string | null }[] = []
+  let neu = false, geprueft = 0
+  for (const r of rows) {
+    if (gewaehlt.length >= 2) break
+    let u = urteile[r.file_path]
+    // Höchstens 3 KI-Prüfungen je Anfrage, damit der Kunde nicht wartet.
+    if (!u && geprueft < 3) {
+      geprueft++
+      const prev = await signed(r.file_path, 1000, 750)
+      const k = prev ? await fotoPruefen(prev) : null
+      if (k) { u = k; urteile[r.file_path] = k; neu = true }
+    }
+    if (!u?.ok) continue
+    const url = await signed(r.file_path, 560, 420)
+    if (url) gewaehlt.push({ url, datum: r.photo_date })
+  }
+  if (neu) {
+    await sb.from('crm_settings').upsert({ key: 'kundenfotos', value: JSON.stringify(urteile), updated_at: new Date().toISOString() }, { onConflict: 'key' })
+  }
+  const dt = gewaehlt[0]?.datum
+  const fotoStand = dt ? new Date(`${dt}T12:00:00`).toLocaleDateString('de-DE', { day: 'numeric', month: 'long', year: 'numeric' }) : ''
+  return { fotos: gewaehlt.map(g => g.url), fotoStand }
+}
+
 type Block = { type?: string; number?: string; kicker?: string; mapLabel?: string }
 type CtxUnit = { unitId?: string; unitNumber?: string; netProperty?: number; netFurniture?: number; bedrooms?: number | null }
 
 async function handle(sb: SupabaseClient, b: Record<string, unknown>): Promise<Record<string, unknown>> {
+  // Nur Fotos eines Projekts prüfen (intern): { mode: 'fotos', project_id }
+  if (b.mode === 'fotos' && typeof b.project_id === 'string') {
+    const r = await kundenFotos(sb, b.project_id)
+    return { ok: true, fotos: r.fotos.length, stand: r.fotoStand }
+  }
   // 0) Schalter
   const { data: modeRow } = await sb.from('crm_settings').select('value').eq('key', 'info_paket_mode').maybeSingle()
   const mode = String((modeRow as { value?: string } | null)?.value ?? 'off').trim()
@@ -240,21 +308,8 @@ async function handle(sb: SupabaseClient, b: Record<string, unknown>): Promise<R
   const calcUrlCash = await rechnung('no', 'ohne Kredit')
   if (!calcUrl || !calcUrlCash) return { ok: false, sent: false, reason: 'rechnung_fehler' }
 
-  // 7) Baustellenfotos (privater Bucket, Links 180 Tage gültig, verkleinert)
-  let fotos: string[] = []
-  let fotoStand = ''
-  if (d.project_id) {
-    const { data: ph } = await sb.from('construction_photos').select('file_path, photo_date')
-      .eq('project_id', d.project_id).order('photo_date', { ascending: false, nullsFirst: false }).limit(2)
-    const rows = (ph ?? []) as { file_path: string; photo_date: string | null }[]
-    for (const r of rows) {
-      const { data: s } = await sb.storage.from('construction-photos').createSignedUrl(r.file_path, 180 * 86400,
-        { transform: { width: 560, height: 420, resize: 'cover', quality: 75 } })
-      if (s?.signedUrl) fotos.push(s.signedUrl)
-    }
-    const dt = rows[0]?.photo_date
-    if (dt) fotoStand = new Date(`${dt}T12:00:00`).toLocaleDateString('de-DE', { day: 'numeric', month: 'long', year: 'numeric' })
-  }
+  // 7) Baustellenfotos: nur saubere Bilder (Svens feste Regel), höchstens 2
+  const { fotos, fotoStand } = d.project_id ? await kundenFotos(sb, d.project_id) : { fotos: [], fotoStand: '' }
 
   // 8) Mail bauen
   const lang = await resolveLang(sb, { email: p.email, lead_id: p.kind === 'lead' ? p.id : null })

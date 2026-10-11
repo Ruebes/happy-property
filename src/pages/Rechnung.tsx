@@ -227,6 +227,22 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
           <KV k={t('rechnung.equityStart', 'Eigenkapital (Start)')} v={eur(r.ekStart)} />
           <KV k={t('rechnung.financing', 'Fremdfinanzierung')} v={eur(r.loan)} />
           <KV k={t('rechnung.bedrooms', 'Schlafzimmer')} v={String(r.bedrooms)} />
+          {/* MwSt-Hinweis im freien Platz der Karte (Sven 11.10.26): bei
+              Kurzzeitvermietung kommt die Umsatzsteuer zurück, die Einzelheiten
+              erklärt Sven im Gespräch. Steht nur da, wo der Rechner auch eine
+              Erstattung rechnet (vatRefund > 0), anteilig bei Selbstnutzung. */}
+          {r.vatRefund > 0 && (
+            <div style={{ marginTop: 16, padding: '12px 14px', borderRadius: 10, background: 'rgba(45,138,94,0.08)', border: '1px solid rgba(45,138,94,0.25)' }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: GREEN }}>
+                ✓ {r.vatRefund >= r.vatAmt
+                  ? t('rechnung.vatRefundFull', 'MwSt wird komplett zurückerstattet')
+                  : t('rechnung.vatRefundPartial', 'MwSt wird anteilig zurückerstattet')}
+              </div>
+              <div style={{ fontSize: 12.5, lineHeight: 1.55, color: '#444', marginTop: 4 }}>
+                {t('rechnung.vatRefundText', 'Bei Kurzzeitvermietung bekommst du die Umsatzsteuer von {{v}} zurück. Wie das genau abläuft, erklären wir im persönlichen Gespräch.', { v: eur(r.vatRefund) })}
+              </div>
+            </div>
+          )}
         </Card>
         <Card>
           <H2>{t('rechnung.totalsMetricsTitle', 'Summen & Kennzahlen (10 Jahre)')}</H2>
