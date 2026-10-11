@@ -81,7 +81,7 @@ interface RevolutTx {
 }
 interface OpenInvoice {
   id: string; invoice_number: string; subtotal_net: number | null; total_gross: number; currency: string
-  lead_id: string | null; deal_id: string | null; token: string | null
+  lead_id: string | null; deal_id: string | null; token: string | null; customer_id: string | null
   customer_snapshot: { company_name?: string; contact_name?: string; email?: string } | null
 }
 
@@ -788,7 +788,7 @@ Deno.serve(async (req: Request) => {
     // Offene Rechnungen
     const { data: openInv, error: invErr } = await supabase
       .from('crm_invoices')
-      .select('id, invoice_number, subtotal_net, total_gross, currency, lead_id, deal_id, token, customer_snapshot')
+      .select('id, invoice_number, subtotal_net, total_gross, currency, lead_id, deal_id, token, customer_id, customer_snapshot')
       .eq('status', 'sent')
     if (invErr) throw invErr
     const open = (openInv ?? []) as OpenInvoice[]
@@ -846,16 +846,22 @@ Deno.serve(async (req: Request) => {
       if (updErr) { console.error(`[revolut-sync] Update ${inv.invoice_number}:`, updErr.message); continue }
       matched.push({ invoice: inv.invoice_number, tx: tx.id, via })
 
-      // Provision am Deal als erhalten markieren (Dashboard/Statistik)
+      // Provision am Deal als erhalten markieren (Dashboard/Statistik). Steht der Deal in
+      // „Provisionsrechnung", rückt er auf „Provision erhalten" (Sven 11.10.26); von dort
+      // archiviert ihn hp_archive_completed_deals nach 7 Tagen.
+      let movedToReceived = false
       if (inv.deal_id) {
         try {
-          const { data: dRow } = await supabase.from('deals').select('commission_amount').eq('id', inv.deal_id).maybeSingle()
+          const { data: dRow } = await supabase.from('deals').select('commission_amount, phase').eq('id', inv.deal_id).maybeSingle()
+          const d = dRow as { commission_amount: number | null; phase: string | null } | null
           const patch: Record<string, unknown> = { commission_paid_at: tx.created_at }
-          if (dRow && (dRow as { commission_amount: number | null }).commission_amount == null && inv.subtotal_net != null) {
+          if (d && d.commission_amount == null && inv.subtotal_net != null) {
             patch.commission_amount = inv.subtotal_net
           }
+          if (d?.phase === 'provisionsrechnung') patch.phase = 'provision_erhalten'
           const { error: cErr } = await supabase.from('deals').update(patch).eq('id', inv.deal_id)
           if (cErr) console.warn('[revolut-sync] commission_paid_at:', cErr.message)
+          else movedToReceived = patch.phase === 'provision_erhalten'
         } catch (e) { console.warn('[revolut-sync] Deal-Provision:', e) }
       }
       console.log(`[revolut-sync] ✓ ${inv.invoice_number} bezahlt (${via}, tx ${tx.id})`)
@@ -865,7 +871,8 @@ Deno.serve(async (req: Request) => {
           await supabase.from('activities').insert({
             lead_id: inv.lead_id, deal_id: inv.deal_id, type: 'note', direction: 'inbound',
             subject: `💶 Zahlungseingang ${inv.invoice_number}`,
-            content: `Revolut: ${inv.total_gross} ${inv.currency} eingegangen am ${tx.created_at.slice(0, 10)} (Match: ${via}). Rechnung automatisch auf „bezahlt" gesetzt.`,
+            content: `Revolut: ${inv.total_gross} ${inv.currency} eingegangen am ${tx.created_at.slice(0, 10)} (Match: ${via}). Rechnung automatisch auf „bezahlt" gesetzt.`
+              + (movedToReceived ? ' Phase: Provisionsrechnung → Provision erhalten.' : ''),
             completed_at: new Date().toISOString(),
           })
         } catch (e) { console.warn('[revolut-sync] Aktivität fehlgeschlagen:', e) }
@@ -886,6 +893,28 @@ Deno.serve(async (req: Request) => {
         } catch (e) { console.warn('[revolut-sync] Zahlungsbestätigung fehlgeschlagen:', e) }
       } else {
         console.warn(`[revolut-sync] Keine Kunden-E-Mail an ${inv.invoice_number} — Bestätigung übersprungen`)
+      }
+      // Zusätzlich WhatsApp von Lotte an den Bezahler (invoice_customers.whatsapp, wie beim
+      // Rechnungsversand in generate-invoice) - ebenfalls ohne Kundenbezug.
+      if (inv.customer_id) {
+        try {
+          const { data: cust } = await supabase.from('invoice_customers').select('whatsapp, contact_name').eq('id', inv.customer_id).maybeSingle()
+          const c = cust as { whatsapp: string | null; contact_name: string | null } | null
+          const waPhone = String(c?.whatsapp ?? '').trim()
+          if (waPhone) {
+            const name = (c?.contact_name ?? inv.customer_snapshot?.contact_name ?? '').trim()
+            const waText = `Hallo${name ? ' ' + name : ''} 🐾\n\n`
+              + `hier ist Lotte - deine Zahlung für Rechnung ${inv.invoice_number} über ${eur(inv.total_gross, inv.currency)} ist bei uns eingegangen.\n\n`
+              + `Vielen Dank!\n\nLiebe Grüße, Lotte 🐾`
+            const { data: waRes, error: waErr } = await supabase.functions.invoke('send-whatsapp', { body: {
+              event_type: 'payment_received', override_text: waText,
+              lead_data: { lead_name: name || 'Partner', lead_phone: waPhone },
+              persona_image: `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/Assets/wa/lotte-kasse.jpg`,
+            } })
+            const ok = !waErr && (waRes as { success?: boolean } | null)?.success !== false
+            console.log(`[revolut-sync] Zahlungseingang-WhatsApp ${inv.invoice_number}: ${ok ? 'gesendet' : 'FEHLER ' + (waErr?.message ?? JSON.stringify(waRes))}`)
+          }
+        } catch (e) { console.warn('[revolut-sync] Zahlungseingang-WhatsApp fehlgeschlagen:', e) }
       }
     }
 
