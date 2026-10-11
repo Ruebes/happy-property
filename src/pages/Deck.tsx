@@ -986,7 +986,7 @@ function InlineCta({ onInfo, terminUrl }: { onInfo: () => void; terminUrl: strin
         <Accent /><Kicker>{t('deck.inlineKicker', 'Nächster Schritt')}</Kicker>
         <h2 className="font-heading font-bold text-white text-3xl md:text-4xl mt-2 leading-tight">{t('deck.inlineHeadline', 'Gefällt dir die Wohnung?')}</h2>
         <p className="text-[15px] leading-relaxed text-gray-300 mt-3">
-          {t('deck.inlineText', 'Fordere die Unterlagen an: Grundriss, Zahlungsplan und auf Wunsch eine persönliche Kosten- und Mietrechnung. Sven schickt sie dir persönlich und unverbindlich.')}
+          {t('deck.inlineText', 'Hol dir die Unterlagen: deine persönliche Kosten- und Mietrechnung, die Wohnung als PDF und unseren Immobilienguide. Kostenlos und unverbindlich per E-Mail.')}
         </p>
         <div className="flex flex-wrap gap-3 mt-6">
           <button onClick={onInfo} className="px-6 py-3 rounded-full font-semibold text-[15px] shadow-lg transition-transform hover:scale-[1.03]" style={{ background: GOLD, color: DARK }}>
@@ -1013,6 +1013,7 @@ function InfoModal({ token, refId, campaign, person, unitNr, internal, terminUrl
   const [question, setQuestion] = useState('')
   const [website, setWebsite] = useState('')   // Honigtopf, für Menschen unsichtbar
   const [state, setState] = useState<'form' | 'sending' | 'done'>('form')
+  const [sent, setSent] = useState(false)
   const [error, setError] = useState('')
   const known = !!person?.known
   const first = person?.first_name ?? ''
@@ -1037,7 +1038,7 @@ function InfoModal({ token, refId, campaign, person, unitNr, internal, terminUrl
       if (!email.trim() && !phone.trim()) { setError(t('deck.infoErrContact', 'Bitte gib eine E-Mail-Adresse oder Telefonnummer an.')); return }
     }
     setState('sending')
-    const { error: fnErr } = await supabase.functions.invoke('track-engagement', { body: {
+    const { data: res, error: fnErr } = await supabase.functions.invoke('track-engagement', { body: {
       type: 'info_request', token, ref: refId, campaign, wants, question, website, internal,
       ...(known ? {} : { name, email, phone }),
     } })
@@ -1048,6 +1049,7 @@ function InfoModal({ token, refId, campaign, person, unitNr, internal, terminUrl
       setState('form')
       return
     }
+    setSent(!!(res as { sent?: boolean } | null)?.sent)
     setState('done')
   }
 
@@ -1068,7 +1070,9 @@ function InfoModal({ token, refId, campaign, person, unitNr, internal, terminUrl
         {state === 'done' ? (
           <div className="mt-4">
             <p className="text-[15px] leading-relaxed text-gray-700">
-              {first ? t('deck.infoDoneName', 'Danke, {{name}}! Sven meldet sich persönlich bei dir, in der Regel innerhalb von 24 Stunden.', { name: first })
+              {sent
+                ? t('deck.infoDoneSent', 'Danke{{name}}! Deine Unterlagen sind unterwegs. Schau in dein Postfach, notfalls auch in den Spam-Ordner.', { name: first ? `, ${first}` : '' })
+                : first ? t('deck.infoDoneName', 'Danke, {{name}}! Sven meldet sich persönlich bei dir, in der Regel innerhalb von 24 Stunden.', { name: first })
                 : t('deck.infoDone', 'Danke! Sven meldet sich persönlich bei dir, in der Regel innerhalb von 24 Stunden.')}
             </p>
             <div className="flex flex-wrap gap-3 mt-6">
@@ -1079,11 +1083,11 @@ function InfoModal({ token, refId, campaign, person, unitNr, internal, terminUrl
         ) : (
           <form onSubmit={submit} className="mt-3 space-y-4">
             <p className="text-[15px] leading-relaxed text-gray-700">
-              {first ? t('deck.infoIntroName', 'Hallo {{name}}, Sven schickt dir die Unterlagen persönlich, in der Regel innerhalb von 24 Stunden.', { name: first })
-                : t('deck.infoIntro', 'Sven schickt dir die Unterlagen persönlich, in der Regel innerhalb von 24 Stunden.')}
+              {first ? t('deck.infoIntroName', 'Hallo {{name}}, du bekommst per E-Mail: deine persönliche Kosten- und Mietrechnung, die Wohnung als PDF und unseren Immobilienguide. Kostenlos und unverbindlich.', { name: first })
+                : t('deck.infoIntro', 'Du bekommst per E-Mail: deine persönliche Kosten- und Mietrechnung, die Wohnung als PDF und unseren Immobilienguide. Kostenlos und unverbindlich.')}
             </p>
             <fieldset>
-              <legend className="text-[11px] font-semibold uppercase tracking-[0.15em] mb-2" style={{ color: GOLD }}>{t('deck.infoWhat', 'Was interessiert dich?')}</legend>
+              <legend className="text-[11px] font-semibold uppercase tracking-[0.15em] mb-2" style={{ color: GOLD }}>{t('deck.infoWhat', 'Was interessiert dich besonders? (optional)')}</legend>
               <div className="space-y-2">
                 {INFO_WANTS.map(k => (
                   <label key={k} className="flex items-center gap-3 rounded-lg bg-white border border-gray-200 px-3 py-2.5 cursor-pointer text-[14px]">
@@ -1131,6 +1135,24 @@ export default function Deck() {
   const [person, setPerson] = useState<DeckPerson | null>(null)
   const [{ ref, campaign }] = useState(readRef)
   const isPrint = typeof window !== 'undefined' && window.location.pathname.endsWith('/print')
+
+  // Druckansicht (/deck/<token>/print, verlinkt aus dem Infopaket „Als PDF
+  // speichern"): alle Bilder sofort laden, dann den Druckdialog öffnen. Bilder
+  // stehen auf loading="lazy" und fehlten sonst im PDF.
+  const printPage = async () => {
+    const imgs = [...document.querySelectorAll('img')] as HTMLImageElement[]
+    imgs.forEach(img => { img.loading = 'eager' })
+    await Promise.race([
+      Promise.all(imgs.map(img => img.complete ? Promise.resolve() : new Promise<void>(r => { img.onload = () => r(); img.onerror = () => r() }))),
+      new Promise<void>(r => setTimeout(r, 8000)),
+    ])
+    window.print()
+  }
+  useEffect(() => {
+    if (!isPrint || !content) return
+    const tm = setTimeout(() => { void printPage() }, 800)
+    return () => clearTimeout(tm)
+  }, [isPrint, content])
 
   // Wer schaut? Nur Vorname + passender Terminlink (persönlich, sonst allgemein).
   useEffect(() => {
@@ -1216,6 +1238,13 @@ export default function Deck() {
 
   return (
     <div className="font-body" style={{ background: CREAM, color: INK }}>
+      {isPrint && (
+        <div className="print:hidden sticky top-0 z-50 flex justify-center p-3" style={{ background: DARK }}>
+          <button onClick={() => { void printPage() }} className="px-5 py-2.5 rounded-full text-sm font-semibold shadow" style={{ background: GOLD, color: DARK }}>
+            📄 {t('deck.printSave', 'Als PDF speichern oder drucken')}
+          </button>
+        </div>
+      )}
       {content.blocks.map((b, i) => (
         <div key={i} className="relative">
           <Block block={b} />
