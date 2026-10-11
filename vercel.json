@@ -9,6 +9,14 @@
       "destination": "https://vjlwgajmtqlwjjreowbu.supabase.co/functions/v1/zypern-report"
     },
     {
+      "source": "/immobilienguide-paphos-2026.pdf",
+      "destination": "https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/web-reports/immobilienguide/immobilienguide-paphos-2026.pdf"
+    },
+    {
+      "source": "/unterlagen/:file",
+      "destination": "https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/datenblatt/:file"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

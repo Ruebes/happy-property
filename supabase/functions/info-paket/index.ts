@@ -34,7 +34,8 @@ const CORS = {
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
 
 const INTERN_ADRESSEN = ['sven@happy-property.com']
-const GUIDE_URL = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/web-reports/immobilienguide/immobilienguide-paphos-2026.pdf'
+// Über portal.happy-property.com (Vercel-Rewrite auf Supabase Storage, Sven 11.10.26).
+const GUIDE_URL = 'https://portal.happy-property.com/immobilienguide-paphos-2026.pdf'
 const LOGO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg'
 const PHOTO_SQ = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/render/image/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg?width=112&height=112&resize=cover&quality=80'
 const SERIF = "'Playfair Display',Georgia,serif", SANS = "'Montserrat',Helvetica,Arial,sans-serif"
@@ -321,11 +322,17 @@ async function handle(sb: SupabaseClient, b: Record<string, unknown>): Promise<R
   let pdfUrl: string | null = null
   const pdfName = `${nr ? `Wohnung-${nr.replace(/[^\w-]/g, '')}` : 'Wohnung'}-Datenblatt.pdf`
   try {
-    const bytes = await baueDatenblatt({ blocks: (d.content?.blocks ?? []) as DeckBlockLite[], lage, nr, stand: new Date() })
+    // Übergabe: wie im Deck (deck_context.completion), sonst Projekt-Fertigstellung.
+    let uebergabe = typeof ctx.completion === 'string' ? ctx.completion : null
+    if (!uebergabe && d.project_id) {
+      const { data: pc } = await sb.from('crm_projects').select('completion_date').eq('id', d.project_id).maybeSingle()
+      uebergabe = ((pc as { completion_date?: string } | null)?.completion_date) ?? null
+    }
+    const bytes = await baueDatenblatt({ blocks: (d.content?.blocks ?? []) as DeckBlockLite[], lage, nr, stand: new Date(), uebergabe })
     pdfB64 = encodeBase64(bytes)
     const pfad = `datenblatt/${crypto.randomUUID()}.pdf`
     const { error: upErr } = await sb.storage.from('deck-assets').upload(pfad, bytes, { contentType: 'application/pdf', upsert: false })
-    if (!upErr) pdfUrl = sb.storage.from('deck-assets').getPublicUrl(pfad).data.publicUrl
+    if (!upErr) pdfUrl = `${PORTAL_URL}/unterlagen/${pfad.split('/').pop()}`
     else console.warn('[info-paket] PDF-Upload:', upErr.message)
   } catch (e) { console.error('[info-paket] Datenblatt:', e) }
 

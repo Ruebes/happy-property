@@ -75,6 +75,10 @@ export default defineConfig({
           // Vercel-Rewrites auf Edge Functions (Zypern-Report-PDF, Kalender-Feed):
           // der SW darf hier nie index.html ausliefern.
           /^\/(zypern-report|cal)(\/|$)/,
+          // PDFs auf portal.happy-property.com (Vercel-Rewrite auf Supabase Storage):
+          // Immobilienguide und Datenblätter aus dem Infopaket.
+          /^\/unterlagen\//,
+          /\.pdf$/,
         ],
         runtimeCaching: [
           {

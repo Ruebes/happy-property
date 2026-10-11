@@ -85,9 +85,40 @@ async function grundrissPng(svgUrl: string, fonts: Uint8Array[]): Promise<Uint8A
   } catch (e) { console.warn('[datenblatt] Grundriss:', e); return null }
 }
 
+// ── Wann wird was fällig (Sven 11.10.26) ────────────────────────────────────
+// „Reservierung jetzt, 30 % Vertrag in ca. 2-4 Wochen, 20 % bei Übergabe
+// (geplant Ende 2027) und dann der Rest in 2028." Die Zeitpunkte stehen nicht im
+// Deck, sie werden aus der Zeilenbezeichnung und dem geplanten Übergabetermin
+// (deck_context.completion, z.B. „11/2027") abgeleitet. Unbekannte Zeilen bekommen
+// keinen Zeitpunkt statt eines geratenen.
+const MONATE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember']
+type Uebergabe = { wann: string; monat: number; jahr: number }
+export function uebergabeAus(s?: string | null): Uebergabe | null {
+  const m = (s ?? '').match(/(\d{1,2})\s*\/\s*(\d{4})/) ?? (s ?? '').match(/(\d{4})-(\d{2})/)
+  if (!m) return null
+  const [monat, jahr] = m[0].includes('-') ? [Number(m[2]), Number(m[1])] : [Number(m[1]), Number(m[2])]
+  if (!(monat >= 1 && monat <= 12) || jahr < 2020) return null
+  return { wann: `${monat <= 4 ? 'Anfang' : monat <= 8 ? 'Mitte' : 'Ende'} ${jahr}`, monat, jahr }
+}
+export function faellig(label?: string, sub?: string, u?: Uebergabe | null): string | null {
+  const l = (label ?? '').toLowerCase(), alles = `${l} ${(sub ?? '').toLowerCase()}`
+  const geplant = u ? `, geplant ${u.wann}` : ''
+  if (/reserv/.test(l)) return 'jetzt'
+  if (/nach übergabe|after handover/.test(alles) && /rate|nach übergabe/.test(l)) {
+    if (!u) return 'in den 12 Monaten nach Übergabe'
+    return u.monat >= 9 ? `im Laufe von ${u.jahr + 1}, in Raten` : `in Raten bis ca. ${MONATE[u.monat - 1]} ${u.jahr + 1}`
+  }
+  if (/bis zur übergabe/.test(alles)) return `bis zur Übergabe${geplant}`
+  if (/übergabe|schluss|letzte rate|handover|key/.test(l)) return `bei Übergabe${geplant}`
+  if (/vertrag|contract|kaufvertrag/.test(l)) return 'in ca. 2 bis 4 Wochen (Kaufvertrag)'
+  if (/bau|fortschritt|milestone|construction|rohbau|mauerwerk|fliesen|alumin/.test(alles)) return `nach Baufortschritt, bis zur Übergabe${geplant}`
+  return null
+}
+
 export async function baueDatenblatt(o: {
-  blocks: DeckBlockLite[]; lage: string; nr: string; stand: Date
+  blocks: DeckBlockLite[]; lage: string; nr: string; stand: Date; uebergabe?: string | null
 }): Promise<Uint8Array> {
+  const ueb = uebergabeAus(o.uebergabe)
   const pdf = await PDFDocument.create()
   pdf.setTitle(o.nr ? `Wohnung ${o.nr} - Datenblatt` : 'Datenblatt')
   pdf.setAuthor('Happy Property')
@@ -211,7 +242,27 @@ export async function baueDatenblatt(o: {
   if (pay && (pay.phase1 || pay.phase2)) {
     neueSeite('Zahlungsplan')
     if (pay.intro) { absatz(pay.intro, 10.5); y -= 6 }
-    page.drawText(t('Wann wird wie viel fällig'), { x: M, y, size: 9, font: semi, color: GOLD }); y -= 30
+    page.drawText(t('Wann wird wie viel fällig'), { x: M, y, size: 9, font: semi, color: GOLD }); y -= 14
+    // Zeitstrahl: je Zahlung ein Kasten mit Zeitpunkt, Betrag, Bezeichnung.
+    const alle = [...(pay.phase1?.rows ?? []), ...(pay.phase2?.rows ?? [])]
+    if (alle.length >= 2 && alle.length <= 5) {
+      const gap = 8, bw = (W - 2 * M - gap * (alle.length - 1)) / alle.length, bh = 70
+      page.drawRectangle({ x: M + bw / 2, y: y - 12, width: W - 2 * M - bw, height: 1.2, color: GOLD })
+      alle.forEach((r, i) => {
+        const x = M + i * (bw + gap)
+        page.drawRectangle({ x, y: y - bh, width: bw, height: bh, color: CREAM, borderColor: LINE, borderWidth: 0.6 })
+        page.drawCircle({ x: x + bw / 2, y: y - 12, size: 4, color: GOLD })
+        const f0 = faellig(r.label, r.sub, ueb) ?? ''
+        const wann = t(f0.charAt(0).toUpperCase() + f0.slice(1))
+        const z1 = wrap(wann, semi, 8, bw - 12).slice(0, 2)
+        z1.forEach((z, k) => page.drawText(z, { x: x + 6, y: y - 28 - k * 10, size: 8, font: semi, color: GOLD }))
+        const v = t(r.value); const vs = Math.min(13, (bw - 12) / Math.max(1, semi.widthOfTextAtSize(v, 1)))
+        page.drawText(v, { x: x + 6, y: y - 52, size: vs, font: semi, color: NAVY })
+        const lab = wrap(r.label ?? '', reg, 7.5, bw - 12)[0] ?? ''
+        page.drawText(lab, { x: x + 6, y: y - 64, size: 7.5, font: reg, color: MUTE })
+      })
+      y -= bh + 20
+    } else { y -= 16 }
     const amountX = W - M
     for (const ph of [pay.phase1, pay.phase2]) {
       if (!ph) continue
@@ -225,6 +276,8 @@ export async function baueDatenblatt(o: {
         page.drawText(t(r.label), { x: M + 10, y, size: 10.5, font: semi, color: INK })
         const v = t(r.value); page.drawText(v, { x: amountX - 10 - semi.widthOfTextAtSize(v, 11.5), y, size: 11.5, font: semi, color: NAVY })
         y -= 13
+        const wann = faellig(r.label, r.sub, ueb)
+        if (wann) { page.drawText(t(`Fällig: ${wann}`), { x: M + 10, y, size: 9, font: semi, color: GOLD }); y -= 12 }
         for (const z of sub) { page.drawText(z, { x: M + 10, y, size: 8.5, font: reg, color: MUTE }); y -= 12 }
         y -= 4; page.drawRectangle({ x: M, y: y + 4, width: W - 2 * M, height: 0.6, color: LINE }); y -= 6
       }
