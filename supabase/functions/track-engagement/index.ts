@@ -6,8 +6,9 @@
 // sales_decks / property_calculations aufgelöst. Dedupe: gleiches (lead,type,token)
 // innerhalb von 2 h wird nicht doppelt gezählt.
 import { createClient } from 'jsr:@supabase/supabase-js@2'
-import { bookingUrl } from '../_shared/bookingLink.ts'
+import { bookingUrl, PORTAL_URL } from '../_shared/bookingLink.ts'
 import { lotteBild } from '../_shared/lotte.ts'
+import { cyDate } from '../_shared/notifyToday.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -117,6 +118,24 @@ export function nlZielErlaubt(raw: string): string | null {
     return ok ? u.toString() : null
   } catch { return null }
 }
+// Persoenliche Deck-Links (Sven 11.10.26): Newsletter verlinken ein gemeinsames
+// Deck. Ohne Kennung wusste das CRM nicht, WER sich die Wohnung ansieht. Die
+// Weiterleitung haengt deshalb den Empfaenger an (hpr = l:<lead> | s:<abonnent>,
+// hpc = Kampagne). Deck.tsx meldet ihn beim Aufruf mit, wa-track ordnet die
+// Sitzung zu. Wirkt auch fuer schon versendete Mails, weil jeder Klick hier durchlaeuft.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const REF_RE = /^[ls]:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+function mitEmpfaenger(ziel: string, campaign: string | null, ref: string | null): string {
+  if (!ref || !REF_RE.test(ref)) return ziel
+  try {
+    const u = new URL(ziel)
+    if (u.hostname !== 'portal.happy-property.com' || !u.pathname.startsWith('/deck/')) return ziel
+    u.searchParams.set('hpr', ref.toLowerCase())
+    if (campaign && UUID_RE.test(campaign)) u.searchParams.set('hpc', campaign)
+    return u.toString()
+  } catch { return ziel }
+}
+
 async function logNewsletter(
   type: 'newsletter_open' | 'newsletter_click',
   campaign: string | null, ref: string | null, label: string | null,
@@ -141,10 +160,12 @@ async function logNewsletter(
   await sb.from('engagement_events').insert(row)
 }
 
-async function logEvent(type: string, token: string | null) {
+async function logEvent(type: string, token: string | null, ref: string | null = null, campaign: string | null = null) {
   if (!type || !token) return
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   let leadId: string | null = null
+  let subscriberId: string | null = null
+  let viaRef = false
   let label = ''
   let isCampaignClone = false
   try {
@@ -167,6 +188,16 @@ async function logEvent(type: string, token: string | null) {
       if (s) { leadId = (s.lead_id as string) ?? null; label = (s.title as string) ?? '' }
     }
   } catch { /* Auflösung best-effort */ }
+
+  // Gemeinsames Deck aus dem Newsletter: Person kommt aus der Kennung im Link.
+  // Persoenliche Decks bleiben beim Besitzer, die Kennung zaehlt dort nicht.
+  if (type === 'deck_view' && !leadId && ref && REF_RE.test(ref)) {
+    try {
+      const p = await personAusRef(supabase, ref)
+      if (p?.kind === 'lead') { leadId = p.id; viaRef = true }
+      if (p?.kind === 'sub') { subscriberId = p.id; viaRef = true }
+    } catch { /* ohne Zuordnung weiter */ }
+  }
 
   // Mail-Öffnung NUR loggen, wenn die Mail mit diesem Deck-Token auch WIRKLICH an
   // den Kunden gesendet wurde (deck_outbox.email_sent_at). Sonst stammt die Öffnung
@@ -204,18 +235,25 @@ async function logEvent(type: string, token: string | null) {
   try {
     const since = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
     let dupQ = supabase.from('engagement_events').select('id').eq('type', type).eq('token', token).gte('occurred_at', since).limit(1)
-    dupQ = leadId ? dupQ.eq('lead_id', leadId) : dupQ.is('lead_id', null)
+    dupQ = leadId ? dupQ.eq('lead_id', leadId)
+      : subscriberId ? dupQ.eq('subscriber_id', subscriberId)
+      : dupQ.is('lead_id', null).is('subscriber_id', null)
     const { data: dup } = await dupQ
     if (dup && dup.length) return
   } catch { /* im Zweifel loggen */ }
 
-  await supabase.from('engagement_events').insert({ type, token, lead_id: leadId, label: label || null })
+  await supabase.from('engagement_events').insert({
+    type, token, lead_id: leadId, subscriber_id: subscriberId, label: label || null,
+    meta: viaRef ? { via: 'newsletter', campaign: campaign && UUID_RE.test(campaign) ? campaign : null } : null,
+  })
 
   // Nach dem ERSTEN Deck-Aufruf: Follow-up auslösen. Wenn der Termin-Bot aktiv ist,
   // startet er den Buchungs-Dialog (schlägt Termine vor + bucht) — das ist die
   // stärkere Variante und hat Vorrang. Sonst greift das statische WhatsApp-Follow-up.
   // Läuft nur hier, wenn das Event NICHT dedupliziert wurde (= erster Aufruf im 2-h-Fenster).
-  if (type === 'deck_view' && leadId) {
+  // NICHT bei Newsletter-Klicks (viaRef): der Newsletter geht nur per Mail, ein
+  // WhatsApp-Nachfassen darauf hat Sven nie freigegeben.
+  if (type === 'deck_view' && leadId && !viaRef) {
     const { data: bot } = await supabase.from('crm_settings').select('value').eq('key', 'booking_bot_enabled').maybeSingle()
     if ((bot as { value?: string } | null)?.value === 'true') {
       // Bot-Start +40 Min planen (nicht sofort — Kunde soll erst selbst buchen können).
@@ -250,6 +288,177 @@ async function logEvent(type: string, token: string | null) {
   }
 }
 
+// ── Person hinter einem Deck-Aufruf ─────────────────────────────────────────
+type Sb = ReturnType<typeof createClient>
+interface Person {
+  kind: 'lead' | 'sub'; id: string; first: string; name: string
+  email: string | null; phone: string | null; bookingToken: string | null
+}
+async function personAusRef(sb: Sb, ref: string): Promise<Person | null> {
+  if (!REF_RE.test(ref)) return null
+  const [art, id] = ref.toLowerCase().split(':')
+  return art === 'l' ? leadPerson(sb, id) : subPerson(sb, id)
+}
+async function leadPerson(sb: Sb, id: string): Promise<Person | null> {
+  const { data } = await sb.from('leads').select('id, first_name, last_name, email, phone, whatsapp, booking_token').eq('id', id).maybeSingle()
+  const l = data as { id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; whatsapp: string | null; booking_token: string | null } | null
+  if (!l) return null
+  return { kind: 'lead', id: l.id, first: (l.first_name ?? '').trim(), name: `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim(),
+    email: l.email, phone: l.whatsapp || l.phone, bookingToken: l.booking_token }
+}
+async function subPerson(sb: Sb, id: string): Promise<Person | null> {
+  const { data } = await sb.from('newsletter_subscribers').select('id, first_name, last_name, email, phone').eq('id', id).maybeSingle()
+  const s = data as { id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null } | null
+  if (!s) return null
+  return { kind: 'sub', id: s.id, first: (s.first_name ?? '').trim(), name: `${s.first_name ?? ''} ${s.last_name ?? ''}`.trim(),
+    email: s.email, phone: s.phone, bookingToken: null }
+}
+// Persoenliches Deck gehoert seinem Lead; gemeinsames Deck: Kennung aus dem Link.
+async function personFuerDeck(sb: Sb, deckLeadId: string | null, ref: string | null): Promise<Person | null> {
+  if (deckLeadId) return leadPerson(sb, deckLeadId)
+  return ref ? personAusRef(sb, ref) : null
+}
+const terminFuer = (p: Person | null): string =>
+  p?.kind === 'lead' ? bookingUrl(p.bookingToken)
+    : p?.kind === 'sub' ? `${PORTAL_URL}/termin?f=none&src=newsletter`
+    : `${PORTAL_URL}/termin?src=deck`
+
+// Deck-Seite fragt beim Laden: Kennen wir den Besucher? Liefert nur den Vornamen
+// und den passenden Terminlink, keine Kontaktdaten.
+async function deckPerson(token: string | null, ref: string | null): Promise<Record<string, unknown>> {
+  const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  if (!token) return { known: false, first_name: null, booking_url: terminFuer(null) }
+  const { data: d } = await sb.from('sales_decks').select('lead_id').eq('token', token).maybeSingle()
+  if (!d) return { known: false, first_name: null, booking_url: terminFuer(null) }
+  const p = await personFuerDeck(sb, (d as { lead_id: string | null }).lead_id, ref)
+  return { known: !!p, first_name: p?.first || null, booking_url: terminFuer(p) }
+}
+
+// ── „Mehr Infos zur Wohnung" (Sven 11.10.26) ────────────────────────────────
+// Kleinere Huerde als ein Termin: Der Besucher fordert Unterlagen an, Sven bekommt
+// eine Aufgabe (normaler Weg: Lotte per Mail + WhatsApp, taegliche Erinnerung bis
+// erledigt). An den Kunden geht NICHTS automatisch raus, Sven antwortet persoenlich.
+const WUNSCH: Record<string, string> = {
+  grundriss: 'Grundriss und Ausstattungsliste',
+  zahlungsplan: 'Zahlungsplan und Kaufnebenkosten',
+  rechnung: 'Persönliche Kosten- und Mietrechnung',
+  ablauf: 'Ablauf beim Kauf aus Deutschland',
+}
+const kurz = (v: unknown, n: number) => (typeof v === 'string' ? v : '').replace(/\s+/g, ' ').trim().slice(0, n)
+async function infoRequest(body: Record<string, unknown>): Promise<{ status: number; body: Record<string, unknown> }> {
+  // Honigtopf: Menschen sehen das Feld nicht, Bots fuellen es aus.
+  if (kurz(body.website, 200)) return { status: 200, body: { ok: true } }
+  const token = kurz(body.token, 64)
+  if (!token) return { status: 400, body: { error: 'Deck fehlt.' } }
+  const ref = kurz(body.ref, 80) || null
+  const campaign = kurz(body.campaign, 40)
+  const intern = body.internal === true
+  const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+
+  const { data: deck } = await sb.from('sales_decks').select('lead_id, project_id, content').eq('token', token).maybeSingle()
+  const d = deck as { lead_id: string | null; project_id: string | null; content: { blocks?: Array<{ type?: string; number?: string }> } | null } | null
+  if (!d) return { status: 404, body: { error: 'Deck nicht gefunden.' } }
+
+  let person = await personFuerDeck(sb, d.lead_id, ref)
+  let name = person?.name || person?.first || ''
+  let email = person?.email ?? null
+  let phone = person?.phone ?? null
+  if (!person) {
+    name = kurz(body.name, 120)
+    email = kurz(body.email, 200).toLowerCase() || null
+    phone = kurz(body.phone, 40) || null
+    if (!name) return { status: 400, body: { error: 'Bitte gib deinen Namen an.' } }
+    if (!email && !phone) return { status: 400, body: { error: 'Bitte gib eine E-Mail-Adresse oder Telefonnummer an.' } }
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { status: 400, body: { error: 'Bitte prüfe die E-Mail-Adresse.' } }
+    // Schon als Lead bekannt? Dann die Aufgabe an den Lead haengen.
+    if (email) {
+      const { data: hit } = await sb.from('leads').select('id').ilike('email', email.replace(/[%_\\]/g, '\\$&')).limit(1)
+      const id = ((hit ?? [])[0] as { id: string } | undefined)?.id
+      if (id) person = await leadPerson(sb, id)
+    }
+  }
+  const leadId = person?.kind === 'lead' ? person.id : null
+  const subId = person?.kind === 'sub' ? person.id : null
+  const wuensche = (Array.isArray(body.wants) ? body.wants : []).map(String).filter(k => k in WUNSCH)
+  const frage = kurz(body.question, 1000)
+
+  // Missbrauchsbremse: oeffentlicher Endpunkt, der Aufgaben anlegt.
+  const vorStunde = new Date(Date.now() - 3600e3).toISOString()
+  const { count } = await sb.from('engagement_events').select('id', { count: 'exact', head: true })
+    .eq('type', 'info_request').gte('occurred_at', vorStunde)
+  if ((count ?? 0) >= 30) return { status: 429, body: { error: 'Gerade zu viele Anfragen. Bitte versuche es später noch einmal.' } }
+  // Doppelt abgeschickt: dieselbe Person zum selben Deck binnen 12 h nur einmal.
+  const vor12 = new Date(Date.now() - 12 * 3600e3).toISOString()
+  let dq = sb.from('engagement_events').select('id').eq('type', 'info_request').eq('token', token).gte('occurred_at', vor12).limit(1)
+  dq = leadId ? dq.eq('lead_id', leadId) : subId ? dq.eq('subscriber_id', subId)
+    : email ? dq.eq('meta->>email', email) : dq.eq('meta->>phone', phone ?? '')
+  const { data: dup } = await dq
+  if (dup && dup.length) return { status: 200, body: { ok: true, duplicate: true } }
+
+  // Objekt benennen: Projekt (intern) + Wohnungsnummer aus dem Deck.
+  let projekt = ''
+  if (d.project_id) {
+    const { data: p } = await sb.from('crm_projects').select('name').eq('id', d.project_id).maybeSingle()
+    projekt = ((p as { name?: string } | null)?.name) ?? ''
+  }
+  const nr = (d.content?.blocks ?? []).find(b => b?.type === 'unit')?.number?.trim() ?? ''
+  const objekt = nr ? `Wohnung ${nr}${projekt ? ` (${projekt})` : ''}` : (projekt || 'ein Objekt')
+
+  let herkunft = d.lead_id ? 'persönliches Deck' : 'Deck-Link ohne Empfänger (weitergeleitet oder Website)'
+  if (!d.lead_id && UUID_RE.test(campaign)) {
+    const { data: c } = await sb.from('newsletter_campaigns').select('title').eq('id', campaign).maybeSingle()
+    herkunft = `Newsletter „${((c as { title?: string } | null)?.title) ?? campaign.slice(0, 8)}“`
+  } else if (!d.lead_id && person) herkunft = 'Newsletter'
+
+  const wer = name || 'Unbekannt'
+  const zeilen = [
+    `Wer: ${[wer, email, phone].filter(Boolean).join(' · ')}${person ? '' : ' (selbst eingetragen)'}`,
+    `Möchte: ${wuensche.length ? wuensche.map(k => WUNSCH[k]).join(', ') : 'mehr Infos (nichts Bestimmtes angekreuzt)'}`,
+    ...(frage ? [`Frage: „${frage}“`] : []),
+    `Herkunft: ${herkunft}`,
+    `Deck: ${PORTAL_URL}/deck/${token}?preview=1`,
+    'Versprochen auf der Seite: persönliche Antwort von Sven, in der Regel innerhalb von 24 Stunden.',
+    ...(wuensche.includes('rechnung') && leadId ? ['Tipp: Rechnung im Lead über „📊 Rechnung erstellen“, der Mail-Entwurf liegt dann im Postausgang.'] : []),
+  ]
+  const beschreibung = zeilen.join('\n')
+
+  await sb.from('engagement_events').insert({
+    type: 'info_request', token, lead_id: leadId, subscriber_id: subId, label: objekt.slice(0, 120),
+    meta: { wants: wuensche, question: frage || null, name: wer, email, phone, campaign: UUID_RE.test(campaign) ? campaign : null, internal: intern },
+  })
+
+  const { data: admin } = await sb.from('profiles').select('id').eq('role', 'admin').order('created_at').limit(1).maybeSingle()
+  const adminId = (admin as { id: string } | null)?.id ?? null
+  const { data: task, error: tErr } = await sb.from('crm_tasks').insert({
+    title: `${intern ? '[Test] ' : ''}📩 ${wer}: möchte mehr Infos zu ${objekt}`.slice(0, 200),
+    description: beschreibung, created_by: adminId, assigned_to: adminId, status: 'offen',
+    due_date: cyDate(new Date()),
+    // Zustellung laeuft ueber die Zustaendigen-Zeile (wie Tasks.tsx), alten Pfad stumm.
+    assigned_notified_at: new Date().toISOString(),
+  }).select('id').single()
+  if (tErr || !task) {
+    console.error('[track-engagement] info_request Aufgabe:', tErr?.message)
+    return { status: 500, body: { error: 'Anfrage konnte nicht gespeichert werden. Bitte schreib Sven direkt.' } }
+  }
+  const taskId = (task as { id: string }).id
+  if (adminId) await sb.from('crm_task_assignees').insert({ task_id: taskId, profile_id: adminId, channel: 'system' })
+  if (leadId) {
+    await sb.from('crm_task_leads').insert({ task_id: taskId, lead_id: leadId })
+    await sb.from('activities').insert({
+      lead_id: leadId, type: 'note', direction: 'inbound', auto: false,
+      subject: `📩 Mehr Infos angefordert: ${objekt}`, content: beschreibung, completed_at: new Date().toISOString(),
+    }).then(({ error }) => { if (error) console.warn('[track-engagement] info_request Notiz:', error.message) })
+  }
+  // Interne Tests (Svens eigener Browser) legen nur die Aufgabe an, ohne Lotte-Meldung.
+  if (!intern) {
+    await sb.functions.invoke('task-notify', { body: { mode: 'dispatch', task_id: taskId } })
+      .catch((e: unknown) => console.warn('[track-engagement] info_request dispatch:', e))
+  }
+  return { status: 200, body: { ok: true } }
+}
+
+const jsonRes = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
   try {
@@ -268,7 +477,8 @@ Deno.serve(async (req) => {
       if (type === 'nl_click') {
         const ziel = nlZielErlaubt(u.searchParams.get('u') ?? '')
         try { await logNewsletter('newsletter_click', u.searchParams.get('c'), u.searchParams.get('r'), u.searchParams.get('l')) } catch { /* egal */ }
-        return new Response(null, { status: 302, headers: { ...CORS, Location: ziel ?? 'https://happy-property.com', 'Cache-Control': 'no-store' } })
+        const wohin = ziel ? mitEmpfaenger(ziel, u.searchParams.get('c'), u.searchParams.get('r')) : 'https://happy-property.com'
+        return new Response(null, { status: 302, headers: { ...CORS, Location: wohin, 'Cache-Control': 'no-store' } })
       }
 
       // Pixel: NIE blockieren, immer das gif zurückgeben (Logging best-effort).
@@ -276,9 +486,15 @@ Deno.serve(async (req) => {
       return pixelResponse()
     }
     if (req.method === 'POST') {
-      const { type, token } = await req.json().catch(() => ({})) as { type?: string; token?: string }
-      await logEvent(type ?? '', token ?? null)
-      return new Response(JSON.stringify({ ok: true }), { headers: { ...CORS, 'Content-Type': 'application/json' } })
+      const body = await req.json().catch(() => ({})) as Record<string, unknown>
+      const type = typeof body.type === 'string' ? body.type : ''
+      const token = typeof body.token === 'string' ? body.token : null
+      const ref = typeof body.ref === 'string' && REF_RE.test(body.ref) ? body.ref : null
+      const campaign = typeof body.campaign === 'string' && UUID_RE.test(body.campaign) ? body.campaign : null
+      if (type === 'deck_person') return jsonRes(await deckPerson(token, ref))
+      if (type === 'info_request') { const r = await infoRequest(body); return jsonRes(r.body, r.status) }
+      await logEvent(type, token, ref, campaign)
+      return jsonRes({ ok: true })
     }
     return new Response('Method Not Allowed', { status: 405, headers: CORS })
   } catch (err) {

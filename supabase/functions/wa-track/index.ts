@@ -129,7 +129,7 @@ var q=[], activeS=0, maxScroll=0, pageMaxScroll=0, replaySeq=0, replayBuf=[], re
 var path=location.pathname;
 
 function sessionInfo(){
-  var u={}; try{ new URLSearchParams(location.search).forEach(function(v,k){ if(/^utm_|^src$|^f$/.test(k)) u[k]=v.slice(0,200); }); }catch(e){}
+  var u={}; try{ new URLSearchParams(location.search).forEach(function(v,k){ if(/^utm_|^src$|^f$|^hp[rc]$/.test(k)) u[k]=v.slice(0,200); }); }catch(e){}
   return { id:sid, visitor_id:visitor, site:location.hostname,
     entry_path:path, referrer:document.referrer||null, utm:u,
     screen_w:screen.width, screen_h:screen.height,
@@ -325,13 +325,23 @@ async function handleBatch(session: SessionInfo, events: TrackEvent[], ua: strin
 
   // Kundenseite mit Token? → Session dem Lead zuordnen (nur einmal).
   if (!ex?.lead_id) {
+    let zugeordnet = false
     for (const e of evs) {
       if (e.t !== 'pageview' || !e.p) continue
       const leadId = await resolveLead(supabase, e.p)
       if (leadId) {
         await supabase.from('web_sessions').update({ lead_id: leadId }).eq('id', session.id)
+        zugeordnet = true
         break
       }
+    }
+    // Newsletter-Klick auf ein gemeinsames Deck: Die Weiterleitung in track-engagement
+    // haengt hpr=l:<lead> an (Sven 11.10.26). Gilt nur, wenn das Deck selbst keinen
+    // Besitzer hat - die Schleife oben hat dann nichts gefunden.
+    const hpr = String(session.utm?.hpr ?? '').toLowerCase()
+    if (!zugeordnet && hpr.startsWith('l:') && UUID_RE.test(hpr.slice(2))) {
+      const { data: l } = await supabase.from('leads').select('id').eq('id', hpr.slice(2)).maybeSingle()
+      if (l) await supabase.from('web_sessions').update({ lead_id: hpr.slice(2) }).eq('id', session.id)
     }
   }
 }
