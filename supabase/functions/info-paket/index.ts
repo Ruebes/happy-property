@@ -23,6 +23,8 @@ import { bookingUrl, PORTAL_URL } from '../_shared/bookingLink.ts'
 import { resolveLang } from '../_shared/recipientLang.ts'
 import { CI } from '../_shared/brand.ts'
 import { callAnthropic, textOf } from '../_shared/anthropic.ts'
+import { encodeBase64 } from 'jsr:@std/encoding@1/base64'
+import { baueDatenblatt, type DeckBlockLite } from './datenblatt.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -312,6 +314,21 @@ async function handle(sb: SupabaseClient, b: Record<string, unknown>): Promise<R
   // 7) Baustellenfotos: nur saubere Bilder (Svens feste Regel), höchstens 2
   const { fotos, fotoStand } = d.project_id ? await kundenFotos(sb, d.project_id) : { fotos: [], fotoStand: '' }
 
+  // 7b) Datenblatt-PDF (Grundriss, Eckdaten, Zahlungsplan, Ausstattung, Bilder).
+  //     Liegt der Mail bei und zusätzlich öffentlich im Storage (Link in der Mail).
+  //     Scheitert es, geht die Mail ohne PDF raus - mit der Druckansicht als Ersatz.
+  let pdfB64: string | null = null
+  let pdfUrl: string | null = null
+  const pdfName = `${nr ? `Wohnung-${nr.replace(/[^\w-]/g, '')}` : 'Wohnung'}-Datenblatt.pdf`
+  try {
+    const bytes = await baueDatenblatt({ blocks: (d.content?.blocks ?? []) as DeckBlockLite[], lage, nr, stand: new Date() })
+    pdfB64 = encodeBase64(bytes)
+    const pfad = `datenblatt/${crypto.randomUUID()}.pdf`
+    const { error: upErr } = await sb.storage.from('deck-assets').upload(pfad, bytes, { contentType: 'application/pdf', upsert: false })
+    if (!upErr) pdfUrl = sb.storage.from('deck-assets').getPublicUrl(pfad).data.publicUrl
+    else console.warn('[info-paket] PDF-Upload:', upErr.message)
+  } catch (e) { console.error('[info-paket] Datenblatt:', e) }
+
   // 8) Mail bauen
   const lang = await resolveLang(sb, { email: p.email, lead_id: p.kind === 'lead' ? p.id : null })
   const ref = p.kind === 'lead' ? `l:${p.id}` : p.kind === 'sub' ? `s:${p.id}` : ''
@@ -321,17 +338,18 @@ async function handle(sb: SupabaseClient, b: Record<string, unknown>): Promise<R
   const frage = typeof b.question === 'string' ? b.question.trim().slice(0, 500) : ''
   const html = mailHtml({
     first: p.first, objekt, lage, gross: grossGesamt, calcUrl, calcUrlCash, deckUrl, printUrl, terminUrl, fotos, fotoStand, frage,
-    guide: lang !== 'en', std, markt,
+    guide: lang !== 'en', std, markt, pdfUrl, pdfAnhang: !!pdfB64,
   })
   const subject = `${p.first ? `${p.first}, d` : 'D'}eine Unterlagen zur ${objekt}`
   const { data: sent, error: sErr } = await sb.functions.invoke('send-email', { body: {
     to: p.email, subject, html, lead_id: p.kind === 'lead' ? p.id : null, auto: true, lang,
+    attachments: pdfB64 ? [{ filename: pdfName, content_base64: pdfB64, content_type: 'application/pdf' }] : null,
   } })
   if (sErr || !(sent as { success?: boolean } | null)?.success) {
     console.error('[info-paket] Versand fehlgeschlagen:', sErr)
     return { ok: false, sent: false, reason: 'versand_fehler', calc_url: calcUrl, calc_url_cash: calcUrlCash }
   }
-  return { ok: true, sent: true, calc_url: calcUrl, calc_url_cash: calcUrlCash, deck_url: deckUrl, to: p.email, annahmen: markt.quelle }
+  return { ok: true, sent: true, calc_url: calcUrl, calc_url_cash: calcUrlCash, deck_url: deckUrl, pdf_url: pdfUrl, to: p.email, annahmen: markt.quelle }
 }
 
 function karte(icon: string, titel: string, text: string, knopf: string, url: string): string {
@@ -379,6 +397,7 @@ function rechnungKarte(m: { gross: number; calcUrl: string; calcUrlCash: string;
 function mailHtml(m: {
   first: string; objekt: string; lage: string; gross: number; calcUrl: string; calcUrlCash: string; deckUrl: string; printUrl: string
   terminUrl: string; fotos: string[]; fotoStand: string; frage: string; guide: boolean; std: CalcStandard; markt: Markt
+  pdfUrl: string | null; pdfAnhang: boolean
 }): string {
   const fotosHtml = m.fotos.length ? `<tr><td style="padding:0 0 14px;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${CI.white};border:1px solid ${CI.line};border-radius:12px;">
@@ -406,7 +425,9 @@ function mailHtml(m: {
   </td></tr>
   <tr><td class="px" style="padding:6px 26px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
     ${rechnungKarte(m)}
-    ${karte('📄', 'Die Wohnung zum Weiterleiten', 'Grundriss, Ausstattung und Zahlungsplan auf einen Blick. Öffne die Druckansicht und speichere sie als PDF, zum Beispiel für deinen Partner oder Steuerberater.', 'Als PDF speichern', m.printUrl)}
+    ${m.pdfUrl || m.pdfAnhang
+      ? karte('📎', 'Datenblatt zur Wohnung', `Grundriss, Eckdaten, Ausstattung, Bilder und der Zahlungsplan: wann wird wie viel fällig. ${m.pdfAnhang ? 'Liegt dieser Mail als PDF bei, ideal' : 'Ideal'} zum Weiterleiten, zum Beispiel an deinen Partner oder Steuerberater.`, 'Datenblatt öffnen', m.pdfUrl ?? m.printUrl)
+      : karte('📄', 'Die Wohnung zum Weiterleiten', 'Grundriss, Ausstattung und Zahlungsplan auf einen Blick. Öffne die Druckansicht und speichere sie als PDF, zum Beispiel für deinen Partner oder Steuerberater.', 'Als PDF speichern', m.printUrl)}
     ${m.guide ? karte('📘', 'Immobilienguide Paphos 2026', 'Ablauf beim Kauf, Kaufnebenkosten und Steuern, kompakt erklärt.', 'Guide herunterladen', GUIDE_URL) : ''}
     ${fotosHtml}
   </table></td></tr>
