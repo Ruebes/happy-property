@@ -926,6 +926,199 @@ function BookMode({ blocks, onClose }: { blocks: DeckBlock[]; onClose: () => voi
   )
 }
 
+// ── Kontakt-Leiste + „Mehr Infos" (Sven 11.10.26) ──────────────────────────
+// Auswertung Newsletter 10.10.: drei Viertel der Besucher kamen nie bis zum
+// Abschluss-Block am Seitenende, einen Kontakt-Knopf gab es sonst nirgends.
+// Jetzt: feste Leiste unten (Blättern, WhatsApp, Termin, Mehr Infos) und ein
+// kurzer Zwischen-Aufruf nach dem Grundriss. „Mehr Infos" ist die kleinere Hürde
+// als ein Termin: Unterlagen anfordern, Sven bekommt eine Aufgabe und antwortet
+// persönlich. Automatisch geht an den Kunden nichts raus.
+const REF_RE = /^[ls]:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const WA_NUMBER = DECK_CONTACT.phone.replace(/\D/g, '')
+const PRIVACY_URL = 'https://steuervorteil-zypern-immobilien.com/datenschutz/'
+const INFO_WANTS = ['grundriss', 'zahlungsplan', 'rechnung', 'ablauf'] as const
+
+// Newsletter-Klicks kommen mit Empfänger-Kennung (hpr) und Kampagne (hpc), siehe
+// track-engagement nl_click. Damit weiß das CRM, wer die Wohnung ansieht.
+function readRef(): { ref: string | null; campaign: string | null } {
+  try {
+    const p = new URLSearchParams(window.location.search)
+    const ref = p.get('hpr') ?? '', campaign = p.get('hpc') ?? ''
+    return { ref: REF_RE.test(ref) ? ref.toLowerCase() : null, campaign: UUID_RE.test(campaign) ? campaign : null }
+  } catch { return { ref: null, campaign: null } }
+}
+
+interface DeckPerson { known: boolean; first_name: string | null; booking_url: string }
+
+function ActionBar({ onBook, onInfo, terminUrl, waUrl }: { onBook: () => void; onInfo: () => void; terminUrl: string; waUrl: string }) {
+  const { t } = useTranslation()
+  return (
+    <div className="fixed inset-x-0 bottom-0 z-40 sm:bottom-5 sm:flex sm:justify-center pointer-events-none print:hidden">
+      <div className="pointer-events-auto flex items-center gap-2 px-3 pt-2.5 sm:px-2.5 sm:rounded-full shadow-2xl"
+        style={{ background: 'rgba(27,27,34,0.97)', paddingBottom: 'max(10px, env(safe-area-inset-bottom))' }}>
+        <button onClick={onBook} aria-label={t('deck.present', 'Blättern')} title={t('deck.present', 'Blättern')}
+          className="w-11 h-11 shrink-0 rounded-full flex items-center justify-center text-lg bg-white/10 hover:bg-white/20 transition">📖</button>
+        <a href={waUrl} target="_blank" rel="noopener noreferrer" aria-label={t('deck.waLabel', 'WhatsApp an Sven')} title={t('deck.waLabel', 'WhatsApp an Sven')}
+          className="w-11 h-11 shrink-0 rounded-full flex items-center justify-center text-lg bg-white/10 hover:bg-white/20 transition">💬</a>
+        <a href={terminUrl}
+          className="h-11 px-4 shrink-0 rounded-full flex items-center gap-1.5 text-sm font-semibold text-white border hover:bg-white/10 transition"
+          style={{ borderColor: 'rgba(194,161,94,0.6)' }}>
+          📅 <span>{t('deck.barTermin', 'Termin')}</span>
+        </a>
+        <button onClick={onInfo}
+          className="h-11 px-5 flex-1 sm:flex-none rounded-full text-sm font-semibold shadow transition hover:brightness-105 whitespace-nowrap"
+          style={{ background: GOLD, color: DARK }}>
+          <span className="sm:hidden">{t('deck.barInfoShort', 'Mehr Infos')}</span>
+          <span className="hidden sm:inline">{t('deck.barInfo', 'Mehr Infos zur Wohnung')}</span>
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// Zwischen-Aufruf direkt nach dem Grundriss: wer bis hier scrollt, ist interessiert.
+function InlineCta({ onInfo, terminUrl }: { onInfo: () => void; terminUrl: string }) {
+  const { t } = useTranslation()
+  return (
+    <section className="px-5 md:px-20 py-12 print:hidden" style={{ background: DARK }}>
+      <div className="max-w-3xl">
+        <Accent /><Kicker>{t('deck.inlineKicker', 'Nächster Schritt')}</Kicker>
+        <h2 className="font-heading font-bold text-white text-3xl md:text-4xl mt-2 leading-tight">{t('deck.inlineHeadline', 'Gefällt dir die Wohnung?')}</h2>
+        <p className="text-[15px] leading-relaxed text-gray-300 mt-3">
+          {t('deck.inlineText', 'Fordere die Unterlagen an: Grundriss, Zahlungsplan und auf Wunsch eine persönliche Kosten- und Mietrechnung. Sven schickt sie dir persönlich und unverbindlich.')}
+        </p>
+        <div className="flex flex-wrap gap-3 mt-6">
+          <button onClick={onInfo} className="px-6 py-3 rounded-full font-semibold text-[15px] shadow-lg transition-transform hover:scale-[1.03]" style={{ background: GOLD, color: DARK }}>
+            {t('deck.inlineInfo', 'Mehr Infos anfordern')} <span aria-hidden>→</span>
+          </button>
+          <a href={terminUrl} className="px-6 py-3 rounded-full font-semibold text-[15px] text-white border hover:bg-white/10 transition" style={{ borderColor: 'rgba(194,161,94,0.6)' }}>
+            {t('deck.inlineTermin', 'Lieber gleich Termin mit Sven')}
+          </a>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function InfoModal({ token, refId, campaign, person, unitNr, internal, terminUrl, onClose }: {
+  token: string; refId: string | null; campaign: string | null; person: DeckPerson | null
+  unitNr: string | null; internal: boolean; terminUrl: string; onClose: () => void
+}) {
+  const { t } = useTranslation()
+  const [wants, setWants] = useState<string[]>([])
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
+  const [question, setQuestion] = useState('')
+  const [website, setWebsite] = useState('')   // Honigtopf, für Menschen unsichtbar
+  const [state, setState] = useState<'form' | 'sending' | 'done'>('form')
+  const [error, setError] = useState('')
+  const known = !!person?.known
+  const first = person?.first_name ?? ''
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const toggle = (k: string) => setWants(w => w.includes(k) ? w.filter(x => x !== k) : [...w, k])
+  const wantLabel = (k: string) => k === 'grundriss' ? t('deck.wantFloorplan', 'Grundriss und Ausstattungsliste')
+    : k === 'zahlungsplan' ? t('deck.wantPayment', 'Zahlungsplan und Kaufnebenkosten')
+    : k === 'rechnung' ? t('deck.wantCalc', 'Persönliche Kosten- und Mietrechnung')
+    : t('deck.wantProcess', 'Ablauf beim Kauf aus Deutschland')
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    if (!known) {
+      if (!name.trim()) { setError(t('deck.infoErrName', 'Bitte gib deinen Namen an.')); return }
+      if (!email.trim() && !phone.trim()) { setError(t('deck.infoErrContact', 'Bitte gib eine E-Mail-Adresse oder Telefonnummer an.')); return }
+    }
+    setState('sending')
+    const { error: fnErr } = await supabase.functions.invoke('track-engagement', { body: {
+      type: 'info_request', token, ref: refId, campaign, wants, question, website, internal,
+      ...(known ? {} : { name, email, phone }),
+    } })
+    if (fnErr) {
+      let msg = ''
+      try { msg = ((await (fnErr as { context?: Response }).context?.json()) as { error?: string } | undefined)?.error ?? '' } catch { /* egal */ }
+      setError(msg || t('deck.infoErrSend', 'Das hat leider nicht geklappt. Schreib Sven gern direkt per WhatsApp.'))
+      setState('form')
+      return
+    }
+    setState('done')
+  }
+
+  const title = unitNr ? t('deck.infoTitleUnit', 'Mehr Infos zu Wohnung {{nr}}', { nr: unitNr }) : t('deck.infoTitle', 'Mehr Infos zu dieser Wohnung')
+  const field = 'w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-[15px] focus:outline-none focus:ring-2'
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/60 print:hidden" onClick={onClose}>
+      <div role="dialog" aria-modal="true" aria-label={title} onClick={e => e.stopPropagation()}
+        className="w-full sm:max-w-lg max-h-[92vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl p-6 shadow-2xl font-body" style={{ background: CREAM, color: INK }}>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <Accent />
+            <h2 className="font-heading font-bold text-2xl leading-tight">{title}</h2>
+          </div>
+          <button onClick={onClose} aria-label={t('deck.exitBook', 'Schließen')} className="text-2xl leading-none text-gray-400 hover:text-gray-700">×</button>
+        </div>
+
+        {state === 'done' ? (
+          <div className="mt-4">
+            <p className="text-[15px] leading-relaxed text-gray-700">
+              {first ? t('deck.infoDoneName', 'Danke, {{name}}! Sven meldet sich persönlich bei dir, in der Regel innerhalb von 24 Stunden.', { name: first })
+                : t('deck.infoDone', 'Danke! Sven meldet sich persönlich bei dir, in der Regel innerhalb von 24 Stunden.')}
+            </p>
+            <div className="flex flex-wrap gap-3 mt-6">
+              <button onClick={onClose} className="px-5 py-2.5 rounded-full font-semibold text-sm text-white" style={{ background: DARK }}>{t('deck.infoBack', 'Zurück zur Wohnung')}</button>
+              <a href={terminUrl} className="px-5 py-2.5 rounded-full font-semibold text-sm border" style={{ borderColor: GOLD, color: INK }}>{t('deck.infoTermin', 'Oder gleich Termin aussuchen')} →</a>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={submit} className="mt-3 space-y-4">
+            <p className="text-[15px] leading-relaxed text-gray-700">
+              {first ? t('deck.infoIntroName', 'Hallo {{name}}, Sven schickt dir die Unterlagen persönlich, in der Regel innerhalb von 24 Stunden.', { name: first })
+                : t('deck.infoIntro', 'Sven schickt dir die Unterlagen persönlich, in der Regel innerhalb von 24 Stunden.')}
+            </p>
+            <fieldset>
+              <legend className="text-[11px] font-semibold uppercase tracking-[0.15em] mb-2" style={{ color: GOLD }}>{t('deck.infoWhat', 'Was interessiert dich?')}</legend>
+              <div className="space-y-2">
+                {INFO_WANTS.map(k => (
+                  <label key={k} className="flex items-center gap-3 rounded-lg bg-white border border-gray-200 px-3 py-2.5 cursor-pointer text-[14px]">
+                    <input type="checkbox" checked={wants.includes(k)} onChange={() => toggle(k)} className="h-4 w-4 shrink-0" style={{ accentColor: GOLD }} />
+                    <span>{wantLabel(k)}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            {!known && (
+              <div className="space-y-2.5">
+                <input className={field} placeholder={t('deck.infoName', 'Dein Name')} value={name} onChange={e => setName(e.target.value)} autoComplete="name" />
+                <input className={field} type="email" placeholder={t('deck.infoEmail', 'E-Mail-Adresse')} value={email} onChange={e => setEmail(e.target.value)} autoComplete="email" />
+                <input className={field} type="tel" placeholder={t('deck.infoPhone', 'Telefon oder WhatsApp (optional)')} value={phone} onChange={e => setPhone(e.target.value)} autoComplete="tel" />
+              </div>
+            )}
+            <textarea className={field} rows={3} placeholder={t('deck.infoQuestion', 'Deine Frage an Sven (optional)')} value={question} onChange={e => setQuestion(e.target.value)} />
+            <input type="text" tabIndex={-1} autoComplete="off" aria-hidden="true" value={website} onChange={e => setWebsite(e.target.value)}
+              className="absolute -left-[9999px] h-0 w-0 opacity-0" />
+            {error && <p className="text-sm text-red-700">{error}</p>}
+            <button type="submit" disabled={state === 'sending'}
+              className="w-full py-3 rounded-full font-semibold text-[15px] shadow disabled:opacity-60" style={{ background: GOLD, color: DARK }}>
+              {state === 'sending' ? t('deck.infoSending', 'Wird gesendet …') : t('deck.infoSubmit', 'Infos anfordern')}
+            </button>
+            <p className="text-[11px] leading-relaxed text-gray-500">
+              {t('deck.infoPrivacy', 'Unverbindlich. Wir nutzen deine Angaben nur, um dir die Unterlagen zu schicken.')}{' '}
+              <a href={PRIVACY_URL} target="_blank" rel="noopener noreferrer" className="underline">{t('deck.infoPrivacyLink', 'Datenschutz')}</a>
+            </p>
+          </form>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function Deck() {
   const { t, i18n } = useTranslation()
   const { token } = useParams<{ token: string }>()
@@ -933,6 +1126,19 @@ export default function Deck() {
   const [content, setContent] = useState<DeckContent | null>(null)
   const [loading, setLoading] = useState(true)
   const [err,     setErr]     = useState(false)
+  const [info, setInfo] = useState(false)
+  const [internal, setInternal] = useState(false)
+  const [person, setPerson] = useState<DeckPerson | null>(null)
+  const [{ ref, campaign }] = useState(readRef)
+  const isPrint = typeof window !== 'undefined' && window.location.pathname.endsWith('/print')
+
+  // Wer schaut? Nur Vorname + passender Terminlink (persönlich, sonst allgemein).
+  useEffect(() => {
+    if (!token) return
+    supabase.functions.invoke('track-engagement', { body: { type: 'deck_person', token, ref } })
+      .then(({ data }) => { if (data && typeof (data as DeckPerson).booking_url === 'string') setPerson(data as DeckPerson) })
+      .catch(() => { /* ohne Person geht alles weiter */ })
+  }, [token, ref])
 
   // Empfängersprache: Das Deck liegt hinter einem Token, es gibt keinen Login -
   // die Sprache kommt serverseitig aus dem Lead. Ohne das blieben alle festen
@@ -971,15 +1177,15 @@ export default function Deck() {
     // gilt DAUERHAFT als intern. Ohne diese Markierung zählte ein aus dem Postausgang
     // kopierter Link im selben Browser (ausgeloggt / anderer Tab) als Kundenbesuch.
     const INTERNAL = 'hp_internal_viewer'
-    const markInternal = () => { try { localStorage.setItem(INTERNAL, '1') } catch { /* Storage gesperrt */ } }
+    const markInternal = () => { setInternal(true); try { localStorage.setItem(INTERNAL, '1') } catch { /* Storage gesperrt */ } }
     if (new URLSearchParams(window.location.search).get('preview') === '1') { markInternal(); return }
-    try { if (localStorage.getItem(INTERNAL) === '1') return } catch { /* egal */ }
+    try { if (localStorage.getItem(INTERNAL) === '1') { setInternal(true); return } } catch { /* egal */ }
     void (async () => {
       const { data: { session } } = await supabase.auth.getSession()
       if (session) { markInternal(); return }
-      supabase.functions.invoke('track-engagement', { body: { type: 'deck_view', token } }).catch(() => { /* egal */ })
+      supabase.functions.invoke('track-engagement', { body: { type: 'deck_view', token, ref, campaign } }).catch(() => { /* egal */ })
     })()
-  }, [token])
+  }, [token, ref, campaign])
 
   if (loading) {
     return (
@@ -997,6 +1203,17 @@ export default function Deck() {
     )
   }
 
+  const unitNr = (content.blocks.find(b => b.type === 'unit') as Extract<DeckBlock, { type: 'unit' }> | undefined)?.number?.trim() || null
+  const terminUrl = person?.booking_url ?? '/termin?src=deck'
+  const waUrl = `https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(unitNr
+    ? t('deck.waTextUnit', 'Hallo Sven, ich habe mir die Wohnung {{nr}} angesehen und hätte eine Frage.', { nr: unitNr })
+    : t('deck.waText', 'Hallo Sven, ich habe mir die Wohnung angesehen und hätte eine Frage.'))}`
+  // Zwischen-Aufruf nach dem Grundriss (sonst nach dem Wohnungs-Block), nicht
+  // direkt vor dem Abschluss-Block, sonst stünde dasselbe zweimal untereinander.
+  const fpIdx = content.blocks.findIndex(b => b.type === 'floorplan')
+  const ctaAfter = fpIdx >= 0 ? fpIdx : content.blocks.findIndex(b => b.type === 'unit')
+  const showInline = ctaAfter >= 0 && content.blocks[ctaAfter + 1]?.type !== 'cta'
+
   return (
     <div className="font-body" style={{ background: CREAM, color: INK }}>
       {content.blocks.map((b, i) => (
@@ -1006,18 +1223,19 @@ export default function Deck() {
           <img src={DECK_LOGO} alt="" aria-hidden="true"
             className="absolute top-3 right-3 md:top-4 md:right-6 h-7 md:h-9 w-auto rounded-md opacity-80 pointer-events-none select-none ring-1 ring-white/10"
             onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+          {!isPrint && showInline && i === ctaAfter && <InlineCta onInfo={() => setInfo(true)} terminUrl={terminUrl} />}
         </div>
       ))}
-      <div className="text-center text-[11px] text-gray-400 py-6" style={{ background: CREAM }}>
+      <div className={`text-center text-[11px] text-gray-400 pt-6 ${isPrint ? 'pb-6' : 'pb-28 sm:pb-24'}`} style={{ background: CREAM }}>
         © Happy Property · {t('deck.footerNote', 'Persönlich erstellt · Preise vorbehaltlich Final-Plans · Bilder zu Marketingzwecken')}
       </div>
 
-      {/* Blättern/Präsentieren — festes Buch-Icon unten rechts, öffnet den Seiten-Modus */}
-      <button onClick={() => setBook(true)}
-        className="fixed bottom-5 right-5 z-40 flex items-center gap-2 px-4 py-2.5 rounded-full text-white text-sm font-semibold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition"
-        style={{ background: DARK }}>
-        📖 <span className="hidden sm:inline">{t('deck.present', 'Blättern')}</span>
-      </button>
+      {/* Feste Leiste unten: Blättern, WhatsApp, Termin, Mehr Infos */}
+      {!isPrint && <ActionBar onBook={() => setBook(true)} onInfo={() => setInfo(true)} terminUrl={terminUrl} waUrl={waUrl} />}
+      {info && token && (
+        <InfoModal token={token} refId={ref} campaign={campaign} person={person} unitNr={unitNr}
+          internal={internal} terminUrl={terminUrl} onClose={() => setInfo(false)} />
+      )}
       {book && <BookMode blocks={content.blocks} onClose={() => setBook(false)} />}
     </div>
   )
