@@ -267,9 +267,13 @@ Deno.serve(async (req: Request) => {
           mimeContent: buildMimeContent(html, stripHtml(html)),
         }
 
+        // content ist ein Uint8Array (rohe Bytes). denomailer kodiert nur bei
+        // encoding 'binary' selbst nach Base64; 'base64' erwartet einen fertigen
+        // Base64-STRING und schrieb seit 13.7.26 die Zahlenreihe der Bytes in die
+        // Mail - jeder Anhang (ICS, PDF) kam kaputt an (Sven 11.10.26).
         const allAttach = [
-          ...(pdfAttachment ? [{ filename: pdfAttachment.filename, content: pdfAttachment.content, contentType: pdfAttachment.contentType ?? 'application/pdf', encoding: 'base64' as const }] : []),
-          ...extraAttachments.map(a => ({ filename: a.filename, content: a.content, contentType: a.contentType, encoding: 'base64' as const })),
+          ...(pdfAttachment ? [{ filename: pdfAttachment.filename, content: pdfAttachment.content, contentType: pdfAttachment.contentType ?? 'application/pdf', encoding: 'binary' as const }] : []),
+          ...extraAttachments.map(a => ({ filename: a.filename, content: a.content, contentType: a.contentType, encoding: 'binary' as const })),
         ]
         if (allAttach.length) mailPayload.attachments = allAttach
 
