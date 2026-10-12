@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef, type CSSProperties } from 'react'
+import { useState, useEffect, useRef, createContext, useContext, type CSSProperties } from 'react'
 import { useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
 import type { DeckBlock, DeckContent, FloorplanRoom } from '../lib/deckTypes'
 import { DECK_CONTACT, DECK_LOGO, DECK_PHOTO } from '../lib/deckTypes'
+import { normalizeMonthPlan, monthPlanCounts } from '../lib/rechner'
 
 // ── Sales-Deck Render-Seite (öffentlich, per Token) ─────────────────────────────
 // Personalisierte Verkaufs-Microsite in Happy-Property-Optik. Datengetrieben aus
@@ -21,12 +22,28 @@ function Kicker({ children, light }: { children?: string; light?: boolean }) {
   if (!children) return null
   return <p className="text-[11px] font-semibold uppercase tracking-[0.2em]" style={{ color: light ? GOLD : GOLD }}>{children}</p>
 }
-function Img({ src, alt, className, style }: { src?: string; alt?: string; className?: string; style?: CSSProperties }) {
-  const [failed, setFailed] = useState(false)
-  if (!src || failed) {
+// Bilder aus dem eigenen Storage verkleinert ueber die Supabase-Bildtransformation
+// ausliefern (WebP, feste Breite). Die Bautraeger-Renderings liegen als 4K-PNG mit
+// ~10 MB im Storage; das Mamba-Deck lud so ~140 MB Bilder und Safari wurde nach
+// wenigen Sekunden weiss (Sven 12.10.26). SVG/GIF und fremde URLs bleiben wie sie sind.
+const STORAGE_OBJ = '/storage/v1/object/public/'
+function sizedImg(url: string | undefined, width = 1600): string | undefined {
+  if (!url) return url
+  const i = url.indexOf(STORAGE_OBJ)
+  if (i < 0 || url.includes('?') || !/\.(jpe?g|png|webp)$/i.test(url)) return url
+  // width allein schneidet zu (resize=cover behaelt die Originalhoehe) - contain in ein
+  // Quadrat erhaelt das Seitenverhaeltnis fuer Quer- und Hochformat.
+  return `${url.slice(0, i)}/storage/v1/render/image/public/${url.slice(i + STORAGE_OBJ.length)}?width=${width}&height=${width}&resize=contain&quality=75`
+}
+function Img({ src, alt, className, style, w = 1600 }: { src?: string; alt?: string; className?: string; style?: CSSProperties; w?: number }) {
+  // 0 = verkleinert, 1 = Original (Transformation fehlgeschlagen), 2 = Platzhalter
+  const [stage, setStage] = useState(0)
+  const sized = sizedImg(src, w)
+  if (!src || stage === 2) {
     return <div className={className} style={{ ...style, background: 'linear-gradient(135deg,#d9cfbe,#b7ab95)' }} />
   }
-  return <img src={src} alt={alt ?? ''} loading="lazy" onError={() => setFailed(true)} className={className} style={style} />
+  return <img src={stage === 0 ? sized : src} alt={alt ?? ''} loading="lazy"
+    onError={() => setStage(st => (st === 0 && sized !== src ? 1 : 2))} className={className} style={style} />
 }
 
 // ── Block-Renderer ──────────────────────────────────────────────────────────────
@@ -39,7 +56,7 @@ function CoverMedia({ image, video }: { image?: string; video?: string }) {
     return (
       <video
         src={video}
-        poster={image}
+        poster={sizedImg(image, 1920)}
         autoPlay muted loop playsInline
         preload="metadata"
         onError={() => setVideoFailed(true)}
@@ -47,7 +64,7 @@ function CoverMedia({ image, video }: { image?: string; video?: string }) {
       />
     )
   }
-  return <Img src={image} className="w-full h-[62vh] object-cover" />
+  return <Img src={image} w={1920} className="w-full h-[62vh] object-cover" />
 }
 function CoverBlock(b: Extract<DeckBlock, { type: 'cover' }>) {
   return (
@@ -82,6 +99,44 @@ function LetterBlock(b: Extract<DeckBlock, { type: 'letter' }>) {
   )
 }
 
+// ── MwSt.-Erstattung bei Kurzzeitvermietung ─────────────────────────────────────
+// Steht in der Rendite-Berechnung des Kunden bei einer Wohnung „Kurzzeit", sagt das
+// Deck dazu, dass die MwSt. erstattet wird (Sven 12.10.26). Quelle: get_deck_let_types
+// (jüngste Berechnung des Leads je Wohnung). Nur Text, keine eigene Rechnung: der
+// erstattete Anteil folgt rechner.ts, (12 - Monate Selbstnutzung) / 12.
+type VatRefund = { letMonths: number }
+const VatRefundCtx = createContext<{ byUnit: Record<string, VatRefund>; units: string[] }>({ byUnit: {}, units: [] })
+const unitNorm = (s?: string) => (s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')
+function vatRefundMap(rows: unknown): Record<string, VatRefund> {
+  const out: Record<string, VatRefund> = {}
+  if (!Array.isArray(rows)) return out
+  for (const r of rows as Array<{ unit?: string; letType?: string; selfUseMonths?: unknown; monthPlan?: string[] | null }>) {
+    if (r?.letType !== 'short' || !r.unit) continue
+    // Selbstnutzung wie rechner.ts: ein Kalender mit Aussage geht vor der reinen Monatszahl (0-11).
+    const plan = normalizeMonthPlan(r.monthPlan)
+    const c = monthPlanCounts(plan)
+    const self = plan && (c.self > 0 || c.empty > 0) ? c.self : Math.max(0, Math.min(11, Math.round(Number(r.selfUseMonths) || 0)))
+    if (self >= 12) continue
+    out[unitNorm(r.unit)] = { letMonths: 12 - self }
+  }
+  return out
+}
+function VatRefundRow({ unit }: { unit?: string }) {
+  const { t } = useTranslation()
+  const r = useContext(VatRefundCtx).byUnit[unitNorm(unit)]
+  if (!r) return null
+  return (
+    <div className="flex items-baseline justify-between gap-4 pt-1.5 mt-1.5 border-t border-white/15">
+      <span className="text-gray-400 text-[13px]">{t('deck.vatRefundLabel', 'Bei Kurzzeitvermietung')}</span>
+      <span className="font-heading text-base text-right" style={{ color: GOLD }}>
+        {r.letMonths >= 12
+          ? t('deck.vatRefundFull', 'MwSt. wird erstattet')
+          : t('deck.vatRefundPartial', 'MwSt. anteilig erstattet ({{n}} von 12 Monaten vermietet)', { n: r.letMonths })}
+      </span>
+    </div>
+  )
+}
+
 function UnitBlock(b: Extract<DeckBlock, { type: 'unit' }>) {
   return (
     <section className="px-5 md:px-20 py-16 grid grid-cols-1 md:grid-cols-2 gap-10 items-center" style={{ background: CREAM }}>
@@ -103,12 +158,14 @@ function UnitBlock(b: Extract<DeckBlock, { type: 'unit' }>) {
                 <span className={`font-heading ${l.strong ? 'text-white text-2xl font-bold' : 'text-gray-200 text-base'} whitespace-nowrap`} style={l.strong ? undefined : { color: '#e5e0d5' }}>{l.value}</span>
               </div>
             ))}
+            <VatRefundRow unit={b.number} />
           </div>
         ) : (b.priceMain || b.priceSub) && (
           <div className="mt-6 rounded-xl px-5 py-4" style={{ background: DARK }}>
             {b.priceSub && <p className="text-[11px] font-semibold uppercase tracking-[0.15em]" style={{ color: GOLD }}>{b.priceSub.split('·')[0]}</p>}
             <p className="font-heading font-bold text-white text-4xl mt-1">{b.priceMain}</p>
             {b.priceSub && b.priceSub.includes('·') && <p className="text-xs text-gray-400 mt-1">{b.priceSub.split('·').slice(1).join('·').trim()}</p>}
+            <VatRefundRow unit={b.number} />
           </div>
         )}
         {b.note && <p className="mt-4 text-[13px] leading-relaxed text-gray-600" dangerouslySetInnerHTML={{ __html: b.note }} />}
@@ -374,7 +431,7 @@ function MasterplanBlock(b: Extract<DeckBlock, { type: 'masterplan' }>) {
       <Accent /><Kicker>{b.kicker}</Kicker>
       {b.headline && <h2 className="font-heading font-bold text-4xl md:text-5xl mt-3 leading-tight" style={{ color: INK }}>{b.headline}</h2>}
       {b.intro && <p className="text-[15px] leading-relaxed text-gray-700 mt-4 max-w-3xl">{b.intro}</p>}
-      <Img src={b.image} className="w-full h-auto max-h-[720px] object-contain bg-white rounded-xl border border-gray-200 p-2 md:p-4 mt-8" />
+      <Img src={b.image} w={2400} className="w-full h-auto max-h-[720px] object-contain bg-white rounded-xl border border-gray-200 p-2 md:p-4 mt-8" />
       {b.caption && <p className="text-[12px] text-gray-500 mt-3 max-w-3xl">{b.caption}</p>}
       {legend.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 mt-8">
@@ -440,7 +497,7 @@ function AmenityBlock(b: Extract<DeckBlock, { type: 'amenity' }>) {
               </div>
               {it.plan && (
                 <div>
-                  <Img src={it.plan} className="w-full h-auto max-h-[420px] object-contain bg-white rounded-xl border border-gray-200 p-3" />
+                  <Img src={it.plan} w={2400} className="w-full h-auto max-h-[420px] object-contain bg-white rounded-xl border border-gray-200 p-3" />
                   {it.planLabel && <p className="text-[12px] text-gray-500 mt-2">{it.planLabel}</p>}
                 </div>
               )}
@@ -550,7 +607,7 @@ function FloorplanBlock(b: Extract<DeckBlock, { type: 'floorplan' }>) {
         ? <FloorplanSchematic rooms={b.rooms} note={b.planNote} />
         : (
           <>
-            <Img src={b.image} className="w-full h-auto max-h-[660px] object-contain bg-white rounded-xl border border-gray-200 p-3 md:p-5" />
+            <Img src={b.image} w={2400} className="w-full h-auto max-h-[660px] object-contain bg-white rounded-xl border border-gray-200 p-3 md:p-5" />
             {/* Flächen-/Maß-Note (hp-floorplan): echte m² als Text statt KI-gemalter
                 Maßketten — der image-Zweig ließ planNote bisher stumm unter den Tisch fallen. */}
             {b.planNote && <p className="text-[12px] text-gray-500 mt-3 max-w-3xl">{b.planNote}</p>}
@@ -612,6 +669,14 @@ function PaymentPhaseCard({ phase, dark }: { phase?: import('../lib/deckTypes').
 
 function PaymentBlock(b: Extract<DeckBlock, { type: 'payment' }>) {
   const { t } = useTranslation()
+  // Kurzzeit-Wohnungen dieses Decks laut Berechnung (siehe VatRefundCtx)
+  const { byUnit, units } = useContext(VatRefundCtx)
+  const kurz = units.filter(u => byUnit[unitNorm(u)])
+  const anteilig = kurz.some(u => byUnit[unitNorm(u)].letMonths < 12)
+  const refundNote = !kurz.length ? null
+    : anteilig ? t('deck.vatRefundNotePartial', 'Bei Kurzzeitvermietung wird die MwSt. anteilig erstattet ({{units}}).', { units: kurz.join(', ') })
+    : kurz.length === units.length ? t('deck.vatRefundNote', 'Bei Kurzzeitvermietung wird die MwSt. erstattet.')
+    : t('deck.vatRefundNoteUnits', 'Bei Kurzzeitvermietung wird die MwSt. erstattet ({{units}}).', { units: kurz.join(', ') })
   return (
     <section className="px-5 md:px-20 py-16" style={{ background: CREAM }}>
       <Accent /><Kicker>{b.kicker}</Kicker>
@@ -628,8 +693,10 @@ function PaymentBlock(b: Extract<DeckBlock, { type: 'payment' }>) {
           <div className="flex items-center justify-between text-sm text-gray-600"><span>{t('deck.netPrice', 'Nettopreis')}</span><span className="font-semibold text-gray-900">{b.priceSummary.net}</span></div>
           <div className="flex items-center justify-between text-sm text-gray-600 mt-1.5"><span>{t('deck.plusVat', 'zzgl. MwSt. ({{rate}})', { rate: b.priceSummary.vatRate ?? '19 %' })}</span><span className="font-semibold text-gray-900">{b.priceSummary.vat}</span></div>
           <div className="flex items-center justify-between mt-2.5 pt-2.5 border-t border-gray-200"><span className="font-heading font-bold" style={{ color: INK }}>{t('deck.grossPriceTotal', 'Bruttopreis gesamt')}</span><span className="font-heading font-bold text-2xl" style={{ color: INK }}>{b.priceSummary.gross}</span></div>
+          {refundNote && <p className="text-[13px] font-semibold mt-2.5 pt-2.5 border-t border-gray-200" style={{ color: GOLD }}>{refundNote}</p>}
         </div>
       )}
+      {!b.priceSummary && refundNote && <p className="mt-6 text-[13px] font-semibold" style={{ color: GOLD }}>{refundNote}</p>}
       {b.note && <div className="mt-6 rounded-xl px-5 py-3 text-[12px] text-gray-700 border-l-2" style={{ background: '#fff', borderColor: GOLD }} dangerouslySetInnerHTML={{ __html: b.note }} />}
     </section>
   )
@@ -655,7 +722,7 @@ function CtaBlock(b: Extract<DeckBlock, { type: 'cta' }>) {
       )}
       {/* Kontakt + Foto */}
       <div className="mt-12 grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-6 items-center rounded-2xl px-6 py-6" style={{ background: 'rgba(194,161,94,0.1)' }}>
-        <img src={DECK_PHOTO} alt={DECK_CONTACT.name} className="h-28 w-28 md:h-32 md:w-32 object-cover rounded-2xl shadow-lg shrink-0" onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+        <img src={sizedImg(DECK_PHOTO, 400)} alt={DECK_CONTACT.name} className="h-28 w-28 md:h-32 md:w-32 object-cover rounded-2xl shadow-lg shrink-0" onError={e => { const el = e.currentTarget as HTMLImageElement; if (el.src !== DECK_PHOTO) el.src = DECK_PHOTO; else el.style.display = 'none' }} />
         <div>
           <p className="font-heading font-bold text-white text-2xl">{DECK_CONTACT.name}</p>
           <p className="text-[11px] font-semibold uppercase tracking-[0.15em] mt-0.5" style={{ color: GOLD }}>{DECK_CONTACT.company}</p>
@@ -816,7 +883,7 @@ function VideoBlock(b: Extract<DeckBlock, { type: 'video' }>) {
               const v = e.currentTarget
               if (v.videoWidth && v.videoHeight) setEchtAspekt(v.videoWidth / v.videoHeight)
             }}
-            poster={b.poster}
+            poster={sizedImg(b.poster)}
             controls
             playsInline
             preload="metadata"
@@ -1133,6 +1200,7 @@ export default function Deck() {
   const [info, setInfo] = useState(false)
   const [internal, setInternal] = useState(false)
   const [person, setPerson] = useState<DeckPerson | null>(null)
+  const [vatRefund, setVatRefund] = useState<Record<string, VatRefund>>({})
   const [{ ref, campaign }] = useState(readRef)
   const isPrint = typeof window !== 'undefined' && window.location.pathname.endsWith('/print')
 
@@ -1174,6 +1242,13 @@ export default function Deck() {
       if (lang === 'en' && i18n.language !== 'en') await i18n.changeLanguage('en')
     } catch { /* im Zweifel in der eingestellten Sprache anzeigen */ }
   })() }, [token, i18n])
+
+  // Vermietungsart je Wohnung aus der Berechnung des Kunden (MwSt.-Erstattung bei Kurzzeit).
+  useEffect(() => {
+    if (!token) return
+    supabase.rpc('get_deck_let_types', { p_token: token })
+      .then(({ data }) => setVatRefund(vatRefundMap(data)), () => { /* ohne Hinweis geht alles weiter */ })
+  }, [token])
 
   useEffect(() => {
     let cancelled = false
@@ -1226,6 +1301,7 @@ export default function Deck() {
   }
 
   const unitNr = (content.blocks.find(b => b.type === 'unit') as Extract<DeckBlock, { type: 'unit' }> | undefined)?.number?.trim() || null
+  const deckUnits = content.blocks.flatMap(b => b.type === 'unit' && b.number?.trim() ? [b.number.trim()] : [])
   const terminUrl = person?.booking_url ?? '/termin?src=deck'
   const waUrl = `https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(unitNr
     ? t('deck.waTextUnit', 'Hallo Sven, ich habe mir die Wohnung {{nr}} angesehen und hätte eine Frage.', { nr: unitNr })
@@ -1237,6 +1313,7 @@ export default function Deck() {
   const showInline = ctaAfter >= 0 && content.blocks[ctaAfter + 1]?.type !== 'cta'
 
   return (
+    <VatRefundCtx.Provider value={{ byUnit: vatRefund, units: deckUnits }}>
     <div className="font-body" style={{ background: CREAM, color: INK }}>
       {isPrint && (
         <div className="print:hidden sticky top-0 z-50 flex justify-center p-3" style={{ background: DARK }}>
@@ -1267,5 +1344,6 @@ export default function Deck() {
       )}
       {book && <BookMode blocks={content.blocks} onClose={() => setBook(false)} />}
     </div>
+    </VatRefundCtx.Provider>
   )
 }
