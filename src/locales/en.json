@@ -9769,6 +9769,7 @@
     "loading": "Loading…",
     "genericNotFound": "Not found.",
     "titleCompare": "Property Comparison",
+    "detailTitle": "Detailed calculation {{label}}",
     "titleSingle": "Yield & Cashflow – Overview",
     "customerLabel": "Customer",
     "projectLabel": "Project",

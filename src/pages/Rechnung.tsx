@@ -140,6 +140,15 @@ export default function Rechnung() {
             {withCalc && <CompareTable rows={rows} />}
             {withCalc && <Bars rows={rows} isMobile={isMobile} />}
             {withCalc && <CashflowTable rows={rows} />}
+            {/* Detailrechnung JEDER Wohnung unter dem Vergleich (Sven 12.10.26: „Das muss
+                IMMER mit rein") - dieselbe 8-Abschnitte-Auswertung wie bei einem Einzelobjekt. */}
+            {withCalc && rows.filter(r => r.res && r.item.params).map((r, i) => (
+              <div key={i} style={{ marginTop: isMobile ? 36 : 48 }}>
+                <div style={{ height: 3, background: `linear-gradient(90deg,${r.color},#f0e8d8)`, borderRadius: 2, marginBottom: 6 }} />
+                <H2Section>{t('rechnung.detailTitle', 'Detailrechnung {{label}}', { label: r.item.label || r.item.unit || r.item.project || String(i + 1) })}</H2Section>
+                <Single row={r} today={today} isMobile={isMobile} />
+              </div>
+            ))}
           </>
         )}
 

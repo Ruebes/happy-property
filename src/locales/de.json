@@ -9582,6 +9582,7 @@
     "loading": "Lädt…",
     "genericNotFound": "Nicht gefunden.",
     "titleCompare": "Immobilienvergleich",
+    "detailTitle": "Detailrechnung {{label}}",
     "titleSingle": "Rendite & Cashflow – Übersicht",
     "customerLabel": "Kunde",
     "projectLabel": "Projekt",
