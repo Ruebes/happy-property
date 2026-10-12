@@ -311,16 +311,39 @@ async function deckOutboxSweep(supabase: ReturnType<typeof createClient>) {
       .select('token, title, content').eq('lead_id', leadId)
       .gte('created_at', new Date(new Date(firstStart).getTime() - 30 * 60_000).toISOString())
       .lte('created_at', firstStart)
+      .order('created_at', { ascending: false })
     let compareLink: string | undefined
-    for (const c of ((calcs ?? []) as Array<{ token: string; title: string | null; content: { items?: Array<{ project?: string }> } | null }>)) {
+    // Neueste zuerst: je Projekt+Wohnung und beim Vergleich zaehlt nur die juengste
+    // (ein abgebrochener Vorlauf derselben halben Stunde darf nicht doppelt rein).
+    const gesehen = new Set<string>()
+    // Seit 12.10.26 je Wohnung eine Einzelberechnung (+ Vergleich ab 2 Wohnungen);
+    // aeltere Sammelberechnungen je Projekt (mehrere items) laufen weiter mit.
+    for (const c of ((calcs ?? []) as Array<{ token: string; title: string | null; content: { items?: Array<{ project?: string; unit?: string }> } | null }>)) {
       const link = `${PORTAL_ORIGIN}/rechnung/${c.token}`
-      if (c.title === 'Immobilienvergleich') { compareLink = link; continue }
-      const proj = c.content?.items?.[0]?.project
-      const it = items.find(x => x.project === proj && !x.calc_link)
-      if (it) it.calc_link = link
+      if (c.title === 'Immobilienvergleich') { compareLink ??= link; continue }
+      const its = c.content?.items ?? []
+      const proj = its[0]?.project
+      const schluessel = `${proj}|${its.length === 1 ? its[0]?.unit : '*'}`
+      if (gesehen.has(schluessel)) continue
+      gesehen.add(schluessel)
+      const it = items.find(x => x.project === proj)
+      if (!it) continue
+      const liste = (it.calc_links ??= []) as Array<{ label: string; url: string }>
+      liste.push({ label: its.length === 1 ? String(its[0]?.unit ?? '') : 'alle Wohnungen', url: link })
+    }
+    // Zurueck in Anlage-Reihenfolge (= Auswahl im Wizard); ein Link auch als calc_link.
+    for (const it of items) {
+      const liste = it.calc_links as Array<{ label: string; url: string }> | undefined
+      if (!liste?.length) continue
+      liste.reverse()
+      it.calc_link = liste.length === 1 ? liste[0].url : undefined
     }
     const tokens = mine.map(j => j.deck_token)
-    const links = items.map(it => `<li><a href="${it.link}">${String(it.label).replace(/</g, '&lt;')}</a>${it.calc_link ? ` · <a href="${it.calc_link}">Berechnung</a>` : ''}</li>`).join('')
+    const links = items.map(it => {
+      const cl = ((it.calc_links ?? []) as Array<{ label: string; url: string }>)
+        .map(c => ` · <a href="${c.url}">Berechnung${c.label ? ` ${String(c.label).replace(/</g, '&lt;')}` : ''}</a>`).join('')
+      return `<li><a href="${it.link}">${String(it.label).replace(/</g, '&lt;')}</a>${cl}</li>`
+    }).join('')
     const { data: ob, error: obErr } = await supabase.from('deck_outbox').insert({
       lead_id: l.id, recipient_email: l.email, status: 'draft', deck_tokens: tokens,
       subject: items.length > 1 ? 'Deine Wohnungs-Vorschläge von Happy Property' : `Dein Vorschlag: ${items[0].label}`,

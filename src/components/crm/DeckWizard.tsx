@@ -31,7 +31,8 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const [projects, setProjects] = useState<ProjectRow[]>([])
   const [developer, setDeveloper] = useState('')   // Filter: Developer-Name
   const [projectId, setProjectId] = useState('')
-  const [withCalc, setWithCalc] = useState(false)
+  // Standard: mit Berechnung (Sven 12.10.26: Decks, Einzelberechnungen und Vergleich IMMER)
+  const [withCalc, setWithCalc] = useState(true)
   const [calcOnly, setCalcOnly] = useState(false)   // NUR Berechnung, kein Deck (Sven 7.8.26)
   const [calcParams, setCalcParams] = useState<CalcParams>({ ...DEFAULT_PARAMS, month: 6, year: new Date().getFullYear() })
   // Pro Wohnung eigene Rendite + Wertsteigerung (unterscheiden sich je Projekt/Lage).
@@ -381,14 +382,15 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
         const madeLinks: string[] = []
         const madeCalcs: Array<{ token: string; title: string }> = []
         const allItems: CalcItem[] = []
-        for (let i = 0; i < groups.length; i++) {
-          setProgress(t('crm.wizard.calcCreating', 'Erstelle Berechnung') + ` ${i + 1}/${groups.length}…`)
-          const items = groups[i].map(buildCalcItem)
-          allItems.push(...items)
-          const title = items.length > 1
-            ? `Berechnung ${groups[i][0].projectName} (${items.length} ${t('crm.wizard.apartments', 'Wohnungen')})`
-            : `Rechnung ${items[0].label}`
-          const content = { with_calc: true, recipient_name: recipientName, items }
+        // Standard (Sven 12.10.26): JEDE Wohnung bekommt ihre eigene Berechnung,
+        // ab zwei Wohnungen kommt der Vergleich dazu - auch innerhalb EINES Projekts.
+        const alle = groups.flat()
+        for (let i = 0; i < alle.length; i++) {
+          setProgress(t('crm.wizard.calcCreating', 'Erstelle Berechnung') + ` ${i + 1}/${alle.length}…`)
+          const item = buildCalcItem(alle[i])
+          allItems.push(item)
+          const title = `Rechnung ${item.label}`
+          const content = { with_calc: true, recipient_name: recipientName, items: [item] }
           const { data: calcRow, error: cErr } = await supabase.from('property_calculations').insert({
             lead_id: lead.id, recipient_name: recipientName, title, with_calc: true, content,
           }).select('token').single()
@@ -396,12 +398,13 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
           const tok = (calcRow as { token?: string } | null)?.token
           if (tok) { madeLinks.push(`${window.location.origin}/rechnung/${tok}`); madeCalcs.push({ token: tok, title }) }
         }
-        if (groups.length >= 2) {
+        if (allItems.length >= 2) {
           setProgress(t('crm.wizard.compareCreating', 'Erstelle Immobilienvergleich…'))
           const content = { with_calc: true, recipient_name: recipientName, items: allItems }
-          const { data: cmpRow2 } = await supabase.from('property_calculations').insert({
+          const { data: cmpRow2, error: cmpErr2 } = await supabase.from('property_calculations').insert({
             lead_id: lead.id, recipient_name: recipientName, title: 'Immobilienvergleich', with_calc: true, content,
           }).select('token').single()
+          if (cmpErr2) throw cmpErr2
           const cmpTok = (cmpRow2 as { token?: string } | null)?.token
           if (cmpTok) { madeLinks.push(`${window.location.origin}/rechnung/${cmpTok}`); madeCalcs.push({ token: cmpTok, title: 'Immobilienvergleich' }) }
         }
@@ -423,34 +426,37 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       // Wizard-Parameter nicht verloren, wenn der Tab waehrend der Deck-Erstellung
       // neu geladen wird (Thomas Hellige 23.9.: Deck da, Berechnung nie entstanden).
       // Das Postausgang-Netz in process-scheduled-messages haengt sie dann an.
-      const calcLinkByProject: Record<string, string> = {}
+      // Standard (Sven 12.10.26: „Die Decks, die Einzelberechnungen und der Vergleich"):
+      // JEDE Wohnung bekommt ihre eigene Berechnung, ab zwei Wohnungen kommt der
+      // Vergleich dazu - auch wenn alle Wohnungen in EINEM Projekt liegen. Vorher gab
+      // es je Projekt nur eine Sammelberechnung, die Einzelrechnungen fehlten in Mail
+      // und WhatsApp.
+      const calcLinksByProject: Record<string, Array<{ label: string; url: string }>> = {}
       let compareLink: string | undefined
       if (withCalc) {
         const recipientName = `${lead.first_name} ${lead.last_name}`.trim()
         const allItems: CalcItem[] = []
-        // EINE Berechnung PRO PROJEKT — alle Wohnungen des Projekts als Items.
-        for (let i = 0; i < groups.length; i++) {
-          setProgress(t('crm.wizard.calcCreating', 'Erstelle Berechnung') + ` ${i + 1}/${groups.length}…`)
-          const items = groups[i].map(buildCalcItem)
-          allItems.push(...items)
-          const title = items.length > 1
-            ? `Berechnung ${groups[i][0].projectName} (${items.length} ${t('crm.wizard.apartments', 'Wohnungen')})`
-            : `Rechnung ${items[0].label}`
-          const content = { with_calc: true, recipient_name: recipientName, items }
+        const alle = groups.flat()
+        for (let i = 0; i < alle.length; i++) {
+          setProgress(t('crm.wizard.calcCreating', 'Erstelle Berechnung') + ` ${i + 1}/${alle.length}…`)
+          const item = buildCalcItem(alle[i])
+          allItems.push(item)
+          const content = { with_calc: true, recipient_name: recipientName, items: [item] }
           const { data: calcRow, error: cErr } = await supabase.from('property_calculations').insert({
-            lead_id: lead.id, recipient_name: recipientName, title, with_calc: true, content,
+            lead_id: lead.id, recipient_name: recipientName, title: `Rechnung ${item.label}`, with_calc: true, content,
           }).select('token').single()
           if (cErr) throw cErr
           const tok = (calcRow as { token?: string } | null)?.token
-          if (tok) calcLinkByProject[groups[i][0].projectId] = `${window.location.origin}/rechnung/${tok}`
+          if (tok) (calcLinksByProject[alle[i].projectId] ??= []).push({ label: alle[i].unit.unit_number, url: `${window.location.origin}/rechnung/${tok}` })
         }
-        // Projektübergreifender Gesamt-Vergleich NUR bei ≥2 PROJEKTEN.
-        if (groups.length >= 2) {
+        // Vergleich ab ZWEI WOHNUNGEN (auch im selben Projekt).
+        if (allItems.length >= 2) {
           setProgress(t('crm.wizard.compareCreating', 'Erstelle Immobilienvergleich…'))
           const content = { with_calc: true, recipient_name: recipientName, items: allItems }
-          const { data: cmpRow } = await supabase.from('property_calculations').insert({
+          const { data: cmpRow, error: cmpErr } = await supabase.from('property_calculations').insert({
             lead_id: lead.id, recipient_name: recipientName, title: 'Immobilienvergleich', with_calc: true, content,
           }).select('token').single()
+          if (cmpErr) throw cmpErr
           const tok = (cmpRow as { token?: string } | null)?.token
           if (tok) compareLink = `${window.location.origin}/rechnung/${tok}`
         }
@@ -484,7 +490,10 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
         const f = l.items[0]
         return {
           label: l.label, link: `${origin}/deck/${l.token}`,
-          calc_link: calcLinkByProject[f.projectId],   // Rendite-Berechnung des Projekts (alle Wohnungen)
+          // Einzelberechnung je Wohnung dieses Decks; calc_link bleibt fuer eine Wohnung gesetzt
+          // (aeltere compose-deck-mail kennt nur das eine Feld).
+          calc_links: calcLinksByProject[f.projectId] ?? [],
+          calc_link: (calcLinksByProject[f.projectId] ?? []).length === 1 ? calcLinksByProject[f.projectId][0].url : undefined,
           image: f.assets?.renders?.[0] ?? f.assets?.gallery?.[0]?.url,   // Projektbild für die Mail-Kachel
           project: f.projectName, unit: l.items.map(it => it.unit.unit_number).join(', '),
           bedrooms: f.unit.bedrooms, size_sqm: f.unit.size_sqm, terrace_sqm: f.unit.terrace_sqm,
@@ -511,7 +520,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
         + (m.image ? `<img src="${esc(m.image)}" width="100%" style="width:100%;max-height:200px;object-fit:cover;border-radius:10px;margin:0 0 14px;display:block" />` : '')
         + `<div style="font-weight:700;font-size:18px;color:#1a1a1a;margin:0 0 12px">${esc(m.label)}</div>`
         + mbtn(m.link, 'Dein Sales Deck ansehen →', '#ff795d', '#ffffff')
-        + (m.calc_link ? mbtn(m.calc_link, '📊 Rendite-Berechnung →', '#2f6b4f', '#ffffff') : '')
+        + m.calc_links.map(c => mbtn(c.url, m.calc_links.length > 1 ? `📊 Berechnung ${c.label} →` : '📊 Rendite-Berechnung →', '#2f6b4f', '#ffffff')).join('')
         + `</div>`).join('')
       const fbCompare = compareLink ? `<div style="margin:0 0 18px;padding:16px 18px;border-radius:12px;background:#f0f7f4;border:1px solid #d4e9df"><div style="font-weight:700;margin:0 0 10px">📊 ${esc(compareLabel)}</div>${mbtn(compareLink, 'Immobilienvergleich ansehen →', '#2f6b4f', '#ffffff')}</div>` : ''
       const fbCta = `<div style="margin:24px 0 8px;padding:22px;border-radius:14px;background:#1a1a1a"><div style="font-weight:700;font-size:17px;color:#ffffff;margin:0 0 12px">Wie geht es weiter?</div><div style="color:#d4d4d4;line-height:1.6;margin:0 0 14px">Lass uns die Optionen gemeinsam durchgehen — buch dir einfach einen neuen Termin oder gib mir kurz Feedback.</div>${mbtn(TERMIN_URL, '📅 Neuen Termin buchen', '#ff795d', '#ffffff')}${mbtn('mailto:sven@happy-property.com', '✉️ Per E-Mail', 'transparent', '#ffffff', '1px solid #555')}</div>`

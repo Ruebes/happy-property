@@ -286,7 +286,9 @@ export default function Postausgang() {
     const deckLines = deckToks.map((tok, i) =>
       `🏠 ${t('crm.outbox.waDeckLabel', 'Sales Deck')}${deckToks.length > 1 ? ` ${i + 1}` : ''}: ${base}/deck/${tok}`)
     // Gleiche Berechnungs-Auswahl wie in der Zeile angezeigt
-    const calcLines = calcsForRow(row)
+    // In der Reihenfolge der Mail (Einzelrechnungen, dann Vergleich), nicht nach Anlagedatum.
+    const pos = (tok: string) => { const i = (row.body ?? '').indexOf(`/rechnung/${tok}`); return i < 0 ? Number.MAX_SAFE_INTEGER : i }
+    const calcLines = [...calcsForRow(row)].sort((a, b) => pos(a.token) - pos(b.token))
       .map(c => `📊 ${c.title?.trim() || t('crm.outbox.waCalcLabel', 'Deine Berechnung')}: ${base}/rechnung/${c.token}`)
     // Fahrplan: nur die in DIESEM Eintrag verlinkten, kein Fallback auf alle -
     // sonst schickt ein reiner Deck-Entwurf ungefragt den Fahrplan mit.

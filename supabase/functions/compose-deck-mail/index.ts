@@ -75,6 +75,8 @@ HARTE REGELN (Wahrheit vor Verkauf — das ist NICHT verhandelbar):
 
 interface MailItem {
   label?: string; link?: string; calc_link?: string; image?: string; project?: string; unit?: string
+  /** Einzelberechnung je Wohnung dieses Decks (Sven 12.10.26). Hat Vorrang vor calc_link. */
+  calc_links?: Array<{ label?: string; url?: string }>
   bedrooms?: number | null; size_sqm?: number | null; terrace_sqm?: number | null
   floor?: number | null; price?: string; facts?: string
   available_count?: number | null; total_count?: number | null
@@ -109,6 +111,9 @@ function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare
     const label = it.label || [it.project, it.unit].filter(Boolean).join(' · ') || `Objekt ${i + 1}`
     const dl = lines[i] || {}
     const btnLabel = `${it.project || 'Objekt'} Deck ansehen →`
+    // Einzelberechnungen dieses Decks: neue Liste, sonst der alte Einzel-Link.
+    const calcs = (it.calc_links ?? []).filter(c => c?.url).map(c => ({ url: String(c.url), label: String(c.label ?? '') }))
+    if (!calcs.length && it.calc_link) calcs.push({ url: it.calc_link, label: '' })
     // Render-Bilder sind riesig (bis 6 MB / 3240px / hochkant) → würden in Apple Mail
     // 1000-2350px hoch und blähen die Mail auf. Server-seitig auf feste 560×300
     // (cover-crop) zuschneiden + EXPLIZITE width/height → kompakt + Client kennt die Maße.
@@ -131,12 +136,18 @@ function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare
             <td bgcolor="${C.navy}" style="border-radius:2px;">
               <a href="${esc(it.link || '#')}" target="_blank" style="display:inline-block;padding:13px 26px;font-family:${SANS};font-size:12px;letter-spacing:0.15em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;white-space:nowrap;">${esc(btnLabel)}</a>
             </td>
-            ${it.calc_link ? `<td style="width:10px;font-size:1px;line-height:1px;">&nbsp;</td>
+            ${calcs.length === 1 ? `<td style="width:10px;font-size:1px;line-height:1px;">&nbsp;</td>
             <td style="border:1px solid ${C.navy};border-radius:2px;">
-              <a href="${esc(it.calc_link)}" target="_blank" style="display:inline-block;padding:12px 22px;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:${C.navy};text-decoration:none;white-space:nowrap;">Berechnung ansehen</a>
+              <a href="${esc(calcs[0].url)}" target="_blank" style="display:inline-block;padding:12px 22px;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:${C.navy};text-decoration:none;white-space:nowrap;">Berechnung ansehen</a>
             </td>` : ''}
           </tr></table>
         </td></tr>
+        ${calcs.length > 1 ? `<tr><td style="padding:12px 40px 0 40px;">
+          ${calcs.map(c => `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="display:inline-table;margin:0 8px 8px 0;"><tr>
+            <td style="border:1px solid ${C.navy};border-radius:2px;">
+              <a href="${esc(c.url)}" target="_blank" style="display:inline-block;padding:11px 18px;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:${C.navy};text-decoration:none;white-space:nowrap;">Berechnung ${esc(c.label)}</a>
+            </td></tr></table>`).join('')}
+        </td></tr>` : ''}
       </table>
     </td></tr>
     <tr><td style="padding:40px 40px 0 40px;"><div style="height:1px;background-color:${C.line};"></div></td></tr>`
@@ -173,6 +184,8 @@ function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare
       <div style="font-family:${SANS};font-size:10px;color:#6b6b74;margin-top:22px;">Sveru Ltd. &nbsp;·&nbsp; Pallados 1, 8046 Paphos, Zypern</div>
     </td></tr></table>
   </td></tr>`
+  // Liegen Berechnungen bei, verspricht der Cashflow-Kasten nichts mehr fuer spaeter.
+  const mitRechnung = !!compare?.link || items.some(it => !!it.calc_link || (it.calc_links ?? []).some(c => c?.url))
   // Gesamt-Vergleich (alle Objekte gegenübergestellt) — eigener Block unter den Karten.
   const compareBlock = compare?.link ? `
   <tr><td style="padding:32px 40px 0 40px;">
@@ -203,7 +216,9 @@ function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare
   <tr><td style="padding:32px 40px 0 40px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#ffffff;border-left:3px solid ${C.coral};"><tr><td style="padding:22px 26px;">
       <div style="font-family:${SANS};font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:${C.coral};font-weight:700;white-space:nowrap;">Cashflow &amp; IRR</div>
-      <p style="margin:8px 0 0 0;font-family:${SANS};font-size:14px;line-height:1.6;color:${C.ink};">Sobald du eine Vorentscheidung hast, rechne ich dir <b>Cashflow, IRR und Finanzierungsbedarf</b> für dein Wunsch-Objekt konkret durch. Du bekommst saubere Zahlen — keine Marketing-Folien.</p>
+      <p style="margin:8px 0 0 0;font-family:${SANS};font-size:14px;line-height:1.6;color:${C.ink};">${mitRechnung
+        ? 'In den Berechnungen oben findest du für jede Wohnung <b>Cashflow, IRR und Finanzierungsbedarf</b> im Detail. Gern gehen wir die Zahlen gemeinsam durch.'
+        : 'Sobald du eine Vorentscheidung hast, rechne ich dir <b>Cashflow, IRR und Finanzierungsbedarf</b> für dein Wunsch-Objekt konkret durch. Du bekommst saubere Zahlen — keine Marketing-Folien.'}</p>
     </td></tr></table>
   </td></tr>
   <tr><td style="padding:28px 40px 0 40px;font-family:${SANS};font-size:14px;line-height:1.7;color:${C.ink};">${closingHtml}</td></tr>
