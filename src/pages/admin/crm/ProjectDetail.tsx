@@ -98,9 +98,11 @@ const EMPTY_PAY = {
 // ── UnitCard ──────────────────────────────────────────────────────────────────
 
 function UnitCard({
-  unit, onClick, customer, onCustomerClick, onAssignCustomer, onContextMenu,
+  unit, parent, onClick, customer, onCustomerClick, onAssignCustomer, onContextMenu,
 }: {
   unit: CrmProjectUnit
+  /** Gesamteinheit einer Teil-Wohnung (A1 zu A1a/A1b): Status und Kunde kommen von dort. */
+  parent?: CrmProjectUnit
   onClick: () => void
   customer?: UnitLead
   onCustomerClick?: () => void
@@ -109,6 +111,8 @@ function UnitCard({
 }) {
   const { t } = useTranslation()
   const price = unitNet(unit)
+  // Teil-Wohnungen werden nie einzeln verkauft: Status zeigt die Gesamteinheit.
+  const shown = parent ?? unit
   return (
     <div
       className="bg-white rounded-2xl border border-gray-100 shadow-sm
@@ -125,7 +129,7 @@ function UnitCard({
         /* Status colour bar */
         <div
           className="h-1.5"
-          style={{ backgroundColor: unit.is_completed ? '#22c55e' : STATUS_BAR[unit.status] }}
+          style={{ backgroundColor: shown.is_completed ? '#22c55e' : STATUS_BAR[shown.status] }}
         />
       )}
 
@@ -140,8 +144,8 @@ function UnitCard({
             )}
             <span className="text-base font-bold text-gray-900 font-body">{unit.unit_number}</span>
             <div className="mt-1 flex flex-wrap gap-1">
-              <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-medium ${STATUS_PILL[unit.status]}`}>
-                {unit.is_completed ? t('crm.pd.handedOver') : t(`crm.pd.status.${unit.status}`)}
+              <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-medium ${STATUS_PILL[shown.status]}`}>
+                {shown.is_completed ? t('crm.pd.handedOver') : t(`crm.pd.status.${shown.status}`)}
               </span>
               {/* Doppelapartment: Teil-Wohnung, wird nie einzeln angeboten */}
               {unit.parent_unit_id && (
@@ -193,6 +197,12 @@ function UnitCard({
               </span>
               <span className="text-[9px] text-[#ff795d] ml-auto shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">→</span>
             </button>
+          </div>
+        ) : parent ? (
+          /* Teil-Wohnung ohne Kunden: Zuweisung nur an der Gesamteinheit */
+          <div className="mt-3 pt-2.5 border-t border-gray-100 flex items-center gap-1.5 text-[10px] text-gray-400">
+            <span>👤</span>
+            <span>{t('crm.pd.subUnitAssignVia', 'Zuweisung über {{unit}}', { unit: parent.unit_number })}</span>
           </div>
         ) : (
           <div className="mt-3 pt-2.5 border-t border-gray-100">
@@ -1179,17 +1189,23 @@ export default function ProjectDetail() {
                 </h2>
               )}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {bUnits.map(u => (
+                {bUnits.map(u => {
+                  // Teil-Wohnung (A1a/A1b): Kunde der Gesamteinheit (A1) anzeigen
+                  const parent = u.parent_unit_id ? units.find(p => p.id === u.parent_unit_id) : undefined
+                  const customer = unitLeadMap[u.id] ?? (parent ? unitLeadMap[parent.id] : undefined) ?? undefined
+                  return (
                   <UnitCard
                     key={u.id}
                     unit={u}
+                    parent={parent}
                     onClick={() => openEdit(u)}
-                    customer={unitLeadMap[u.id] ?? undefined}
-                    onCustomerClick={() => navigate(`/admin/crm/leads/${unitLeadMap[u.id]?.id}`)}
+                    customer={customer}
+                    onCustomerClick={() => navigate(`/admin/crm/leads/${customer?.id}`)}
                     onAssignCustomer={() => { setAssigningUnit(u); setShowAssignModal(true) }}
                     onContextMenu={(e) => { e.preventDefault(); setUnitCtx({ x: e.clientX, y: e.clientY, unit: u }) }}
                   />
-                ))}
+                  )
+                })}
               </div>
             </div>
           ))}

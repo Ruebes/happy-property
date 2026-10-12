@@ -3171,8 +3171,12 @@
       "handedOver": "✅ Handed over",
       "status": {
         "under_construction": "Under construction",
-        "active": "Active"
+        "active": "Active",
+        "proposal": "Offered",
+        "reserved": "Reserved",
+        "sold": "Sold"
       },
+      "subUnitAssignVia": "Assigned via {{unit}}",
       "rentalShortTitle": "Short-term rental",
       "rentalLongTitle": "Long-term rental",
       "terrace": "Terrace",

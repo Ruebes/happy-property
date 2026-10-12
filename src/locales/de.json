@@ -3171,8 +3171,12 @@
       "handedOver": "✅ Übergeben",
       "status": {
         "under_construction": "Im Bau",
-        "active": "Aktiv"
+        "active": "Aktiv",
+        "proposal": "Angebot",
+        "reserved": "Reserviert",
+        "sold": "Verkauft"
       },
+      "subUnitAssignVia": "Zuweisung über {{unit}}",
       "rentalShortTitle": "Kurzzeitmiete",
       "rentalLongTitle": "Langzeitmiete",
       "terrace": "Terrasse",
