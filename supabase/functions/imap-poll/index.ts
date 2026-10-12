@@ -261,7 +261,7 @@ Deno.serve(async (req) => {
           // Probelauf oder keine Adresse erkannt: Anfang des Klartexts mitliefern, damit man sieht, warum.
           found.push({ uid, date: header(fetched, 'Date'), from, subject: decodeMimeWords(header(fetched, 'Subject')).slice(0, 90), bounces, ...(dry || !bounces.length ? { text: extractPlain(fetched).slice(0, 800) } : {}) })
           if (!dry) for (const b of bounces.filter(x => x.kind !== 'ignore')) {
-            if (await recordBounce(supabase, b.email, `${b.status} ${b.diag}`.trim(), 'ndr', b.kind === 'hard')) recorded++
+            if (await recordBounce(supabase, b.email, `${b.status} ${b.diag}`.trim(), 'ndr', b.kind === 'hard', header(fetched, 'Date'))) recorded++
           }
         } catch (e) { result.errors.push(e instanceof Error ? e.message : String(e)) }
       }
@@ -403,7 +403,7 @@ Deno.serve(async (req) => {
         // Newsletter geht dort nicht mehr per Mail hin (Sven 11.10.).
         if (looksLikeBounce(addr, fetched)) {
           const hits = parseBounces(fetched, isOwnAddr).filter(b => b.kind !== 'ignore')
-          for (const b of hits) if (await recordBounce(supabase, b.email, `${b.status} ${b.diag}`.trim(), 'ndr', b.kind === 'hard')) result.bounces++
+          for (const b of hits) if (await recordBounce(supabase, b.email, `${b.status} ${b.diag}`.trim(), 'ndr', b.kind === 'hard', header(fetched, 'Date'))) result.bounces++
           if (hits.length) continue
         }
         if (addr === own || (!invoiceSubject && /(^|@)(no-?reply|mailer-daemon|postmaster)\b/.test(addr))) { skip(addr === own ? 'eigene_adresse' : 'no_reply_ohne_rechnung', addr); continue }

@@ -5,10 +5,13 @@
 // (siehe _shared/emailBounce.ts) und bekommt den Newsletter nicht mehr per Mail.
 //
 // Nur Standard-Zustellberichte (RFC 3464, Final-Recipient + Status), nur 5.x.x:
-//   hard   = Adresse gibt es nicht (5.1.1, „unrouteable", „mailbox unavailable")
+//   hard   = Empfänger-Server sagt ausdrücklich „Adresse gibt es nicht" (5.1.x)
 //            -> sofort gesperrt
-//   soft   = Postfach voll, Zustellung nach Tagen aufgegeben, Grund unbekannt
-//            -> gesperrt erst ab der zweiten Meldung (email_bounces.bounce_count)
+//   soft   = alles andere Dauerhafte („mailbox unavailable", „unrouteable",
+//            Postfach voll, nach Tagen aufgegeben, Grund unbekannt)
+//            -> gesperrt erst ab der zweiten Meldung (email_bounces.bounce_count).
+//            Fall Schäck 12.10.: EIN „mailbox unavailable" am 1.10., danach kamen
+//            alle Mails an - eine Meldung allein reicht nicht.
 //   ignore = Spam/Richtlinie (5.7.x): liegt an unserem Versand, nicht an der Adresse
 
 export type Bounce = { email: string; status: string; diag: string; kind: 'hard' | 'soft' | 'ignore' }
@@ -26,9 +29,7 @@ function field(para: string, name: string): string {
 function kind(status: string, diag: string): Bounce['kind'] {
   if (!/^5\./.test(status)) return 'ignore'
   if (/^5\.7\./.test(status) || /spam|policy|blocked|blacklist|block ?list|reputation|dmarc|\bspf\b|dkim/i.test(diag)) return 'ignore'
-  if (status === '5.2.2' || /quota|storage allocation|mailbox (is )?full|multiple delivery attempts|retry time/i.test(diag)) return 'soft'
-  if (/^5\.0\.0$/.test(status) && !diag) return 'soft'   // Grund unbekannt
-  return 'hard'
+  return /^5\.1\./.test(status) ? 'hard' : 'soft'
 }
 
 // Grund zur Adresse aus dem lesbaren Teil des Rückläufers. IONOS:

@@ -18,7 +18,8 @@
 // Deployment: supabase functions deploy newsletter-campaign --no-verify-jwt
 
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
-import { bounceKey, loadBouncedKeys } from '../_shared/emailBounce.ts'
+import { bounceKey, loadBouncedKeys, loadBounceTimes } from '../_shared/emailBounce.ts'
+import { echteNummer } from '../_shared/phonePlausible.ts'
 import { htmlToWhatsapp } from '../_shared/htmlToWhatsapp.ts'
 import { gateCaller } from '../_shared/callerGate.ts'
 
@@ -589,16 +590,7 @@ Deno.serve(async (req: Request) => {
     // mehr, das kostet nur Plaetze im IONOS-Sendelimit. Mit Nummer geht der
     // Newsletter per WhatsApp, ohne Nummer faellt der Empfaenger raus.
     // stats zaehlt beides fuer die Anzeige im Wizard.
-    // WhatsApp-Ersatz nur an glaubwuerdige Nummern: Test-/Fake-Eintraege
-    // (+491234, +4915123456789, „Test Test", „John Doe") haben oft auch eine
-    // erfundene Nummer, und die gehoert womoeglich einem Fremden.
-    const echteNummer = (tel: string | null | undefined, vor: string | null, nach: string | null): boolean => {
-      const d = (tel ?? '').replace(/\D/g, '')
-      if (d.length < 10 || d.length > 14) return false
-      if (/1234567|2345678|3456789|(\d)\1{4}/.test(d)) return false
-      const name = `${vor ?? ''} ${nach ?? ''}`.trim().toLowerCase()
-      return !/^(test( test)?|john doe|max mustermann)$/.test(name)
-    }
+    // WhatsApp-Ersatz nur an glaubwuerdige Nummern (echteNummer, _shared/phonePlausible.ts).
     const combined = async (mode: string, ids: string[], excludeLeadIds: string[] = [], stats?: { per_whatsapp: number; ohne_nummer: number }) => {
       const bounced = await loadBouncedKeys(sb)
       const seenMail = new Set<string>(), seenTel = new Set<string>()
@@ -805,18 +797,18 @@ Deno.serve(async (req: Request) => {
       if (camp.content_mode !== 'html') return json({ error: 'Nur für Newsletter im HTML-Modus' }, 400)
       const dry = body.dry !== false
       const raw = String(camp.html_body ?? '')
-      const bounced = await loadBouncedKeys(sb)
+      const bounceZeit = await loadBounceTimes(sb)
       const { data: rows } = await sb.from('scheduled_messages')
-        .select('lead_id, subscriber_id, type, status').eq('campaign_id', camp.id).limit(5000)
-      type Stand = { lead_id: string | null; subscriber_id: string | null; sent: boolean; failed: boolean; wa: boolean; storniert: boolean }
+        .select('lead_id, subscriber_id, type, status, sent_at').eq('campaign_id', camp.id).limit(5000)
+      type Stand = { lead_id: string | null; subscriber_id: string | null; sent: boolean; sentAt: string; failed: boolean; wa: boolean; storniert: boolean }
       const per = new Map<string, Stand>()
-      for (const r of (rows ?? []) as Array<{ lead_id: string | null; subscriber_id: string | null; type: string; status: string }>) {
+      for (const r of (rows ?? []) as Array<{ lead_id: string | null; subscriber_id: string | null; type: string; status: string; sent_at: string | null }>) {
         const k = r.lead_id ? `l:${r.lead_id}` : r.subscriber_id ? `s:${r.subscriber_id}` : ''
         if (!k) continue
-        const st = per.get(k) ?? { lead_id: r.lead_id, subscriber_id: r.subscriber_id, sent: false, failed: false, wa: false, storniert: false }
+        const st = per.get(k) ?? { lead_id: r.lead_id, subscriber_id: r.subscriber_id, sent: false, sentAt: '', failed: false, wa: false, storniert: false }
         if (r.type !== 'email' && !['failed', 'cancelled', 'skipped'].includes(r.status)) st.wa = true
         if (r.type !== 'whatsapp') {
-          if (r.status === 'sent') st.sent = true
+          if (r.status === 'sent') { st.sent = true; st.sentAt = r.sent_at ?? '' }
           if (r.status === 'failed') st.failed = true
           if (r.status === 'cancelled' || r.status === 'skipped') st.storniert = true
         }
@@ -847,7 +839,10 @@ Deno.serve(async (req: Request) => {
       for (const [k, st] of per) {
         const p = people.get(k)
         if (!p) continue
-        const unzustellbar = bounced.has(bounceKey(p.email))
+        // Gilt nur, wenn die Meldung NACH dem Versand kam. Eine ältere Meldung heißt
+        // nicht, dass diese Mail scheiterte (Fall Schäck: Rückläufer 1.10., Mail 10.10. kam an).
+        const meldung = bounceZeit.get(bounceKey(p.email))
+        const unzustellbar = !!meldung && !!st.sentAt && Date.parse(meldung) >= Date.parse(st.sentAt)
         const nichtAngekommen = (st.failed && !st.sent) || (st.sent && unzustellbar)
         if (!nichtAngekommen || st.storniert) continue
         const name = `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim() || (p.email ?? k)

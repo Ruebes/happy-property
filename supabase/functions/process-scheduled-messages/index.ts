@@ -29,6 +29,7 @@ import { withSocialFooter } from '../_shared/socialFooter.ts'
 import { buildIcs, toB64 } from '../_shared/ics.ts'
 import { bookingUrl } from '../_shared/bookingLink.ts'
 import { isHardSmtpBounce, recordBounce } from '../_shared/emailBounce.ts'
+import { NO_WHATSAPP_RE, markWaUnreachable, clearWaUnreachable } from '../_shared/phonePlausible.ts'
 
 // Wiederholung bei TimelinesAI-Kontingent (403 quota_exceeded): 8 x 10 Min = 80 Min,
 // länger als das beobachtete Sperrfenster (~50 Min am 11.9.2026). 10 Min bleibt
@@ -877,10 +878,11 @@ Deno.serve(async (req: Request) => {
               errors.push(`email: ${errMsg}`)
               success = false
               mailLimitHit = /\b450\b|send limit exceeded/i.test(errMsg)
-              // Adresse gibt es nicht (z. B. 550 invalid DNS MX) → merken, der
-              // Newsletter geht dort künftig per WhatsApp statt per Mail.
+              // Adresse gibt es nicht (z. B. 550 invalid DNS MX) → merken. Gesperrt
+              // wird erst ab der zweiten Meldung (DNS-Fehler können vorübergehend
+              // sein, Fall Brendel), dann geht der Newsletter per WhatsApp.
               if (isHardSmtpBounce(errMsg)) {
-                try { await recordBounce(supabase, rcpt.email, errMsg, 'smtp') } catch (be) { console.warn('[process-scheduled] Bounce merken:', be) }
+                try { await recordBounce(supabase, rcpt.email, errMsg, 'smtp', false) } catch (be) { console.warn('[process-scheduled] Bounce merken:', be) }
               }
             }
           } else {
@@ -915,6 +917,7 @@ Deno.serve(async (req: Request) => {
                   contactCard: msg.contact_card ?? null,
                 })
                 waSent = true
+                try { await clearWaUnreachable(supabase, phone) } catch { /* egal */ }
                 await logActivity(supabase, {
                   lead_id: msg.lead_id,
                   deal_id: msg.deal_id,
@@ -927,6 +930,8 @@ Deno.serve(async (req: Request) => {
                 console.error(`[process-scheduled] WhatsApp Fehler (${msg.id}):`, errMsg)
                 errors.push(`whatsapp: ${errMsg}`)
                 success = false
+                // „Diese Nummer hat kein WhatsApp" → merken (Kontakt-Bereinigung).
+                if (NO_WHATSAPP_RE.test(errMsg)) { try { await markWaUnreachable(supabase, phone, errMsg) } catch { /* egal */ } }
                 waQuotaHit = /quota_exceeded|mass sending quota/i.test(errMsg)
                 // TimelinesAI: "Whatsapp account not found" / Evolution: Instanz getrennt.
                 waAccountGone = /whatsapp account not found/i.test(errMsg) || EVO_DISCONNECTED_RE.test(errMsg)
