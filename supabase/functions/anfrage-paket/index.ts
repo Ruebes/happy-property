@@ -343,7 +343,8 @@ async function start(sb: SupabaseClient, b: Record<string, unknown>): Promise<Re
     wuensche.length ? `Gewünscht: ${wuensche.join(', ')}.` : '',
     frage ? `Seine Frage: ${frage}` : '',
     text ? `Seine Nachricht: ${text.slice(0, 600)}` : '',
-    'Das Deck ist sein vollständiges Informationspaket. Anschreiben kurz und freundlich: danke für das Interesse, hier ist alles zur Wohnung, Sven rechnet gern persönlich durch.',
+    'Das Deck ist sein vollständiges Informationspaket. Anschreiben kurz und freundlich: danke für das Interesse, hier ist alles zur Wohnung.',
+    'Seine persönliche Kosten- und Mietrechnung (mit Finanzierung und ohne Kredit) bekommt er zusammen mit diesem Deck per Mail. Schreibe nie, sie fehle oder komme später. Erlaubt: genauer wird sie mit seinem Eigenkapital, das rechnet Sven gern im Gespräch durch.',
   ].filter(Boolean).join('\n')
   const { data: admin } = await sb.from('profiles').select('id').eq('role', 'admin').order('created_at').limit(1).maybeSingle()
   const adminId = (admin as { id: string } | null)?.id ?? null
