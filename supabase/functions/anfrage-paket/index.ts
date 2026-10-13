@@ -625,7 +625,9 @@ async function svenAufgabe(sb: SupabaseClient, o: {
 // ── Mail ────────────────────────────────────────────────────────────────────
 // After-Sale (Sven 13.10.26): was wir nach dem Kauf übernehmen, mit Link auf die
 // ausführliche Seite (auch aus anderen Mails verlinkbar).
-const NACH_DEM_KAUF_URL = `${PORTAL_URL}/service/nach-dem-kauf.html`
+// Unter /s/: diesen Pfad lässt auch ein älterer Service-Worker der Portal-App durch
+// (sonst sähen Kunden, die schon im Portal waren, beim ersten Klick den Login).
+const NACH_DEM_KAUF_URL = `${PORTAL_URL}/s/nach-dem-kauf.html`
 // Original statt /render/image: nur width ohne height schneidet das Bild zu.
 const APP_BILD = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/landing-assets/app/as_einnahmen.jpg'
 function nachDemKaufKarte(): string {
