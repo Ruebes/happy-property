@@ -282,13 +282,19 @@ async function handleBatch(session: SessionInfo, events: TrackEvent[], ua: strin
     .select('id, pageviews, clicks, duration_s, max_scroll_pct, lead_id').eq('id', session.id).maybeSingle()
   const ex = existing as { pageviews: number; clicks: number; duration_s: number; max_scroll_pct: number; lead_id: string | null } | null
 
+  // Einstieg (entry_path, referrer, utm) nur beim ERSTEN Batch setzen: jede weitere
+  // Seite der Sitzung schickt ihren eigenen Pfad und den internen Referrer mit und
+  // hat bis 13.10.2026 die echte Herkunft (z. B. YouTube) überschrieben.
+  const einstieg = ex ? {} : {
+    entry_path: (session.entry_path ?? '').slice(0, 500) || null,
+    referrer: (session.referrer ?? '')?.slice(0, 500) || null,
+    utm: session.utm && Object.keys(session.utm).length ? session.utm : null,
+  }
   const row = {
     id: session.id,
     visitor_id: String(session.visitor_id ?? '').slice(0, 64),
     site: String(session.site).slice(0, 120),
-    entry_path: (session.entry_path ?? '').slice(0, 500) || null,
-    referrer: (session.referrer ?? '')?.slice(0, 500) || null,
-    utm: session.utm && Object.keys(session.utm).length ? session.utm : null,
+    ...einstieg,
     device, browser, os,
     screen_w: session.screen_w ?? null, screen_h: session.screen_h ?? null,
     lang: (session.lang ?? '').slice(0, 20) || null,

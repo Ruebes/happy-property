@@ -4293,7 +4293,24 @@
       "actions": "Aktion",
       "first": "Vorname",
       "last": "Nachname",
-      "remove": "Aus Liste entfernen"
+      "remove": "Aus Liste entfernen",
+      "source": "Quelle"
+    },
+    "signupSrc": {
+      "title": "Woher kommen die Anmeldungen?",
+      "sub": "Newsletter, Immobilienguide und Masterclass nach Kanal. Klaviyo-Importe zählen nicht mit.",
+      "all": "Alle",
+      "days": "{{n}} Tage",
+      "loadErr": "Die Anmeldungen konnten nicht geladen werden.",
+      "empty": "In diesem Zeitraum gab es keine Anmeldungen.",
+      "channel": "Kanal",
+      "total": "Anmeldungen",
+      "confirmed": "Bestätigt",
+      "rowTip": "Anklicken: nur diese Anmeldungen unten zeigen",
+      "latest": "Letzte Anmeldungen",
+      "latestFiltered": "Letzte Anmeldungen über {{k}}",
+      "showAll": "Alle zeigen",
+      "hint": "Erkannt über die Kennung im Link (z. B. ?src=youtube), den Website-Besuch oder die verweisende Seite. Erfasst seit 14.10.2026; ältere Anmeldungen stehen unter „Vor der Erfassung“."
     },
     "noActivitiesFilter": "Keine Aktivitäten in diesem Filter.",
     "actFilter": {

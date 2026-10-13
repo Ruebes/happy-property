@@ -4293,7 +4293,24 @@
       "actions": "Action",
       "first": "First name",
       "last": "Last name",
-      "remove": "Remove from list"
+      "remove": "Remove from list",
+      "source": "Source"
+    },
+    "signupSrc": {
+      "title": "Where do sign-ups come from?",
+      "sub": "Newsletter, property guide and masterclass by channel. Klaviyo imports are not counted.",
+      "all": "All",
+      "days": "{{n}} days",
+      "loadErr": "Could not load the sign-ups.",
+      "empty": "No sign-ups in this period.",
+      "channel": "Channel",
+      "total": "Sign-ups",
+      "confirmed": "Confirmed",
+      "rowTip": "Click to show only these sign-ups below",
+      "latest": "Latest sign-ups",
+      "latestFiltered": "Latest sign-ups via {{k}}",
+      "showAll": "Show all",
+      "hint": "Detected from the link tag (e.g. ?src=youtube), the website visit or the referring page. Tracked since 14 Oct 2026; older sign-ups are listed as “Before tracking”."
     },
     "noActivitiesFilter": "No activities in this filter.",
     "actFilter": {

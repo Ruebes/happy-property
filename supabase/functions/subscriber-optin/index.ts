@@ -3,8 +3,10 @@
 // sie DSGVO-konform per Double-Opt-In in newsletter_subscribers + newsletter_list_members.
 //
 // Aktionen:
-//   POST { email?, phone?, contact?, first_name?, last_name?, list, source?, lang? }
+//   POST { email?, phone?, contact?, first_name?, last_name?, list, source?, lang?, herkunft? }
 //        → Abonnent anlegen/finden, Bestätigung (DOI) verschicken.
+//          `herkunft` = Link-Parameter/Referrer/Tracking-IDs des Formulars → Kanal
+//          (YouTube, Instagram, …) in properties.herkunft + herkunft_log (_shared/herkunft.ts).
 //          Bereits bestätigte (z.B. Klaviyo-Import) werden ohne DOI direkt zur Liste
 //          hinzugefügt.
 //          `contact` ist das EINE Feld der Landingpage: enthält es ein "@", ist es eine
@@ -21,6 +23,7 @@
 // Deploy:  supabase functions deploy subscriber-optin --no-verify-jwt
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { lotteBild } from '../_shared/lotte.ts'
+import { ermittleHerkunft, mitHerkunft, herkunftBestaetigt } from '../_shared/herkunft.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -261,7 +264,7 @@ Deno.serve(async (req) => {
       // Willkommensnachricht nur EINMAL (Doppelklicks auf den Bestätigungslink)
       const sendWelcome = !props.welcome_sent_at
       if (sendWelcome) props.welcome_sent_at = new Date().toISOString()
-      await sb.from('newsletter_subscribers').update({ properties: props, optout_at: null }).eq('id', s.id)
+      await sb.from('newsletter_subscribers').update({ properties: listId ? herkunftBestaetigt(props, listId) : props, optout_at: null }).eq('id', s.id)
       if (listId) {
         await sb.from('newsletter_list_members').upsert({ list_id: listId, subscriber_id: s.id }, { onConflict: 'list_id,subscriber_id' })
         await enrollInListSequences(sb, s.id, listId)
@@ -276,7 +279,7 @@ Deno.serve(async (req) => {
     // ── POST: Anmeldung (schickt Double-Opt-In-Mail) ─────────────────────────
     const body = await req.json().catch(() => ({})) as {
       email?: string; first_name?: string; last_name?: string; phone?: string; contact?: string
-      list?: string; source?: string; lang?: string; confirm_redirect?: string
+      list?: string; source?: string; lang?: string; confirm_redirect?: string; herkunft?: unknown
     }
 
     // E-Mail und Telefon sind BEIDE optional, aber eins von beiden ist Pflicht.
@@ -322,6 +325,8 @@ Deno.serve(async (req) => {
 
     // Schon bestätigt (DOI früher ODER aus Klaviyo importiert) → direkt zur Liste, keine neue DOI-Mail.
     if (ex && alreadyConfirmed && !ex.optout_at) {
+      const h = await ermittleHerkunft(sb, body.herkunft)
+      await sb.from('newsletter_subscribers').update({ properties: mitHerkunft(ex.properties ?? {}, h, list, true) }).eq('id', ex.id)
       await sb.from('newsletter_list_members').upsert({ list_id: list.id, subscriber_id: ex.id }, { onConflict: 'list_id,subscriber_id' })
       await enrollInListSequences(sb, ex.id, list.id)
       return json({ ok: true, already_confirmed: true, added: true, channel })
@@ -380,8 +385,9 @@ Deno.serve(async (req) => {
     // Neu oder unbestätigt → DOI-Token setzen + Bestätigung auf dem gewählten Kanal
     const token = crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '').slice(0, 8)
     let subId: string | undefined = ex?.id
+    const herkunft = await ermittleHerkunft(sb, body.herkunft)
     const baseProps = {
-      ...(ex?.properties ?? {}), lang, channel,
+      ...mitHerkunft(ex?.properties ?? {}, herkunft, list), lang, channel,
       doi_token: token, doi_pending_list: list.id, doi_confirmed: false,
       doi_redirect: erlaubtesZiel(body.confirm_redirect),
       // Vorab als verschickt markiert; schlägt der Versand fehl, wird es unten zurückgesetzt.

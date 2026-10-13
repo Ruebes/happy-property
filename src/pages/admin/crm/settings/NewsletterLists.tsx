@@ -4,6 +4,7 @@ import DashboardLayout from '../../../../components/DashboardLayout'
 import { supabase } from '../../../../lib/supabase'
 import SequenceEditor from '../../../../components/crm/SequenceEditor'
 import SubscribersModal from '../../../../components/crm/SubscribersModal'
+import SignupSources from '../../../../components/crm/SignupSources'
 
 // ── Empfängerlisten ─────────────────────────────────────────────────────────────
 // Die Adressen aus Klaviyo (Webinar-Anmeldungen, Leadmagneten, Newsletter) liegen
@@ -214,6 +215,7 @@ export default function NewsletterLists() {
             <p className="text-xs text-gray-500">
               {t('crm.lists.total', 'Freigeschaltet: {{n}} Adressen. Deine CRM-Kunden kommen im Newsletter immer dazu; doppelte Adressen werden nur einmal angeschrieben.', { n: gesamt.toLocaleString('de-DE') })}
             </p>
+            <SignupSources />
           </>
         )}
       </div>

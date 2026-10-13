@@ -19,6 +19,7 @@
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { buildIcs, toB64 } from '../_shared/ics.ts'
 import { CI } from '../_shared/brand.ts'
+import { ermittleHerkunft, mitHerkunft } from '../_shared/herkunft.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -223,7 +224,7 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'method' }, 405)
 
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-  let body: { event?: string; first_name?: string; last_name?: string; email?: string; phone?: string; website?: string; utm?: Record<string, string> }
+  let body: { event?: string; first_name?: string; last_name?: string; email?: string; phone?: string; website?: string; utm?: Record<string, string>; herkunft?: unknown }
   try { body = await req.json() } catch { return json({ error: 'bad json' }, 400) }
 
   // Honeypot: Bots füllen das unsichtbare Feld — stumm „ok" zurückgeben.
@@ -239,6 +240,8 @@ Deno.serve(async (req) => {
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(email)) return json({ error: 'email' }, 400)
   if (phone && !/^\+\d{8,15}$/.test(phone)) return json({ error: 'phone' }, 400)
   const utm = body.utm ?? {}
+  // Herkunft (YouTube, Instagram, …): ältere Formular-Fassung schickt nur utm.
+  const herkunft = await ermittleHerkunft(sb, body.herkunft ?? utm)
 
   // ── 1. Abonnent + Liste ────────────────────────────────────────────────────
   let listId: string | null = null
@@ -255,7 +258,7 @@ Deno.serve(async (req) => {
   {
     const { data: ex } = await sb.from('newsletter_subscribers').select('id, properties').ilike('email', email).limit(1)
     const found = (ex as { id: string; properties: Record<string, unknown> | null }[] | null)?.[0]
-    const props = { ...(found?.properties ?? {}), lang: 'de', doi_confirmed: true, doi_confirmed_at: new Date().toISOString(),
+    const props = { ...mitHerkunft(found?.properties ?? {}, herkunft, { id: listId, name: ev.list }, true), lang: 'de', doi_confirmed: true, doi_confirmed_at: new Date().toISOString(),
       masterclass: Array.from(new Set([...(((found?.properties ?? {}) as { masterclass?: string[] }).masterclass ?? []), key])) }
     if (found) {
       subId = found.id
@@ -271,7 +274,9 @@ Deno.serve(async (req) => {
   }
 
   // ── 2. CRM-Lead ────────────────────────────────────────────────────────────
-  const leadId = await upsertLead(sb, { first, last, email, phone, utm, ev, key })
+  // Ohne utm_source im Link bekommt der neue Lead den erkannten Kanal (CRM zeigt ihn als „Kanal").
+  const leadUtm = !utm.utm_source && herkunft.kanal !== 'direkt' ? { ...utm, utm_source: herkunft.kanal } : utm
+  const leadId = await upsertLead(sb, { first, last, email, phone, utm: leadUtm, ev, key })
 
   // Texte aus dem Listen-Workflow der Event-Liste (falls angelegt), sonst eingebaut.
   // Die Einschreibung macht die Anmeldung im Workflow-Zähler des CRM sichtbar.

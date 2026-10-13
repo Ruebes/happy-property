@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
+import { herkunftBadge, herkunftFuer } from '../../lib/signupHerkunft'
 
 // ── Abonnenten einer Empfängerliste ansehen / bearbeiten / entfernen ─────────
 // Öffnet sich beim Klick auf eine Listenzeile. Zeigt alle Einträge (aus
@@ -130,6 +131,7 @@ export default function SubscribersModal({ listId, listName, onClose, onChanged 
                   <th className="px-2 py-2">{t('crm.subs.name', 'Name')}</th>
                   <th className="px-2 py-2">{t('crm.subs.email', 'E-Mail')}</th>
                   <th className="px-2 py-2">{t('crm.subs.phone', 'Telefon')}</th>
+                  <th className="px-2 py-2">{t('crm.subs.source', 'Quelle')}</th>
                   <th className="px-2 py-2">{t('crm.subs.status', 'Status')}</th>
                   <th className="px-2 py-2">{t('crm.subs.added', 'Hinzugefügt')}</th>
                   <th className="px-2 py-2 text-right">{t('crm.subs.actions', 'Aktion')}</th>
@@ -138,6 +140,7 @@ export default function SubscribersModal({ listId, listName, onClose, onChanged 
               <tbody className="divide-y divide-gray-50">
                 {filtered.map(s => {
                   const st = statusOf(s)
+                  const hb = herkunftBadge(herkunftFuer(s, listId))
                   const editing = editId === s.id
                   return (
                     <tr key={s.id} className="hover:bg-gray-50/60 align-middle">
@@ -159,6 +162,7 @@ export default function SubscribersModal({ listId, listName, onClose, onChanged 
                         {editing ? <input className={inp} type="tel" value={draft.phone ?? ''} onChange={e => setDraft(d => ({ ...d, phone: e.target.value }))} />
                           : <span className="text-gray-600">{s.phone || '–'}</span>}
                       </td>
+                      <td className="px-2 py-2"><span className="text-[11px] px-2 py-0.5 rounded-full font-semibold whitespace-nowrap" style={hb.badge}>{hb.icon} {hb.label}</span></td>
                       <td className="px-2 py-2"><span className={`text-[11px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${st.cls}`}>{st.label}</span></td>
                       <td className="px-2 py-2 text-gray-400 whitespace-nowrap">{d2(s.added_at)}</td>
                       <td className="px-2 py-2 text-right whitespace-nowrap">

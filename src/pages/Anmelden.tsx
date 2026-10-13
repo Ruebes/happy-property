@@ -31,6 +31,21 @@ function useParams() {
   }, [])
 }
 
+// Herkunft der Anmeldung (Kanal-Erkennung in subscriber-optin, _shared/herkunft.ts):
+// Link-Parameter, Referrer und die IDs des Web-Trackings (wa-track).
+function herkunftDaten(): Record<string, string> {
+  const h: Record<string, string> = {}
+  try {
+    const q = new URLSearchParams(window.location.search)
+    for (const k of ['src', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content']) { const v = q.get(k); if (v) h[k] = v.slice(0, 100) }
+    h.referrer = (document.referrer || '').slice(0, 300)
+    h.page = window.location.hostname + window.location.pathname
+    h.sid = sessionStorage.getItem('_hpwa_s') ?? ''
+    h.vid = localStorage.getItem('_hpwa_v') ?? ''
+  } catch { /* Speicher gesperrt (privater Modus) — dann ohne Tracking-IDs */ }
+  return h
+}
+
 export default function Anmelden() {
   const { t, i18n } = useTranslation()
   const p = useParams()
@@ -60,7 +75,7 @@ export default function Anmelden() {
       const { data, error } = await supabase.functions.invoke('subscriber-optin', {
         body: {
           email: email.trim(), first_name: firstName.trim() || undefined, last_name: lastName.trim() || undefined,
-          phone: phone.trim() || undefined, list: p.list, source: p.source || 'signup', lang,
+          phone: phone.trim() || undefined, list: p.list, source: p.source || 'signup', lang, herkunft: herkunftDaten(),
         },
       })
       // invoke wirft bei non-2xx nicht immer — Fehlerfeld zusätzlich prüfen.
