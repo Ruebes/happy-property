@@ -10524,7 +10524,11 @@
     "undo": "Undo last change",
     "inputPlaceholder": "Write a message … (Enter to send)",
     "send": "Send",
-    "rememberForAll": "Remember for all future decks of this project"
+    "rememberForAll": "Remember for all future decks of this project",
+    "discardConfirm": "Discard the text you entered?",
+    "autofixUndone": "Automatic clean-up undone. The deck is back to what the AI wrote, and the traffic light shows the old findings.",
+    "undoBusy": "An edit is still running. Please wait a moment and then undo again.",
+    "undoNothing": "There is no step that can be undone."
   },
   "postausgang": {
     "calcLoadFail": "Failed to load calculation",
@@ -11249,7 +11253,60 @@
     "coverage": "Images: {{used}} of {{usable}} usable project images in the deck",
     "coverageType": "unit type {{type}}",
     "coverageExcluded": "{{n}} images of other types excluded",
-    "coverageReview": "{{n}} pending review"
+    "coverageReview": "{{n}} pending review",
+    "fixInChat": "Fix in deck chat ({{n}})",
+    "fixInChatTitle": "Opens the deck chat with a prepared instruction. Nothing is sent until you click Send.",
+    "fixInChatHint": "The instruction is placed in the input field, you can edit it before sending.",
+    "autofix": {
+      "applied": "Automatically cleaned up ({{n}})",
+      "dryRun": "Dry run: would clean up ({{n}})",
+      "dryRunRolledBack": "Dry run: clean-up would be rolled back ({{reason}})",
+      "rolledBack": "Clean-up rolled back ({{reason}})",
+      "undone": "Automatic clean-up undone by hand",
+      "error": "Automatic clean-up failed: {{e}}",
+      "nothing": "Nothing cleaned up automatically",
+      "superseded": "Edited in the deck chat afterwards. The list shows the state at generation.",
+      "dryRunHint": "In a dry run the deck stays unchanged.",
+      "removed": "(removed)",
+      "notApplied": "These changes are NOT in the deck. It contains the text as the AI wrote it.",
+      "wouldBe": "would be:",
+      "wouldRemove": "(would be removed)",
+      "hintFact": "Is the statement true? Then add it as a fact to the project, otherwise it will be removed from every deck again.",
+      "skipped": "Not cleaned up automatically ({{n}})",
+      "undoHint": "\"↶ Undo last change\" in the deck chat restores the uncleaned version including the traffic light.",
+      "rollback": {
+        "blockzahl": "number of blocks changed",
+        "blockfolge": "block order changed",
+        "systemblock": "system block changed",
+        "festes_feld": "fixed field changed",
+        "ohne_korrektur": "field changed without a correction",
+        "zu_viele": "more than 10 corrections",
+        "textanteil": "more than 15 % of the text removed",
+        "rot_mehr": "more red findings than before",
+        "nichts_behoben": "no finding resolved"
+      },
+      "action": {
+        "satz_entfernt": "Sentence removed",
+        "punkt_entfernt": "List item removed",
+        "karte_entfernt": "Card removed",
+        "feld_geleert": "Field cleared",
+        "wert_gesetzt": "Value set from the CRM"
+      },
+      "reason": {
+        "systemblock": "System block from the CRM, never changed automatically",
+        "gesperrtes_feld": "Heading, title or fixed field",
+        "html_feld": "Field with formatting (HTML, character code or **)",
+        "nicht_lokalisierbar": "Passage not found verbatim or sentence boundary unclear (abbreviation)",
+        "mehrdeutig": "Passage occurs more than once",
+        "pflichtfeld": "Required text would have become empty or the greeting would have been removed",
+        "zu_wenige_karten": "Fewer than 3 key facts would have remained",
+        "neuer_befund": "Correction would have created a new finding",
+        "ziel_nicht_behoben": "Finding would not have been resolved",
+        "limit": "Limit reached (number or amount of text)",
+        "kontext": "Neighbouring text depends on the passage (reference, quotation or colon)",
+        "fliesstext": "Sits inside running text - please rephrase it yourself or in the deck chat"
+      }
+    }
   },
   "shell": {
     "groups": {

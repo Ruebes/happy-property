@@ -56,7 +56,7 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
   const [deckMeta, setDeckMeta] = useState<Record<string, DeckMeta>>({})
   const [loading, setLoading] = useState(true)
   const [busy, setBusy]     = useState<string | null>(null)
-  const [chat, setChat]     = useState<{ token: string; label: string } | null>(null)
+  const [chat, setChat]     = useState<{ token: string; label: string; initialInput?: string } | null>(null)
   const [quality, setQuality] = useState<{ token: string; label: string } | null>(null)
 
   const allTokens = useMemo(() => Array.from(new Set(outbox.flatMap(o => o.deck_tokens ?? []))), [outbox])
@@ -242,8 +242,16 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
         ))}
       </div>
       <p className="text-[11px] text-gray-400 mt-2">{t('leadAngebote.footerHint', 'Links bleiben dauerhaft gültig. ✏️ = Deck per Chat anpassen (läuft im Hintergrund, Farbe wechselt bei fertig). ⚠/✓ = Bericht der automatischen Prüfung. ✓ (grün) = als fertig bestätigen.')}</p>
-      {chat && <DeckChat token={chat.token} label={chat.label} onClose={() => setChat(null)} onStarted={onRefineStarted} />}
-      {quality && <DeckQualityPanel token={quality.token} label={quality.label} onClose={() => setQuality(null)} />}
+      {chat && <DeckChat key={`${chat.token}|${chat.initialInput ?? ''}`} token={chat.token} label={chat.label} initialInput={chat.initialInput}
+        onClose={() => setChat(null)} onStarted={onRefineStarted} />}
+      {/* Läuft gerade ein Feinschliff, gibt es keinen Chat-Knopf im Panel: ein zweiter
+          refine-deck-Lauf würde den ersten samt prev_content überschreiben (wie das ✏️). */}
+      {quality && <DeckQualityPanel token={quality.token} label={quality.label} onClose={() => setQuality(null)}
+        onFixInChat={deckMeta[quality.token]?.refining ? undefined : instruction => {
+          const q = quality
+          if (deckMeta[q.token]?.refining) return
+          setQuality(null); setChat({ token: q.token, label: q.label, initialInput: instruction })
+        }} />}
     </div>
   )
 }

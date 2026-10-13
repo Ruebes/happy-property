@@ -22,6 +22,7 @@
     "_shared/deckContext.ts",
     "_shared/deckNormalize.ts",
     "_shared/deckGate.ts",
+    "_shared/deckAutofix.ts",
     "_types/remote.d.ts",
     "generate-deck/index.ts",
     "refine-deck/index.ts"

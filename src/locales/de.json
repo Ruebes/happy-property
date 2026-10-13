@@ -10337,7 +10337,11 @@
     "undo": "Letzte Änderung rückgängig",
     "inputPlaceholder": "Nachricht schreiben … (Enter zum Senden)",
     "send": "Senden",
-    "rememberForAll": "Für alle künftigen Decks dieses Projekts merken"
+    "rememberForAll": "Für alle künftigen Decks dieses Projekts merken",
+    "discardConfirm": "Eingegebenen Text verwerfen?",
+    "autofixUndone": "Automatische Bereinigung zurückgenommen. Das Deck steht wieder so da, wie die KI es geschrieben hat, die Ampel zeigt die alten Befunde.",
+    "undoBusy": "Die Bearbeitung läuft noch. Bitte kurz warten und dann noch einmal rückgängig machen.",
+    "undoNothing": "Es gibt keinen Schritt, der sich rückgängig machen lässt."
   },
   "postausgang": {
     "calcLoadFail": "Berechnung konnte nicht geladen werden",
@@ -11062,7 +11066,60 @@
     "coverage": "Bilder: {{used}} von {{usable}} verwendbaren Projektbildern im Deck",
     "coverageType": "Wohnungstyp {{type}}",
     "coverageExcluded": "{{n}} Bilder anderer Typen ausgeschlossen",
-    "coverageReview": "{{n}} zur Prüfung"
+    "coverageReview": "{{n}} zur Prüfung",
+    "fixInChat": "Im Deck-Chat beheben ({{n}})",
+    "fixInChatTitle": "Öffnet den Deck-Chat mit einer vorbereiteten Anweisung. Gesendet wird erst, wenn du auf Senden klickst.",
+    "fixInChatHint": "Die Anweisung steht danach im Eingabefeld, du kannst sie vor dem Senden anpassen.",
+    "autofix": {
+      "applied": "Automatisch bereinigt ({{n}})",
+      "dryRun": "Probelauf: würde bereinigen ({{n}})",
+      "dryRunRolledBack": "Probelauf: Bereinigung würde zurückgenommen ({{reason}})",
+      "rolledBack": "Bereinigung zurückgenommen ({{reason}})",
+      "undone": "Automatische Bereinigung von Hand rückgängig gemacht",
+      "error": "Automatische Bereinigung ausgefallen: {{e}}",
+      "nothing": "Nichts automatisch bereinigt",
+      "superseded": "Danach im Deck-Chat bearbeitet. Die Liste zeigt den Stand der Erzeugung.",
+      "dryRunHint": "Im Probelauf bleibt das Deck unverändert.",
+      "removed": "(gestrichen)",
+      "notApplied": "Diese Änderungen sind NICHT im Deck. Es enthält den Text, wie die KI ihn geschrieben hat.",
+      "wouldBe": "wäre:",
+      "wouldRemove": "(wäre gestrichen)",
+      "hintFact": "Stimmt die Aussage? Dann als Fakt im Projekt hinterlegen, sonst fällt sie in jedem Deck wieder raus.",
+      "skipped": "Nicht automatisch bereinigt ({{n}})",
+      "undoHint": "„↶ Letzte Änderung rückgängig“ im Deck-Chat stellt die unbereinigte Fassung samt Ampel wieder her.",
+      "rollback": {
+        "blockzahl": "Blockzahl verändert",
+        "blockfolge": "Blockfolge verändert",
+        "systemblock": "Systemblock verändert",
+        "festes_feld": "festes Feld verändert",
+        "ohne_korrektur": "Feld ohne Korrektur verändert",
+        "zu_viele": "mehr als 10 Korrekturen",
+        "textanteil": "mehr als 15 % des Textes entfernt",
+        "rot_mehr": "mehr rote Befunde als vorher",
+        "nichts_behoben": "kein Befund behoben"
+      },
+      "action": {
+        "satz_entfernt": "Satz gestrichen",
+        "punkt_entfernt": "Listenpunkt gestrichen",
+        "karte_entfernt": "Karte gestrichen",
+        "feld_geleert": "Feld geleert",
+        "wert_gesetzt": "Wert aus dem CRM gesetzt"
+      },
+      "reason": {
+        "systemblock": "Systemblock aus dem CRM, wird nie automatisch geändert",
+        "gesperrtes_feld": "Überschrift, Titel oder festes Feld",
+        "html_feld": "Feld mit Formatierung (HTML, Zeichen-Code oder **)",
+        "nicht_lokalisierbar": "Stelle nicht wörtlich gefunden oder Satzgrenze unsicher (Abkürzung)",
+        "mehrdeutig": "Stelle kommt mehrfach vor",
+        "pflichtfeld": "Pflichttext wäre leer geworden oder die Anrede wäre weggefallen",
+        "zu_wenige_karten": "Es blieben weniger als 3 Key Facts",
+        "neuer_befund": "Korrektur hätte einen neuen Befund erzeugt",
+        "ziel_nicht_behoben": "Befund wäre danach nicht behoben gewesen",
+        "limit": "Grenze erreicht (Anzahl oder Textmenge)",
+        "kontext": "Nachbartext hängt an der Stelle (Verweis, Zitat oder Doppelpunkt)",
+        "fliesstext": "Steht mitten im Fließtext - bitte selbst umformulieren oder im Deck-Chat ändern"
+      }
+    }
   },
   "shell": {
     "groups": {

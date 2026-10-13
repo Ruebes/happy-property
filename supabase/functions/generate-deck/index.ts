@@ -16,6 +16,7 @@ import { eur, VAT_CAP_SQM } from '../_shared/deckVat.ts'
 import { buildDeckContext, MARINA_MODEL, type DeckContext, type FurnitureMode, type PaySchedule } from '../_shared/deckContext.ts'
 import { applyDeterministic, normalizeDashes, type ScrubEvent } from '../_shared/deckNormalize.ts'
 import { runDeckGate, claimIssuesToFindings, type Finding } from '../_shared/deckGate.ts'
+import { autofixDeck, type AutofixMode, type AutofixResult } from '../_shared/deckAutofix.ts'
 import { auditBlockImages, checkClaims, checkImageTypes, checkMapSource, translateGermanRemnants } from '../_shared/deckQuality.ts'
 import { assetsFromGallery, loadCatalogAssets, selectImages, type CatalogAsset } from '../_shared/deckAssets.ts'
 import type { GalleryImage } from '../_shared/deckGate.ts'
@@ -71,7 +72,7 @@ ${TRUTH_RULES}
 8. RENDITE — HART, KEINE AUSNAHME: Das Deck enthält KEINE Rendite-, Mietertrags- oder Amortisationszahlen. Keine Prozentsätze p.a., keine erwartete Miete pro Monat oder Jahr, keine Auslastungsquoten, keine Kaufpreisfaktoren, keine Wertsteigerungsprognosen in Zahlen — auch dann nicht, wenn die Fakten oder Bauträger-Unterlagen solche Zahlen enthalten. Diese Zahlen rechnet Happy Property in einer eigenen, persönlichen Kalkulation; im Deck haben sie nichts verloren. Was du stattdessen sagen darfst: was die Wohnung und die Anlage für Mieter attraktiv macht (Lage, Ausstattung, Ganzjahresnutzung, Gemeinschaftsflächen) und dass Sven die Zahlen persönlich durchrechnet.`
 
 /** Ergebnis eines Generierungslaufs — inklusive Gate-Urteil. */
-interface GenResult { token: string; blocks: number; deckId: string | null; quality: 'green' | 'red'; findings: number }
+interface GenResult { token: string; blocks: number; deckId: string | null; quality: 'green' | 'red'; findings: number; autofixed: number }
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } })
@@ -614,6 +615,18 @@ Deno.serve(async (req) => {
     const { data: aiRules } = await rulesQ
     const learnedTxt = (aiRules ?? []).map((r: { rule: string }) => `- ${r.rule}`).join('\n')
     const learnedBlock = learnedTxt ? `GELERNTE VORGABEN (immer beachten):\n${learnedTxt}\n\n` : ''
+    // Deck-Autobereinigung (_shared/deckAutofix.ts): Schalter crm_settings
+    // 'deck_autofix' = off | dry_run | on, umschaltbar ohne Deploy. Fehlt die
+    // Zeile, gilt der Probelauf; ein Lesefehler oder ein unbekannter Wert
+    // schaltet sie ab. Allgemeine Decks bleiben in v1 aussen vor.
+    let afMode: AutofixMode = 'off'
+    if (!generic) {
+      try {
+        const { data: afRow, error: afErr } = await sbRules.from('crm_settings').select('value').eq('key', 'deck_autofix').maybeSingle()
+        const v = String((afRow as { value?: string } | null)?.value ?? '').trim()
+        afMode = afErr ? 'off' : !afRow ? 'dry_run' : (v === 'on' || v === 'dry_run' || v === 'off') ? v : 'off'
+      } catch { afMode = 'off' }
+    }
     // Regeln duerfen Stil vorgeben, keine Fakten: Preise, Raten, Reservierungen,
     // Flaechen, Termine. Solche Regeln werden NICHT geloescht, sondern als Befund
     // gemeldet (ai_rule_contains_fact) - Sven entscheidet.
@@ -1043,6 +1056,8 @@ Deno.serve(async (req) => {
     // Prüft das fertige Deck gegen die harten Fakten und entscheidet GREEN/RED.
     // Es REPARIERT nichts still — was hier auffällt, steht als Befund im Bericht
     // und wird im CRM angezeigt. Ein RED-Deck bleibt erreichbar und versendbar.
+    // Eng begrenzte Textbefunde bereinigt danach die Autobereinigung, nicht still,
+    // sondern sichtbar im Bericht unter autofix (siehe unten).
     const gate = runDeckGate(blocks, ctx)
     const findings: Finding[] = [...gate.findings, ...datenFindings, ...auswahlFindings, ...auditFindings]
 
@@ -1051,10 +1066,12 @@ Deno.serve(async (req) => {
     // das zusammen mit Generierung und Bild-Audit das 150-Sekunden-Limit des
     // Gateways — deshalb läuft sie dort NACH der Antwort weiter (deferClaims) und
     // aktualisiert den Bericht, sobald sie fertig ist.
+    const claimFindings: Finding[] = []
     if (!deferClaims) {
       try {
         const claim = await checkClaims(blocks, factsAug, ctx)
-        if (claim.issues.length) findings.push(...claimIssuesToFindings(claim.issues))
+        if (claim.issues.length) claimFindings.push(...claimIssuesToFindings(claim.issues))
+        findings.push(...claimFindings)
         if (claim.failed) {
           findings.push({ key: 'behauptungspruefung_ausgefallen', severity: 'mittel',
             what: 'Die Behauptungsprüfung konnte nicht durchlaufen — die Aussagen im Deck sind ungeprüft.',
@@ -1066,6 +1083,47 @@ Deno.serve(async (req) => {
           evidence: e instanceof Error ? e.message : String(e) })
       }
     }
+
+    // ── Autobereinigung (_shared/deckAutofix.ts) ────────────────────────────
+    // Das Gate repariert nicht STILL: Die Bereinigung laeuft hier sichtbar, BEVOR
+    // das Deck gespeichert wird, und steht mit vorher/nachher im Bericht unter
+    // autofix. Nur im Hintergrundlauf (dort liegt die Behauptungspruefung schon
+    // vor), nie bei allgemeinen Decks. Ein Fehler darf die Erzeugung nie reissen.
+    let af: AutofixResult | null = null
+    let afFehler: string | null = null
+    let rohBlocks: Array<Record<string, unknown>> | null = null
+    if (!deferClaims && !generic && afMode !== 'off') {
+      try {
+        const other = findings.filter(f => !gate.findings.includes(f) && !claimFindings.includes(f))
+        af = autofixDeck(blocks, { gate: gate.findings, claims: claimFindings, other }, ctx, afMode)
+        if (afMode === 'on' && af.applied > 0) {
+          rohBlocks = blocks
+          blocks = af.blocks as Array<Record<string, unknown>>
+          // Behauptungen auf dem bereinigten Deck NEU von der KI pruefen lassen. Feste
+          // Wortvergleiche erkennen umformulierte Wiederholungen nicht („Meerblick" /
+          // „Blick aufs Meer", Plural, Zahlwoerter) - gruen darf die Ampel nur aus einer
+          // echten Pruefung werden (Endpruefung 13.10.26). Faellt die Nachpruefung aus,
+          // gelten die alten Behauptungs-Befunde weiter (im Zweifel rot).
+          const ohneClaims = af.findings.filter(f => !String(f.key).startsWith('behauptung_'))
+          let neu: Finding[] | null = null
+          try {
+            const claim2 = await checkClaims(blocks, factsAug, ctx)
+            if (!claim2.failed) neu = claim2.issues.length ? claimIssuesToFindings(claim2.issues) : []
+          } catch { neu = null }
+          const endBefunde = [...ohneClaims, ...(neu ?? claimFindings)]
+          findings.splice(0, findings.length, ...endBefunde)
+          const rot = endBefunde.filter(f => f.severity === 'kritisch' || f.severity === 'hoch').length
+          af.report.after = { status: rot ? 'red' : 'green', red: rot }
+          af.report.claims_rechecked = neu != null
+        }
+        console.log(`[generate-deck] Autobereinigung (${afMode}): ${af.report.status}, ${af.report.changes.length} Änderung(en), ${af.report.skipped.length} übersprungen${af.report.rollback_reason ? `, Grund: ${af.report.rollback_reason}` : ''}`)
+      } catch (e) {
+        af = null
+        afFehler = e instanceof Error ? e.message : String(e)
+        console.warn('[generate-deck] Autobereinigung fehlgeschlagen:', afFehler)
+      }
+    }
+    const autofixed = rohBlocks && af ? af.applied : 0
 
     const qualityStatus: 'green' | 'red' =
       findings.some(f => f.severity === 'kritisch' || f.severity === 'hoch') ? 'red' : 'green'
@@ -1090,6 +1148,7 @@ Deno.serve(async (req) => {
       completion: ctx.completion,
       payment_source: ctx.paymentSource,
       generated_at: new Date().toISOString(),
+      autofix: af ? af.report : afFehler ? { version: 1, mode: afMode, status: 'error', error: afFehler } : null,
     }
     console.log(`[generate-deck] Quality-Gate: ${qualityStatus.toUpperCase()} — ${findings.length} Befund(e)`)
     for (const f of findings) console.log(`  [${f.severity}] ${f.key}: ${f.what}`)
@@ -1126,6 +1185,8 @@ Deno.serve(async (req) => {
     } else {
       const { data: row, error } = await supabase.from('sales_decks').insert({
         ...persist,
+        // Unbereinigte KI-Fassung als Rueckgaengig-Schritt (DeckChat ↶, refine-deck).
+        ...(rohBlocks ? { prev_content: { blocks: rohBlocks } } : {}),
         recipient_name: body.recipient_name ?? null,
         lead_id:    body.lead_id ?? null,
         deal_id:    body.deal_id ?? null,
@@ -1168,7 +1229,7 @@ Deno.serve(async (req) => {
       if (er2?.waitUntil) er2.waitUntil(nachtragen())
     }
 
-    return { token, blocks: blocks.length, deckId, quality: qualityStatus, findings: findings.length }
+    return { token, blocks: blocks.length, deckId, quality: qualityStatus, findings: findings.length, autofixed }
     }   // ── Ende doGenerate ──
 
     // ── Job-Zeile: der Wizard pollt sie statt auf einen neuen Token zu raten ──
@@ -1214,7 +1275,12 @@ Deno.serve(async (req) => {
           quality_status: out.quality,
           deck_token: out.token,
           sales_deck_id: out.deckId,
-          progress: out.quality === 'red' ? `${out.findings} Befund(e) — bitte prüfen` : 'Fertig',
+          progress: out.autofixed > 0
+            ? (out.quality === 'red'
+                ? `${out.findings} Befund(e) offen, ${out.autofixed} Stelle(n) automatisch bereinigt, bitte prüfen`
+                : `Fertig, ${out.autofixed} Stelle(n) automatisch bereinigt`)
+            // Ohne Bereinigung der bisherige Wortlaut, nur Bindestrich statt Gedankenstrich
+            : out.quality === 'red' ? `${out.findings} Befund(e) - bitte prüfen` : 'Fertig',
           error: null,
         })
         return out

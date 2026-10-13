@@ -13,6 +13,7 @@ import { TRUTH_RULES } from '../_shared/deckRules.ts'
 import { buildDeckContext, type DeckContext, type FurnitureMode } from '../_shared/deckContext.ts'
 import { applyDeterministic } from '../_shared/deckNormalize.ts'
 import { runDeckGate, claimIssuesToFindings, type Finding } from '../_shared/deckGate.ts'
+import { undoNachAutofix } from '../_shared/deckAutofix.ts'
 import { auditBlockImages, checkClaims, checkImageTypes, checkMapSource, translateGermanRemnants, type GalleryImage } from '../_shared/deckQuality.ts'
 import { assetsFromGallery, loadCatalogAssets } from '../_shared/deckAssets.ts'
 import { gateCaller } from '../_shared/callerGate.ts'
@@ -72,12 +73,26 @@ Deno.serve(async (req: Request) => {
     if (!token) return json({ error: 'token fehlt' }, 400)
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
-    const { data: deck } = await supabase.from('sales_decks').select('content, prev_content, project_id, unit_id, angle, revision, deck_context').eq('token', token).maybeSingle()
+    const { data: deck } = await supabase.from('sales_decks').select('content, prev_content, project_id, unit_id, angle, revision, refining, deck_context, quality_status, quality_report').eq('token', token).maybeSingle()
     if (!deck) return json({ error: 'Deck nicht gefunden' }, 404)
+    // Abschnitt der Autobereinigung aus generate-deck (_shared/deckAutofix.ts), falls vorhanden.
+    type AfReport = { status?: string; superseded_at?: string; before?: { status?: string; findings?: unknown[] } } & Record<string, unknown>
+    const altReport = (deck.quality_report ?? null) as (Record<string, unknown> & { autofix?: AfReport | null }) | null
+    const altAutofix = altReport?.autofix ?? null
 
     // ── Undo (immer synchron — schnell, kein Claude-Call) ──
     if (action === 'undo') {
       if (!deck.prev_content) return json({ error: 'Kein Schritt zum Rückgängigmachen' }, 400)
+      // Erste Rücknahme nach einer Autobereinigung: Inhalt UND Ampel springen zurück
+      // (Entscheidung in _shared/deckAutofix.ts, dort getestet).
+      const u = undoNachAutofix(deck as Record<string, unknown>, new Date().toISOString())
+      // Läuft gerade ein Feinschliff, würde er die Rücknahme gleich wieder
+      // überschreiben (er baut auf der bereinigten Fassung auf) - erst danach.
+      if (u.art === 'laeuft') return json({ error: 'Bearbeitung läuft noch. Bitte warten, bis der Feinschliff fertig ist.' }, 409)
+      if (u.art === 'autofix') {
+        await supabase.from('sales_decks').update(u.update).eq('token', token)
+        return json({ ok: true, undone: true, autofix_undone: true })
+      }
       await supabase.from('sales_decks').update({ content: deck.prev_content, prev_content: null }).eq('token', token)
       return json({ ok: true, undone: true })
     }
@@ -279,6 +294,8 @@ Deno.serve(async (req: Request) => {
               source: 'refine',
               instruction: instruction!.trim().slice(0, 500),
               generated_at: new Date().toISOString(),
+              // Liste der Autobereinigung bleibt lesbar (vorher/nachher), markiert als überholt.
+              ...(altAutofix ? { autofix: { ...altAutofix, superseded_at: altAutofix.superseded_at ?? new Date().toISOString() } } : {}),
             },
           }
           console.log(`[refine-deck] Quality-Gate: ${status.toUpperCase()} — ${findings.length} Befund(e)`)

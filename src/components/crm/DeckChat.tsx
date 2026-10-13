@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
+import { FunctionsHttpError } from '@supabase/supabase-js'
 import { supabase } from '../../lib/supabase'
+import { starteFeinschliff } from '../../lib/deckChatSend'
 
 // ── Deck-Feinschliff als Chat ─────────────────────────────────────────────────
 // Echtes Gesprächsfenster (wie ein Chat): Sven schreibt in eigenen Worten, was am
@@ -9,19 +11,25 @@ import { supabase } from '../../lib/supabase'
 // Rückfragen — man kann Schritt für Schritt weiter verfeinern.
 //
 // Ablauf: Anweisung → refine-deck (background) → Polling auf sales_decks.refining;
-// sobald fertig, wird refine_summary (oder refine_error) als Antwort angezeigt und
-// die Angebots-Liste (onStarted) über die neue Revision informiert. „Rückgängig"
+// gleich nach dem Start meldet onStarted der Angebots-Liste „in Bearbeitung"; sobald
+// fertig, wird refine_summary (oder refine_error) als Antwort angezeigt. „Rückgängig"
 // nimmt die letzte Änderung zurück.
 
 type Msg = { id: number; role: 'user' | 'assistant'; text: string; state?: 'thinking' | 'done' | 'error' }
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
-export default function DeckChat({ token, label, onClose, onStarted }: { token: string; label?: string; onClose: () => void; onStarted?: (token: string) => void }) {
+export default function DeckChat({ token, label, onClose, onStarted, initialInput }: {
+  token: string; label?: string; onClose: () => void; onStarted?: (token: string) => void
+  /** Füllt das Eingabefeld beim Öffnen vor (z.B. „Im Deck-Chat beheben" aus der Prüfung). Sendet NICHT. */
+  initialInput?: string
+}) {
   const { t } = useTranslation()
-  const [input, setInput] = useState('')
+  const [input, setInput] = useState(initialInput ?? '')
   const [busy, setBusy] = useState(false)
   const [learn, setLearn] = useState(false)
+  // Vorbefuellte Befund-Anweisung (Block-Nummern dieses Decks) nie als Projektregel lernen.
+  const vorbefuellt = !!initialInput && input === initialInput
   const [msgs, setMsgs] = useState<Msg[]>([{
     id: 0, role: 'assistant', state: 'done',
     text: t('deckChat.greeting', 'Was soll ich am Deck ändern? Schreib’s mir einfach — z.B. „Titelbild gegen das Pool-Bild tauschen", „Einleitung kürzer und persönlicher" oder „Zahlungsplan weiter nach oben". Der Link bleibt gleich.'),
@@ -56,16 +64,20 @@ export default function DeckChat({ token, label, onClose, onStarted }: { token: 
     push({ role: 'user', text })
     const thinkingId = push({ role: 'assistant', text: '', state: 'thinking' })
     try {
-      const { error } = await supabase.functions.invoke('refine-deck', {
-        body: { token, instruction: text, learn, background: true },
+      // onStarted gleich nach dem Start, nicht erst nach pollDone: sonst gilt das Deck in
+      // der Angebots-Liste während des Laufs nicht als „in Bearbeitung" und ein zweiter
+      // Lauf ließe sich starten. Den fertigen Stand holt das Polling der Liste.
+      const res = await starteFeinschliff({
+        invoke: () => supabase.functions.invoke('refine-deck', {
+          body: { token, instruction: text, learn: learn && text !== initialInput, background: true },
+        }),
+        onStarted: () => onStarted?.(token),
+        warten: pollDone,
       })
-      if (error) throw new Error(error.message)
-      const res = await pollDone()
       if (res.error) {
         patch(thinkingId, { state: 'error', text: t('deckChat.failed', 'Das hat nicht geklappt: {{e}}', { e: res.error }) })
       } else {
         patch(thinkingId, { state: 'done', text: res.summary || t('deckChat.doneGeneric', 'Erledigt ✓ Ich habe das Deck angepasst.') })
-        onStarted?.(token)
       }
     } catch (e) {
       patch(thinkingId, { state: 'error', text: e instanceof Error ? e.message : t('deckChat.error', 'Fehler') })
@@ -78,10 +90,24 @@ export default function DeckChat({ token, label, onClose, onStarted }: { token: 
     const thinkingId = push({ role: 'assistant', text: '', state: 'thinking' })
     try {
       const { data, error } = await supabase.functions.invoke('refine-deck', { body: { token, action: 'undo' } })
-      if (error) throw new Error(error.message)
-      const d = data as { error?: string } | null
+      if (error) {
+        // Nicht-2xx (409 „Bearbeitung läuft noch", 400 „Kein Schritt"): die Erklärung
+        // steht im Antwort-Body, error.message ist nur die allgemeine Meldung von supabase-js.
+        const body = error instanceof FunctionsHttpError
+          ? await (error.context as Response).clone().json().catch(() => null) as { error?: string } | null
+          : null
+        // Bekannte Fälle übersetzt (der Server-Text ist nur deutsch), body.error nur als Rückfall.
+        const status = error instanceof FunctionsHttpError ? (error.context as Response).status : 0
+        throw new Error(status === 409 ? t('deckChat.undoBusy', 'Die Bearbeitung läuft noch. Bitte kurz warten und dann noch einmal rückgängig machen.')
+          : status === 400 ? t('deckChat.undoNothing', 'Es gibt keinen Schritt, der sich rückgängig machen lässt.')
+          : body?.error || error.message)
+      }
+      const d = data as { error?: string; autofix_undone?: boolean } | null
       if (d?.error) throw new Error(d.error)
-      patch(thinkingId, { state: 'done', text: t('deckChat.undoSuccess', '↶ Letzte Änderung rückgängig gemacht.') })
+      // Erste Rücknahme nach der Autobereinigung (refine-deck): Inhalt UND Ampel zurück.
+      patch(thinkingId, { state: 'done', text: d?.autofix_undone
+        ? t('deckChat.autofixUndone', 'Automatische Bereinigung zurückgenommen. Das Deck steht wieder so da, wie die KI es geschrieben hat, die Ampel zeigt die alten Befunde.')
+        : t('deckChat.undoSuccess', '↶ Letzte Änderung rückgängig gemacht.') })
       onStarted?.(token)
     } catch (e) {
       patch(thinkingId, { state: 'error', text: e instanceof Error ? e.message : t('deckChat.error', 'Fehler') })
@@ -89,7 +115,8 @@ export default function DeckChat({ token, label, onClose, onStarted }: { token: 
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
+      onClick={() => { if (input.trim() && !window.confirm(t('deckChat.discardConfirm', 'Eingegebenen Text verwerfen?'))) return; onClose() }}>
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg flex flex-col" style={{ height: 'min(80vh, 640px)' }} onClick={e => e.stopPropagation()}>
         {/* Kopf */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 shrink-0">
@@ -122,7 +149,8 @@ export default function DeckChat({ token, label, onClose, onStarted }: { token: 
         {/* Eingabe */}
         <div className="border-t border-gray-100 p-3 shrink-0 space-y-2">
           <div className="flex items-end gap-2">
-            <textarea rows={1} value={input} onChange={e => setInput(e.target.value)} disabled={busy}
+            <textarea rows={Math.min(6, Math.max(1, input.split('\n').length))} value={input} onChange={e => setInput(e.target.value)} disabled={busy}
+              autoFocus={!!initialInput}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send() } }}
               placeholder={t('deckChat.inputPlaceholder', 'Nachricht schreiben … (Enter zum Senden)')}
               className="flex-1 resize-none border border-gray-200 rounded-xl px-3 py-2 text-sm max-h-32 focus:outline-none focus:ring-2 focus:ring-orange-300" />
@@ -132,10 +160,12 @@ export default function DeckChat({ token, label, onClose, onStarted }: { token: 
             </button>
           </div>
           <div className="flex items-center justify-between">
+            {vorbefuellt ? <span /> : (
             <label className="flex items-center gap-1.5 text-[11px] text-gray-500 cursor-pointer">
               <input type="checkbox" checked={learn} onChange={e => setLearn(e.target.checked)} className="accent-orange-500 w-3.5 h-3.5" />
               {t('deckChat.rememberForAll', 'Für alle künftigen Decks dieses Projekts merken')}
             </label>
+            )}
             <button onClick={() => void undo()} disabled={busy} className="text-[11px] text-gray-500 hover:text-gray-800 disabled:opacity-40">↶ {t('deckChat.undo', 'Letzte Änderung rückgängig')}</button>
           </div>
         </div>

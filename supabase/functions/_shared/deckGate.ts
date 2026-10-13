@@ -34,6 +34,16 @@ export interface Finding {
   sourceB?: string
   /** Was Sven tun kann. */
   fix?: string
+  /** Fundstelle fuer die Autobereinigung (_shared/deckAutofix.ts): Feldpfad im
+   *  Block (Hinweis, z. B. 'paragraphs[1]') und der woertliche Treffer. Rein
+   *  additiv, Anzeige und Ampel lesen das Feld nicht. index: Position des Treffers
+   *  im Feldtext, damit nur genau diese Stelle bereinigt wird. */
+  loc?: { field?: string; match: string; index?: number }
+  /** Nur Behauptungsbefunde: die beanstandete Aussage im Wortlaut. */
+  claim?: string
+  /** Nur flaeche_abweichung: die Stammwerte mit Bedeutung je Wohnung („C-105: Innenfläche
+   *  84,5 m², Terrasse 16 m², gesamt 100,5 m²"), fuer die Chat-Anweisung. Rein additiv. */
+  stamm?: string
 }
 
 export interface GateResult {
@@ -165,10 +175,13 @@ export function runDeckGate(blocks: Block[], ctx: DeckContext): GateResult {
     // Preis darf NICHT in freien Texten wiederholt werden — dort veraltet er.
     for (const field of ['text', 'note', 'quote', 'intro']) {
       const v = b[field]
-      if (typeof v === 'string' && /\d{2,3}\.\d{3}\s*(€|EUR)/.test(v)) {
+      // Ab 1 Mio. den ganzen Betrag treffen („1.250.000 €", nicht nur „250.000 €"),
+      // sonst findet die Autobereinigung die Stelle nie. Darunter wie bisher.
+      const pm = typeof v === 'string' ? v.match(/(?<![\d.])\d{1,3}(?:\.\d{3}){2,}\s*(€|EUR)|\d{2,3}\.\d{3}\s*(€|EUR)/) : null
+      if (typeof v === 'string' && pm) {
         add({ key: 'preis_im_fliesstext', severity: 'mittel', block: i,
           what: 'Im Fließtext steht ein Preis. Er wird bei Preisänderungen nicht mitgezogen.',
-          evidence: v.slice(0, 200) })
+          evidence: v.slice(0, 200), loc: { field, match: pm[0], index: pm.index } })
       }
     }
   }
@@ -330,7 +343,8 @@ export function runDeckGate(blocks: Block[], ctx: DeckContext): GateResult {
       add({ key: 'renditeaussage', severity: 'hoch', block: i,
         what: 'Im Deck steht eine Rendite- oder Mietertragsangabe. Solche Zahlen gehoeren in den Rendite-Rechner, nicht ins Deck.',
         evidence: `${k}: ${v.slice(Math.max(0, (m.index ?? 0) - 40), (m.index ?? 0) + 120)}`,
-        fix: 'Aussage aus dem Deck entfernen und stattdessen auf die persoenliche Berechnung verweisen.' })
+        fix: 'Aussage aus dem Deck entfernen und stattdessen auf die persoenliche Berechnung verweisen.',
+        loc: { field: k, match: m[0], index: m.index } })
       return
     }
   })
@@ -372,6 +386,16 @@ export function runDeckGate(blocks: Block[], ctx: DeckContext): GateResult {
       if (u.bathrooms != null) baeder.add(Number(u.bathrooms))
       if (u.floor != null) etagen.add(Number(u.floor))
     }
+    // Stammflaechen mit Bedeutung, damit die Chat-Anweisung sagen kann, welcher Wert wofuer steht.
+    const qm = (v: number) => `${String(Math.round(v * 100) / 100).replace('.', ',')} m²`
+    const flaechenStamm = ctx.units.map(u => {
+      const teile: string[] = []
+      if (u.sizeSqm != null && u.sizeSqm > 0) teile.push(`Innenfläche ${qm(Number(u.sizeSqm))}`)
+      if (u.terraceSqm != null && u.terraceSqm > 0) teile.push(`Terrasse ${qm(Number(u.terraceSqm))}`)
+      if (u.sizeSqm != null && u.terraceSqm != null && u.sizeSqm > 0 && u.terraceSqm > 0) teile.push(`gesamt ${qm(Number(u.sizeSqm) + Number(u.terraceSqm))}`)
+      if (u.plotSqm != null && u.plotSqm > 0) teile.push(`Grundstück ${qm(Number(u.plotSqm))}`)
+      return teile.length ? `${u.unitNumber ? `${u.unitNumber}: ` : ''}${teile.join(', ')}` : ''
+    }).filter(Boolean).join('; ')
     const betraege = new Set<number>()
     const addB = (n: number | null | undefined) => { if (n != null && Number.isFinite(n) && n > 0) betraege.add(Math.round(n)) }
     for (const u of ctx.units) {
@@ -451,7 +475,8 @@ export function runDeckGate(blocks: Block[], ctx: DeckContext): GateResult {
             add({ key: 'flaeche_abweichung', severity: hart ? 'hoch' : 'mittel', block: i,
               what: `Im Text steht ${m[1]} m², in den Stammdaten ${[...flaechen].map(f => String(f).replace('.', ',')).join(' / ')} m².`,
               evidence: `${field}: ${ausschnitt(m.index ?? 0)}`, sourceA: `CRM: ${[...flaechen].join(' / ')} m²`, sourceB: `Deck: ${m[1]} m²`,
-              fix: hart ? 'Fläche im Feinschliff auf den CRM-Wert setzen oder Deck neu erzeugen.' : 'Prüfen, ob die Zahl zum Projekt gehört; sonst korrigieren.' })
+              fix: hart ? 'Fläche im Feinschliff auf den CRM-Wert setzen oder Deck neu erzeugen.' : 'Prüfen, ob die Zahl zum Projekt gehört; sonst korrigieren.',
+              loc: { field, match: m[0], index: m.index }, ...(flaechenStamm ? { stamm: flaechenStamm } : {}) })
           }
         }
         if (!hart) continue
@@ -463,7 +488,7 @@ export function runDeckGate(blocks: Block[], ctx: DeckContext): GateResult {
             const key = `sz:${v}`; if (gemeldet.has(key)) continue; gemeldet.add(key)
             add({ key: 'zimmer_abweichung', severity: 'hoch', block: i,
               what: `Im Text stehen ${v} Schlafzimmer, in den Stammdaten ${[...zimmer].join(' / ')}.`,
-              evidence: `${field}: ${ausschnitt(m.index ?? 0)}`, fix: 'Zimmerzahl korrigieren.' })
+              evidence: `${field}: ${ausschnitt(m.index ?? 0)}`, fix: 'Zimmerzahl korrigieren.', loc: { field, match: m[0], index: m.index } })
           }
         }
         // Baeder
@@ -474,7 +499,7 @@ export function runDeckGate(blocks: Block[], ctx: DeckContext): GateResult {
             const key = `bad:${v}`; if (gemeldet.has(key)) continue; gemeldet.add(key)
             add({ key: 'bad_abweichung', severity: 'mittel', block: i,
               what: `Im Text stehen ${v} Bäder, in den Stammdaten ${[...baeder].join(' / ')}.`,
-              evidence: `${field}: ${ausschnitt(m.index ?? 0)}` })
+              evidence: `${field}: ${ausschnitt(m.index ?? 0)}`, loc: { field, match: m[0], index: m.index } })
           }
         }
         // Etage
@@ -491,7 +516,7 @@ export function runDeckGate(blocks: Block[], ctx: DeckContext): GateResult {
             const key = `et:${x.v}`; if (gemeldet.has(key)) continue; gemeldet.add(key)
             add({ key: 'etage_abweichung', severity: 'hoch', block: i,
               what: `Im Text steht „${x.roh}", in den Stammdaten Etage ${[...etagen].join(' / ')}.`,
-              evidence: `${field}: ${ausschnitt(x.idx)}`, fix: 'Etage korrigieren.' })
+              evidence: `${field}: ${ausschnitt(x.idx)}`, fix: 'Etage korrigieren.', loc: { field, match: x.roh, index: x.idx } })
           }
         }
       }
@@ -505,7 +530,7 @@ export function runDeckGate(blocks: Block[], ctx: DeckContext): GateResult {
           add({ key: 'betrag_fremd', severity: v >= 5000 ? 'hoch' : 'mittel', block: i,
             what: `Im Text steht ein Betrag (${m[0].trim()}), der weder Preis, MwSt, Rate, Reservierung noch Möbelpaket dieses Decks entspricht.`,
             evidence: `${field}: ${text.slice(Math.max(0, (m.index ?? 0) - 50), (m.index ?? 0) + 70)}`,
-            fix: 'Betrag streichen oder auf einen der verbindlichen Werte setzen.' })
+            fix: 'Betrag streichen oder auf einen der verbindlichen Werte setzen.', loc: { field, match: m[0], index: m.index } })
         }
         // Fertigstellung in Wortform ("September 2028")
         if (cm && cy) {
@@ -614,5 +639,8 @@ export function claimIssuesToFindings(issues: Array<Record<string, unknown>>): F
       : `Behauptung ist durch keinen Fakt gedeckt: ${String(it.claim ?? '')}`,
     evidence: String(it.evidence ?? it.reason ?? '').slice(0, 400),
     fix: 'Aussage im Feinschliff streichen oder mit einem belegten Fakt ersetzen.',
+    // Fuer die Autobereinigung: die Aussage im Wortlaut (das what-Praefix ist Anzeige).
+    claim: String(it.claim ?? ''),
+    loc: { match: String(it.claim ?? '') },
   }))
 }
