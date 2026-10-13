@@ -121,6 +121,13 @@ const baseBlocks = (specs) => {
 {
   const r = runDeckGate(baseBlocks(['3 Schlafzimmer', '84,5 m²']), ctx())
   ok('Zimmer 3 statt 2 → zimmer_abweichung hoch', has(r, 'zimmer_abweichung', 'hoch'), keys(r).join(', '))
+  // Doppel-Apartment (13.10.26): zwei Teilwohnungen mit je 1 Schlafzimmer = 2 laut CRM
+  for (const sp of ['2 × 1 Schlafzimmer / 1 Bad (A3a + A3b)', 'Je 1 Schlafzimmer in beiden Apartments', '2x 1 Schlafzimmer']) {
+    const rd = runDeckGate(baseBlocks([sp, '84,5 m²']), ctx())
+    ok(`Doppel-Apartment „${sp}" → kein zimmer_abweichung`, !has(rd, 'zimmer_abweichung'), keys(rd).join(', '))
+  }
+  const rf = runDeckGate(baseBlocks(['3 × 1 Schlafzimmer', '84,5 m²']), ctx())
+  ok('Gegenprobe „3 × 1 Schlafzimmer" (≠ 2) → zimmer_abweichung', has(rf, 'zimmer_abweichung', 'hoch'), keys(rf).join(', '))
   const r2 = runDeckGate(baseBlocks(['3. Etage', '84,5 m²']), ctx())
   ok('Etage 3 statt 1 → etage_abweichung hoch', has(r2, 'etage_abweichung', 'hoch'), keys(r2).join(', '))
   const r3 = runDeckGate(baseBlocks(['Erdgeschoss', '84,5 m²']), ctx())

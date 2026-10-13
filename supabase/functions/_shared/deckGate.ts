@@ -480,11 +480,19 @@ export function runDeckGate(blocks: Block[], ctx: DeckContext): GateResult {
           }
         }
         if (!hart) continue
+        // Doppel-Apartments (Mamba A3 = A3a + A3b): „2 × 1 Schlafzimmer" oder „je 1 Schlafzimmer"
+        // stimmt, wenn das Produkt bzw. ein Vielfaches den Stammwert ergibt (13.10.26).
+        const geteilt = (idx: number, v: number, soll: Set<number>) => {
+          const vor = text.slice(Math.max(0, idx - 24), idx)
+          const mal = vor.match(/(\d+)\s*[×x*]\s*$/i)
+          if (mal && soll.has(Number(mal[1]) * v)) return true
+          return /(?:\bje\b|\bjeweils\b|\bpro\b|\beach\b|\bper\b)[^.;]{0,18}$/i.test(vor) && [...soll].some(z => z > v && z % v === 0)
+        }
         // Schlafzimmer
         if (zimmer.size) {
           for (const m of text.matchAll(/\b(\d|ein|eine|einem|zwei|drei|vier|fünf|fuenf|one|two|three|four|five)[\s-]*(?:schlafzimmer|sz\b|bedrooms?\b|bed\b)/gi)) {
             const v = /^\d$/.test(m[1]) ? Number(m[1]) : (WORTZAHL[m[1].toLowerCase()] ?? NaN)
-            if (!Number.isFinite(v) || zimmer.has(v)) continue
+            if (!Number.isFinite(v) || zimmer.has(v) || geteilt(m.index ?? 0, v, zimmer)) continue
             const key = `sz:${v}`; if (gemeldet.has(key)) continue; gemeldet.add(key)
             add({ key: 'zimmer_abweichung', severity: 'hoch', block: i,
               what: `Im Text stehen ${v} Schlafzimmer, in den Stammdaten ${[...zimmer].join(' / ')}.`,
@@ -495,7 +503,7 @@ export function runDeckGate(blocks: Block[], ctx: DeckContext): GateResult {
         if (baeder.size) {
           for (const m of text.matchAll(/\b(\d|ein|zwei|drei|one|two|three)[\s-]*(?:badezimmer|bäder|bathrooms?\b)/gi)) {
             const v = /^\d$/.test(m[1]) ? Number(m[1]) : (WORTZAHL[m[1].toLowerCase()] ?? NaN)
-            if (!Number.isFinite(v) || baeder.has(v)) continue
+            if (!Number.isFinite(v) || baeder.has(v) || geteilt(m.index ?? 0, v, baeder)) continue
             const key = `bad:${v}`; if (gemeldet.has(key)) continue; gemeldet.add(key)
             add({ key: 'bad_abweichung', severity: 'mittel', block: i,
               what: `Im Text stehen ${v} Bäder, in den Stammdaten ${[...baeder].join(' / ')}.`,
