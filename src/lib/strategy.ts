@@ -163,8 +163,10 @@ export const DEV_AFTER_MONTHS = 24
 export const DEV_AFTER_PER_YEAR = 4
 export const DEV_AFTER_RATE_PCT = 3.4
 
+// Reservierung Mito seit 13.10.26: 20.000 EUR netto zzgl. 19 % MwSt (Sven). Der
+// Plan rechnet in Bruttobetraegen, deshalb 23.800.
 export const MITO_SCHEDULE: DevSchedule = {
-  reservation: 20000, contractPct: 30, build: [], handoverPct: 20,
+  reservation: 23800, contractPct: 30, build: [], handoverPct: 20,
   afterPct: 50, afterMonths: DEV_AFTER_MONTHS, afterPerYear: DEV_AFTER_PER_YEAR, afterRatePct: DEV_AFTER_RATE_PCT,
   source: 'Mito',
 }
@@ -246,8 +248,11 @@ export function scheduleFromProject(raw: unknown, developer?: string | null): De
   let resCredit: string | undefined
   const stages: Array<{ text: string; label: string; pct: number; monthsBefore?: number }> = []
   if (raw && !Array.isArray(raw) && typeof raw === 'object') {
-    const o = raw as { reservation?: number; reservationCredit?: string; stages?: Array<{ label?: string; sub?: string; pct?: number; monthsBefore?: number }> }
+    const o = raw as { reservation?: number; reservationVat?: boolean; reservationCredit?: string; stages?: Array<{ label?: string; sub?: string; pct?: number; monthsBefore?: number }> }
     reservation = Number(o.reservation) || 0
+    // Ausdruecklich netto hinterlegt (Mito seit 13.10.26): brutto rechnen, weil
+    // alle Raten des Plans Bruttobetraege sind.
+    if (o.reservationVat === true) reservation = Math.round(reservation * 1.19)
     resCredit = o.reservationCredit
     for (const s of o.stages ?? []) {
       if (Number(s.pct) > 0) stages.push({ text: `${s.label ?? ''} ${s.sub ?? ''}`, label: `${s.label ?? ''} ${s.sub ?? ''}`.trim(), pct: Number(s.pct),

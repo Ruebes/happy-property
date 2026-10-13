@@ -6,6 +6,7 @@ import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { CI } from '../_shared/brand.ts'
 import { callAnthropic, textOf } from '../_shared/anthropic.ts'
 import { zahlungsUebersicht } from './datenblatt.ts'
+import { normalizePaySchedule } from '../_shared/deckContext.ts'
 
 // Über portal.happy-property.com (Vercel-Rewrite auf Supabase Storage, Sven 11.10.26).
 export const GUIDE_URL = 'https://portal.happy-property.com/immobilienguide-paphos-2026.pdf'
@@ -238,3 +239,91 @@ export function zahlungKarte(z: ReturnType<typeof zahlungsUebersicht>, url: stri
 </td></tr>`
 }
 
+
+// ── Ratenplan für die Mail (Sven 13.10.26) ──────────────────────────────────
+// „Ein zusätzlicher Reiter nur für den Zahlungsplan, sodass man sieht, wann welche
+// Rate fällig wird": Reservierung jetzt, Vertrag in ca. 2 bis 4 Wochen, Übergabe
+// mit Termin, Raten danach mit Zins. Rechnet aus dem CRM-Zahlungsplan und dem
+// Bruttopreis des Decks. Raten nach der Übergabe quartalsweise (Annuität), die
+// Reservierung wird je nach Plan mit der ersten oder letzten Rate verrechnet.
+export interface Rate { wann: string; was: string; brutto: number; netto: number | null; zins?: boolean }
+const MONATE_DE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember']
+export function ratenplan(o: { schedule: unknown; brutto: number; netto: number; uebergabe: string | null; uebergabeLabel: string | null }):
+  { raten: Rate[]; zinsen: number; summe: number } | null {
+  const s = normalizePaySchedule(o.schedule) as (ReturnType<typeof normalizePaySchedule> & { reservationCredit?: string }) | null
+  if (!s || !o.brutto || !o.netto) return null
+  const faktor = o.brutto / o.netto
+  const resNet = Math.max(0, Number(s.reservation ?? 0))
+  const resBrutto = s.reservationVat === false ? resNet : Math.round(resNet * 1.19)
+  const ab = s.reservationCredit === 'last' ? 'last' : 'first'
+  const ueb = o.uebergabe ? new Date(o.uebergabe) : null
+  const uebText = o.uebergabeLabel || (ueb && !isNaN(ueb.getTime()) ? `${MONATE_DE[ueb.getMonth()]} ${ueb.getFullYear()}` : '')
+  const raten: Rate[] = []
+  if (resNet > 0) raten.push({ wann: 'Jetzt', was: 'Reservierung, sichert dir die Wohnung', brutto: resBrutto, netto: s.reservationVat === false ? null : resNet })
+  let resOffen = resNet > 0 ? resBrutto : 0
+  let zinsen = 0
+  for (const st of s.stages) {
+    const text = `${st.label ?? ''} ${st.sub ?? ''}`.toLowerCase()
+    const anteil = o.brutto * st.pct / 100
+    if (/nach (der )?((ü|ue)bergabe|fertigstellung)|after (handover|completion)/.test(text)) {
+      const monate = Number(text.match(/(\d+)\s*monat/)?.[1] ?? 12) || 12
+      const zinsPct = Number((text.match(/(\d+(?:[.,]\d+)?)\s*%\s*zins/)?.[1] ?? '0').replace(',', '.')) || 0
+      const proJahr = 4
+      const n = Math.max(1, Math.round(monate / 12 * proJahr))
+      const r = zinsPct / 100 / proJahr
+      const rate = r > 0 ? anteil * r / (1 - Math.pow(1 + r, -n)) : anteil / n
+      zinsen += rate * n - anteil
+      for (let k = 1; k <= n; k++) {
+        let betrag = rate
+        let was = `${k}. Rate von ${n}${zinsPct ? `, inkl. ${String(zinsPct).replace('.', ',')} % Zins` : ''}`
+        if (k === n && ab === 'last' && resOffen > 0) { betrag -= resOffen; was += ', abzüglich Reservierung'; resOffen = 0 }
+        let wann = `${k * 12 / proJahr}. Monat nach Übergabe`
+        if (ueb && !isNaN(ueb.getTime())) {
+          const d = new Date(ueb.getFullYear(), ueb.getMonth() + k * 12 / proJahr, 1)
+          wann = `ca. ${MONATE_DE[d.getMonth()]} ${d.getFullYear()}`
+        }
+        raten.push({ wann, was, brutto: Math.round(betrag), netto: null, zins: true })
+      }
+      continue
+    }
+    let betrag = anteil
+    let was = `${String(st.pct).replace('.', ',')} % ${st.label}`
+    let wann = 'Nach Baufortschritt'
+    if (/vertrag|unterzeichnung|contract|signing/.test(text)) {
+      wann = 'In ca. 2 bis 4 Wochen'
+      was = `${String(st.pct).replace('.', ',')} % bei Unterzeichnung des Kaufvertrags`
+    } else if (/(ü|ue)bergabe|schl(ü|ue)ssel|fertigstellung|handover|completion/.test(text)) {
+      wann = uebText ? `Bei Übergabe, geplant ${uebText}` : 'Bei Übergabe'
+      was = `${String(st.pct).replace('.', ',')} % mit oder kurz vor der Übergabe`
+    }
+    if (ab === 'first' && resOffen > 0) { betrag -= resOffen; was += ', abzüglich Reservierung'; resOffen = 0 }
+    raten.push({ wann, was, brutto: Math.round(betrag), netto: Math.round(betrag / faktor) })
+  }
+  const summe = raten.reduce((a, x) => a + x.brutto, 0)
+  return { raten, zinsen: Math.round(zinsen), summe }
+}
+
+export function ratenplanKarte(p: NonNullable<ReturnType<typeof ratenplan>>, pdfUrl: string | null): string {
+  const zeilen = p.raten.map((x, i) => `<tr>
+      <td style="padding:12px 0;${i ? `border-top:1px solid ${CI.line};` : ''}vertical-align:top;">
+        <p style="margin:0;font-family:${SANS};font-size:14px;font-weight:700;color:${CI.navy};">${esc(x.wann)}</p>
+        <p style="margin:2px 0 0;font-family:${SANS};font-size:13px;line-height:1.5;color:${CI.ink};">${esc(x.was)}</p>
+      </td>
+      <td align="right" style="padding:12px 0 12px 12px;${i ? `border-top:1px solid ${CI.line};` : ''}vertical-align:top;white-space:nowrap;">
+        <p style="margin:0;font-family:${SANS};font-size:15px;font-weight:700;color:${CI.navy};">${eur(x.brutto)}</p>
+        ${x.netto != null && x.netto !== x.brutto ? `<p style="margin:2px 0 0;font-family:${SANS};font-size:12px;color:${CI.mute};">${eur(x.netto)} netto + MwSt</p>` : ''}
+      </td></tr>`).join('')
+  return `<tr><td style="padding:0 0 14px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${CI.white};border:1px solid ${CI.line};border-radius:12px;">
+    <tr><td class="px" style="padding:20px 22px 6px;">
+      <p style="margin:0 0 6px;font-family:${SERIF};font-size:19px;font-weight:700;color:${CI.navy};">💶 Dein Zahlungsplan: wann welche Rate fällig wird</p>
+      <p style="margin:0 0 4px;font-family:${SANS};font-size:14px;line-height:1.6;color:${CI.ink};">Alle Beträge brutto, also inklusive 19 % MwSt.</p>
+    </td></tr>
+    <tr><td class="px" style="padding:0 22px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${zeilen}</table></td></tr>
+    <tr><td class="px" style="padding:6px 22px 20px;">
+      <p style="margin:0 0 ${pdfUrl ? '14px' : '0'};font-family:${SANS};font-size:12px;line-height:1.6;color:${CI.mute};">Die Raten nach der Übergabe sind quartalsweise gerechnet (monatlich geht auch)${p.zinsen > 0 ? `, die Zinsen machen zusammen ca. ${eur(p.zinsen)} aus` : ''}. Die genauen Termine und Beträge regelt der Kaufvertrag.</p>
+      ${pdfUrl ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>${knopf('Zahlungsplan als PDF', pdfUrl, CI.coral)}</tr></table>` : ''}
+    </td></tr>
+  </table>
+</td></tr>`
+}

@@ -223,7 +223,7 @@ export function removeFurniture(blocks: Block[], sink: ScrubEvent[]): Block[] {
 // Sprache kommt aus dem Kontext: vorher war der Block immer deutsch, auch im
 // englischen Deck, und nach jedem Feinschliff stand er wieder deutsch drin.
 // Reservierung: netto hinterlegt, gezahlt wird mit 19 % MwSt (Sven 19.9.26) -
-// ausser reservationVat ist ausdruecklich false (MITO: 20.000 EUR glatt).
+// ausser reservationVat ist ausdruecklich false (MITO bis 12.10.26: 20.000 EUR glatt, seit 13.10.26 netto zzgl. MwSt).
 export function buildPaymentBlock(sched: PaySchedule, basis?: { net: number; gross: number } | null, lang: 'de' | 'en' = 'de'): Block {
   const EN = lang === 'en'
   // MITO: Reservierung mit der letzten Rate verrechnet, Raten nach der Uebergabe

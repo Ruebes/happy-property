@@ -22,8 +22,8 @@ export interface PriceSummary { net: string; vatRate: string; vat: string; gross
 
 export interface PayStage { label: string; sub?: string; pct: number }
 /** reservationVat: Reservierung wird netto angegeben und mit 19 % MwSt gezahlt
- *  (Sven 19.9.26: gilt bei allen Bautraegern; einzige Ausnahme MITO mit 20.000 EUR
- *  glatt). Fehlt das Feld, gilt true. */
+ *  (Sven 19.9.26: gilt bei allen Bautraegern; MITO war mit 20.000 EUR glatt die
+ *  Ausnahme, seit 13.10.26 ebenfalls netto zzgl. MwSt). Fehlt das Feld, gilt true. */
 /** reservationCredit 'last': Reservierung wird mit der letzten Rate (nach der
  *  Uebergabe) verrechnet, die Vertragsrate ist der volle Prozentsatz (MITO, Sven
  *  9.10.26). Fehlt das Feld, gilt wie bisher die erste Rate. */
@@ -157,7 +157,7 @@ export function normalizePaySchedule(raw: unknown): PaySchedule | null {
     if (/%/.test(roh)) stages.push({ label, sub, pct: zahl(roh) })
     else if (/€|eur/i.test(roh)) {
       reservation = zahl(roh)
-      // Formular-Zeile darf `vat: false` tragen (MITO: 20.000 EUR glatt).
+      // Formular-Zeile darf `vat: false` tragen (Ausnahme ausdruecklich vat:false; MITO seit 13.10.26 ebenfalls 20.000 EUR netto zzgl. MwSt).
       if (typeof r.vat === 'boolean') reservationVat = r.vat
     }
     else if (typeof r.pct === 'number') stages.push({ label, sub, pct: r.pct })

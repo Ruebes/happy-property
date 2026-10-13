@@ -36,7 +36,7 @@ import { cyDate } from '../_shared/notifyToday.ts'
 import { baueDatenblatt, zahlungsUebersicht, type DeckBlockLite } from '../info-paket/datenblatt.ts'
 import {
   GUIDE_URL, LOGO, PHOTO_SQ, SERIF, SANS, CALC_STANDARD, type CalcStandard, type Markt, marktAnnahmen, calcParams,
-  esc, kundenFotos, karte, rechnungKarte, zahlungKarte,
+  esc, kundenFotos, karte, rechnungKarte, zahlungKarte, ratenplan, ratenplanKarte,
 } from '../info-paket/bausteine.ts'
 
 const CORS = {
@@ -64,8 +64,9 @@ interface UnitRow {
 }
 interface ProjektRow {
   id: string; name: string; developer: string | null; location: string | null; latitude: number | null; longitude: number | null
-  furniture_included: boolean | null; completion_date: string | null
+  furniture_included: boolean | null; completion_date: string | null; payment_schedule?: unknown
   deck_assets: {
+    completion_label?: string
     facts?: string; renders?: string[]; gallery?: Array<{ url: string; category: string; label: string }>
     floorplans?: Array<{ floor: number; label: string; url: string }> | Record<string, string>
     map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }
@@ -296,7 +297,7 @@ async function start(sb: SupabaseClient, b: Record<string, unknown>): Promise<Re
 
   // 3) Projekt + Fakten
   const { data: pr } = await sb.from('crm_projects')
-    .select('id, name, developer, location, latitude, longitude, furniture_included, completion_date, deck_assets').eq('id', unit.project_id).maybeSingle()
+    .select('id, name, developer, location, latitude, longitude, furniture_included, completion_date, payment_schedule, deck_assets').eq('id', unit.project_id).maybeSingle()
   const projekt = pr as ProjektRow | null
   if (!projekt) return await notiere('uebersprungen', 'projekt_fehlt', { unit_id: unit.id })
   const a = projekt.deck_assets ?? {}
@@ -409,7 +410,7 @@ async function abschliessen(sb: SupabaseClient, id: string): Promise<{ fertig: b
   const p = await person(sb, { lead_id: row.lead_id, subscriber_id: row.subscriber_id, email: row.empfaenger_email, name: row.empfaenger_name })
   const { data: u } = await sb.from('crm_project_units').select(UNIT_COLS).eq('id', row.unit_id).maybeSingle()
   const unit = u as UnitRow | null
-  const { data: pr } = await sb.from('crm_projects').select('id, name, developer, location, latitude, longitude, furniture_included, completion_date, deck_assets').eq('id', row.project_id).maybeSingle()
+  const { data: pr } = await sb.from('crm_projects').select('id, name, developer, location, latitude, longitude, furniture_included, completion_date, payment_schedule, deck_assets').eq('id', row.project_id).maybeSingle()
   const projekt = pr as ProjektRow | null
   if (!job || job.status === 'failed' || !p || !unit || !projekt) {
     const grund = !job ? 'Deck-Job fehlt' : job.status === 'failed' ? `Deck fehlgeschlagen: ${job.error ?? ''}` : 'Daten fehlen'
@@ -517,12 +518,15 @@ async function baueEntwurf(sb: SupabaseClient, row: PaketRow, p: Person, unit: U
     catch (e) { console.error('[anfrage-paket] Zahlungsplan:', e) }
   }
 
+  // Ratenplan aus dem CRM-Zahlungsplan (jede Rate mit Termin, Sven 13.10.26).
+  const plan = ratenplan({ schedule: projekt.payment_schedule, brutto: grossGesamt, netto: netJetzt + furnCost,
+    uebergabe: projekt.completion_date, uebergabeLabel: projekt.deck_assets?.completion_label ?? null })
   const lang = await resolveLang(sb, { email: p.email, lead_id: p.kind === 'lead' ? p.id : null })
   const deckUrl = `${PORTAL_URL}/deck/${token}`
   const terminUrl = p.kind === 'lead' ? bookingUrl(p.bookingToken) : `${PORTAL_URL}/termin?f=none&src=infopaket`
   const html = mailHtml({
     first: p.first, objekt, lage, gross: grossGesamt, calcUrl, calcUrlCash, deckUrl, terminUrl, fotos, fotoStand,
-    quelle: row.quelle, guide: lang !== 'en', std, markt, pdfUrl, zahlung, zahlplanUrl,
+    quelle: row.quelle, guide: lang !== 'en', std, markt, pdfUrl, zahlung, zahlplanUrl, plan,
   })
   const subject = `${p.first ? `${p.first}, d` : 'D'}eine Unterlagen zur ${objekt}`
   const waText = [
@@ -613,6 +617,7 @@ function mailHtml(m: {
   first: string; objekt: string; lage: string; gross: number; calcUrl: string; calcUrlCash: string; deckUrl: string
   terminUrl: string; fotos: string[]; fotoStand: string; quelle: Quelle; guide: boolean; std: CalcStandard; markt: Markt
   pdfUrl: string | null; zahlung: ReturnType<typeof zahlungsUebersicht>; zahlplanUrl: string | null
+  plan: ReturnType<typeof ratenplan>
 }): string {
   const fotosHtml = m.fotos.length ? `<tr><td style="padding:0 0 14px;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${CI.white};border:1px solid ${CI.line};border-radius:12px;">
@@ -641,7 +646,7 @@ function mailHtml(m: {
   <tr><td class="px" style="padding:6px 26px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
     ${karte('🏡', 'Deine Wohnung im Detail', 'Alle Bilder, der Grundriss, die Baubeschreibung, die Ausstattung, die Lage und der Zahlungsplan: alles zur Wohnung auf einer Seite.', 'Wohnung ansehen', m.deckUrl)}
     ${rechnungKarte({ gross: m.gross, calcUrl: m.calcUrl, calcUrlCash: m.calcUrlCash, terminUrl: m.terminUrl, std: m.std, markt: m.markt })}
-    ${zahlungKarte(m.zahlung, m.zahlplanUrl)}
+    ${m.plan ? ratenplanKarte(m.plan, m.zahlplanUrl) : zahlungKarte(m.zahlung, m.zahlplanUrl)}
     ${m.pdfUrl ? karte('📎', 'Datenblatt zur Wohnung', 'Grundriss, Eckdaten, Ausstattung, Bilder und der Zahlungsplan als PDF. Ideal zum Weiterleiten, zum Beispiel an deinen Partner oder Steuerberater.', 'Datenblatt öffnen', m.pdfUrl) : ''}
     ${m.guide ? karte('📘', 'Immobilienguide Paphos 2026', 'Ablauf beim Kauf, Kaufnebenkosten und Steuern, kompakt erklärt.', 'Guide herunterladen', GUIDE_URL) : ''}
     ${fotosHtml}
