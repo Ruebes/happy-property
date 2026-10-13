@@ -79,6 +79,10 @@ export default defineConfig({
           // Immobilienguide und Datenblätter aus dem Infopaket.
           /^\/unterlagen\//,
           /\.pdf$/,
+          // Statische Seiten aus public/ (Nach-dem-Kauf-Seite, persönliche Guides):
+          // sonst liefert ein alter SW die App-Shell aus und leitet auf /login um.
+          /^\/(service|guide)\//,
+          /\.html$/,
         ],
         runtimeCaching: [
           {
