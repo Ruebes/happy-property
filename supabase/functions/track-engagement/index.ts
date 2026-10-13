@@ -429,8 +429,14 @@ async function infoRequest(body: Record<string, unknown>): Promise<{ status: num
     mwst_sonderfall: 'MwSt-Sonderfall', preis_geaendert: 'Preis hat sich seit dem Deck geändert', rechnung_fehler: 'Rechnung ließ sich nicht anlegen',
     versand_fehler: 'Mailversand fehlgeschlagen', deck_fehlt: 'Deck nicht gefunden', fehler: 'technischer Fehler',
   }
+  // Anfrage-Paket (Sven 13.10.26): Ist das Infopaket nicht automatisch raus, bereitet
+  // anfrage-paket Deck, Rechnungen und Mail als Entwurf im Postausgang vor.
+  const { data: apRow } = await sb.from('crm_settings').select('value').eq('key', 'anfrage_paket_mode').maybeSingle()
+  const anfragePaket = !paket.sent && String((apRow as { value?: string } | null)?.value ?? '').trim() === 'on'
   const paketZeile = paket.sent
     ? `Infopaket: automatisch per Mail verschickt (2 Rechnungen, Wohnung als PDF, Guide, Baufotos). Finanziert: ${paket.calc_url ?? ''} · Ohne Kredit: ${paket.calc_url_cash ?? ''}`
+    : anfragePaket
+      ? 'Infopaket: wird gerade vorbereitet (eigenes Deck mit Grundriss und Baubeschreibung, 2 Rechnungen, Datenblatt) und liegt in wenigen Minuten im Postausgang. Prüfen und senden.'
     : paket.reason && paket.reason !== 'automatik_aus'
       ? `Infopaket: NICHT automatisch verschickt (${PAKET_GRUND[paket.reason] ?? paket.reason}), bitte selbst schicken.`
       : ''
@@ -479,6 +485,19 @@ async function infoRequest(body: Record<string, unknown>): Promise<{ status: num
   if (!intern) {
     await sb.functions.invoke('task-notify', { body: { mode: 'dispatch', task_id: taskId } })
       .catch((e: unknown) => console.warn('[track-engagement] info_request dispatch:', e))
+  }
+  // Paket im Hintergrund vorbereiten (Deck-Erstellung dauert Minuten).
+  if (anfragePaket && !intern) {
+    const svc = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    const p = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/anfrage-paket`, {
+      method: 'POST', headers: { Authorization: `Bearer ${svc}`, apikey: svc, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        quelle: 'formular', token, lead_id: leadId, subscriber_id: subId, email: person ? null : email, name: wer, phone,
+        wuensche: wuensche.map(k => WUNSCH[k]), frage, task_id: taskId,
+      }),
+    }).then(r => r.text()).catch((e: unknown) => console.warn('[track-engagement] anfrage-paket:', e))
+    const er = (globalThis as { EdgeRuntime?: { waitUntil: (p: Promise<unknown>) => void } }).EdgeRuntime
+    if (er) er.waitUntil(p); else await p
   }
   return { status: 200, body: { ok: true, sent: !!paket.sent } }
 }

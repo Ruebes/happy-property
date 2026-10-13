@@ -19,6 +19,7 @@ import { gateCaller } from '../_shared/callerGate.ts'
 import { wantsNewsletterOptout } from './optout.ts'
 import { looksLikeBounce, parseBounces } from './bounce.ts'
 import { recordBounce } from '../_shared/emailBounce.ts'
+import { anfragePaketAnstossen, ohneZitat } from '../_shared/anfragePaket.ts'
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
@@ -443,6 +444,8 @@ Deno.serve(async (req) => {
         // Abmeldung per Antwort-Mail („bitte aus dem Verteiler nehmen") → wie der
         // Abmelde-Link: Newsletter-Opt-out + offene Newsletter-Mails stornieren.
         // Still: nur eine Notiz im Lead-Verlauf, keine Meldung an Sven (sein Wunsch 1.10.).
+        // Infos zu einer Wohnung angefragt? Paket im Postausgang vorbereiten (Sven 13.10.26).
+        if (!wantsNewsletterOptout(bodyText)) await anfragePaketAnstossen(leadId, ohneZitat(`${subject}\n${bodyText}`), 'mail', 'imap-poll')
         if (wantsNewsletterOptout(bodyText)) {
           const { data: optedOut } = await supabase.from('leads')
             .update({ newsletter_optout_at: new Date().toISOString() })

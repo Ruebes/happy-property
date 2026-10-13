@@ -3967,6 +3967,7 @@
       "noPhone": "No phone number on the lead.",
       "waDeckLabel": "Sales Deck",
       "waCalcLabel": "Your calculation",
+      "waTextSection": "WhatsApp text",
       "noLinks": "No deck, calculation or plan links on this entry.",
       "confirmWa": "Send this WhatsApp now?",
       "waSent": "✅ WhatsApp sent",

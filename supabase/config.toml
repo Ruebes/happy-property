@@ -257,3 +257,8 @@ verify_jwt = false
 # [functions.typeform-webhook] steht oben (ebenfalls false wie live).
 [functions.calendly-status]
 verify_jwt = false
+
+# Anfrage-Paket: intern aus track-engagement, waInbound, imap-poll und Cron
+# (Service-Role, eigener Guard gateCaller).
+[functions.anfrage-paket]
+verify_jwt = false

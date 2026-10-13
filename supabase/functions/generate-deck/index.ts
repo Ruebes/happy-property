@@ -572,6 +572,14 @@ Deno.serve(async (req) => {
       // Sprache des Kunden: 'en' erzeugt das komplette Deck auf Englisch
       // (Sven 26.8.). Fehlt der Wert, wird sie am Lead aufgeloest.
       lang?: 'de' | 'en'
+      // Anfrage-Paket (Sven 13.10.26): Der Kunde hat alle Unterlagen angefordert.
+      // vollstaendig = Pflicht-Abschnitt Baubeschreibung + alles, was die Fakten
+      // hergeben. ohne_namen = kein Projekt- oder Bautraegername sichtbar (Kunde
+      // vor dem Erstgespraech, Provisionsschutz), lage_label ersetzt ihn auf Karte
+      // und Marina-Sektion.
+      vollstaendig?: boolean
+      ohne_namen?: boolean
+      lage_label?: string
     }
     const generic   = body.generic === true
     const recipient = generic ? '' : (body.recipient_name?.trim() || 'den Kunden')
@@ -791,6 +799,36 @@ Deno.serve(async (req) => {
     // Strukturierter CRM-Zahlungsplan als harter Faktblock - Prosa aus der Broschuere
     // (z.B. veraltete Fristen) darf ihn nicht ueberstimmen.
     extraFacts += paymentScheduleFacts(ctx.paymentSchedule)
+    // Preis MIT Einrichtung (zweite Preisspalte): Prosa-Hinweise der Projekt-Fakten
+    // ("Einrichtung NICHT im Kaufpreis") meinen den Grundpreis. Ohne diese Klarstellung
+    // meldete die Behauptungspruefung jede korrekte "inklusive"-Aussage als Widerspruch
+    // (Infinity 103, Newsletter-Deck 9.10.26).
+    if (ctx.furnitureMode === 'included') {
+      extraFacts += `\n\n=== PREIS MIT EINRICHTUNG (HART, SCHLAEGT DIE PROJEKT-FAKTEN) ===\nDieses Deck nennt den Preis MIT Einrichtungspaket (zweite Preisspalte des Bautraegers). Fuer DIESES Deck ist die Einrichtung im genannten Kaufpreis enthalten. Steht in den Projekt-Fakten, die Einrichtung sei NICHT im Kaufpreis oder du duerftest das nicht schreiben, bezieht sich das auf den Grundpreis ohne Einrichtung und gilt hier NICHT.`
+    }
+    // Vollstaendiges Info-Deck nach einer Kundenanfrage (Anfrage-Paket).
+    if (body.vollstaendig && !generic) {
+      extraFacts += `\n\n=== VOLLSTAENDIGES INFO-DECK (HART) ===\nDer Kunde hat ausdruecklich alle Unterlagen zu dieser Wohnung angefordert. Dieses Deck ist sein komplettes Informationspaket. Es gab noch KEIN Gespraech mit Sven: schreibe nie 'wie besprochen', 'schoen, dass wir gesprochen haben' oder Aehnliches.\nPflicht zusaetzlich zur Standard-Reihenfolge:\n1. Ein eigener inventory-Block mit kicker 'Baubeschreibung' (englisch 'Specification') und einer headline zur Bauqualitaet, direkt nach dem Grundriss. Gruppen nur, soweit die FAKTEN sie belegen, zum Beispiel: Rohbau und Waende, Fassade, Fenster und Tueren, Heizung, Klima und Energie, Boeden, Kueche und Baeder (fest verbaut), Gewaehrleistung. Jeder Punkt kurz und konkret (Material, Mass, Marke) und vollstaendig durch die Fakten gedeckt. Nichts ergaenzen. Keine Villen-Merkmale (Garten, privater Pool, Keller, Wendeltreppe) bei Wohnungen. Moebel, Geraete, Geschirr und Waesche gehoeren NICHT in die Baubeschreibung.\n2. Gemeinschaftsanlagen, Lage und Zahlungsplan vollstaendig, mit allem, was die Fakten hergeben.`
+    }
+    // Kein Projekt- und kein Bautraegername im Deck (Sven 30.9.26: kundenwirksames
+    // Material nennt nur Lage und Objekttyp).
+    const namenVerbot: string[] = []
+    if (body.ohne_namen && body.project_id) {
+      try {
+        const { data: pn } = await sbRules.from('crm_projects').select('name, developer').eq('id', body.project_id).maybeSingle()
+        const r = pn as { name?: string | null; developer?: string | null } | null
+        // Bautraeger auch mit dem ersten Wort ("Mito Developers" -> "Mito"), aber nie
+        // Allerweltswoerter. Der Klammerzusatz im Fakten-Kopf bleibt aussen vor - er
+        // ist bei manchen Projekten der Ort.
+        const erstes = String(r?.developer ?? '').trim().split(/\s+/)[0] ?? ''
+        const kandidaten = [r?.name, r?.developer, erstes.length >= 4 && !/^(the|developers?|group|homes|estates?)$/i.test(erstes) ? erstes : '']
+        for (const n of kandidaten) {
+          const x = String(n ?? '').trim()
+          if (x.length >= 3 && !namenVerbot.some(v => v.toLowerCase() === x.toLowerCase())) namenVerbot.push(x)
+        }
+      } catch { /* ohne Liste greift nur die allgemeine Regel */ }
+      extraFacts += `\n\n=== KEINE NAMEN (HART, HOECHSTE PRIORITAET) ===\nNenne an KEINER Stelle den Namen des Projekts oder des Bautraegers${namenVerbot.length ? ` (verboten: ${namenVerbot.join(', ')})` : ''}, auch nicht in Ueberschriften, Bildunterschriften, Zitaten oder Markenbeschreibungen. Schreibe statt dessen Lage und Objekttyp, zum Beispiel '${body.lage_label || 'der Neubau'}' oder 'der Bautraeger'. Die Fakten nennen die Namen nur zu deiner Orientierung.`
+    }
     const factsAug = body.facts.trim() + extraFacts + bildFakten + langHinweis
 
     const userMsg = learnedBlock + (generic ? [
@@ -918,7 +956,9 @@ Deno.serve(async (req) => {
         }
       } catch { /* Karte optional — Deck wird trotzdem erzeugt */ }
     }
-    assignMapAndFloorplan(blocks, body.images, projName)
+    // Sichtbarer Name auf Karte und Marina-Sektion: bei ohne_namen die Lage.
+    const sichtName = body.ohne_namen ? (body.lage_label?.trim() || '') : projName
+    assignMapAndFloorplan(blocks, body.images, sichtName)
 
     // ── Karte: KEIN eigener map-Block mehr ───────────────────────────────────
     // Bis hierher setzte generate-deck einen Block { type: 'map' } ein. Den kennt
@@ -934,8 +974,8 @@ Deno.serve(async (req) => {
     if (hatKarte && !blocks.some(b => b.type === 'facts')) {
       const fb: Record<string, unknown> = {
         type: 'facts', kicker: deckLang === 'en' ? 'Location' : 'Lage',
-        headline: projName
-          ? (deckLang === 'en' ? `${projName} on the map` : `${projName} auf der Karte`)
+        headline: sichtName
+          ? (deckLang === 'en' ? `${sichtName} on the map` : `${sichtName} auf der Karte`)
           : (deckLang === 'en' ? 'The location on the map' : 'Die Lage auf der Karte'),
         items: [],
       }
@@ -948,7 +988,7 @@ Deno.serve(async (req) => {
         fb.image = body.images.map
         if (body.images.mapMarker) fb.mapMarker = body.images.mapMarker
       }
-      if (projName) fb.mapLabel = projName
+      if (sichtName) fb.mapLabel = sichtName
       if (body.images?.mapUrl) fb.mapUrl = body.images.mapUrl
       blocks.splice(Math.min(4, blocks.length), 0, fb)
       console.log('[generate-deck] facts-Block mit Karte ergänzt (KI hatte ihn weggelassen)')
@@ -971,7 +1011,7 @@ Deno.serve(async (req) => {
     // Deck-Standard: Entfernungs-Chips (facts) + Marina-Sektion — deterministisch,
     // damit JEDES Deck sie hat, unabhängig davon was die KI liefert.
     const enDeck = deckLang === 'en'
-    injectLocationAndMarina(blocks, projRow?.name || projName, projRow, deckLang)
+    injectLocationAndMarina(blocks, body.ohne_namen ? sichtName : (projRow?.name || projName), projRow, deckLang)
     // Projektfilm nach der Lage-Sektion einsetzen. Anlage- und Innen-Clips folgen
     // weiter unten, nachdem die Bildstrecken stehen.
     injectVideos(blocks, projAssets?.videos, projRow?.video_url, 'hero', enDeck)
@@ -1124,6 +1164,27 @@ Deno.serve(async (req) => {
       }
     }
     const autofixed = rohBlocks && af ? af.applied : 0
+
+    // Kein Projekt-/Bautraegername sichtbar (ohne_namen): jede Fundstelle ist ein
+    // harter Befund, damit Sven sie vor dem Versand sieht. Nur Text, keine URLs.
+    if (body.ohne_namen && namenVerbot.length) {
+      const muster = namenVerbot.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+      const re = new RegExp(`(^|[^\\p{L}])(${muster})(?![\\p{L}])`, 'iu')
+      const URL_KEYS = new Set(['image', 'video', 'videoUrl', 'embedUrl', 'poster', 'link', 'mapUrl', 'url', 'src', 'href'])
+      const treffer: Array<{ block: number; text: string }> = []
+      const pruefe = (v: unknown, i: number, key = ''): void => {
+        if (typeof v === 'string') { if (!URL_KEYS.has(key) && !/^https?:\/\//.test(v) && re.test(v)) treffer.push({ block: i, text: v.slice(0, 120) }) }
+        else if (Array.isArray(v)) v.forEach(x => pruefe(x, i, key))
+        else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v as Record<string, unknown>)) pruefe(x, i, k)
+      }
+      blocks.forEach((b, i) => pruefe(b, i))
+      for (const t of treffer.slice(0, 6)) {
+        findings.push({ key: 'projektname_sichtbar', severity: 'hoch', block: t.block,
+          what: `Block ${t.block} nennt den Projekt- oder Bauträgernamen.`, evidence: t.text,
+          fix: 'Im Deck-Chat durch Lage und Objekttyp ersetzen lassen.' })
+      }
+      if (treffer.length) console.warn(`[generate-deck] ohne_namen: ${treffer.length} Fundstelle(n) mit Projekt-/Bauträgername`)
+    }
 
     const qualityStatus: 'green' | 'red' =
       findings.some(f => f.severity === 'kritisch' || f.severity === 'hoch') ? 'red' : 'green'

@@ -10,6 +10,7 @@
 
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { maybeUpdateEmailFromWa } from './waMailUpdate.ts'
+import { anfragePaketAnstossen } from './anfragePaket.ts'
 
 export type WaEvent = {
   uid:    string | null      // Message-ID des Anbieters (Dedupe)
@@ -237,6 +238,9 @@ export async function processWaEvent(sb: SupabaseClient, ev: WaEvent, tag: strin
     // und klinkt sich ein (engage). Beides im Hintergrund.
     const hasConv = !!(conv && conv.length)
     if (hasConv || APPT_HINT.test(text)) await callBot(hasConv ? 'reply' : 'engage', lead.id, text, tag)
+    // Infos zu einer Wohnung angefragt? Dann Paket im Postausgang vorbereiten
+    // (anfrage-paket entscheidet selbst, im Hintergrund).
+    await anfragePaketAnstossen(lead.id, text, 'whatsapp', tag)
   }
 
   return { outcome: 'processed' }

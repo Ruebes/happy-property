@@ -29,6 +29,8 @@ interface OutboxRow {
   sent_at: string | null
   email_sent_at: string | null
   whatsapp_sent_at: string | null
+  // Fertiger WhatsApp-Text (anfrage-paket, Erstanfrage): wird genau so gesendet.
+  wa_text?: string | null
   lead?: { first_name: string; last_name: string; phone: string | null; whatsapp: string | null; email: string | null } | null
 }
 interface DeckMeta { revision: number; refining: boolean; refine_error: string | null; approved_at: string | null; quality_status: string | null; quality_findings: number }
@@ -302,8 +304,9 @@ export default function Postausgang() {
     // der Mailtext selbst zur WhatsApp: Absätze, Listen und Links bleiben erhalten
     // (Sven 11.9.26, Bodo-Fahrplan). send-whatsapp teilt lange Texte selbst auf.
     const fallback = links ? '' : htmlToWhatsapp(row.body ?? '')
-    if (!links && !fallback) { flash(t('crm.outbox.noLinks', 'Keine Deck-, Berechnungs- oder Fahrplan-Links an diesem Eintrag.')); return }
-    const text = links
+    const eigenerText = row.wa_text?.trim() ? row.wa_text : ''
+    if (!eigenerText && !links && !fallback) { flash(t('crm.outbox.noLinks', 'Keine Deck-, Berechnungs- oder Fahrplan-Links an diesem Eintrag.')); return }
+    const text = eigenerText ? eigenerText : links
       ? t('crm.outbox.waBody', 'Hallo {{name}},\n\nschön, dass wir gesprochen haben! Hier sind deine persönlichen Angebote:\n\n{{links}}\n\nSchau sie dir in Ruhe an – bei Fragen bin ich jederzeit für dich da.\n\nViele Grüße\nSven · Happy Property', { name: fn, links })
       : fallback
     const regWarnWa = await registrationWarning(row)
@@ -476,6 +479,12 @@ export default function Postausgang() {
               )}
               {openId === r.id && (
                 <div className="border-t border-gray-100 px-4 py-3 space-y-4">
+                  {r.wa_text?.trim() && (
+                    <div>
+                      <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">💬 {t('crm.outbox.waTextSection', 'WhatsApp-Text')}</p>
+                      <p className="text-xs text-gray-700 whitespace-pre-wrap break-words bg-gray-50 rounded-lg px-3 py-2">{r.wa_text}</p>
+                    </div>
+                  )}
                   {/* ── Decks: ansehen · per Chat anpassen (Hintergrund) · als fertig bestätigen ── */}
                   <div>
                     <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">{t('crm.outbox.decksSection', 'Decks')}</p>
