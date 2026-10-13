@@ -626,7 +626,8 @@ async function svenAufgabe(sb: SupabaseClient, o: {
 // After-Sale (Sven 13.10.26): was wir nach dem Kauf übernehmen, mit Link auf die
 // ausführliche Seite (auch aus anderen Mails verlinkbar).
 const NACH_DEM_KAUF_URL = `${PORTAL_URL}/service/nach-dem-kauf.html`
-const APP_BILD = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/render/image/public/landing-assets/app/as_einnahmen.jpg?width=1040&quality=80'
+// Original statt /render/image: nur width ohne height schneidet das Bild zu.
+const APP_BILD = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/landing-assets/app/as_einnahmen.jpg'
 function nachDemKaufKarte(): string {
   const punkte = [
     ['Komplette Verwaltung', 'deiner Wohnung, du musst nicht vor Ort sein.'],
