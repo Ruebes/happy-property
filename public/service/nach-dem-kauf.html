@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Nach dem Kauf | Happy Property</title>
+<meta name="description" content="Nach dem Kauf übernimmt Happy Property die komplette Verwaltung deiner Wohnung auf Zypern: Vermietung, Rechnungen, Abrechnung und Auszahlung. Du behältst alles in der Happy Property App im Blick.">
+<meta property="og:title" content="Du kaufst. Wir kümmern uns um den Rest.">
+<meta property="og:description" content="Verwaltung, Vermietung, Rechnungen und Auszahlung: was Happy Property nach dem Kauf deiner Wohnung auf Zypern übernimmt.">
+<meta property="og:image" content="https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/landing-assets/app/as_einnahmen.jpg">
+<link rel="icon" href="/favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;1,500&family=Montserrat:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --creme: #fffcf6;
+    --creme-2: #f7f1e6;
+    --korall: #ff795d;
+    --korall-soft: #fff0ec;
+    --navy: #1a2332;
+    --navy-2: #26324a;
+    --ink: #2a2a2a;
+    --line: #e6dfd0;
+    --gold: #c2a15e;
+    --muted: #6f6f78;
+    --white: #ffffff;
+    --font-display: 'Playfair Display', Georgia, 'Times New Roman', serif;
+    --font-body: 'Montserrat', 'Helvetica Neue', Arial, sans-serif;
+    --wrap: 1120px;
+    --text: 660px;
+    --radius: 18px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--creme); color: var(--ink);
+    font-family: var(--font-body); font-size: 17px; line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  img { max-width: 100%; height: auto; display: block; }
+  .hero-grid > *, .split > *, .shots > *, .cards > *, .plans > *, .steps > *, .app-extras > * { min-width: 0; }
+  html, body { overflow-x: hidden; }
+  a { color: inherit; }
+  h1, h2, h3 { font-family: var(--font-display); color: var(--navy); font-weight: 500; line-height: 1.12; margin: 0; text-wrap: balance; }
+  h1 { font-size: clamp(2.4rem, 5.6vw, 4.3rem); }
+  h2 { font-size: clamp(1.8rem, 3.6vw, 2.7rem); }
+  h3 { font-size: 1.28rem; }
+  p { margin: 0 0 1em; }
+  p:last-child { margin-bottom: 0; }
+  .wrap { width: min(var(--wrap), calc(100% - 32px)); margin: 0 auto; }
+  .eyebrow { font-size: .72rem; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--korall); margin: 0 0 14px; }
+  .lead { font-size: 1.12rem; color: var(--ink); max-width: var(--text); }
+  section { padding: clamp(56px, 8vw, 104px) 0; }
+  .section-head { max-width: 720px; margin-bottom: 40px; }
+  .section-head p { color: var(--muted); max-width: var(--text); margin-top: 16px; }
+
+  /* Kopf */
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 0; }
+  .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; font-weight: 700; color: var(--navy); letter-spacing: .02em; }
+  .brand img { width: 40px; height: 40px; border-radius: 10px; }
+  .top a.top-cta { font-size: .85rem; font-weight: 600; text-decoration: none; color: var(--navy); border: 1px solid var(--line); background: var(--white); border-radius: 999px; padding: 9px 16px; }
+
+  /* Buttons */
+  .btns { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; font-size: .95rem; text-decoration: none; border-radius: 999px; padding: 14px 24px; }
+  .btn-primary { background: var(--navy); color: var(--white); }
+  .btn-accent { background: var(--korall); color: var(--white); }
+  .btn-ghost { background: transparent; color: var(--navy); border: 1px solid var(--navy); }
+
+  /* Hero */
+  .hero { padding: clamp(28px, 6vw, 72px) 0 clamp(56px, 8vw, 96px); }
+  .hero-grid { display: grid; grid-template-columns: 1.05fr .95fr; gap: 56px; align-items: center; }
+  .hero h1 em { font-style: italic; color: var(--navy-2); }
+  .hero .lead { margin-top: 22px; }
+  .need {
+    margin-top: 30px; display: grid; gap: 10px; max-width: 520px;
+  }
+  .need div { display: flex; gap: 12px; align-items: flex-start; background: var(--white); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; font-size: .95rem; }
+  .need b { color: var(--navy); }
+  .need .ico { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 9px; background: var(--korall-soft); color: var(--korall); display: grid; place-items: center; font-weight: 700; }
+  .hero-shot { position: relative; }
+  .browser { background: var(--white); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 30px 60px -30px rgba(26,35,50,.35); overflow: hidden; }
+  .browser .bar { display: flex; align-items: center; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: #fbf8f2; }
+  .browser .bar i { width: 9px; height: 9px; border-radius: 50%; background: #e2d9c8; display: block; }
+  .browser .bar span { margin-left: 10px; font-size: .72rem; color: var(--muted); }
+  .phone { position: absolute; right: -14px; bottom: -40px; width: 34%; min-width: 150px; background: var(--navy); border-radius: 26px; padding: 9px; box-shadow: 0 30px 50px -24px rgba(26,35,50,.55); }
+  .phone img { border-radius: 18px; }
+
+  /* Du / Wir */
+  .split { display: grid; grid-template-columns: .8fr 1.2fr; gap: 0; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); }
+  .split > div { padding: clamp(28px, 4vw, 44px); }
+  .split .du { background: var(--white); }
+  .split .wir { background: var(--navy); color: #e9ecf2; }
+  .split .wir h3 { color: var(--white); }
+  .split h3 { margin-bottom: 18px; }
+  .split ol, .split ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 14px; }
+  .split li { display: flex; gap: 12px; align-items: flex-start; }
+  .split .du li b { color: var(--navy); }
+  .num { flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%; border: 1.5px solid var(--korall); color: var(--korall); font-weight: 700; font-size: .85rem; display: grid; place-items: center; margin-top: 1px; }
+  .check { flex: 0 0 auto; width: 22px; height: 22px; margin-top: 3px; }
+  .wir ul { grid-template-columns: 1fr 1fr; column-gap: 28px; }
+
+  /* Leistungen */
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .card { background: var(--white); border: 1px solid var(--line); border-radius: var(--radius); padding: 28px 26px; }
+  .card .tag { display: inline-block; font-size: .7rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--gold); margin-bottom: 12px; }
+  .card h3 { margin-bottom: 12px; }
+  .card p { font-size: .95rem; color: var(--ink); }
+  .card ul { margin: 12px 0 0; padding-left: 18px; font-size: .92rem; color: var(--ink); }
+  .card ul li { margin-bottom: 6px; }
+
+  /* Ablauf */
+  .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; position: relative; }
+  .step { padding: 0 22px 0 0; position: relative; }
+  .step .dot { width: 46px; height: 46px; border-radius: 50%; background: var(--white); border: 2px solid var(--navy); color: var(--navy); display: grid; place-items: center; font-family: var(--font-display); font-size: 1.2rem; position: relative; z-index: 1; }
+  .step:not(:last-child)::before { content: ''; position: absolute; left: 46px; right: 0; top: 23px; height: 2px; background: var(--line); }
+  .step h3 { margin: 18px 0 8px; font-size: 1.15rem; }
+  .step .when { font-size: .75rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--korall); margin-top: 18px; }
+  .step .when + h3 { margin-top: 6px; }
+  .step p { font-size: .92rem; color: var(--muted); }
+
+  /* App */
+  .app { background: var(--creme-2); }
+  .shots { display: grid; grid-template-columns: repeat(12, 1fr); gap: 22px; }
+  .shot { grid-column: span 6; }
+  .shot.wide { grid-column: span 12; }
+  .shot figcaption { margin-top: 14px; }
+  .shot figcaption b { display: block; font-family: var(--font-display); font-size: 1.2rem; color: var(--navy); font-weight: 500; margin-bottom: 4px; }
+  .shot figcaption span { font-size: .92rem; color: var(--muted); }
+  figure { margin: 0; }
+  .app-extras { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 40px; }
+  .app-extras div { background: var(--white); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; font-size: .92rem; }
+  .app-extras b { display: block; color: var(--navy); margin-bottom: 4px; }
+
+  /* Plan A/B */
+  .plans { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .plan { border-radius: var(--radius); padding: 32px 30px; border: 1px solid var(--line); background: var(--white); }
+  .plan .tag { font-size: .7rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--korall); }
+  .plan h3 { margin: 10px 0 12px; }
+  .plan p { font-size: .95rem; }
+  .plan.b .tag { color: var(--gold); }
+
+  /* FAQ */
+  .faq { max-width: 820px; }
+  .faq details { border-top: 1px solid var(--line); padding: 18px 0; }
+  .faq details:last-child { border-bottom: 1px solid var(--line); }
+  .faq summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; gap: 16px; font-weight: 600; color: var(--navy); font-size: 1.02rem; }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary::after { content: '+'; color: var(--korall); font-size: 1.4rem; line-height: 1; }
+  .faq details[open] summary::after { content: '-'; }
+  .faq details p { margin-top: 12px; color: var(--ink); font-size: .96rem; max-width: 700px; }
+
+  /* Schluss */
+  .closing { background: var(--navy); color: #e9ecf2; text-align: center; }
+  .closing h2 { color: var(--white); }
+  .closing p { margin: 18px auto 0; max-width: 620px; color: #cfd5df; }
+  .closing .btns { justify-content: center; }
+  .closing .btn-ghost { color: var(--white); border-color: rgba(255,255,255,.5); }
+  .contact { margin-top: 26px; font-size: .9rem; color: #aeb6c4; }
+  .contact a { color: var(--white); text-decoration: none; font-weight: 600; }
+  footer { padding: 26px 0 40px; font-size: .8rem; color: var(--muted); }
+  footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; }
+  footer a { text-decoration: none; }
+
+  @media (max-width: 920px) {
+    .hero-grid, .split, .plans { grid-template-columns: 1fr; }
+    .hero-shot { margin: 10px 0 40px; }
+    .cards, .app-extras { grid-template-columns: 1fr 1fr; }
+    .steps { grid-template-columns: 1fr 1fr; row-gap: 34px; }
+    .step:nth-child(2)::before { display: none; }
+    .shot { grid-column: span 12; }
+  }
+  @media (max-width: 620px) {
+    body { font-size: 16px; }
+    .cards, .app-extras, .steps, .wir ul { grid-template-columns: 1fr; }
+    .step::before { display: none; }
+    .phone { width: 42%; right: -6px; bottom: -30px; }
+    .top a.top-cta { display: none; }
+    .btn { width: 100%; justify-content: center; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap top">
+  <a class="brand" href="https://steuervorteil-zypern-immobilien.com/" target="_blank" rel="noopener"><img src="/logo.jpg" alt="Happy Property Logo">Happy Property</a>
+  <a class="top-cta" href="https://portal.happy-property.com/termin?f=none&amp;src=nach-dem-kauf">Gespräch mit Sven buchen</a>
+</div>
+
+<!-- Hero -->
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <p class="eyebrow">Nach dem Kauf</p>
+      <h1>Du kaufst. <em>Wir kümmern uns um den Rest.</em></h1>
+      <p class="lead">Mit dem Kauf fängt unsere Arbeit erst richtig an. Wir übernehmen die komplette Verwaltung deiner Wohnung auf Zypern: Vermietung, Rechnungen, Abrechnung und Auszahlung. Du musst nicht vor Ort sein, nichts organisieren und keinem Handwerker hinterhertelefonieren.</p>
+      <div class="need">
+        <div><span class="ico">1</span><span><b>Von dir brauchen wir nur deine Bankverbindung.</b> Dorthin überweisen wir dir regelmäßig dein Geld.</span></div>
+        <div><span class="ico">2</span><span><b>Alles andere siehst du in der Happy Property App:</b> Einnahmen, Ausgaben, Buchungen und Unterlagen, am Laptop und auf dem Handy.</span></div>
+      </div>
+      <div class="btns">
+        <a class="btn btn-primary" href="https://portal.happy-property.com/termin?f=none&amp;src=nach-dem-kauf">Kostenloses Gespräch buchen &rarr;</a>
+        <a class="btn btn-ghost" href="#app">So sieht die App aus</a>
+      </div>
+    </div>
+    <div class="hero-shot">
+      <div class="browser">
+        <div class="bar"><i></i><i></i><i></i><span>portal.happy-property.com</span></div>
+        <img src="https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/landing-assets/app/as_einnahmen.jpg" width="1400" height="781" alt="Happy Property App: Einnahmen, Ausgaben, Ergebnis und Auslastung einer Wohnung">
+      </div>
+      <div class="phone"><img src="https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/landing-assets/app/as_m_einnahmen.jpg" width="600" height="680" alt="Happy Property App auf dem Handy"></div>
+    </div>
+  </div>
+</header>
+
+<!-- Du / Wir -->
+<section style="padding-top: 24px;">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Arbeitsteilung</p>
+      <h2>Drei Dinge für dich. Alles andere für uns.</h2>
+    </div>
+    <div class="split">
+      <div class="du">
+        <h3>Was du tust</h3>
+        <ol>
+          <li><span class="num">1</span><span><b>Bankverbindung angeben.</b> Einmal, dann läuft die Auszahlung.</span></li>
+          <li><span class="num">2</span><span><b>Entscheiden, wie vermietet wird:</b> an Feriengäste oder langfristig an einen festen Mieter.</span></li>
+          <li><span class="num">3</span><span><b>Reinschauen, wann du magst.</b> In der App siehst du jederzeit, was deine Wohnung verdient. Musst du aber nicht.</span></li>
+        </ol>
+      </div>
+      <div class="wir">
+        <h3>Was wir übernehmen</h3>
+        <ul>
+          <li><svg class="check" viewBox="0 0 24 24" fill="none" stroke="#ff795d" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Die komplette Verwaltung deiner Wohnung</span></li>
+          <li><svg class="check" viewBox="0 0 24 24" fill="none" stroke="#ff795d" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Ferienvermietung über Airbnb, Booking.com und Direktbuchungen</span></li>
+          <li><svg class="check" viewBox="0 0 24 24" fill="none" stroke="#ff795d" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Betreuung deiner Gäste</span></li>
+          <li><svg class="check" viewBox="0 0 24 24" fill="none" stroke="#ff795d" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Oder: Suche nach einem passenden Langzeitmieter</span></li>
+          <li><svg class="check" viewBox="0 0 24 24" fill="none" stroke="#ff795d" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Alle Rechnungen, die ankommen, bezahlen wir</span></li>
+          <li><svg class="check" viewBox="0 0 24 24" fill="none" stroke="#ff795d" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Abrechnung jeder Buchung und jeder Ausgabe</span></li>
+          <li><svg class="check" viewBox="0 0 24 24" fill="none" stroke="#ff795d" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Regelmäßige Überweisung auf dein Konto</span></li>
+          <li><svg class="check" viewBox="0 0 24 24" fill="none" stroke="#ff795d" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg><span>Unterlagen für deinen Steuerberater</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Leistungen -->
+<section style="padding-top: 0;">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Unsere Leistungen</p>
+      <h2>Was nach dem Kauf alles in unserer Hand liegt</h2>
+      <p>Du entscheidest, wie deine Wohnung genutzt wird. Um die Umsetzung kümmern wir uns, Monat für Monat.</p>
+    </div>
+    <div class="cards">
+      <article class="card">
+        <span class="tag">Kurzzeit</span>
+        <h3>Ferienvermietung, komplett übernommen</h3>
+        <p>Wir vermieten deine Wohnung an Feriengäste und kümmern uns um alles, was dazugehört.</p>
+        <ul>
+          <li>Vermietung über Airbnb, Booking.com und Direktbuchungen</li>
+          <li>Betreuung der Gäste</li>
+          <li>Jede Buchung mit Plattform, Nächten und Betrag in deiner App</li>
+        </ul>
+      </article>
+      <article class="card">
+        <span class="tag">Langzeit</span>
+        <h3>Ein fester Mieter, gesucht von uns</h3>
+        <p>Lieber planbare Miete statt Feriengäste? Dann suchen wir einen passenden Langzeitmieter für deine Wohnung.</p>
+        <ul>
+          <li>Mietersuche durch uns</li>
+          <li>Mietvertrag als PDF in deiner Akte</li>
+          <li>Vertragslaufzeit im Kalender im Blick</li>
+        </ul>
+      </article>
+      <article class="card">
+        <span class="tag">Rechnungen</span>
+        <h3>Alle Rechnungen bezahlen wir</h3>
+        <p>Was für deine Wohnung an Rechnungen ankommt, bezahlen wir für dich, zum Beispiel Reinigung oder Versicherung.</p>
+        <ul>
+          <li>Jede Ausgabe mit Rechnung als PDF</li>
+          <li>Status „bezahlt“ direkt sichtbar</li>
+          <li>Keine Mahnung, kein Papierkram bei dir</li>
+        </ul>
+      </article>
+      <article class="card">
+        <span class="tag">Auszahlung</span>
+        <h3>Dein Geld kommt aufs Konto</h3>
+        <p>Wir brauchen von dir nur deine Bankverbindung. Deine Einnahmen überweisen wir dir regelmäßig, die Kosten sind bis dahin schon bezahlt.</p>
+        <ul>
+          <li>Einnahmen, Ausgaben und Ergebnis je Monat</li>
+          <li>Auslastung in Prozent und Nächten</li>
+        </ul>
+      </article>
+      <article class="card">
+        <span class="tag">Steuern</span>
+        <h3>Fertig für deinen Steuerberater</h3>
+        <p>Einnahmen, Ausgaben, Belege und Steuerguides liegen bereit, fertig zum Weiterreichen.</p>
+        <ul>
+          <li>Steuerguide mit Doppelbesteuerungsabkommen und relevanten Paragraphen</li>
+          <li>Dein Steuerberater kann mitlesen, deine Bankdaten sieht er nicht</li>
+        </ul>
+      </article>
+      <article class="card">
+        <span class="tag">Eigennutzung</span>
+        <h3>Selbst Urlaub machen</h3>
+        <p>Es ist deine Wohnung. Willst du selbst hin, siehst du im Belegungskalender sofort, wann frei ist, und trägst deinen Aufenthalt einfach ein.</p>
+        <ul>
+          <li>Alle Buchungen in einem Kalender</li>
+          <li>Eigennutzung über „Neue Buchung“</li>
+        </ul>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- Ablauf -->
+<section style="padding-top: 0;">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Der Weg</p>
+      <h2>Von der Reservierung bis zur ersten Auszahlung</h2>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <div class="dot">1</div>
+        <p class="when">Ab der Reservierung</p>
+        <h3>Dein Zugang zur App</h3>
+        <p>Sobald deine Wohnung reserviert ist, legen wir deinen Zugang an. Kaufvertrag und Unterlagen liegen als PDF in deiner Akte.</p>
+      </div>
+      <div class="step">
+        <div class="dot">2</div>
+        <p class="when">Während der Bauphase</p>
+        <h3>Raten und Baufortschritt</h3>
+        <p>Jede Rate mit Rechnung und Zahlungsbeleg. Baustellenfotos mit Datum, eine Nachricht aufs Handy, sobald es Neues gibt.</p>
+      </div>
+      <div class="step">
+        <div class="dot">3</div>
+        <p class="when">Ab der Übergabe</p>
+        <h3>Die Vermietung startet</h3>
+        <p>Ferienvermietung oder Langzeitmieter, so wie du es willst. Wir übernehmen ab dem ersten Tag.</p>
+      </div>
+      <div class="step">
+        <div class="dot">4</div>
+        <p class="when">Laufend</p>
+        <h3>Abrechnung und Auszahlung</h3>
+        <p>Wir bezahlen die Rechnungen, rechnen ab und überweisen dir dein Geld. Du siehst jeden Schritt in der App.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- App -->
+<section class="app" id="app">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Happy Property App</p>
+      <h2>Deine Wohnung, jederzeit in deiner Hand</h2>
+      <p>Wir tragen alles ein: Raten, Fotos, Buchungen, Rechnungen und Abrechnungen. Du musst nichts pflegen, kannst aber jederzeit reinschauen. Die App läuft im Browser, ohne App Store, auf Deutsch und Englisch, und ist für Eigentümer von Happy Property inklusive.</p>
+    </div>
+    <div class="shots">
+      <figure class="shot wide">
+        <div class="browser"><div class="bar"><i></i><i></i><i></i><span>Einnahmen</span></div>
+          <img src="https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/landing-assets/app/as_einnahmen.jpg" width="1400" height="781" alt="Einnahmen und Ausgaben je Monat mit Diagramm und Tabelle" loading="lazy"></div>
+        <figcaption><b>Was deine Wohnung verdient</b><span>Einnahmen, Ausgaben, Ergebnis und Auslastung je Monat, als Diagramm und Tabelle. Jede Buchung einzeln.</span></figcaption>
+      </figure>
+      <figure class="shot">
+        <div class="browser"><div class="bar"><i></i><i></i><i></i><span>Ausgaben</span></div>
+          <img src="https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/landing-assets/app/as_ausgaben.jpg" width="1400" height="380" alt="Ausgaben einer Wohnung, alle als bezahlt markiert" loading="lazy"></div>
+        <figcaption><b>Rechnungen: bezahlt</b><span>Jede Rechnung, die für deine Wohnung ankommt, bezahlen wir. Du siehst Betrag, Aussteller und Status.</span></figcaption>
+      </figure>
+      <figure class="shot">
+        <div class="browser"><div class="bar"><i></i><i></i><i></i><span>Dokumente</span></div>
+          <img src="https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/landing-assets/app/as_rechnungen.jpg" width="790" height="290" alt="Rechnungen für Reinigung, Abrechnung der Vermietung und Gebäudeversicherung" loading="lazy"></div>
+        <figcaption><b>Jeder Beleg als PDF</b><span>Reinigung, Abrechnung der Vermietung, Versicherung: alles sortiert, durchsuchbar und zum Weiterleiten.</span></figcaption>
+      </figure>
+      <figure class="shot">
+        <div class="browser"><div class="bar"><i></i><i></i><i></i><span>Verträge</span></div>
+          <img src="https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/landing-assets/app/as_vertraege.jpg" width="1400" height="330" alt="Kaufvertrag, Reservierungsvereinbarung und Zahlungsplan als Dokumente" loading="lazy"></div>
+        <figcaption><b>Deine komplette Akte</b><span>Kaufvertrag, Reservierungsvereinbarung, Zahlungsplan und Mietverträge an einem Ort.</span></figcaption>
+      </figure>
+      <figure class="shot">
+        <div class="browser"><div class="bar"><i></i><i></i><i></i><span>Zahlungsplan</span></div>
+          <img src="https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/landing-assets/app/as_zahlung.jpg" width="1400" height="165" alt="Zahlungsplan mit Gesamtbetrag, bezahlt und ausstehend" loading="lazy"></div>
+        <figcaption><b>Raten im Blick, schon in der Bauphase</b><span>Gesamtbetrag, bezahlt und ausstehend. Zu jeder Rate die Rechnung des Bauträgers und dein Zahlungsbeleg.</span></figcaption>
+      </figure>
+    </div>
+    <div class="app-extras">
+      <div><b>Nachricht aufs Handy</b>Neue Fotos, Dokumente und Buchungen melden wir dir per WhatsApp oder E-Mail.</div>
+      <div><b>Steuerberater einladen</b>Er sieht Unterlagen, Zahlungen und Abrechnungen. Deine Bankdaten bleiben ausgenommen.</div>
+      <div><b>Problem melden</b>Eine Frage oder ein Problem? Direkt aus der App melden, wir kümmern uns und geben Bescheid.</div>
+      <div><b>Mehrere Wohnungen, ein Zugang</b>Jede Wohnung mit eigener Akte, eigenem Zahlungsplan und eigener Abrechnung.</div>
+      <div><b>Eigene Unterlagen hochladen</b>Vollmacht, Ausweis, Finanzierung: hochladen, wir werden automatisch informiert.</div>
+      <div><b>Nur deine Daten</b>Login mit E-Mail und Passwort. Du siehst ausschließlich deine eigenen Wohnungen und Zahlen.</div>
+    </div>
+  </div>
+</section>
+
+<!-- Plan A / B -->
+<section>
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Vermietung</p>
+      <h2>Zwei Wege, und du bist auf keinen angewiesen</h2>
+      <p>Wir wählen Lagen, die das ganze Jahr gefragt sind. Deshalb funktioniert deine Wohnung in beiden Modellen.</p>
+    </div>
+    <div class="plans">
+      <div class="plan">
+        <span class="tag">Plan A</span>
+        <h3>Kurzzeitvermietung, ganzjährig</h3>
+        <p>Auch von Oktober bis April gefragt: Überwinterer, Langzeiturlauber, Geschäftsreisende. Wir übernehmen die komplette Ferienvermietung, von der Buchung bis zur Abrechnung.</p>
+      </div>
+      <div class="plan b">
+        <span class="tag">Plan B</span>
+        <h3>Langzeitvermietung, jederzeit möglich</h3>
+        <p>Jede unserer Wohnungen eignet sich auch für die Langzeitmiete. Wir suchen den Mieter, du bekommst eine planbare Miete.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section style="padding-top: 0;">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Häufige Fragen</p>
+      <h2>Gut zu wissen</h2>
+    </div>
+    <div class="faq">
+      <details open>
+        <summary>Was muss ich nach dem Kauf selbst tun?</summary>
+        <p>Fast nichts. Wir brauchen deine Bankverbindung für die Auszahlung und deine Entscheidung, ob deine Wohnung an Feriengäste oder langfristig vermietet wird. Um Vermietung, Rechnungen und Abrechnung kümmern wir uns.</p>
+      </details>
+      <details>
+        <summary>Wer bezahlt die laufenden Rechnungen?</summary>
+        <p>Wir. Alle Rechnungen, die für deine Wohnung ankommen, bezahlen wir, zum Beispiel Reinigung oder Versicherung. Jede Rechnung liegt als PDF in deiner App, mit Status „bezahlt“.</p>
+      </details>
+      <details>
+        <summary>Wie komme ich an mein Geld?</summary>
+        <p>Wir überweisen dir deine Einnahmen regelmäßig auf dein Konto. In der App siehst du jederzeit, was eingenommen und was ausgegeben wurde.</p>
+      </details>
+      <details>
+        <summary>Kann ich selbst in meiner Wohnung Urlaub machen?</summary>
+        <p>Ja. Im Belegungskalender siehst du, wann frei ist, und trägst deinen Aufenthalt über „Neue Buchung“ ein.</p>
+      </details>
+      <details>
+        <summary>Kann mein Steuerberater mitlesen?</summary>
+        <p>Ja. Du lädst ihn zu deiner Wohnung ein. Er sieht Unterlagen, Zahlungen und Abrechnungen, deine Bankdaten nicht.</p>
+      </details>
+      <details>
+        <summary>Was kostet die App?</summary>
+        <p>Nichts extra. Sie ist Teil unseres Service für alle, die über Happy Property eine Wohnung auf Zypern kaufen.</p>
+      </details>
+      <details>
+        <summary>Ab wann habe ich Zugang?</summary>
+        <p>Sobald deine Wohnung reserviert ist. Die Zugangsdaten bekommst du per E-Mail und WhatsApp.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- Schluss -->
+<section class="closing">
+  <div class="wrap">
+    <p class="eyebrow">Bei uns in guten Händen</p>
+    <h2>Deine Wohnung arbeitet. Du lehnst dich zurück.</h2>
+    <p>Lass uns in 20 Minuten durchgehen, wie das bei deiner Wohnung aussieht: Vermietung, Kosten und was am Ende für dich übrig bleibt.</p>
+    <div class="btns">
+      <a class="btn btn-accent" href="https://portal.happy-property.com/termin?f=none&amp;src=nach-dem-kauf">Termin mit Sven aussuchen &rarr;</a>
+      <a class="btn btn-ghost" href="https://steuervorteil-zypern-immobilien.com/happy-property-app/" target="_blank" rel="noopener">Alle Funktionen der App</a>
+    </div>
+    <p class="contact">WhatsApp <a href="https://wa.me/35795154722">+357 95 154722</a> &middot; <a href="mailto:sven@happy-property.com">sven@happy-property.com</a></p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>&copy; Happy Property Cyprus</span>
+    <span><a href="https://steuervorteil-zypern-immobilien.com/impressum/" target="_blank" rel="noopener">Impressum</a> &middot; <a href="https://steuervorteil-zypern-immobilien.com/datenschutz/" target="_blank" rel="noopener">Datenschutz</a></span>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -381,8 +381,11 @@ async function start(sb: SupabaseClient, b: Record<string, unknown>): Promise<Re
 
   // Im selben Lauf auf das Deck warten (meist 2-4 Min). Reicht die Zeit nicht,
   // übernimmt der Cron.
+  // Nur solange genug Laufzeit für Rechnungen, Fotos und PDFs bleibt (Edge-Limit
+  // ca. 400 s, 13.10.26: ein Abschluss nach 270 s wurde abgeschnitten).
+  const t0 = Date.now()
   const warten = (async () => {
-    for (let i = 0; i < 34; i++) {
+    while (Date.now() - t0 < 200_000) {
       await sleep(10_000)
       const r = await abschliessen(sb, id).catch(e => ({ fertig: false, fehler: String(e) }))
       if (r.fertig) return
@@ -447,7 +450,10 @@ async function abschliessen(sb: SupabaseClient, id: string): Promise<{ fertig: b
   }
 }
 
-async function baueEntwurf(sb: SupabaseClient, row: PaketRow, p: Person, unit: UnitRow, projekt: ProjektRow, token: string): Promise<{
+// vorhanden: Mail eines fertigen Pakets neu bauen (gleiche Rechnungen, gleicher
+// Postausgang-Eintrag), z.B. nach einer Textänderung. Deck bleibt unverändert.
+async function baueEntwurf(sb: SupabaseClient, row: PaketRow, p: Person, unit: UnitRow, projekt: ProjektRow, token: string,
+  vorhanden?: { calcTokens: string[]; outboxId: string }): Promise<{
   calcTokens: string[]; calcUrls: string[]; outboxId: string; ampel: string; befunde: string[]; hinweis: string | null
 }> {
   const { data: d } = await sb.from('sales_decks').select('content, deck_context, quality_status, quality_report').eq('token', token).maybeSingle()
@@ -496,8 +502,9 @@ async function baueEntwurf(sb: SupabaseClient, row: PaketRow, p: Person, unit: U
     calcTokens.push(tok)
     return `${PORTAL_URL}/rechnung/${tok}`
   }
-  const calcUrl = await rechnung('yes', 'finanziert')
-  const calcUrlCash = await rechnung('no', 'ohne Kredit')
+  const calcUrl = vorhanden?.calcTokens[0] ? `${PORTAL_URL}/rechnung/${vorhanden.calcTokens[0]}` : await rechnung('yes', 'finanziert')
+  const calcUrlCash = vorhanden?.calcTokens[1] ? `${PORTAL_URL}/rechnung/${vorhanden.calcTokens[1]}` : await rechnung('no', 'ohne Kredit')
+  if (vorhanden) calcTokens.push(...vorhanden.calcTokens.slice(0, 2))
 
   // Baustellenfotos (nur saubere, Svens feste Regel) + Datenblatt/Zahlungsplan-PDF
   const { fotos, fotoStand } = await kundenFotos(sb, projekt.id).catch(() => ({ fotos: [] as string[], fotoStand: '' }))
@@ -538,15 +545,18 @@ async function baueEntwurf(sb: SupabaseClient, row: PaketRow, p: Person, unit: U
     `📊 Deine Rechnung mit Finanzierung: ${calcUrl}`,
     `📊 Deine Rechnung ohne Kredit: ${calcUrlCash}`,
     ...(pdfUrl ? [`📄 Datenblatt als PDF: ${pdfUrl}`] : []),
+    `🔑 Was wir nach dem Kauf alles für dich übernehmen: ${NACH_DEM_KAUF_URL}`,
     '',
     `Am einfachsten gehen wir alles in 20 Minuten gemeinsam durch. Hier kannst du dir einen Termin aussuchen: ${terminUrl}`,
     '',
     'Viele Grüße',
     'Sven',
   ].join('\n')
-  const { data: ob, error: oErr } = await sb.from('deck_outbox').insert({
-    lead_id: p.kind === 'lead' ? p.id : null, recipient_email: p.email, subject, body: html, deck_tokens: [token], status: 'draft', wa_text: waText,
-  }).select('id').single()
+  const { data: ob, error: oErr } = vorhanden
+    ? await sb.from('deck_outbox').update({ subject, body: html, wa_text: waText }).eq('id', vorhanden.outboxId).eq('status', 'draft').select('id').single()
+    : await sb.from('deck_outbox').insert({
+      lead_id: p.kind === 'lead' ? p.id : null, recipient_email: p.email, subject, body: html, deck_tokens: [token], status: 'draft', wa_text: waText,
+    }).select('id').single()
   if (oErr || !ob) throw new Error(`Postausgang: ${oErr?.message ?? 'kein Eintrag'}`)
 
   const hart = (deck.quality_report?.findings ?? []).filter(f => f.severity === 'kritisch' || f.severity === 'hoch').map(f => String(f.what ?? '')).slice(0, 5)
@@ -613,6 +623,37 @@ async function svenAufgabe(sb: SupabaseClient, o: {
 }
 
 // ── Mail ────────────────────────────────────────────────────────────────────
+// After-Sale (Sven 13.10.26): was wir nach dem Kauf übernehmen, mit Link auf die
+// ausführliche Seite (auch aus anderen Mails verlinkbar).
+const NACH_DEM_KAUF_URL = `${PORTAL_URL}/service/nach-dem-kauf.html`
+const APP_BILD = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/render/image/public/landing-assets/app/as_einnahmen.jpg?width=1040&quality=80'
+function nachDemKaufKarte(): string {
+  const punkte = [
+    ['Komplette Verwaltung', 'deiner Wohnung, du musst nicht vor Ort sein.'],
+    ['Vermietung, wie du willst:', 'komplette Ferienvermietung über Airbnb, Booking.com und Direktbuchungen oder ein fester Langzeitmieter, den wir für dich suchen.'],
+    ['Alle Rechnungen', 'für deine Wohnung bezahlen wir, zum Beispiel Reinigung oder Versicherung.'],
+    ['Nur deine Bankverbindung', 'brauchen wir. Dein Geld überweisen wir dir regelmäßig.'],
+    ['Alles im Blick', 'in der Happy Property App: Einnahmen, Ausgaben, Buchungen und Unterlagen.'],
+  ]
+  return `<tr><td style="padding:0 0 14px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${CI.navy};border-radius:12px;">
+    <tr><td class="px" style="padding:22px 22px 6px;">
+      <p style="margin:0 0 6px;font-family:${SERIF};font-size:20px;font-weight:700;color:#ffffff;">🔑 Nach dem Kauf: Wir kümmern uns um alles</p>
+      <p style="margin:0 0 12px;font-family:${SANS};font-size:14px;line-height:1.6;color:#d6dbe4;">Mit dem Kauf fängt unsere Arbeit erst richtig an. Das übernehmen wir für dich:</p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        ${punkte.map(([b, t]) => `<tr><td width="22" style="vertical-align:top;padding:3px 0 8px;font-family:${SANS};font-size:15px;color:${CI.coral};font-weight:700;">✓</td><td style="padding:3px 0 8px;font-family:${SANS};font-size:14px;line-height:1.55;color:#ffffff;"><strong>${esc(b)}</strong> ${esc(t)}</td></tr>`).join('')}
+      </table>
+    </td></tr>
+    <tr><td class="px" style="padding:6px 22px 0;"><img src="${APP_BILD}" width="512" alt="Happy Property App: Einnahmen und Ausgaben deiner Wohnung" style="display:block;width:100%;height:auto;border-radius:8px;"></td></tr>
+    <tr><td class="px" style="padding:16px 22px 22px;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:${CI.coral};border-radius:999px;padding:11px 20px;">
+        <a href="${esc(NACH_DEM_KAUF_URL)}" style="font-family:${SANS};font-size:14px;font-weight:700;color:#ffffff;text-decoration:none;">So betreuen wir deine Wohnung &rarr;</a>
+      </td></tr></table>
+    </td></tr>
+  </table>
+</td></tr>`
+}
+
 function mailHtml(m: {
   first: string; objekt: string; lage: string; gross: number; calcUrl: string; calcUrlCash: string; deckUrl: string
   terminUrl: string; fotos: string[]; fotoStand: string; quelle: Quelle; guide: boolean; std: CalcStandard; markt: Markt
@@ -648,6 +689,7 @@ function mailHtml(m: {
     ${rechnungKarte({ gross: m.gross, calcUrl: m.calcUrl, calcUrlCash: m.calcUrlCash, terminUrl: m.terminUrl, std: m.std, markt: m.markt })}
     ${m.plan ? ratenplanKarte(m.plan, m.zahlplanUrl) : zahlungKarte(m.zahlung, m.zahlplanUrl)}
     ${m.pdfUrl ? karte('📎', 'Datenblatt zur Wohnung', 'Grundriss, Eckdaten, Ausstattung, Bilder und der Zahlungsplan als PDF. Ideal zum Weiterleiten, zum Beispiel an deinen Partner oder Steuerberater.', 'Datenblatt öffnen', m.pdfUrl) : ''}
+    ${nachDemKaufKarte()}
     ${m.guide ? karte('📘', 'Immobilienguide Paphos 2026', 'Ablauf beim Kauf, Kaufnebenkosten und Steuern, kompakt erklärt.', 'Guide herunterladen', GUIDE_URL) : ''}
     ${fotosHtml}
   </table></td></tr>
@@ -669,7 +711,7 @@ function mailHtml(m: {
 async function sweep(sb: SupabaseClient): Promise<Record<string, unknown>> {
   // Hängende Claims (Lauf abgestürzt) nach 10 Min freigeben.
   await sb.from('anfrage_pakete').update({ abschluss_at: null }).eq('status', 'deck')
-    .lt('abschluss_at', new Date(Date.now() - 10 * 60_000).toISOString())
+    .lt('abschluss_at', new Date(Date.now() - 7 * 60_000).toISOString())
   const { data } = await sb.from('anfrage_pakete').select('id, created_at').eq('status', 'deck').order('created_at').limit(10)
   const out: Record<string, string> = {}
   for (const r of (data ?? []) as { id: string; created_at: string }[]) {
@@ -698,7 +740,13 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({})) as Record<string, unknown>
     const sb = createClient(SB_URL, SERVICE)
-    if (body.action === 'abschluss') return json(await sweep(sb))
+    // Cron (pg_net bricht nach wenigen Sekunden ab): Arbeit im Hintergrund, sofort antworten.
+    if (body.action === 'abschluss') {
+      const lauf = sweep(sb).then(r => console.log('[anfrage-paket] sweep', JSON.stringify(r))).catch(e => console.error('[anfrage-paket] sweep', e))
+      if (edgeRt) { edgeRt.waitUntil(lauf); return json({ ok: true, gestartet: true }) }
+      await lauf
+      return json({ ok: true })
+    }
     // Trockenlauf der Erkennung (keine Zeile, kein Deck): { action: 'test_erkennung', lead_id, text }
     if (body.action === 'test_erkennung' && typeof body.text === 'string') {
       const leadId = typeof body.lead_id === 'string' ? body.lead_id : null
@@ -707,6 +755,18 @@ Deno.serve(async (req) => {
       const k = e?.kandidat ? ks[e.kandidat - 1] : null
       return json({ ok: true, kandidaten: ks.map(x => `${x.projekt} ${x.unit.unit_number} (${x.herkunft.join(', ')})`), erkennung: e,
         treffer: k ? { projekt: k.projekt, wohnung: k.unit.unit_number, unit_id: k.unit.id, vergeben: await anbietbar(sb, k.unit, leadId) } : null })
+    }
+    // Mail eines fertigen Pakets neu bauen: { action: 'mail_neu', id }
+    if (body.action === 'mail_neu' && typeof body.id === 'string') {
+      const { data: r0 } = await sb.from('anfrage_pakete').select('*').eq('id', body.id).maybeSingle()
+      const row = r0 as (PaketRow & { deck_token: string | null; calc_tokens: string[] | null; outbox_id: string | null }) | null
+      if (!row || row.status !== 'fertig' || !row.deck_token || !row.outbox_id) return json({ ok: false, reason: 'paket_nicht_fertig' }, 400)
+      const p = await person(sb, { lead_id: row.lead_id, subscriber_id: row.subscriber_id, email: row.empfaenger_email, name: row.empfaenger_name })
+      const { data: u } = await sb.from('crm_project_units').select(UNIT_COLS).eq('id', row.unit_id).maybeSingle()
+      const { data: pr } = await sb.from('crm_projects').select('id, name, developer, location, latitude, longitude, furniture_included, completion_date, payment_schedule, deck_assets').eq('id', row.project_id).maybeSingle()
+      if (!p || !u || !pr) return json({ ok: false, reason: 'daten_fehlen' }, 400)
+      const out = await baueEntwurf(sb, row, p, u as UnitRow, pr as ProjektRow, row.deck_token, { calcTokens: row.calc_tokens ?? [], outboxId: row.outbox_id })
+      return json({ ok: true, outbox_id: out.outboxId })
     }
     if (body.action === 'status' && typeof body.id === 'string') {
       const { data } = await sb.from('anfrage_pakete').select('*').eq('id', body.id).maybeSingle()
