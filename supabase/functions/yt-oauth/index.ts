@@ -26,6 +26,10 @@ import { authorizeCaller, safeEqual } from '../_shared/callerAuth.ts'
 const SELF = 'https://vjlwgajmtqlwjjreowbu.supabase.co/functions/v1/yt-oauth'
 const CONNECTORS_PAGE = 'https://portal.happy-property.com/admin/crm/settings/connectors'
 const STATE_TTL_MS = 10 * 60 * 1000
+// youtube.force-ssl = Upload/Metadaten/Thumbnails; yt-analytics.readonly (seit
+// 14.10.26) = Klickrate, Impressionen, Wiedergabedauer aus der YouTube Analytics API.
+const YT_SCOPE = 'https://www.googleapis.com/auth/youtube.force-ssl'
+const YT_ANALYTICS_SCOPE = 'https://www.googleapis.com/auth/yt-analytics.readonly'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -79,7 +83,7 @@ Deno.serve(async (req) => {
       auth.searchParams.set('client_id', startCid)
       auth.searchParams.set('redirect_uri', SELF)
       auth.searchParams.set('response_type', 'code')
-      auth.searchParams.set('scope', target === 'drive' ? 'https://www.googleapis.com/auth/drive' : 'https://www.googleapis.com/auth/youtube.force-ssl')
+      auth.searchParams.set('scope', target === 'drive' ? 'https://www.googleapis.com/auth/drive' : `${YT_SCOPE} ${YT_ANALYTICS_SCOPE}`)
       auth.searchParams.set('access_type', 'offline')
       auth.searchParams.set('prompt', 'consent')
       auth.searchParams.set('state', await makeState(target))
@@ -101,7 +105,7 @@ Deno.serve(async (req) => {
       method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ code, client_id: cid, client_secret: csec, redirect_uri: SELF, grant_type: 'authorization_code' }),
     })
-    const td = await tr.json() as { refresh_token?: string; access_token?: string; error?: string; error_description?: string }
+    const td = await tr.json() as { refresh_token?: string; access_token?: string; scope?: string; error?: string; error_description?: string }
     if (!td.refresh_token) return text(`Kein refresh_token erhalten: ${td.error ?? ''} ${td.error_description ?? ''}`, 400)
     if (drive) {
       // Welches Konto hat zugestimmt? Direkt prüfen, ob es in den Kundenordner schreiben darf.
@@ -120,6 +124,11 @@ Deno.serve(async (req) => {
       console.log('[yt-oauth] Drive verbunden:', account, warn)
       return text(`✅ Google Drive verbunden${account ? ` (Konto: ${account})` : ''}${warn} — Token wurde automatisch gespeichert. Diesen Tab kannst du schließen.`)
     }
+    // Google laesst einzelne Haken abwaehlen. Ohne force-ssl wuerden Upload und
+    // Thumbnails brechen: dann den alten, funktionierenden Token behalten.
+    const granted = (td.scope ?? '').split(' ')
+    if (td.scope && !granted.includes(YT_SCOPE)) return text('Nicht gespeichert: Der Haken für „YouTube-Konto verwalten" fehlte. Bitte erneut verbinden und alle Haken gesetzt lassen.', 400)
+    const analyticsWarn = td.scope && !granted.includes(YT_ANALYTICS_SCOPE) ? ' Hinweis: Statistik-Zugriff (Klickrate) wurde nicht erteilt.' : ''
     await sb.from('connector_secrets').upsert({ key: 'YOUTUBE_REFRESH_TOKEN', value: td.refresh_token }, { onConflict: 'key' })
     // Kurzer Funktionstest: Kanalname holen
     let channel = ''
@@ -128,7 +137,7 @@ Deno.serve(async (req) => {
       channel = ch.items?.[0]?.snippet?.title ?? ''
     }
     console.log('[yt-oauth] Verbunden, Kanal:', channel)
-    return text(`✅ YouTube verbunden${channel ? ` (Kanal: ${channel})` : ''} — Token wurde automatisch gespeichert. Diesen Tab kannst du schließen.`)
+    return text(`✅ YouTube verbunden${channel ? ` (Kanal: ${channel})` : ''} — Token wurde automatisch gespeichert.${analyticsWarn} Diesen Tab kannst du schließen.`)
   } catch (e) {
     if (req.method === 'POST') return json({ error: (e as Error).message }, 500)
     return text(`Fehler: ${(e as Error).message}`, 500)

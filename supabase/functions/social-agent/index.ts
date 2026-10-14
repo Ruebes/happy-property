@@ -1839,6 +1839,12 @@ Regeln:
       } catch (e) { return json({ error: (e as Error).message }, 500) }
     }
 
+    // Umschreib-Anweisung fuer Thumbnail-Wuensche. Gestaltungsregeln (eine
+    // Hauptfigur gross im Bild, Neugier-Luecke, kein Gewimmel, lesbar bei 120 px)
+    // aus higgsfield-ai/skills youtube-thumbnail (MIT), angepasst an HP: echter
+    // Foto-Look statt Hochglanz, Svens/Leonards ausdruecklicher Wunsch geht vor.
+    const THUMB_REWRITE_SYSTEM = 'You turn a German thumbnail wish into a compact ENGLISH image prompt (max 70 words) for a photo generator. Context: "Lotte" is a chocolate labrador dog (never a person), "Sven" is the male founder of Happy Property; character reference images provide their look. Include EVERY requested visual element and refer to reference images where given (e.g. "the flag from the reference image"). The explicit wish always wins over the following thumbnail rules. Thumbnail rules: (1) ONE clear focal subject; if Sven or Lotte appear they are large in the frame (about 40-60% of the image, chest-up or medium close-up), face sharp, with a clear emotion that fits the topic (curious, surprised, confident, relaxed). (2) The image raises a question the video answers (curiosity gap). If the wish only names a topic or video title, choose ONE strong, truthful visual idea: person portrait plus one key object, a size contrast, a map or aerial view with one highlighted spot, or the place itself as hero with one small person. (3) At most one or two supporting elements, no clutter, simple background clearly separated from the subject by brightness or colour. (4) It must still read at 120 px width on a phone. (5) Never invent claims, numbers, objects or places that the wish does not support. (6) It looks like a real, bright, sharp photo, not glossy CGI. NO text/typography in the scene. If there is a slogan, put the main subject in the right half and keep the lower-left area calm (the slogan box goes there). For 9:16 keep faces in the upper two-thirds. Separately extract: the exact slogan the user wants ON the image (empty string if none), and reference_search = a short English Wikimedia search term for any SPECIFIC real-world symbol/object the generator will hallucinate without a reference (a national flag, coat of arms, a specific landmark, a logo) - empty string if none. Reply ONLY as JSON {"scene":"...","slogan":"...","reference_search":""} with no other words.'
+
     // ── Thumbnail-Studio: Prompt → Plattform-Bild (Soul-Charaktere) ──────────
     // Universell für YouTube/Instagram/Story/Facebook/LinkedIn — je Plattform
     // das passende Format. Verlauf in thumbnail_creations (RLS deny-all, Zugriff
@@ -1872,8 +1878,9 @@ Regeln:
           let scene = prompt, slogan = '', refSearch = ''
           try {
             const resp = await claude(anthropicKey, {
-              system: 'You turn a German thumbnail wish into a compact ENGLISH image prompt (max 60 words) for a photorealistic generator. Context: "Lotte" is a chocolate labrador dog (never a person), "Sven" is the male founder of Happy Property; character reference images provide their look. Include EVERY requested visual element and refer to reference images where given (e.g. "the flag from the reference image"). NO text/typography in the scene. Separately extract: the exact slogan the user wants ON the image (empty string if none), and reference_search = a short English Wikimedia search term for any SPECIFIC real-world symbol/object the generator will hallucinate without a reference (a national flag, coat of arms, a specific landmark, a logo) - empty string if none. Reply ONLY as JSON {"scene":"...","slogan":"...","reference_search":""} with no other words.',
-              messages: [{ role: 'user', content: prompt }], max_tokens: 1000,
+              system: THUMB_REWRITE_SYSTEM,
+
+              messages: [{ role: 'user', content: `Format: ${PLAT_ASPECT[platform]} (${platform})\n\n${prompt}` }], max_tokens: 1000,
             })
             const raw = ((resp.content as Array<{ type: string; text?: string }>) ?? []).find(b => b.type === 'text')?.text ?? ''
             const m = raw.match(/\{[\s\S]*\}/)
@@ -1883,7 +1890,7 @@ Regeln:
           const who = persona === 'sven' ? ' The image shows Sven Rüprich, founder of Happy Property (the trained character), as the main subject.'
             : persona === 'lotte' ? " The image shows Lotte, Sven's chocolate labrador and office boss (the trained character), as the main subject." : ''
           const params: Record<string, unknown> = {
-            prompt: `${scene}.${who} Eye-catching social media thumbnail composition, expressive, photorealistic, natural lighting, crisp details, no text, no watermark.`,
+            prompt: `${scene}.${who} Bold thumbnail composition: one dominant subject, face sharp and clearly lit with a subtle rim light separating it from a simple, uncluttered background, strong contrast, bright natural colours, looks like a real photo, crisp details, no text, no watermark.`,
             aspect_ratio: PLAT_ASPECT[platform], quality: '2k',
           }
           if (soulId) params.custom_reference_id = soulId
@@ -1913,7 +1920,7 @@ Regeln:
             const who2 = persona === 'sven' ? ' The man from the first reference image is the main subject (same face, same person).'
               : persona === 'lotte' ? ' The chocolate labrador from the first reference image is the main subject (same dog).' : ''
             bytes = await hfGenerateBytes(sb, 'nano_banana', {
-              prompt: `${scene}.${who2} Objects and symbols shown in the other reference images must appear EXACTLY as depicted there (accurate shapes, colours and details - especially flags and emblems). Photorealistic, natural lighting, no text, no watermark.`,
+              prompt: `${scene}.${who2} Objects and symbols shown in the other reference images must appear EXACTLY as depicted there (accurate shapes, colours and details - especially flags and emblems). Bold thumbnail composition: one dominant subject, clearly lit and separated from a simple, uncluttered background, strong contrast, looks like a real photo, no text, no watermark.`,
               aspect_ratio: PLAT_ASPECT[platform], image_references: refs,
             })
           } else {
@@ -1942,7 +1949,8 @@ Regeln:
     // Debug: Prompt-Umschreibung isoliert testen (synchron, kein Bild).
     if (body.action === 'thumbnail_rewrite_test') {
       const resp = await claude(anthropicKey, {
-        system: 'You turn a German thumbnail wish into a compact ENGLISH image prompt (max 60 words) for a photorealistic generator. Context: "Lotte" is a chocolate labrador dog (never a person), "Sven" is the male founder of Happy Property; character reference images provide their look. Include EVERY requested visual element and refer to reference images where given (e.g. "the flag from the reference image"). NO text/typography in the scene. Separately extract: the exact slogan the user wants ON the image (empty string if none), and reference_search = a short English Wikimedia search term for any SPECIFIC real-world symbol/object the generator will hallucinate without a reference (a national flag, coat of arms, a specific landmark, a logo) - empty string if none. Reply ONLY as JSON {"scene":"...","slogan":"...","reference_search":""} with no other words.',
+        system: THUMB_REWRITE_SYSTEM,
+
         messages: [{ role: 'user', content: String(body.prompt ?? '') }], max_tokens: 1000,
       })
       return json({ ok: true, resp })
