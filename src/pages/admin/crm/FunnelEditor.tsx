@@ -7,8 +7,9 @@ import FunnelIcon, { OptionVisual } from '../../../components/FunnelIcon'
 import { CustomSelect } from '../../../components/CustomSelect'
 import {
   loadFunnelConfig, normalizeFunnelConfig, FUNNEL_ICONS, FUNNEL_HERO_DEFAULT,
-  buildFunnelLinkUrl, type FunnelConfig, type FunnelOption, type FunnelLink,
+  buildFunnelLinkUrl, funnelImageUrl, type FunnelConfig, type FunnelOption, type FunnelLink,
 } from '../../../lib/funnelConfig'
+import { DECK_PHOTO } from '../../../lib/deckTypes'
 import { CHANNEL_BADGES, channelBadgeFor } from '../../../lib/crmTypes'
 
 // ── Funnel-Editor (/admin/crm/funnel-editor) ─────────────────────────────────
@@ -131,6 +132,8 @@ export default function FunnelEditor() {
   const heroRef = useRef<HTMLInputElement>(null)
   const [doneImgUploading, setDoneImgUploading] = useState(false)
   const doneImgRef = useRef<HTMLInputElement>(null)
+  const [hostUploading, setHostUploading] = useState(false)
+  const hostRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     void loadFunnelConfig().then(c => { setCfg(c); setLoading(false) })
@@ -400,6 +403,43 @@ export default function FunnelEditor() {
                 }} />
             </div>
           </div>
+
+          {/* Ansprechpartner: Seitenspalte (Desktop) bzw. kleiner Kopf (Handy) neben Fragen, Kontakt und Kalender */}
+          <h3 className="text-xs font-semibold text-gray-600 mt-6 pt-5 border-t border-gray-100 mb-3">{t('crm.funnelEditor.hostTitle', 'Ansprechpartner (Foto neben Fragen, Kontakt und Kalender)')}</h3>
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="space-y-3">
+              <Field label={t('crm.funnelEditor.hostLabel', 'Kleine Zeile über dem Namen')} value={cfg.host.label} onChange={v => update(c => ({ ...c, host: { ...c.host, label: v } }))} />
+              <Field label={t('crm.funnelEditor.hostName', 'Name')} value={cfg.host.name} onChange={v => update(c => ({ ...c, host: { ...c.host, name: v } }))} />
+              <Field label={t('crm.funnelEditor.hostNote', 'Satz unter dem Namen')} textarea value={cfg.host.note} onChange={v => update(c => ({ ...c, host: { ...c.host, note: v } }))} />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.hostImage', 'Foto (Hochformat)')}</label>
+              <img src={cfg.host.photo_url ? funnelImageUrl(cfg.host.photo_url, 256, 320) : funnelImageUrl(DECK_PHOTO, 480, 320, 'contain')} alt="" className="w-32 h-40 object-cover rounded-xl border border-gray-100"
+                style={{ objectPosition: cfg.host.photo_url ? '50% 30%' : '26% 50%' }} />
+              <div className="flex gap-2 mt-2">
+                <button onClick={() => hostRef.current?.click()} disabled={hostUploading}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                  {hostUploading ? t('crm.funnelEditor.uploading', 'Lädt hoch…') : t('crm.funnelEditor.changeImage', '📷 Bild ändern')}
+                </button>
+                {cfg.host.photo_url && (
+                  <button onClick={() => update(c => ({ ...c, host: { ...c.host, photo_url: '' } }))}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-300 bg-white text-gray-700 hover:bg-gray-50">
+                    {t('crm.funnelEditor.resetImage', 'Standard (Sven-Foto)')}
+                  </button>
+                )}
+              </div>
+              <input ref={hostRef} type="file" accept="image/*" className="hidden"
+                onChange={async e => {
+                  const f = e.target.files?.[0]; e.target.value = ''
+                  if (!f) return
+                  setHostUploading(true)
+                  const url = await uploadImage(f)
+                  setHostUploading(false)
+                  if (url) update(c => ({ ...c, host: { ...c.host, photo_url: url } }))
+                  else showToast(t('crm.funnelEditor.uploadError', 'Upload fehlgeschlagen.'))
+                }} />
+            </div>
+          </div>
         </div>
 
         {/* ── Fragen ── */}
@@ -555,7 +595,7 @@ export default function FunnelEditor() {
               <label className="block text-xs font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.doneVisual', 'Symbol oben (Emoji oder Bild)')}</label>
               <div className="flex items-center gap-3">
                 {cfg.done.image_url
-                  ? <img src={cfg.done.image_url} alt="" className="w-16 h-16 object-cover rounded-full border border-gray-100" />
+                  ? <img src={cfg.done.image_url} alt="" className="w-24 h-20 object-cover rounded-lg border border-gray-100" />
                   : <span className="text-4xl">{cfg.done.emoji || '🎉'}</span>}
                 <div className="space-y-2">
                   {!cfg.done.image_url && (
@@ -586,6 +626,11 @@ export default function FunnelEditor() {
                   if (url) update(c => ({ ...c, done: { ...c.done, image_url: url } }))
                   else showToast(t('crm.funnelEditor.uploadError', 'Upload fehlgeschlagen.'))
                 }} />
+              {cfg.done.image_url && (
+                <div className="mt-3">
+                  <Field label={t('crm.funnelEditor.imageCaption', 'Zeile unter dem Foto')} value={cfg.done.image_caption} onChange={v => update(c => ({ ...c, done: { ...c.done, image_caption: v } }))} />
+                </div>
+              )}
 
               <label className="block text-xs font-semibold text-gray-500 mt-5 mb-2">{t('crm.funnelEditor.socials', 'Kanal-Buttons (Icon · Name · Link)')}</label>
               <div className="space-y-2">

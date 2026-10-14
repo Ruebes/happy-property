@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase'
 import { DECK_LOGO, DECK_PHOTO } from '../lib/deckTypes'
 import { OptionVisual } from '../components/FunnelIcon'
 import {
-  loadFunnelConfig, DEFAULT_FUNNEL_CONFIG, FUNNEL_HERO_DEFAULT,
+  loadFunnelConfig, DEFAULT_FUNNEL_CONFIG, FUNNEL_HERO_DEFAULT, funnelImageUrl,
   type FunnelQuestion, type FunnelOption,
 } from '../lib/funnelConfig'
 
@@ -23,6 +23,9 @@ const INK = '#1a1a1a'
 // Sven-Porträt für die Terminwahl (rund, server-seitig quadratisch zugeschnitten —
 // das Original ist 5672×3781 Querformat)
 const SVEN_SQ = DECK_PHOTO.replace('/object/public/', '/render/image/public/') + '?width=224&height=224&resize=cover&quality=80'
+// Seitenspalte (Desktop): Querformat unbeschnitten laden, das Hochformat-Fenster
+// schneidet CSS. Sven steht im linken Drittel, daher object-position 26 %.
+const SVEN_SIDE = funnelImageUrl(DECK_PHOTO, 960, 640, 'contain')
 
 
 type Phase = 'welcome' | 'questions' | 'contact' | 'meeting_type' | 'slot' | 'done'
@@ -189,6 +192,12 @@ export default function Funnel() {
   )
   const QUESTION_TEXT: Record<string, string> = Object.fromEntries(QUESTIONS.map(q => [q.key, q.title]))
   const HERO = cfg.welcome.hero_url || FUNNEL_HERO_DEFAULT
+  // Ansprechpartner: eigenes Foto aus dem Editor oder Svens Standard-Foto
+  const hostSq = cfg.host.photo_url ? funnelImageUrl(cfg.host.photo_url, 224, 224) : SVEN_SQ
+  const hostSide = cfg.host.photo_url ? funnelImageUrl(cfg.host.photo_url, 512, 640) : SVEN_SIDE
+  const hostFirstName = cfg.host.name.trim().split(/\s+/)[0] ?? ''
+  // Schon auf der Startseite vorladen, sonst steht bei Frage 1 kurz ein leerer Rahmen
+  useEffect(() => { for (const src of [hostSide, hostSq]) new Image().src = src }, [hostSide, hostSq])
   const [phase, setPhase] = useState<Phase>(directEntry.wanted || directEntry.rebook ? 'meeting_type' : 'welcome')
   const [direct, setDirect] = useState(directEntry.wanted)
   const [directName, setDirectName] = useState('')
@@ -417,6 +426,8 @@ export default function Funnel() {
   }
 
   const btn = 'w-full text-left px-5 py-3.5 rounded-xl border-2 bg-white text-[15px] font-medium transition hover:-translate-y-0.5 hover:shadow-md'
+  // Startseite (Hero) und Danke-Seite (Teamfoto) zeigen Sven schon groß
+  const showHost = phase === 'questions' || phase === 'contact' || phase === 'meeting_type' || phase === 'slot'
 
   return (
     <div className="min-h-screen font-body flex flex-col" style={{ background: CREAM, color: INK }}>
@@ -424,14 +435,37 @@ export default function Funnel() {
         <div className="h-full transition-all duration-500" style={{ width: `${(stepNow / totalSteps) * 100}%`, background: CORAL }} />
       </div>
       <div className="flex items-center justify-between px-5 md:px-10 py-4">
-        <img src={DECK_LOGO} alt="Happy Property" className="h-8 md:h-9 w-auto" />
+        <div className="flex items-center gap-3">
+          <img src={DECK_LOGO} alt="Happy Property" className="h-8 md:h-9 w-auto" />
+          {/* Handy/Tablet: kleiner Kopf statt Seitenspalte. Terminart zeigt ihn schon groß. */}
+          {showHost && phase !== 'meeting_type' && (
+            <span className="lg:hidden flex items-center gap-2 pl-3 border-l border-black/10">
+              {/* Standard-Foto zeigt Sven halbtotal: im 32-px-Kreis aufs Gesicht zoomen */}
+              <span className="w-8 h-8 rounded-full overflow-hidden shadow ring-2 ring-white shrink-0">
+                <img src={hostSq} alt="" width={32} height={32} className="w-8 h-8 object-cover"
+                  style={cfg.host.photo_url ? undefined : { transform: 'translate(42%, 46%) scale(2)' }} />
+              </span>
+              <span className="text-sm font-semibold" style={{ color: NAVY }}>{hostFirstName}</span>
+            </span>
+          )}
+        </div>
         {phase !== 'welcome' && phase !== 'done' && !((direct || rebook) && phase === 'meeting_type') && (
           <button onClick={back} className="text-sm text-gray-500 hover:text-gray-800">← {t('funnel.back', 'Zurück')}</button>
         )}
       </div>
 
       <div className="flex-1 flex items-center justify-center px-5 pb-10">
-        <div className="w-full max-w-2xl">
+        <div className="w-full flex justify-center items-start gap-10">
+        {showHost && (
+          <aside className="hidden lg:block w-64 shrink-0 sticky top-8">
+            <img src={hostSide} alt={cfg.host.name} className="w-64 h-80 object-cover rounded-2xl shadow-lg"
+              style={{ objectPosition: cfg.host.photo_url ? '50% 30%' : '26% 50%' }} />
+            {cfg.host.label && <p className="mt-5 text-xs font-bold tracking-widest uppercase" style={{ color: CORAL }}>{cfg.host.label}</p>}
+            {cfg.host.name && <p className="mt-1 font-heading font-bold text-xl" style={{ color: NAVY }}>{cfg.host.name}</p>}
+            {cfg.host.note && <p className="mt-2 text-sm text-gray-600 leading-relaxed">{cfg.host.note}</p>}
+          </aside>
+        )}
+        <div className="w-full max-w-2xl min-w-0">
 
           {phase === 'welcome' && (
             <div className="text-center">
@@ -549,8 +583,8 @@ export default function Funnel() {
 
           {phase === 'meeting_type' && (
             <div>
-              <div className="flex justify-center mb-6">
-                <img src={SVEN_SQ} alt="Sven – Happy Property" width={112} height={112}
+              <div className="flex justify-center mb-6 lg:hidden">
+                <img src={hostSq} alt={cfg.host.name} width={112} height={112}
                   className="w-24 h-24 md:w-28 md:h-28 rounded-full object-cover shadow-lg ring-4 ring-white" />
               </div>
               <p className="text-xs font-bold tracking-widest uppercase mb-2 text-center" style={{ color: CORAL }}>{t('funnel.your_appointment', 'Dein Wunschtermin')}</p>
@@ -608,9 +642,14 @@ export default function Funnel() {
 
           {phase === 'done' && (
             <div className="text-center">
-              {cfg.done.image_url
-                ? <img src={cfg.done.image_url} alt="" className="w-28 h-28 mx-auto object-cover rounded-full shadow-lg" />
-                : <div className="text-6xl">{cfg.done.emoji || '🎉'}</div>}
+              {cfg.done.image_url ? (
+                <figure className="max-w-sm mx-auto">
+                  <img src={funnelImageUrl(cfg.done.image_url, 960, 800)} alt={cfg.done.image_caption} className="w-full aspect-[6/5] object-cover rounded-2xl shadow-lg" />
+                  {cfg.done.image_caption && (
+                    <figcaption className="mt-3 font-heading font-semibold text-lg" style={{ color: NAVY }}>{cfg.done.image_caption}</figcaption>
+                  )}
+                </figure>
+              ) : <div className="text-6xl">{cfg.done.emoji || '🎉'}</div>}
               <h2 className="font-heading font-bold text-3xl md:text-4xl mt-4" style={{ color: NAVY }}>{cfg.done.title}</h2>
               <p className="mt-3 text-gray-600 text-[15px]">
                 <strong>{fmtSlotFull(slot)}{t('funnel.oclock', ' Uhr')}</strong> · {meetingType === 'zoom' ? t('funnel.zoom_short', '📹 Zoom') : t('funnel.whatsapp_call', '💬 WhatsApp-Call')}
@@ -644,6 +683,7 @@ export default function Funnel() {
             </div>
           )}
 
+        </div>
         </div>
       </div>
       <div className="text-center text-[11px] text-gray-400 pb-5">{t('funnel.footer', '© Happy Property · Paphos, Zypern')}</div>

@@ -57,9 +57,18 @@ export interface FunnelConfig {
   sources: FunnelSource[]
   links: FunnelLink[]
   contact: { title: string; subtitle: string; cta: string; privacy: string }
+  // Ansprechpartner neben Fragen, Kontakt und Kalender (Desktop: Seitenspalte,
+  // Handy: kleiner runder Kopf neben dem Logo)
+  host: {
+    photo_url: string      // leer = Standard-Foto (DECK_PHOTO)
+    label: string          // kleine Zeile über dem Namen
+    name: string
+    note: string           // ein Satz unter dem Namen
+  }
   done: {
     emoji: string          // Symbol oben (wird von image_url ersetzt, falls gesetzt)
-    image_url: string      // optionales Bild statt Emoji
+    image_url: string      // optionales Foto statt Emoji (groß, 6:5)
+    image_caption: string  // Zeile unter dem Foto (nur mit image_url)
     title: string
     note: string           // Hinweistext unter dem Termin
     cta: string            // Haupt-Button-Text
@@ -72,6 +81,13 @@ export interface FunnelConfig {
 export const FUNNEL_ICONS = ['steuern', 'kapital', 'auswandern', 'langfristig', 'unsicher'] as const
 
 export const FUNNEL_HERO_DEFAULT = DECK_PHOTO.replace('/object/public/', '/render/image/public/') + '?width=1100&height=620&resize=cover&quality=78'
+
+// Storage-Bild über die Render-API verkleinern. Immer Breite UND Höhe mitgeben:
+// nur mit Breite behält die API die Originalhöhe.
+export function funnelImageUrl(url: string, width: number, height: number, resize: 'cover' | 'contain' = 'cover'): string {
+  if (!url.includes('/storage/v1/object/public/')) return url
+  return url.replace('/object/public/', '/render/image/public/') + `?width=${width}&height=${height}&resize=${resize}&quality=78`
+}
 
 export const SITE_URL = 'https://portal.happy-property.com'
 
@@ -176,9 +192,16 @@ export const DEFAULT_FUNNEL_CONFIG: FunnelConfig = {
     cta: 'Weiter zum Wunschtermin →',
     privacy: 'Mit dem Absenden stimmst du zu, dass wir dich zur Terminabstimmung per E-Mail und WhatsApp kontaktieren. Kostenlos & unverbindlich.',
   },
+  host: {
+    photo_url: '',  // leer = Standard-Foto (DECK_PHOTO)
+    label: 'Dein Ansprechpartner',
+    name: DECK_CONTACT.name,
+    note: 'Ich freue mich auf unser Gespräch und nehme mir persönlich Zeit für deine Fragen.',
+  },
   done: {
     emoji: '🎉',
-    image_url: '',
+    image_url: 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/funnel/sven-lotte-pool.jpg',
+    image_caption: 'Sven & Lotte freuen sich auf dich',
     title: 'Dein Termin steht!',
     note: 'Die Bestätigung ist per E-Mail und WhatsApp unterwegs — inklusive Kalender-Datei.',
     cta: 'Bis dahin: Tipps, Blog & Videos →',
@@ -242,6 +265,7 @@ export function normalizeFunnelConfig(raw: unknown): FunnelConfig {
     sources,
     links,
     contact: { ...d.contact, ...(r.contact ?? {}) },
+    host: { ...d.host, ...(r.host ?? {}) },
     done: { ...d.done, ...doneRaw, socials },
   }
 }
