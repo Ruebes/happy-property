@@ -46,15 +46,15 @@ type Ev = {
   list: string; thanksUrl: string; landingUrl: string
 }
 const EVENTS: Record<string, Ev> = {
-  // Schlüssel bleibt 'aerzte-2026-10-11' (Formular + verschickte .ics-Links nutzen ihn); Termin am 2.10. auf 18.10. verschoben.
+  // Schlüssel bleibt 'aerzte-2026-10-11' (Formular + verschickte .ics-Links nutzen ihn); Termin am 2.10. auf 18.10., am 14.10. auf 15.11. verschoben (11 Uhr MEZ = 10:00 UTC).
   'aerzte-2026-10-11': {
     title: 'Masterclass für Ärzte & Apotheker: Immobilien auf Zypern & Steuern zurückholen',
     short: 'Masterclass für Ärzte & Apotheker',
-    startIso: '2026-10-18T09:00:00Z', endIso: '2026-10-18T10:00:00Z',
-    dateLabel: 'Sonntag, 18. Oktober 2026', timeLabel: '11:00 Uhr (deutsche Zeit)',
+    startIso: '2026-11-15T10:00:00Z', endIso: '2026-11-15T11:00:00Z',
+    dateLabel: 'Sonntag, 15. November 2026', timeLabel: '11:00 Uhr (deutsche Zeit)',
     zoomUrl: 'https://us06web.zoom.us/j/84711642809?pwd=uvj0nmrfjlt37KlWv2LBwyfpqa6E8P.1',
     zoomId: '847 1164 2809', zoomPw: '590189',
-    list: 'Masterclass Ärzte 18.10.2026',
+    list: 'Masterclass Ärzte 15.11.2026',
     thanksUrl: 'https://steuervorteil-zypern-immobilien.com/masterclass-fuer-aerzte-apotheker-danke/',
     landingUrl: 'https://steuervorteil-zypern-immobilien.com/masterclass-fuer-aerzte-apotheker-anmeldung/',
   },
