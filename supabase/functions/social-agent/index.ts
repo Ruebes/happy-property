@@ -635,23 +635,55 @@ async function generateLotteImage(sb: SupabaseClient, postId: string, prompt: st
       }
     } catch (e) { console.warn('[social-agent] Lotte-Ordner nicht lesbar:', e instanceof Error ? e.message : String(e)) }
   }
-  const full = `${prompt.replace(AI_LOOK_WORDS, '').replace(/\s{2,}/g, ' ').trim()}. The dog is Lotte, a chocolate brown labrador retriever (the trained character), she must look exactly like the reference photos: same coat color, same face, same build. Candid smartphone photo taken by her owner, natural daylight with real shadows, true-to-life colors, real fur texture, slightly imperfect framing. No bokeh, no HDR, no cinematic grading, no text, no watermark.`
+  const full = `${prompt.replace(AI_LOOK_WORDS, '').replace(/\s{2,}/g, ' ').trim()}. The dog is Lotte, a chocolate brown labrador retriever (the trained character), she must look exactly like the reference photos: same coat color, same face, same build. Candid smartphone photo taken by her owner, natural daylight with real shadows, true-to-life colors, real fur texture, slightly imperfect framing. ONE single photo filling the whole frame, Lotte appears exactly once. No collage, no grid, no split screen, no multiple panels. No bokeh, no HDR, no cinematic grading, no text, no watermark.`
   const tries: Array<[string, Record<string, unknown>]> = []
   if (soul && refs.length) tries.push(['text2image_soul_v2', { prompt: full, aspect_ratio: '1:1', quality: '2k', custom_reference_id: soul, image_references: refs }])
   if (soul) tries.push(['text2image_soul_v2', { prompt: full, aspect_ratio: '1:1', quality: '2k', custom_reference_id: soul }])
   if (!soul && refs.length) tries.push(['nano_banana', { prompt: `Create a new photorealistic image: ${full}`, aspect_ratio: '1:1', image_references: refs }])
+  // Höchstens 3 Bilder je Aufruf, sonst reißt die Laufzeit der Function.
+  let budget = 3
   for (const [job, params] of tries) {
-    try {
-      const bytes = await hfGenerateBytes(sb, job, params)
-      const path = `social/${postId}-lotte-${Date.now()}.png`
-      const { error: upErr } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/png', upsert: true })
-      if (upErr) throw new Error(`Upload: ${upErr.message}`)
-      const url = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
-      await sb.from('social_posts').update({ image_urls: [url], image_url: url, image_prompt: prompt, updated_at: new Date().toISOString() }).eq('id', postId)
-      return url
-    } catch (e) { console.warn(`[social-agent] Lotte-Bild via ${job} fehlgeschlagen:`, e instanceof Error ? e.message : String(e)) }
+    for (let attempt = 1; attempt <= 2 && budget > 0; attempt++) {
+      budget--
+      try {
+        const bytes = await hfGenerateBytes(sb, job, params)
+        const path = `social/${postId}-lotte-${Date.now()}.png`
+        const { error: upErr } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/png', upsert: true })
+        if (upErr) throw new Error(`Upload: ${upErr.message}`)
+        const url = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
+        if (await isCollage(url)) {
+          console.warn(`[social-agent] Lotte-Bild via ${job} ist eine Collage (Versuch ${attempt}), wird verworfen`)
+          await sb.storage.from('ad-creatives').remove([path])
+          continue
+        }
+        await sb.from('social_posts').update({ image_urls: [url], image_url: url, image_prompt: prompt, updated_at: new Date().toISOString() }).eq('id', postId)
+        return url
+      } catch (e) { console.warn(`[social-agent] Lotte-Bild via ${job} fehlgeschlagen:`, e instanceof Error ? e.message : String(e)); break }
+    }
   }
   return await generatePersonaImage(sb, postId, prompt, ['lotte'])
+}
+
+// Soul + Referenzfotos liefert bei Lotte immer wieder statt EINES Fotos eine
+// Collage aus 2-4 fast gleichen Bildern (Posts 7., 14., 17. und 21.10.2026).
+// Deshalb schaut Claude vor dem Speichern drauf. Fällt die Prüfung selbst aus,
+// geht das Bild durch, damit der Post nicht ohne Bild bleibt.
+async function isCollage(url: string): Promise<boolean> {
+  const key = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
+  if (!key) return false
+  try {
+    const small = `${url.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/')}?width=768&quality=70`
+    const r = await claude(key, {
+      system: 'You check generated images before they are posted on social media. Answer with exactly one word: SINGLE if it is one single photo, COLLAGE if it is split into several panels, a grid, a contact sheet, or shows the same subject more than once side by side.',
+      messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'url', url: small } }, { type: 'text', text: 'SINGLE or COLLAGE?' }] }],
+      max_tokens: 10,
+    })
+    const t = ((r.content ?? []) as Array<{ type: string; text?: string }>).find(b => b.type === 'text')?.text ?? ''
+    return /COLLAGE/i.test(t)
+  } catch (e) {
+    console.warn('[social-agent] Collage-Prüfung ausgefallen:', e instanceof Error ? e.message : String(e))
+    return false
+  }
 }
 
 // News-Recherche → Ideen (social_ideas). avoid = Themen, die schon liefen.
@@ -1785,17 +1817,24 @@ Regeln:
     // ── Bild via Higgsfield → ad-creatives/social/… ──────────────────────────
     // ── Bild eines Posts ersetzen (neues Rezept/Modell), Text bleibt ────────────
     if (body.action === 'regen_image') {
-      const { data: pr } = await sb.from('social_posts').select('id, status, image_prompt, title, content').eq('id', String(body.post_id ?? '')).maybeSingle()
-      const post = pr as { id: string; status: string; image_prompt: string | null; title: string | null; content: string | null } | null
+      const { data: pr } = await sb.from('social_posts').select('id, status, topic, image_prompt, title, content').eq('id', String(body.post_id ?? '')).maybeSingle()
+      const post = pr as { id: string; status: string; topic: string | null; image_prompt: string | null; title: string | null; content: string | null } | null
       if (!post) return json({ error: 'Post nicht gefunden' }, 404)
       if (post.status === 'gepostet') return json({ error: 'Post ist schon gelaufen' }, 400)
       const idea = String(body.prompt ?? '').trim() || post.image_prompt || `${post.title ?? ''}. ${(post.content ?? '').slice(0, 400)}`
       const job = (async () => {
         await sb.from('social_posts').update({ image_urls: [], image_url: null, updated_at: new Date().toISOString() }).eq('id', post.id)
-        await generatePostImage(sb, post.id, idea)
+        if (post.topic === 'weisheit') await generateLotteImage(sb, post.id, idea)
+        else await generatePostImage(sb, post.id, idea)
       })()
       if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(job.catch(e => console.error('[social-agent] regen_image:', e))); else await job
       return json({ ok: true, pending: true })
+    }
+    // ── Collage-Prüfung von Hand anstoßen (Debug, nur eigene Bilder) ─────────────
+    if (body.action === 'collage_check') {
+      const url = String(body.url ?? '')
+      if (!url.startsWith(`${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/`)) return json({ error: 'nur ad-creatives-Bilder' }, 400)
+      return json({ ok: true, collage: await isCollage(url) })
     }
     // ── Higgsfield-Jobtyp prüfen, ohne ein Bild zu erzeugen (ungültiges Format) ──
     if (body.action === 'hf_probe') {
