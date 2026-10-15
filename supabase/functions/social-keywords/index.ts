@@ -78,7 +78,9 @@ const DEFAULT_FALLBACK = ['Hier ist dein Zypern-Report als PDF: {{link}} 📩', 
 // rules: eigene Antwort je Stichwort (z. B. RECHNER → Rechner-Links). Stichwörter
 // ohne Regel bekommen dm_template / public_fallback_replies (Zypern-Report).
 // report:false = Report-Link NICHT automatisch anhängen (Text bringt eigene Links).
-interface KwRule { keywords: string[]; dm_template?: string; fallback_replies?: string[]; report?: boolean }
+// post_ids / post_text: JEDER Kommentar unter diesen Beiträgen (IDs oder Text im
+// Beitrag) bekommt die Antwort der Regel, auch ohne Stichwort (z. B. Guide-Posts).
+interface KwRule { keywords: string[]; dm_template?: string; fallback_replies?: string[]; report?: boolean; post_ids?: string[]; post_text?: string[] }
 interface KwCfg {
   enabled?: boolean; keywords?: string[]; public_reply?: boolean; public_replies?: string[]; dm_template?: string; active_since?: string
   public_fallback?: boolean; public_fallback_replies?: string[]; rules?: KwRule[]
@@ -96,6 +98,19 @@ export function ruleFor(cfg: KwCfg, kw: string | null): KwRule | null {
   if (!n) return null
   return (Array.isArray(cfg.rules) ? cfg.rules : []).find(r => strList(r?.keywords).some(x => kwNorm(x) === n)) ?? null
 }
+// Regel, die an den Beitrag gebunden ist (post_ids oder Text im Beitrag). Liefert das
+// erste Stichwort der Regel, damit ruleFor() beim Senden dieselbe Regel findet.
+export function postRuleKeyword(cfg: KwCfg, postId: string, caption: string): string | null {
+  const cap = String(caption ?? '').normalize('NFC').toLowerCase()
+  for (const r of Array.isArray(cfg.rules) ? cfg.rules : []) {
+    const kw = strList(r?.keywords)[0]
+    if (!kw) continue
+    if (strList(r?.post_ids).includes(postId)) return kw.trim()
+    if (cap && strList(r?.post_text).some(t => cap.includes(t.normalize('NFC').toLowerCase()))) return kw.trim()
+  }
+  return null
+}
+const rulePostIds = (cfg: KwCfg) => [...new Set((Array.isArray(cfg.rules) ? cfg.rules : []).flatMap(r => strList(r?.post_ids)))]
 interface Row {
   id: string; comment_id: string; platform: 'facebook' | 'instagram'; post_id: string | null
   author_id: string | null; author_name: string | null; comment_text: string | null; keyword: string | null
@@ -103,7 +118,7 @@ interface Row {
   private_reply_at: string | null; public_reply_at: string | null; ref: string | null
   clicked_at: string | null; click_count: number; created_at: string; last_attempt_at?: string | null
 }
-interface Cand { comment_id: string; platform: 'facebook' | 'instagram'; post_id: string; author_id: string | null; author_name: string | null; text: string; at: number; canReply: boolean | null }
+interface Cand { comment_id: string; platform: 'facebook' | 'instagram'; post_id: string; caption: string; author_id: string | null; author_name: string | null; text: string; at: number; canReply: boolean | null }
 interface GErr { message?: string; code?: number; error_subcode?: number; type?: string; http?: number }
 interface LinkCheck { ok: boolean; reason?: string; at: string }
 interface Summary {
@@ -366,32 +381,47 @@ const IG_C = 'comments.limit(50){id,timestamp,from,username,text}'
 type FbComment = { id: string; created_time?: string; from?: { id?: string; name?: string }; message?: string; can_reply_privately?: boolean }
 type IgComment = { id: string; timestamp?: string; from?: { id?: string; username?: string }; username?: string; text?: string }
 
-async function collect(m: Meta, prevAds: Summary['ads'] | undefined, errors: string[]): Promise<{ cands: Cand[]; ads: Summary['ads'] }> {
+async function collect(m: Meta, prevAds: Summary['ads'] | undefined, errors: string[], ruleIds: string[] = []): Promise<{ cands: Cand[]; ads: Summary['ads'] }> {
   const cands: Cand[] = []
-  const fbPost = (postId: string, cs: FbComment[] | undefined) => {
+  const fbPost = (postId: string, cs: FbComment[] | undefined, caption = '') => {
     for (const c of cs ?? []) cands.push({
-      comment_id: c.id, platform: 'facebook', post_id: postId, author_id: c.from?.id ?? null, author_name: c.from?.name ?? null,
+      comment_id: c.id, platform: 'facebook', post_id: postId, caption, author_id: c.from?.id ?? null, author_name: c.from?.name ?? null,
       text: c.message ?? '', at: Date.parse(c.created_time ?? '') || 0, canReply: typeof c.can_reply_privately === 'boolean' ? c.can_reply_privately : null,
     })
   }
-  const igMedia = (mediaId: string, cs: IgComment[] | undefined) => {
+  const igMedia = (mediaId: string, cs: IgComment[] | undefined, caption = '') => {
     for (const c of cs ?? []) cands.push({
-      comment_id: c.id, platform: 'instagram', post_id: mediaId, author_id: c.from?.id ?? null, author_name: c.username ?? c.from?.username ?? null,
+      comment_id: c.id, platform: 'instagram', post_id: mediaId, caption, author_id: c.from?.id ?? null, author_name: c.username ?? c.from?.username ?? null,
       text: c.text ?? '', at: Date.parse(c.timestamp ?? '') || 0, canReply: null,
     })
   }
   const seenFb = new Set<string>(), seenIg = new Set<string>()
 
   // 1) Facebook organisch: letzte 25 Beiträge mit ihren neuesten Kommentaren (1 Aufruf)
-  const fb = await gGet<{ data?: Array<{ id: string; comments?: { data?: FbComment[] } }> }>(`${m.pageId}/published_posts`, m.pageToken, { fields: `id,${FB_C}`, limit: '25' })
+  const fb = await gGet<{ data?: Array<{ id: string; message?: string; comments?: { data?: FbComment[] } }> }>(`${m.pageId}/published_posts`, m.pageToken, { fields: `id,message,${FB_C}`, limit: '25' })
   if (fb.error) errors.push(redact(`Facebook-Beiträge: ${fb.error.message ?? 'Fehler'}${fb.error.code ? ` (#${fb.error.code})` : ''}`))
-  for (const p of fb.data ?? []) { seenFb.add(p.id); fbPost(p.id, p.comments?.data) }
+  for (const p of fb.data ?? []) { seenFb.add(p.id); fbPost(p.id, p.comments?.data, p.message ?? '') }
 
   // 2) Instagram organisch: letzte 25 Medien (1 Aufruf)
   if (m.igId) {
-    const ig = await gGet<{ data?: Array<{ id: string; comments?: { data?: IgComment[] } }> }>(`${m.igId}/media`, m.pageToken, { fields: `id,${IG_C}`, limit: '25' })
+    const ig = await gGet<{ data?: Array<{ id: string; caption?: string; comments?: { data?: IgComment[] } }> }>(`${m.igId}/media`, m.pageToken, { fields: `id,caption,${IG_C}`, limit: '25' })
     if (ig.error) errors.push(redact(`Instagram-Beiträge: ${ig.error.message ?? 'Fehler'}${ig.error.code ? ` (#${ig.error.code})` : ''}`))
-    for (const p of ig.data ?? []) { seenIg.add(p.id); igMedia(p.id, p.comments?.data) }
+    for (const p of ig.data ?? []) { seenIg.add(p.id); igMedia(p.id, p.comments?.data, p.caption ?? '') }
+  }
+
+  // 2b) Beiträge aus Regeln mit post_ids, die nicht mehr unter den letzten 25 sind
+  //     (FB-IDs haben die Form <Seite>_<Beitrag>, IG-Medien-IDs sind reine Zahlen).
+  const fbRule = ruleIds.filter(id => id.includes('_') && !seenFb.has(id))
+  const igRule = ruleIds.filter(id => !id.includes('_') && !seenIg.has(id))
+  if (fbRule.length) {
+    const r = await gGet<Record<string, { comments?: { data?: FbComment[] } }>>('', m.pageToken, { ids: fbRule.join(','), fields: FB_C })
+    if (r.error) errors.push(redact(`Regel-Beiträge Facebook: ${r.error.message ?? 'Fehler'}`))
+    else for (const [id, v] of Object.entries(r)) if (id !== 'error') { seenFb.add(id); fbPost(id, (v as { comments?: { data?: FbComment[] } })?.comments?.data) }
+  }
+  if (igRule.length) {
+    const r = await gGet<Record<string, { comments?: { data?: IgComment[] } }>>('', m.pageToken, { ids: igRule.join(','), fields: IG_C })
+    if (r.error) errors.push(redact(`Regel-Beiträge Instagram: ${r.error.message ?? 'Fehler'}`))
+    else for (const [id, v] of Object.entries(r)) if (id !== 'error') { seenIg.add(id); igMedia(id, (v as { comments?: { data?: IgComment[] } })?.comments?.data) }
   }
 
   // 3) Aktive Anzeigen: Kommentare hängen an unveröffentlichten Beiträgen. Liste wird
@@ -539,7 +569,7 @@ async function scanRun(sb: SupabaseClient, cfg: KwCfg, dryRun: boolean, test: { 
       sum.ads = prev.ads
       await persist(); return sum
     }
-    const { cands, ads } = await collect(m, prev.ads, sum.errors)
+    const { cands, ads } = await collect(m, prev.ads, sum.errors, rulePostIds(cfg))
     sum.ads = ads
     if (sum.errors.some(e => /#190\)/.test(e)) && !dryRun) await taskForSven(sb, TASK_TOKEN, TOKEN_TEXT)
     sum.scanned = cands.length
@@ -556,7 +586,7 @@ async function scanRun(sb: SupabaseClient, cfg: KwCfg, dryRun: boolean, test: { 
       if (isOwnText(c.text, own)) { ign.own++; continue }             // eigene Antwort, auch ohne „from"
       if (!test.ignoreWindow && (!c.at || now - c.at > WINDOW_MS)) { ign.old++; continue }
       if (c.canReply === false && !test.ignoreWindow) { ign.no_private_reply++; continue }
-      const kw = matchKeyword(c.text, keywords)
+      const kw = matchKeyword(c.text, keywords) ?? (test.keywords?.length ? null : postRuleKeyword(cfg, c.post_id, c.caption))
       if (kw) hits.push({ ...c, keyword: kw })
     }
     // Schon bekannte Kommentare raus
