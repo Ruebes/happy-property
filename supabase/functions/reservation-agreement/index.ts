@@ -57,6 +57,9 @@ const MAX_BYTES = 15 * 1024 * 1024
 const MAX_ATTEMPTS = 3
 const AI_MIME = /^(application\/pdf|image\/(jpeg|png|webp|gif))$/
 const DEAD_PHASES = ['deal_verloren', 'archiviert']
+// Bild zur WhatsApp an den Bauträger (Higgsfield, Unterlagen auf dem Schreibtisch). Ohne Bild
+// zeigt WhatsApp zum Drive-Link nur die Google-Anmeldeseite als Vorschau (Sven 15.10.).
+const DEV_WA_IMAGE = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/reservierung-unterlagen.jpg'
 
 type Client = SupabaseClient
 type Mode = 'on' | 'test' | 'off'
@@ -87,6 +90,8 @@ interface Ctx {
   deal: { id: string; lead_id: string; unit_id: string | null; phase: string }
   lead: { id: string; first_name: string | null; last_name: string | null; email: string | null; drive_folder_id: string | null; drive_folder_url: string | null }
   unit: { id: string; unit_number: string; type: string | null; price_net: number | null; project_id: string }
+  /** Teil-Wohnungen (Doppelapartment, z. B. A1 = A1a + A1b) */
+  subUnits: string[]
   project: { id: string; name: string; developer: string | null; location: string | null; payment_schedule: { reservation?: number; reservationVat?: boolean } | null }
   developerName: string
   template: TemplateDb
@@ -116,6 +121,8 @@ async function loadCtx(sb: Client, dealId: string): Promise<Ctx | { error: strin
   const { data: unit } = await sb.from('crm_project_units').select('id, unit_number, type, price_net, project_id').eq('id', d.unit_id).maybeSingle()
   if (!unit) return { error: 'Wohnung nicht gefunden' }
   const u = unit as Ctx['unit']
+  const { data: subs } = await sb.from('crm_project_units').select('unit_number').eq('parent_unit_id', u.id).order('unit_number')
+  const subUnits = ((subs ?? []) as Array<{ unit_number: string }>).map(x => x.unit_number).filter(Boolean)
   const { data: proj } = await sb.from('crm_projects').select('id, name, developer, location, payment_schedule').eq('id', u.project_id).maybeSingle()
   if (!proj) return { error: 'Projekt nicht gefunden' }
   const p = proj as Ctx['project']
@@ -134,7 +141,7 @@ async function loadCtx(sb: Client, dealId: string): Promise<Ctx | { error: strin
   const devEmails = (withDrive.length ? withDrive : cs.filter(c => c.email?.trim()).slice(0, 1)).map(c => c.email!.trim())
   const waContact = (withDrive.length ? withDrive : cs).find(c => (c.whatsapp || c.phone)?.trim())
   return {
-    deal: d, lead: lead as Ctx['lead'], unit: u, project: p, developerName: (dev as { name: string }).name,
+    deal: d, lead: lead as Ctx['lead'], unit: u, subUnits, project: p, developerName: (dev as { name: string }).name,
     template: tpl as TemplateDb, devEmails,
     devPhone: waContact ? { name: waContact.name ?? p.developer, phone: (waContact.whatsapp || waContact.phone)!.trim() } : null,
   }
@@ -243,7 +250,8 @@ function fieldsFor(ctx: Ctx, buyers: Buyer[]): { fields: AgreementFields; proble
       date: todayCy(),
       property_name: [t.property_prefix, ctx.project.name].filter(Boolean).join(' ').toUpperCase(),
       address,
-      unit_number: ctx.unit.unit_number,
+      // Doppelapartment: beide Teil-Wohnungen nennen (Sven 15.10.: „A1 ist A1a und A1b")
+      unit_number: ctx.subUnits.length ? `${ctx.unit.unit_number} (${ctx.subUnits.join(' + ')})` : ctx.unit.unit_number,
       purchasers: buyers.map(b => b.full_name.toUpperCase()),
       id_numbers: buyers.map(b => b.document_number),
       property_kind: kindOf(ctx.unit.type),
@@ -333,11 +341,14 @@ async function fileSigned(sb: Client, row: AgreementRow, ctx: Ctx, fileId: strin
 
 /** Vom Bauträger unterschriebener Reservierungsvertrag für DIESE Wohnung im Ordner? (jüngster) */
 function signedAgreementOf(checked: Record<string, CheckedFile>, ctx: Ctx, row: AgreementRow): [string, CheckedFile] | null {
+  // Vertrag nennt die Wohnung z. B. „A1", „A1 (A1a + A1b)", „A1a / A1b" oder „Block B, B305".
+  // Verglichen wird je Wort (nie als Teilstring: „A10" darf nicht als „A1" zählen).
   const key = (u: string) => u.toUpperCase().replace(/[^A-Z0-9]/g, '')
-  const unit = key(ctx.unit.unit_number)
+  const wanted = new Set([ctx.unit.unit_number, ...ctx.subUnits].map(key).filter(Boolean))
+  const matches = (written: string) => written.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean).some(t => wanted.has(t))
   const hits = Object.entries(checked)
     .filter(([id, c]) => c.kind === 'reservation_agreement' && c.signed && id !== row.drive_file_id && id !== row.signed_file_id
-      && !!c.unit && (key(c.unit) === unit || key(c.unit).endsWith(unit)))
+      && !!c.unit && matches(c.unit))
     .sort(([, a], [, b]) => (b.created ?? '').localeCompare(a.created ?? ''))
   return hits[0] ?? null
 }
@@ -383,6 +394,7 @@ ${folderLink
   if (test || ctx.devPhone) {
     const err = await invoke(sb, 'send-whatsapp', {
       event_type: 'reservation_agreement', override_text: (test ? 'TEST · ' : '') + devWa, auto: true, lang: 'en', already_translated: true,
+      file_url: DEV_WA_IMAGE, file_name: 'reservation.jpg',
       lead_data: test ? { lead_name: 'Sven', lead_phone: SVEN_PHONE } : { lead_name: ctx.devPhone!.name, lead_phone: ctx.devPhone!.phone },
     })
     if (err) errors.push(`WhatsApp: ${err}`)

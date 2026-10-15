@@ -149,6 +149,9 @@ Deno.serve(async (req: Request) => {
     // Drive-Freigabe: alle Bauträger-Kontakte mit Haken drive_access (Sven klickt das je
     // Kontakt an, 30.9.). Ist niemand angehakt, bleibt es beim Hauptkontakt (unitDevEmail).
     let unitDevEmails: string[] = []
+    // Bauträger mit Reservierungsvorlage (z. B. Mito, 15.10.): den Vertrag füllt das System
+    // selbst aus, sobald der Ausweis im Drive-Ordner liegt (Edge reservation-agreement).
+    let unitDevHasResTemplate = false
     if (dealData?.unit_id) {
       const { data: unit } = await supabase.from('crm_project_units')
         .select('unit_number, price_net, price_gross, vat_rate, project_id, crm_projects(name, developer)').eq('id', dealData.unit_id).maybeSingle()
@@ -179,6 +182,9 @@ Deno.serve(async (req: Request) => {
             const { data: withDrive } = await supabase.from('crm_developer_contacts')
               .select('email').eq('developer_id', devId).eq('drive_access', true)
             unitDevEmails = ((withDrive ?? []) as { email?: string | null }[]).map(x => (x.email ?? '').trim()).filter(Boolean)
+            const { data: resTpl } = await supabase.from('reservation_templates')
+              .select('id').eq('developer_id', devId).eq('is_active', true).limit(1).maybeSingle()
+            unitDevHasResTemplate = !!resTpl
           }
         }
       }
@@ -284,6 +290,12 @@ Deno.serve(async (req: Request) => {
       mwst_satz:        mwstSatz,         // 19 oder 5
       kaufpreis_brutto: kaufpreisBrutto,
       drive_link:   lead.drive_folder_url ?? '',
+      // Nachricht an den Bauträger bei Reservierung: was er jetzt tun soll
+      reservierung_ablauf: unitDevHasResTemplate
+        ? 'As soon as we have the client\'s passport details, we will send you the filled-in reservation agreement automatically. '
+          + 'Please then sign and seal it and upload the signed version to this Drive folder. The client and the lawyer have access there, '
+          + 'so there is no need to send it to the client separately.'
+        : 'Please:\n1) prepare the reservation,\n2) upload it to the same Drive folder, and\n3) send it directly to the client.',
       doc_vollmacht:  docVollmacht,
       doc_unterlagen: docUnterlagen,
     }
