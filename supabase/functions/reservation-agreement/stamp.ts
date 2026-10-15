@@ -131,6 +131,8 @@ export async function stampDocument(src: Uint8Array, s: DocSigner, seal: Uint8Ar
     const t1 = safe(bold, `${s.name} · ${s.company}`), t2 = safe(reg, placeDate)
     const tw = Math.max(bold.widthOfTextAtSize(t1, 6.5), reg.widthOfTextAtSize(t2, 6))
     const right = W - 45
+    // heller Untergrund, damit das Band auch auf dunklen Seiten (Titelblatt) lesbar ist
+    page.drawRectangle({ x: right - tw - 82, y: 3, width: tw + 88, height: 30, color: rgb(1, 1, 1), opacity: 0.9 })
     page.drawText(t1, { x: right - bold.widthOfTextAtSize(t1, 6.5), y: 19, size: 6.5, font: bold, color: DARK })
     page.drawText(t2, { x: right - reg.widthOfTextAtSize(t2, 6), y: 10, size: 6, font: reg, color: GREY })
     drawFit(page, sig, right - tw - 76, 6, 70, 24)
