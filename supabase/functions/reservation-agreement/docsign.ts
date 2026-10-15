@@ -13,7 +13,7 @@ import { stampDocument } from './stamp.ts'
 import { uploadToken, uploadFile } from './drive.ts'
 import { loadSeal, saveSeal, sealDataUrl, pngFromInput, clientIp, LOCK_MINUTES, MAX_SEAL_BYTES } from './seal.ts'
 import { cleanName, cleanSignature, sha256Hex, placeOf, langOf } from './sign.ts'
-import { b64, esc, invoke, whatsappSven, SVEN_MAIL, SVEN_PHONE, CRM_LEAD, todayCy } from './index.ts'
+import { b64, esc, invoke, whatsappSven, whatsappPdf, SVEN_MAIL, SVEN_PHONE, CRM_LEAD, todayCy } from './index.ts'
 
 type Res = { status: number; body: Record<string, unknown> }
 const SIGN_BASE = 'https://portal.happy-property.com/sign/d/'
@@ -265,8 +265,11 @@ export async function docSubmit(sb: SupabaseClient, body: Record<string, unknown
         html: `<p>Testlauf: So sieht das Dokument nach der Unterschrift aus (${stamped.placement === 'field' ? 'Unterschriftsfeld gefunden' : 'kein Feld gefunden, Unterschriftsseite angehängt'}). Es wurde nichts abgelegt und nichts an Anwalt, Kunde oder Bauträger geschickt.</p>`,
         attachment, auto: true, lang: 'de', already_translated: true,
       })
-      // Test wie im echten Ablauf: Bestätigung auch per WhatsApp, aber nur an Sven
+      // Test wie im echten Ablauf: Bestätigung + PDF per WhatsApp, aber nur an Sven
       await whatsappSven(sb, `TEST · ✅ ${name} hat ${row.title} digital unterschrieben.\n\nIm echten Ablauf läge es jetzt am Objekt im Eigentümerportal und im Drive-Ordner, und Timotheos hätte es per Mail. Das PDF ist in deinem Postfach.`)
+      const tpath = `unit-documents/${row.unit_id ?? 'ohne-einheit'}/${Date.now()}-test-signed.pdf`
+      const { error: tErr } = await sb.storage.from('unit-documents').upload(tpath, pdf, { contentType: 'application/pdf', upsert: false })
+      if (!tErr) await whatsappPdf(sb, { name: 'Sven', phone: SVEN_PHONE }, `TEST · So bekommt der Bauträger das unterschriebene PDF per WhatsApp:\n\nThank you, ${name}! Here is your signed copy of ${row.title}.`, tpath, fname, 'de')
       return { status: 200, body: { ok: true, test: true, mail_error: err ?? null, pdf_base64: b64(pdf) } }
     }
 
@@ -324,8 +327,8 @@ export async function docSubmit(sb: SupabaseClient, body: Record<string, unknown
     }
 
     // 4. Kopie an den Bauträger, Notiz am Kunden, WhatsApp an Sven
-    const { data: contacts } = await sb.from('crm_developer_contacts').select('email, drive_access').eq('developer_id', row.developer_id)
-    const cs = (contacts ?? []) as Array<{ email: string | null; drive_access: boolean }>
+    const { data: contacts } = await sb.from('crm_developer_contacts').select('name, email, phone, whatsapp, drive_access, is_primary, language').eq('developer_id', row.developer_id).order('is_primary', { ascending: false })
+    const cs = (contacts ?? []) as Array<{ name: string | null; email: string | null; phone: string | null; whatsapp: string | null; drive_access: boolean; is_primary: boolean; language: string | null }>
     const devMails = (cs.some(c => c.drive_access && c.email) ? cs.filter(c => c.drive_access && c.email) : cs.filter(c => c.email).slice(0, 1)).map(c => c.email!)
     for (const to of devMails) {
       const de = row.signer_lang === 'de'
@@ -336,6 +339,16 @@ export async function docSubmit(sb: SupabaseClient, body: Record<string, unknown
         attachment, auto: true, lang: de ? 'de' : 'en', already_translated: true,
       })
       if (err) problems.push(`Kopie ${to}: ${err}`)
+    }
+    // Unterschriebenes PDF auch per WhatsApp an den Unterzeichner (gleicher Kontakt wie die Anfrage)
+    const waC = (cs.some(c => c.drive_access && c.email) ? cs.filter(c => c.drive_access && c.email) : cs).find(c => (c.whatsapp || c.phone)?.trim())
+    if (waC) {
+      const de = row.signer_lang === 'de'
+      const waText = de
+        ? `Danke, ${name}! Hier ist Ihre unterschriebene Fassung: ${row.title}.${driveId ? ' Sie liegt auch im gemeinsamen Drive-Ordner für Kunde und Anwalt.' : ''}`
+        : `Thank you, ${name}! Here is your signed copy of ${row.title}.${driveId ? ' It is also stored in the shared Drive folder for the client and the lawyer.' : ''}`
+      const err = await whatsappPdf(sb, { name: waC.name ?? 'Developer', phone: (waC.whatsapp || waC.phone)!.trim() }, waText, path, fname, de ? 'de' : 'en')
+      if (err) problems.push(`WhatsApp-PDF: ${err}`)
     }
     await sb.from('sign_documents').update({
       status: 'unterschrieben', signer_name: name, sign_meta: meta, signed_pdf_path: path, unit_document_id: docId,

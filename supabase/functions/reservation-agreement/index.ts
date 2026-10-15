@@ -366,6 +366,21 @@ export async function invoke(sb: Client, fn: string, body: Record<string, unknow
   return error?.message || d?.error || (d?.success === false ? 'success=false' : null)
 }
 
+/**
+ * Unterschriebenes PDF per WhatsApp an den Unterzeichner (Sven 15.10.: „alles, was unterschrieben
+ * wird, auch direkt als WhatsApp-PDF"). Datei über einen 30 Tage gültigen Storage-Link; über
+ * ~2 MB hängt send-whatsapp automatisch den Download-Link an statt der Datei.
+ */
+export async function whatsappPdf(sb: Client, to: { name: string; phone: string }, text: string, storagePath: string, fileName: string, lang: 'de' | 'en'): Promise<string | null> {
+  const { data, error } = await sb.storage.from('unit-documents').createSignedUrl(storagePath, 30 * 86400)
+  if (error || !data?.signedUrl) return `PDF-Link: ${error?.message ?? 'fehlt'}`
+  return await invoke(sb, 'send-whatsapp', {
+    event_type: 'signed_document', override_text: text, auto: true, lang, already_translated: true,
+    file_url: data.signedUrl, file_name: fileName.replace(/[^A-Za-z0-9._-]+/g, '_'),
+    lead_data: { lead_name: to.name, lead_phone: to.phone },
+  })
+}
+
 export async function whatsappSven(sb: Client, text: string): Promise<string | null> {
   return await invoke(sb, 'send-whatsapp', {
     event_type: 'reservation_agreement', override_text: text, auto: true, lang: 'de', already_translated: true,

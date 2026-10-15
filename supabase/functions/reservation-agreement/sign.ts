@@ -11,8 +11,8 @@ import { renderAgreement, type AgreementFields } from './pdf.ts'
 import { uploadToken, uploadFile } from './drive.ts'
 import { loadSeal, saveSeal, sealDataUrl, pngFromInput, clientIp, LOCK_MINUTES, MAX_SEAL_BYTES } from './seal.ts'
 import {
-  loadCtx, leadName, todayCy, b64, esc, invoke, whatsappSven, fileNameFor,
-  SVEN_MAIL, CRM_LEAD, type AgreementRow, type TemplateDb,
+  loadCtx, leadName, todayCy, b64, esc, invoke, whatsappSven, whatsappPdf, fileNameFor,
+  SVEN_MAIL, SVEN_PHONE, CRM_LEAD, type AgreementRow, type TemplateDb,
 } from './index.ts'
 
 const DEAD = ['deal_verloren', 'archiviert']
@@ -155,8 +155,11 @@ export async function signSubmit(sb: SupabaseClient, body: Record<string, unknow
         html: `<p>Testlauf: So sieht der Vertrag nach der Unterschrift aus. Es wurde nichts abgelegt und nichts an Kunden oder Bauträger geschickt.</p><p>Unterschrieben von ${esc(name)}, ${esc(place)}, ${esc(date)}</p>`,
         attachment, auto: true, lang: 'de', already_translated: true,
       })
-      // Test wie im echten Ablauf: Bestätigung auch per WhatsApp, aber nur an Sven
+      // Test wie im echten Ablauf: Bestätigung + PDF per WhatsApp, aber nur an Sven
       await whatsappSven(sb, `TEST · ✅ ${name} hat den Reservierungsvertrag ${leadName(ctx.lead)} (${unitLabel}) digital unterschrieben.\n\nIm echten Ablauf läge er jetzt an der Wohnung unter Verträge und im Drive-Ordner. Das PDF ist in deinem Postfach.`)
+      const tpath = `unit-documents/${ctx.unit.id}/${Date.now()}-test-signed.pdf`
+      const { error: tErr } = await sb.storage.from('unit-documents').upload(tpath, pdf, { contentType: 'application/pdf', upsert: false })
+      if (!tErr) await whatsappPdf(sb, { name: 'Sven', phone: SVEN_PHONE }, `TEST · So bekommt der Bauträger das unterschriebene PDF per WhatsApp:\n\nThank you, ${name}! Here is your signed reservation agreement (${p.fields.property_name}, unit ${p.fields.unit_number}).`, tpath, fname, 'de')
       return { status: 200, body: { ok: true, test: true, mail_error: err ?? null, pdf_base64: b64(pdf) } }
     }
 
@@ -212,6 +215,14 @@ export async function signSubmit(sb: SupabaseClient, body: Record<string, unknow
         attachment, auto: true, lang: de ? 'de' : 'en', already_translated: true,
       })
       if (err) problems.push(`Kopie ${to}: ${err}`)
+    }
+    // Unterschriebenes PDF auch per WhatsApp an den Unterzeichner
+    if (ctx.devPhone) {
+      const waText = de
+        ? `Danke, ${name}! Hier ist Ihr unterschriebener Reservierungsvertrag (${p.fields.property_name}, Einheit ${p.fields.unit_number}).${driveId ? ' Er liegt auch im gemeinsamen Drive-Ordner für Kunde und Anwalt.' : ''}`
+        : `Thank you, ${name}! Here is your signed reservation agreement (${p.fields.property_name}, unit ${p.fields.unit_number}).${driveId ? ' It is also stored in the shared Drive folder for the client and the lawyer.' : ''}`
+      const err = await whatsappPdf(sb, ctx.devPhone, waText, path, fname, de ? 'de' : 'en')
+      if (err) problems.push(`WhatsApp-PDF: ${err}`)
     }
     await whatsappSven(sb, `✅ ${name} (${p.template.company_name}) hat den Reservierungsvertrag ${leadName(ctx.lead)} (${unitLabel}) digital unterschrieben.\n\nLiegt an der Wohnung unter Verträge${driveId ? ' und im Drive-Ordner' : ''}.${problems.length ? `\n\nAchtung: ${problems.join('; ')}` : ''}\n\n${CRM_LEAD}${ctx.lead.id}`)
     return { status: 200, body: { ok: true, test: false, pdf_base64: b64(pdf) } }
