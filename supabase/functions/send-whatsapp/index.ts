@@ -82,6 +82,57 @@ async function youtubeThumb(url: string): Promise<string | null> {
   return null
 }
 
+// ── Eigene PDF-Links als Datei mitschicken ────────────────────────────────────
+// Seit dem eigenen WhatsApp-Server gibt es kein 2-MB-Limit mehr (Sven 15.10.26:
+// „wo sinnvoll, direkt das Dokument versenden"). Steht ein Link auf eines UNSERER
+// PDFs allein in einer Zeile oder am Zeilenende hinter einer Beschriftung, geht
+// das PDF als Datei direkt hinter dem Text raus; die Beschriftung bleibt im Text,
+// der Link verschwindet. Nur eigene Dokumente (Storage + Portal), nur PDF. Links
+// mitten im Satz und Webseiten (Deck, Berechnung, Termin) bleiben Links.
+// Gilt für Automatik-Nachrichten (Scheduler) und den Postausgang; andere Aufrufer
+// schalten es mit docs_as_files:true zu.
+const DOC_EVENTS = new Set(['scheduled', 'deck_angebot'])
+const MAX_DOCS = 5
+type DocFile = { url: string; name: string }
+
+function isOwnPdf(u: string): boolean {
+  try {
+    const x = new URL(u)
+    const supa = new URL(Deno.env.get('SUPABASE_URL') ?? 'https://invalid').host
+    const own = x.host === 'portal.happy-property.com' || (x.host === supa && x.pathname.startsWith('/storage/v1/object/'))
+    return own && /\.pdf$/i.test(x.pathname)
+  } catch { return false }
+}
+
+// Dateiname: ?download=… (setzt der Aufrufer bewusst), sonst der Dateiname aus dem
+// Pfad ohne Zeitstempel-Präfix. Ist der nur ein Token/UUID, zählt die Beschriftung.
+function docName(u: string, label: string): string {
+  const x = new URL(u)
+  const dl = (x.searchParams.get('download') ?? '').trim()
+  if (/\.pdf$/i.test(dl)) return dl
+  let base = decodeURIComponent(x.pathname.split('/').pop() ?? '').replace(/^\d{10,}[_-]/, '')
+  const stem = base.replace(/\.pdf$/i, '')
+  if (!stem || /^[0-9a-f-]{16,}$/i.test(stem) || /^[A-Za-z0-9]{16,}$/.test(stem)) {
+    const l = label.replace(/[^\p{L}\p{N} .,()&+-]/gu, ' ').replace(/\b(als|as)\s+PDF\b|\(PDF\)|\bPDF\b/gi, ' ')
+      .replace(/\s{2,}/g, ' ').replace(/^[\s.,-]+|[\s.,-]+$/g, '')
+    base = `${l || 'Dokument'}.pdf`
+  }
+  return base
+}
+
+function extractDocs(text: string): { text: string; docs: DocFile[] } {
+  const docs: DocFile[] = []
+  const out: string[] = []
+  for (const line of text.split('\n')) {
+    const m = line.match(/^(.*?)(https?:\/\/\S+?)[).,;!]*\s*$/)
+    if (!m || docs.length >= MAX_DOCS || !isOwnPdf(m[2])) { out.push(line); continue }
+    const label = m[1].replace(/[\s:–-]+$/, '').trim()
+    if (!docs.some(d => d.url === m[2])) docs.push({ url: m[2], name: docName(m[2], label) })
+    if (label) out.push(label)
+  }
+  return { text: out.join('\n').replace(/\n{3,}/g, '\n\n').trim(), docs }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
@@ -117,6 +168,8 @@ Deno.serve(async (req) => {
       contact_card,  // optionale Kontaktkarte {name, phone, email?, organization?}: geht
                      // NACH dem Text als vCard raus (Evolution sendContact). Ueber
                      // TimelinesAI gibt es keine Karte -> Name + Nummer als Textzeile.
+      docs_as_files, // true = Links auf eigene PDFs im Text als Datei hinterherschicken
+                     // (für Scheduler und Postausgang automatisch an, siehe DOC_EVENTS)
     } = await req.json()
 
     const apiKey      = Deno.env.get('TIMELINES_API_KEY')     ?? ''
@@ -225,6 +278,11 @@ Deno.serve(async (req) => {
     const hasAttach = () => !!fileUidCache || !!attachBlob
     let attachError:  string | null = null
     let linkFallback = false     // Anhang ging nicht hoch → Link steht im Text
+    // PDFs hinter dem Text: Bytes (bzw. TimelinesAI-UID) nur einmal je Datei laden
+    const docBytes = new Map<string, { bytes: Uint8Array; ctype: string } | null>()
+    const docUids  = new Map<string, string | null>()
+    let docsSent = 0
+    const docErrors: string[] = []
     // waSize auch fuer EXPLIZITE Anhaenge: ein Vorlagenbild aus dem Storage kommt
     // sonst in Originalgroesse (gemessen 8,4 MB Deck-Render) und scheitert still an
     // der 2-MB-Grenze — die Nachricht ging dann als nackter Text raus, obwohl der
@@ -247,6 +305,18 @@ Deno.serve(async (req) => {
 
     let attachUrl:  string | null = file_url  ? waSize(String(file_url))  : null
     let attachName: string | null = file_name ? String(file_name) : null
+
+    // Eigene PDF-Links → Dateien, die nach dem Text rausgehen (siehe extractDocs).
+    let docs: DocFile[] = []
+    if ((docs_as_files === true || DOC_EVENTS.has(String(event_type))) && typeof message === 'string') {
+      const ex = extractDocs(message)
+      if (ex.docs.length) { docs = ex.docs; message = ex.text; console.log(`[send-whatsapp] ${docs.length} PDF(s) als Datei: ${docs.map(d => d.name).join(', ')}`) }
+    }
+    // Bestand der Text nur aus dem Link, wird das erste PDF selbst zur Nachricht.
+    if ((typeof message !== 'string' || !message.trim()) && !attachUrl && docs.length) {
+      const d = docs.shift()!
+      attachUrl = d.url; attachName = d.name
+    }
 
     // ── Leerer Text ist bei TimelinesAI ein harter Fehler ─────────
     // HTTP 400 validation_error: text "can not be empty string". Genau das traf
@@ -284,7 +354,7 @@ Deno.serve(async (req) => {
       // WICHTIG: Der Doppel-Schutz hasht den DEUTSCHEN Quelltext. Würde man den
       // übersetzten Text hashen, ergäbe derselbe deutsche Satz bei jedem Lauf ein
       // leicht anderes Englisch - der Kunde bekäme die Nachricht mehrfach.
-      const bh = typeof message === 'string' ? bodyHash(message + (attachName ?? attachUrl ?? '')) : ''
+      const bh = typeof message === 'string' ? bodyHash(message + (attachName ?? attachUrl ?? '') + docs.map(d => d.name).join('|')) : ''
       if (!allow_duplicate && bh) {
         const win = new Date(Date.now() - DEDUP_HOURS * 3600_000).toISOString()
         const { data: dup } = await supabase.from('wa_sent').select('id')
@@ -513,6 +583,61 @@ Deno.serve(async (req) => {
       // geht. Hash immer ueber den GESAMTEN Text, unabhaengig von der Teilung.
       if (sentAllParts && bh) { try { await supabase.from('wa_sent').insert({ phone: recipient.phone, body_hash: bh }) } catch { /* egal */ } }
 
+      // ── PDFs hinterher (aus eigenen Links, siehe extractDocs) ─────
+      // Erst wenn der Text komplett draussen ist. Klappt eine Datei nicht, geht
+      // ihr Link als Text hinterher: der Kunde bekommt das Dokument so oder so.
+      if (sentAllParts && docs.length) {
+        for (const d of docs) {
+          await new Promise(r => setTimeout(r, 700))
+          let ok = false, why = ''
+          try {
+            if (!docBytes.has(d.url)) {
+              const r = await fetch(d.url)
+              const b = r.ok ? new Uint8Array(await r.arrayBuffer()) : null
+              const ct = (r.headers.get('content-type') ?? '').split(';')[0].trim()
+              docBytes.set(d.url, b && b.length ? { bytes: b, ctype: /pdf/i.test(ct) || !ct || ct === 'application/octet-stream' ? 'application/pdf' : ct } : null)
+              if (!b) why = `Datei nicht ladbar (${r.status})`
+            }
+            const f = docBytes.get(d.url)
+            if (!f) throw new Error(why || 'Datei nicht ladbar')
+            if (viaEvolution) {
+              const r = await evoSendMedia(recipient.phone, { bytes: f.bytes, mimetype: f.ctype, fileName: d.name, caption: '' })
+              if (r.ok && r.messageId) { try { await supabase.from('wa_processed').insert({ message_uid: String(r.messageId) }) } catch { /* ok */ } }
+              ok = r.ok; if (!ok) why = evoErrorText(r.status, r.data)
+            } else {
+              if (!docUids.has(d.url)) {
+                const form = new FormData()
+                form.append('file', new Blob([f.bytes.buffer as ArrayBuffer], { type: f.ctype }), d.name)
+                form.append('filename', d.name)
+                form.append('content_type', f.ctype)
+                const up = await fetch('https://app.timelines.ai/integrations/api/files_upload', { method: 'POST', headers: { 'Authorization': `Bearer ${apiKey}` }, body: form })
+                const uj = await up.json().catch(() => null)
+                docUids.set(d.url, (uj?.data?.uid ?? uj?.uid ?? null) as string | null)
+                if (!docUids.get(d.url)) why = `Upload abgelehnt (HTTP ${up.status})`
+              }
+              const uid = docUids.get(d.url)
+              if (!uid) throw new Error(why || 'Upload abgelehnt')
+              const res = await fetch('https://app.timelines.ai/integrations/api/messages', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                body: JSON.stringify({ phone: recipient.phone, whatsapp_account_phone: senderPhone, text: captionFromName(d.name), file_uid: uid }),
+              })
+              ok = res.ok; if (!ok) why = `HTTP ${res.status}`
+            }
+          } catch (e) { why = e instanceof Error ? e.message : String(e) }
+          if (ok) { docsSent++; continue }
+          console.warn(`[send-whatsapp] PDF ${d.name} an ${recipient.phone} fehlgeschlagen (${why}) - Link als Text`)
+          docErrors.push(`${d.name}: ${why}`)
+          const line = `\u{1F4CE} ${d.name.replace(/\.pdf$/i, '')}:\n${d.url}`
+          if (viaEvolution) {
+            const r = await evoSendText(recipient.phone, line)
+            if (r.ok && r.messageId) { try { await supabase.from('wa_processed').insert({ message_uid: String(r.messageId) }) } catch { /* ok */ } }
+          } else await fetch('https://app.timelines.ai/integrations/api/messages', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+            body: JSON.stringify({ phone: recipient.phone, whatsapp_account_phone: senderPhone, text: line }),
+          }).catch(() => null)
+        }
+      }
+
       // ── Kontaktkarte hinterher ───────────────────────────────────
       // Erst wenn der Text komplett draussen ist. Ein Fehler hier kippt den
       // Versand nicht (Text ist ja angekommen), landet aber im Ergebnis.
@@ -583,7 +708,7 @@ Deno.serve(async (req) => {
         type:         'whatsapp',
         direction:    'outbound',
         subject:      anKunde ? `WhatsApp: ${event_type}` : `Intern an ${empfaenger || 'Partner'} (nicht an den Kunden)`,
-        content:      message,
+        content:      docs.length ? `${message}\n\n${docs.map(d => `\u{1F4CE} ${d.name}`).join('\n')}` : message,
         completed_at: new Date().toISOString(),
         auto:         auto === true,
       })
@@ -616,6 +741,7 @@ Deno.serve(async (req) => {
         // attached sagt, ob wirklich ein Bild dran war — "sent" allein reicht nicht,
         // ein gescheiterter Anhang faellt sonst nie auf.
         attached: hasAttach() || linkFallback, ...(linkFallback ? { attach_as_link: true } : {}),
+        ...(docs.length ? { documents: docsSent, ...(docErrors.length ? { document_errors: docErrors } : {}) } : {}),
         ...(attachError ? { attach_error: attachError } : {}) }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     )

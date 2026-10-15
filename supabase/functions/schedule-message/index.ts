@@ -34,18 +34,25 @@ function substitute(template: string, data: Record<string, string>): string {
   return result.replace(/\{\{[^}]+\}\}/g, '–')
 }
 
-// Finanzierung-DE-Dokumente → langlebige Signed-URLs (Bucket privat, 10 Jahre gültig)
-async function finDocs(supabase: ReturnType<typeof createClient>): Promise<{ doc_vollmacht: string; doc_unterlagen: string }> {
+// Finanzierung-DE-Dokumente → langlebige Signed-URLs (Bucket privat, 10 Jahre gültig).
+// wa_* tragen zusätzlich ?download=<Name>: send-whatsapp schickt eigene PDF-Links als
+// Datei, und der Kunde sieht dann „Vollmacht.pdf" statt des Speichernamens.
+type FinDocs = { doc_vollmacht: string; doc_unterlagen: string; wa_vollmacht: string; wa_unterlagen: string }
+async function finDocs(supabase: ReturnType<typeof createClient>): Promise<FinDocs> {
+  const leer: FinDocs = { doc_vollmacht: '', doc_unterlagen: '', wa_vollmacht: '', wa_unterlagen: '' }
   try {
     const { data: files } = await supabase.storage.from('workflow-documents').list('finanzierung_de', { limit: 100 })
-    const sign = async (re: RegExp): Promise<string> => {
+    const sign = async (re: RegExp, name: string): Promise<[string, string]> => {
       const f = (files ?? []).find((x: { name: string }) => re.test(x.name))
-      if (!f) return ''
+      if (!f) return ['', '']
       const { data } = await supabase.storage.from('workflow-documents').createSignedUrl(`finanzierung_de/${f.name}`, 315360000)
-      return data?.signedUrl ?? ''
+      const url = data?.signedUrl ?? ''
+      return [url, url ? `${url}${url.includes('?') ? '&' : '?'}download=${encodeURIComponent(name)}` : '']
     }
-    return { doc_vollmacht: await sign(/vollmacht/i), doc_unterlagen: await sign(/kapitalbeschaffung/i) }
-  } catch { return { doc_vollmacht: '', doc_unterlagen: '' } }
+    const [v, vWa] = await sign(/vollmacht/i, 'Vollmacht.pdf')
+    const [u, uWa] = await sign(/kapitalbeschaffung/i, 'Unterlagen-Liste Finanzierung.pdf')
+    return { doc_vollmacht: v, doc_unterlagen: u, wa_vollmacht: vWa, wa_unterlagen: uWa }
+  } catch { return leer }
 }
 
 Deno.serve(async (req: Request) => {
@@ -194,8 +201,8 @@ Deno.serve(async (req: Request) => {
     }
 
     // P4: Finanzierung-DE-Dokumente (langlebige Signed-URLs) nur für diese Stage
-    const { doc_vollmacht: docVollmacht, doc_unterlagen: docUnterlagen } =
-      event_type === 'finanzierung_de' ? await finDocs(supabase) : { doc_vollmacht: '', doc_unterlagen: '' }
+    const { doc_vollmacht: docVollmacht, doc_unterlagen: docUnterlagen, wa_vollmacht: waVollmacht, wa_unterlagen: waUnterlagen } =
+      event_type === 'finanzierung_de' ? await finDocs(supabase) : { doc_vollmacht: '', doc_unterlagen: '', wa_vollmacht: '', wa_unterlagen: '' }
 
     // Registrierung: Developer + Bemerkung stehen evtl. nur in der Phasenwechsel-Aktivität,
     // falls das Frontend deal.developer noch nicht gesetzt hat (robust gegen alten PWA-Cache).
@@ -400,7 +407,8 @@ Deno.serve(async (req: Request) => {
       if ((rule.message_type === 'whatsapp' || rule.message_type === 'both') && rule.whatsapp_event_type) {
         const { data: tpl } = await supabase.from('whatsapp_templates').select('message_template, image_url').eq('event_type', rule.whatsapp_event_type).eq('active', true).single()
         if (tpl) {
-          waText = substitute(tpl.message_template as string, ph)
+          waText = substitute(tpl.message_template as string,
+            waVollmacht || waUnterlagen ? { ...ph, doc_vollmacht: waVollmacht, doc_unterlagen: waUnterlagen } : ph)
           // Bild der Vorlage mitnehmen — es muss den Weg durch die Warteschlange
           // ueberstehen, genau wie der Text.
           waImage = (tpl as { image_url?: string | null }).image_url ?? null

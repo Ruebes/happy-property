@@ -544,7 +544,9 @@ async function baueEntwurf(sb: SupabaseClient, row: PaketRow, p: Person, unit: U
     `🏡 Die Wohnung mit allen Bildern, Grundriss und Baubeschreibung: ${deckUrl}`,
     `📊 Deine Rechnung mit Finanzierung: ${calcUrl}`,
     `📊 Deine Rechnung ohne Kredit: ${calcUrlCash}`,
-    ...(pdfUrl ? [`📄 Datenblatt als PDF: ${pdfUrl}`] : []),
+    // send-whatsapp schickt eigene PDF-Links als Datei hinterher (Name aus ?download=),
+    // im Text bleibt nur die Beschriftung stehen.
+    ...(pdfUrl ? [`📄 Das Datenblatt zum Weiterleiten kommt als PDF direkt hier im Chat: ${pdfUrl}?download=${encodeURIComponent(`${nr ? `Wohnung-${nr.replace(/[^\w-]/g, '')}` : 'Wohnung'}-Datenblatt.pdf`)}`] : []),
     `🔑 Was wir nach dem Kauf alles für dich übernehmen: ${NACH_DEM_KAUF_URL}`,
     '',
     `Am einfachsten gehen wir alles in 20 Minuten gemeinsam durch. Hier kannst du dir einen Termin aussuchen: ${terminUrl}`,

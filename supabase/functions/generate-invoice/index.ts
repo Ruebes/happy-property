@@ -248,11 +248,12 @@ Deno.serve(async (req) => {
       }
       // ── Zusätzlich IMMER WhatsApp von Lotte (Svens Vorgabe 5.8.26), wenn der
       // Rechnungs-Empfänger eine Nummer hat (invoice_customers.whatsapp).
+      // Seit 15.10.26 mit der Rechnung selbst als PDF statt Link (eigener
+      // WhatsApp-Server, kein 2-MB-Limit mehr): direkt weiterleitbar an die Buchhaltung.
       const waPhone = String(customer.whatsapp ?? '').trim()
       if (waPhone) {
         const waText = `Hallo ${customerSnap.contact_name || ''} 🐾\n\n`
-          + `hier ist Lotte - ich habe dir gerade unsere Rechnung ${invoiceNumber} über ${eur(total_gross)} per Mail geschickt.\n\n`
-          + `Du kannst sie auch direkt hier ansehen:\n${publicUrl}\n\n`
+          + `hier ist Lotte - ich habe dir gerade unsere Rechnung ${invoiceNumber} über ${eur(total_gross)} per Mail geschickt. Hier ist sie auch direkt als PDF.\n\n`
           + `Zahlbar bis ${dDate(dueStr)} (Verwendungszweck: ${invoiceNumber}).\n\nLiebe Grüße, Lotte 🐾`
         try {
           await fetch(`${SUPABASE_URL}/functions/v1/send-whatsapp`, {
@@ -261,7 +262,8 @@ Deno.serve(async (req) => {
             body: JSON.stringify({
               event_type: 'invoice_sent', override_text: waText,
               lead_data: { lead_name: customerSnap.contact_name || 'Partner', lead_phone: waPhone },
-              persona_image: `${SUPABASE_URL}/storage/v1/object/public/Assets/wa/lotte-money.jpg`,
+              // ?v= gegen den Storage-CDN: eine neu erzeugte Rechnung liegt unter demselben Pfad
+              file_url: `${pdfUrl}?v=${Date.now()}`, file_name: `${invoiceNumber}.pdf`,
             }),
           })
           console.log(`[generate-invoice] Rechnungs-WhatsApp an ${waPhone} gesendet`)
