@@ -605,14 +605,16 @@ async function driveVideoToStorage(token: string, file: DriveFile, path: string)
   return `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
 }
 
-// Lotte-Bild: trainierte Soul-ID + bis zu 2 zufällige echte Fotos aus dem Ordner
-// „Lotte Bilder" als Referenz (Sven legt dort laufend Fotos ab). Scheitert das,
-// Soul-ID allein, danach die bisherige Persona-Kette.
+// Lotte-Bild: trainierte Soul-ID allein. Soul + Referenzfotos aus „Lotte Bilder"
+// liefert seit ca. 1.10.2026 fast immer eine Collage aus 2-6 Feldern statt eines
+// Fotos (Gegenprobe 15.10.: Soul ohne Referenzen = sauberes Einzelbild). Die
+// Fotos aus dem Ordner dienen nur noch, wenn keine Soul-ID da ist (nano_banana),
+// danach die bisherige Persona-Kette.
 async function generateLotteImage(sb: SupabaseClient, postId: string, prompt: string): Promise<string> {
   const cfg = await personaCfg(sb)
   const soul = cfg.lotte_soul_id
   const refs: Array<{ id: string }> = []
-  if (cfg.lotte_folder) {
+  if (cfg.lotte_folder && !soul) {
     try {
       const token = await driveToken()
       const pics = (await driveChildren(token, cfg.lotte_folder)).filter(f => f.mimeType.startsWith('image/'))
@@ -635,9 +637,8 @@ async function generateLotteImage(sb: SupabaseClient, postId: string, prompt: st
       }
     } catch (e) { console.warn('[social-agent] Lotte-Ordner nicht lesbar:', e instanceof Error ? e.message : String(e)) }
   }
-  const full = `${prompt.replace(AI_LOOK_WORDS, '').replace(/\s{2,}/g, ' ').trim()}. The dog is Lotte, a chocolate brown labrador retriever (the trained character), she must look exactly like the reference photos: same coat color, same face, same build. Candid smartphone photo taken by her owner, natural daylight with real shadows, true-to-life colors, real fur texture, slightly imperfect framing. ONE single photo filling the whole frame, Lotte appears exactly once. No collage, no grid, no split screen, no multiple panels. No bokeh, no HDR, no cinematic grading, no text, no watermark.`
+  const full = `${prompt.replace(AI_LOOK_WORDS, '').replace(/\s{2,}/g, ' ').trim()}. The dog is Lotte, a chocolate brown labrador retriever (the trained character), she must look exactly like the trained character: same coat color, same face, same build. Candid smartphone photo taken by her owner, natural daylight with real shadows, true-to-life colors, real fur texture, slightly imperfect framing. ONE single photo filling the whole frame, Lotte appears exactly once. No collage, no grid, no split screen, no multiple panels. No bokeh, no HDR, no cinematic grading, no text, no watermark.`
   const tries: Array<[string, Record<string, unknown>]> = []
-  if (soul && refs.length) tries.push(['text2image_soul_v2', { prompt: full, aspect_ratio: '1:1', quality: '2k', custom_reference_id: soul, image_references: refs }])
   if (soul) tries.push(['text2image_soul_v2', { prompt: full, aspect_ratio: '1:1', quality: '2k', custom_reference_id: soul }])
   if (!soul && refs.length) tries.push(['nano_banana', { prompt: `Create a new photorealistic image: ${full}`, aspect_ratio: '1:1', image_references: refs }])
   // Höchstens 3 Bilder je Aufruf, sonst reißt die Laufzeit der Function.
