@@ -23,6 +23,7 @@ import LeadRegistrations from '../../../components/crm/LeadRegistrations'
 import { sendWhatsApp } from '../../../lib/whatsapp'
 import LeadQuickSend from '../../../components/crm/LeadQuickSend'
 import FunnelNotes from '../../../components/crm/FunnelNotes'
+import ReservationAgreementCard from '../../../components/crm/ReservationAgreementCard'
 import type { CrmAppointment } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
 import { detachPropertyFromOwner, detachConfirmText, dealInPortal, fetchUnitPropertyId, isForeignOwnedProperty, leadProfileIds } from '../../../lib/detachProperty'
@@ -2639,6 +2640,9 @@ export default function LeadDetail() {
                         📝 {t('crm.notifyLawyer', 'Anwalt informieren')}
                       </button>
                     </div>
+
+                    {/* ── Reservierungsvertrag (Automatik je Bauträger-Vorlage) ── */}
+                    {profile?.role === 'admin' && deal.unit_id && <ReservationAgreementCard dealId={deal.id} />}
 
                     {/* ── Wohnungszuweisung ──────────────────────────── */}
                     <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 space-y-3">

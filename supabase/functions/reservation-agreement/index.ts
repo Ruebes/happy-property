@@ -1,0 +1,593 @@
+// reservation-agreement — Reservierungsvertrag des Bauträgers automatisch ausfüllen
+// und an den Bauträger schicken (Sven 15.10.2026).
+//
+// Ablauf:
+//   1. Deal steht auf „reservierung", die Wohnung gehört zu einem Bauträger mit
+//      aktiver Vorlage (reservation_templates, z. B. „Reservierung Mito")
+//      → Zeile in reservation_agreements (status wartet_ausweis).
+//   2. Kunde lädt seinen Ausweis in den Drive-Kundenordner. Jede neue Datei läuft
+//      einmal durch die KI (ausweis.ts): Ausweis ja/nein, Name, Passnummer.
+//   3. 30 Minuten nach dem letzten Ausweis (Paare laden oft nacheinander hoch)
+//      wird der Vertrag ausgefüllt (pdf.ts) und geprüft (Name passt zum Kunden,
+//      Nummer lesbar, nicht abgelaufen, Preis da). Alles gut → PDF per Mail an den
+//      Bauträger + WhatsApp-Hinweis, Ablage im Drive-Ordner und an der Wohnung,
+//      Kopie an Sven. Sonst → status pruefen + WhatsApp an Sven.
+//   4. Nach dem Versand wird der Ordner 7 Tage weiter beobachtet: kommt noch ein
+//      Ausweis dazu, meldet sich das System bei Sven.
+//
+// Schalter crm_settings.reservation_agreement_mode: on | test (alles nur an Sven) | off.
+//
+// Aktionen:
+//   { action:'sweep' }                                   Cron alle 5 Min (Service-Role)
+//   { action:'status',  deal_id }                         Zeile lesen
+//   { action:'preview', deal_id }                         PDF bauen, nichts senden (base64)
+//   { action:'preview_template', template, sample? }      Vorlage mit Beispieldaten (base64)
+//   { action:'send',    deal_id, buyers?, test? }         jetzt bauen + senden (Svens Knopf);
+//                                                         test=true → nur an Sven
+//
+// Deploy: supabase functions deploy reservation-agreement --no-verify-jwt
+import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
+import { gateCaller } from '../_shared/callerGate.ts'
+import { saToken, uploadToken, listTree, download, thumbnail, uploadFile, type DriveFile } from './drive.ts'
+import { checkId, type IdCheck, type IdPerson } from './ausweis.ts'
+import { renderAgreement, type AgreementFields, type PropertyKind, type TemplateRow } from './pdf.ts'
+
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
+const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
+
+const SVEN_PHONE = '+35795096409'
+const SVEN_MAIL = 'sven@happy-property.com'
+const CRM_LEAD = 'https://portal.happy-property.com/admin/crm/leads/'
+// Nur Deals, die NACH dem Start auf Reservierung gingen (kein Rückwirken auf alte Deals).
+const FLOW_START = '2026-10-15T00:00:00Z'
+const QUIET_MIN = 30                 // Wartezeit nach dem letzten Ausweis
+const WAIT_DAYS = 45                 // so lange auf einen Ausweis warten
+const WATCH_AFTER_SEND_DAYS = 7      // nach dem Versand auf weitere Ausweise achten
+const MAX_CHECKS_PER_RUN = 10        // KI-Prüfungen je Vertrag und Lauf
+const MAX_BYTES = 15 * 1024 * 1024
+const MAX_ATTEMPTS = 3
+const AI_MIME = /^(application\/pdf|image\/(jpeg|png|webp|gif))$/
+const DEAD_PHASES = ['deal_verloren', 'archiviert']
+
+type Client = SupabaseClient
+type Mode = 'on' | 'test' | 'off'
+
+interface TemplateDb extends TemplateRow {
+  id: string; name: string; developer_id: string; is_active: boolean; auto_send: boolean
+  property_prefix: string | null; project_addresses: Record<string, string>
+}
+interface Buyer {
+  full_name: string; document_number: string; document_type: string; nationality: string
+  date_of_birth: string; expiry_date: string; file_id: string; file_name: string
+}
+interface CheckedFile {
+  name: string; at: string; created?: string | null
+  is_id?: boolean; persons?: IdPerson[]; note?: string
+  failed?: number; skipped?: string
+}
+interface AgreementRow {
+  id: string; deal_id: string; lead_id: string; unit_id: string | null; template_id: string | null
+  status: string; buyers: Buyer[]; checked_files: Record<string, CheckedFile>
+  last_id_at: string | null; review_reason: string | null; pdf_path: string | null
+  unit_document_id: string | null; drive_file_id: string | null; sent_at: string | null
+  sven_notified_at: string | null; created_at: string
+}
+interface Ctx {
+  deal: { id: string; lead_id: string; unit_id: string | null; phase: string }
+  lead: { id: string; first_name: string | null; last_name: string | null; email: string | null; drive_folder_id: string | null; drive_folder_url: string | null }
+  unit: { id: string; unit_number: string; type: string | null; price_net: number | null; project_id: string }
+  project: { id: string; name: string; developer: string | null; location: string | null; payment_schedule: { reservation?: number; reservationVat?: boolean } | null }
+  developerName: string
+  template: TemplateDb
+  devEmails: string[]
+  devPhone: { name: string; phone: string } | null
+}
+
+const leadName = (l: Ctx['lead']) => [l.first_name, l.last_name].map(x => (x ?? '').trim()).filter(Boolean).join(' ') || l.email || 'Kunde'
+const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+const eurEn = (n: number) => `EUR ${n.toLocaleString('en-US', { maximumFractionDigits: 2 })}`
+const todayCy = () => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Nicosia', day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date())
+
+async function mode(sb: Client): Promise<Mode> {
+  const { data } = await sb.from('crm_settings').select('value').eq('key', 'reservation_agreement_mode').maybeSingle()
+  const v = String((data as { value?: unknown } | null)?.value ?? 'off').replace(/"/g, '').trim()
+  return v === 'on' || v === 'test' ? v : 'off'
+}
+
+// ── Kontext eines Deals laden ─────────────────────────────────────────────────
+async function loadCtx(sb: Client, dealId: string): Promise<Ctx | { error: string }> {
+  const { data: deal } = await sb.from('deals').select('id, lead_id, unit_id, phase').eq('id', dealId).maybeSingle()
+  if (!deal) return { error: 'Deal nicht gefunden' }
+  const d = deal as Ctx['deal']
+  if (!d.unit_id) return { error: 'Am Deal ist keine Wohnung zugewiesen' }
+  const { data: lead } = await sb.from('leads').select('id, first_name, last_name, email, drive_folder_id, drive_folder_url').eq('id', d.lead_id).maybeSingle()
+  if (!lead) return { error: 'Kunde nicht gefunden' }
+  const { data: unit } = await sb.from('crm_project_units').select('id, unit_number, type, price_net, project_id').eq('id', d.unit_id).maybeSingle()
+  if (!unit) return { error: 'Wohnung nicht gefunden' }
+  const u = unit as Ctx['unit']
+  const { data: proj } = await sb.from('crm_projects').select('id, name, developer, location, payment_schedule').eq('id', u.project_id).maybeSingle()
+  if (!proj) return { error: 'Projekt nicht gefunden' }
+  const p = proj as Ctx['project']
+  if (!p.developer) return { error: 'Projekt ohne Bauträger' }
+  const { data: dev } = await sb.from('crm_developers').select('id, name').ilike('name', p.developer).limit(1).maybeSingle()
+  const devId = (dev as { id?: string } | null)?.id
+  if (!devId) return { error: `Bauträger ${p.developer} nicht angelegt` }
+  const { data: tpl } = await sb.from('reservation_templates').select('*').eq('developer_id', devId).eq('is_active', true).maybeSingle()
+  if (!tpl) return { error: `Keine Reservierungsvorlage für ${p.developer}` }
+  const { data: contacts } = await sb.from('crm_developer_contacts')
+    .select('name, email, phone, whatsapp, is_primary, drive_access').eq('developer_id', devId).order('is_primary', { ascending: false })
+  const cs = (contacts ?? []) as Array<{ name: string | null; email: string | null; phone: string | null; whatsapp: string | null; is_primary: boolean; drive_access: boolean }>
+  // Mail an alle mit Haken „Drive-Zugang nach Reservierung", sonst an den Hauptkontakt
+  // (gleiche Regel wie die Drive-Freigabe in schedule-message).
+  const withDrive = cs.filter(c => c.drive_access && c.email?.trim())
+  const devEmails = (withDrive.length ? withDrive : cs.filter(c => c.email?.trim()).slice(0, 1)).map(c => c.email!.trim())
+  const waContact = (withDrive.length ? withDrive : cs).find(c => (c.whatsapp || c.phone)?.trim())
+  return {
+    deal: d, lead: lead as Ctx['lead'], unit: u, project: p, developerName: (dev as { name: string }).name,
+    template: tpl as TemplateDb, devEmails,
+    devPhone: waContact ? { name: waContact.name ?? p.developer, phone: (waContact.whatsapp || waContact.phone)!.trim() } : null,
+  }
+}
+
+// ── Ausweise im Ordner prüfen ─────────────────────────────────────────────────
+async function scanFolder(row: Pick<AgreementRow, 'checked_files' | 'drive_file_id'>, ctx: Ctx): Promise<{ checked: Record<string, CheckedFile>; changed: boolean; pending: number }> {
+  const checked = { ...(row.checked_files ?? {}) }
+  if (!ctx.lead.drive_folder_id) return { checked, changed: false, pending: 0 }
+  const token = await saToken()
+  const files = (await listTree(token, ctx.lead.drive_folder_id))
+    .sort((a, b) => (a.createdTime ?? '').localeCompare(b.createdTime ?? ''))
+  let changed = false, done = 0, pending = 0
+  for (const f of files) {
+    const prev = checked[f.id]
+    if (prev && (prev.is_id !== undefined || prev.skipped || (prev.failed ?? 0) >= MAX_ATTEMPTS)) continue
+    if (f.id === row.drive_file_id || f.name.toLowerCase().startsWith(ctx.template.title.toLowerCase())) {
+      checked[f.id] = { name: f.name, at: new Date().toISOString(), created: f.createdTime ?? null, skipped: 'eigene Datei' }
+      changed = true; continue
+    }
+    const isImage = f.mimeType.startsWith('image/')
+    if (!isImage && f.mimeType !== 'application/pdf') {
+      checked[f.id] = { name: f.name, at: new Date().toISOString(), created: f.createdTime ?? null, skipped: f.mimeType }
+      changed = true; continue
+    }
+    if (done >= MAX_CHECKS_PER_RUN) { pending++; continue }
+    done++
+    changed = true
+    const base = { name: f.name, at: new Date().toISOString(), created: f.createdTime ?? null }
+    try {
+      const size = f.size ? Number(f.size) : 0
+      let src: { bytes: Uint8Array; mime: string } | null = null
+      if (AI_MIME.test(f.mimeType) && size <= MAX_BYTES) src = await download(token, f)
+      else src = await thumbnail(token, f)          // HEIC-Fotos, sehr große Dateien
+      if (!src) { checked[f.id] = { ...base, skipped: `nicht lesbar (${f.mimeType}, ${Math.round(size / 1e6)} MB)` }; continue }
+      const res: IdCheck | null = await checkId(src.bytes, src.mime, f.name)
+      if (!res) { checked[f.id] = { ...base, failed: (prev?.failed ?? 0) + 1 }; continue }
+      checked[f.id] = { ...base, is_id: res.is_identity_document, persons: res.is_identity_document ? res.persons : [], note: res.note }
+    } catch (e) {
+      console.error('[reservation-agreement] Prüfung', f.name, (e as Error).message)
+      checked[f.id] = { ...base, failed: (prev?.failed ?? 0) + 1, note: (e as Error).message.slice(0, 200) }
+    }
+  }
+  return { checked, changed, pending }
+}
+
+function ageYears(dob: string): number | null {
+  const t = Date.parse(dob)
+  if (!Number.isFinite(t)) return null
+  return (Date.now() - t) / (365.25 * 864e5)
+}
+
+/** Käufer aus allen erkannten Ausweisen, je Person einmal, in Upload-Reihenfolge. Kinder fallen raus. */
+function buyersFrom(checked: Record<string, CheckedFile>): { buyers: Buyer[]; minors: string[]; lastIdAt: string | null } {
+  const out: Buyer[] = []
+  const minors: string[] = []
+  let lastIdAt: string | null = null
+  const entries = Object.entries(checked).filter(([, c]) => c.is_id).sort(([, a], [, b]) => (a.created ?? '').localeCompare(b.created ?? ''))
+  for (const [fileId, c] of entries) {
+    if (c.created && (!lastIdAt || c.created > lastIdAt)) lastIdAt = c.created
+    for (const p of c.persons ?? []) {
+      const full = `${p.given_names} ${p.surname}`.replace(/\s+/g, ' ').trim()
+      if (!full) continue
+      const age = ageYears(p.date_of_birth)
+      if (age !== null && age < 18) { if (!minors.includes(full)) minors.push(full); continue }
+      const num = p.document_number.replace(/\s+/g, '').toUpperCase()
+      const dup = out.find(b => (num && b.document_number === num) || (!num && norm(b.full_name) === norm(full)))
+      if (dup) { if (!dup.document_number && num) dup.document_number = num; continue }
+      // Gleiche Person mit zweitem Dokument (Pass + Personalausweis): Name schon da → den Pass bevorzugen
+      const samePerson = out.find(b => norm(b.full_name) === norm(full))
+      if (samePerson) {
+        if (samePerson.document_type !== 'passport' && p.document_type === 'passport') Object.assign(samePerson, { document_number: num, document_type: p.document_type, expiry_date: p.expiry_date, file_id: fileId, file_name: c.name })
+        continue
+      }
+      out.push({ full_name: full, document_number: num, document_type: p.document_type, nationality: p.nationality, date_of_birth: p.date_of_birth, expiry_date: p.expiry_date, file_id: fileId, file_name: c.name })
+    }
+  }
+  return { buyers: out, minors, lastIdAt }
+}
+
+function kindOf(type: string | null): PropertyKind {
+  const t = (type ?? '').toLowerCase()
+  if (t === 'villa') return 'villa'
+  if (t === 'townhouse' || t === 'house' || t === 'maisonette') return 'townhouse'
+  return 'apartment'
+}
+
+function fieldsFor(ctx: Ctx, buyers: Buyer[]): { fields: AgreementFields; problems: string[] } {
+  const problems: string[] = []
+  const t = ctx.template
+  const net = ctx.unit.price_net != null ? Number(ctx.unit.price_net) : null
+  if (!net) problems.push('An der Wohnung fehlt der Nettopreis')
+  const ps = ctx.project.payment_schedule ?? {}
+  const dep = typeof ps.reservation === 'number' ? ps.reservation : null
+  if (!dep) problems.push('Im Projekt fehlt die Reservierungsgebühr (Zahlungsplan)')
+  const depositText = dep
+    ? (ps.reservationVat ? `${eurEn(dep)} + 19% VAT = ${eurEn(Math.round(dep * 119) / 100)}` : eurEn(dep))
+    : ''
+  const address = t.project_addresses?.[ctx.project.id] || (ctx.project.location ?? '').replace(/Zypern/g, 'Cyprus')
+  return {
+    fields: {
+      date: todayCy(),
+      property_name: [t.property_prefix, ctx.project.name].filter(Boolean).join(' ').toUpperCase(),
+      address,
+      unit_number: ctx.unit.unit_number,
+      purchasers: buyers.map(b => b.full_name.toUpperCase()),
+      id_numbers: buyers.map(b => b.document_number),
+      property_kind: kindOf(ctx.unit.type),
+      price_text: net ? `${eurEn(net)} + VAT` : '',
+      deposit_text: depositText,
+    },
+    problems,
+  }
+}
+
+/** Gründe, warum der Vertrag NICHT automatisch rausgeht (leer = alles gut). */
+function gate(ctx: Ctx, buyers: Buyer[], fieldProblems: string[], checked: Record<string, CheckedFile>, minors: string[]): string[] {
+  const r = [...fieldProblems]
+  if (!buyers.length) r.push('Kein Ausweis im Drive-Ordner erkannt')
+  for (const b of buyers) {
+    if (!b.document_number) r.push(`Ausweisnummer von ${b.full_name} nicht sicher lesbar`)
+    if (b.expiry_date && Date.parse(b.expiry_date) < Date.now()) r.push(`Ausweis von ${b.full_name} ist abgelaufen (${b.expiry_date})`)
+  }
+  const leadTokens = norm(ctx.lead.last_name ?? '').split(' ').filter(x => x.length > 1)
+  if (buyers.length && leadTokens.length && !buyers.some(b => leadTokens.some(t => norm(b.full_name).split(' ').includes(t)))) {
+    r.push(`Kein Ausweis passt zum Kundennamen ${leadName(ctx.lead)} (erkannt: ${buyers.map(b => b.full_name).join(', ')})`)
+  }
+  const unread = Object.values(checked).filter(c => (c.failed ?? 0) >= MAX_ATTEMPTS || (c.skipped ?? '').startsWith('nicht lesbar'))
+  if (unread.length) r.push(`Datei nicht lesbar, könnte ein Ausweis sein: ${unread.map(c => c.name).join(', ')}`)
+  if (minors.length) r.push(`Ausweis eines Kindes erkannt und weggelassen: ${minors.join(', ')}`)
+  if (!ctx.template.auto_send) r.push('Vorlage steht auf „erst prüfen"')
+  if (!ctx.devEmails.length) r.push(`Beim Bauträger ${ctx.developerName} ist keine E-Mail hinterlegt`)
+  return r
+}
+
+// ── Versand ───────────────────────────────────────────────────────────────────
+function b64(bytes: Uint8Array): string {
+  let bin = ''
+  const CH = 0x8000
+  for (let i = 0; i < bytes.length; i += CH) bin += String.fromCharCode(...bytes.subarray(i, i + CH))
+  return btoa(bin)
+}
+const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+async function invoke(sb: Client, fn: string, body: Record<string, unknown>): Promise<string | null> {
+  const { data, error } = await sb.functions.invoke(fn, { body })
+  const d = data as { error?: string; success?: boolean } | null
+  return error?.message || d?.error || (d?.success === false ? 'success=false' : null)
+}
+
+async function whatsappSven(sb: Client, text: string): Promise<string | null> {
+  return await invoke(sb, 'send-whatsapp', {
+    event_type: 'reservation_agreement', override_text: text, auto: true, lang: 'de', already_translated: true,
+    lead_data: { lead_name: 'Sven', lead_phone: SVEN_PHONE },
+  })
+}
+
+function fileNameFor(ctx: Ctx): string {
+  return `${ctx.template.title} ${ctx.project.name} ${ctx.unit.unit_number} - ${leadName(ctx.lead)}.pdf`.replace(/[\\/:*?"<>|]+/g, ' ')
+}
+
+async function storePdf(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array): Promise<{ path: string; docId: string | null }> {
+  const path = `unit-documents/${ctx.unit.id}/${Date.now()}-reservation-agreement.pdf`
+  const { error: upErr } = await sb.storage.from('unit-documents').upload(path, pdf, { contentType: 'application/pdf', upsert: false })
+  if (upErr) throw new Error(`Speichern fehlgeschlagen: ${upErr.message}`)
+  const meta = {
+    name: `Reservation ${ctx.project.name} ${ctx.unit.unit_number}`,
+    file_path: path, file_name: fileNameFor(ctx), file_size: pdf.byteLength, doc_type: 'sonstiges',
+    notes: 'Reservierungsvereinbarung, automatisch ausgefüllt (noch ohne Unterschriften)',
+  }
+  if (row.unit_document_id) {
+    const { data } = await sb.from('crm_unit_documents').update(meta).eq('id', row.unit_document_id).select('id')
+    if (data?.length) return { path, docId: row.unit_document_id }
+  }
+  const { data: ins, error } = await sb.from('crm_unit_documents').insert({ ...meta, unit_id: ctx.unit.id, project_id: ctx.project.id }).select('id').single()
+  if (error) console.warn('[reservation-agreement] crm_unit_documents:', error.message)
+  return { path, docId: (ins as { id?: string } | null)?.id ?? null }
+}
+
+async function sendOut(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array, fields: AgreementFields, buyers: Buyer[], test: boolean): Promise<Record<string, unknown>> {
+  const fname = fileNameFor(ctx)
+  // Mail-Anhang ohne Leerzeichen: denomailer kürzt Namen mit Leerzeichen sonst auf das erste Wort.
+  const attachment = { filename: fname.replace(/\s*-\s*/g, '_').replace(/\s+/g, '_'), content_base64: b64(pdf), content_type: 'application/pdf' }
+  const folderLink = ctx.lead.drive_folder_url ?? (ctx.lead.drive_folder_id ? `https://drive.google.com/drive/folders/${ctx.lead.drive_folder_id}` : '')
+  const unitLabel = `${ctx.project.name} ${ctx.unit.unit_number}`
+  const names = fields.purchasers.join(', ')
+  const errors: string[] = []
+
+  // 1. Ablage: an der Wohnung (CRM) und im Drive-Kundenordner. Der Drive-Eintrag
+  //    wird gleich als „gemeldet" vermerkt, damit owner-drive nicht alle Ordner-
+  //    Mitglieder über einen noch unterschriebenen Entwurf informiert.
+  let stored: { path: string; docId: string | null } | null = null
+  let driveFileId: string | null = row.drive_file_id
+  if (!test) {
+    stored = await storePdf(sb, row, ctx, pdf)
+    if (ctx.lead.drive_folder_id) {
+      try {
+        const tok = await uploadToken(sb)
+        if (!tok) throw new Error('Drive-Upload nicht verbunden')
+        const up: DriveFile = await uploadFile(tok, ctx.lead.drive_folder_id, fname, 'application/pdf', pdf)
+        driveFileId = up.id
+        await sb.from('drive_folder_files').upsert({
+          file_id: up.id, lead_id: ctx.lead.id, folder_id: ctx.lead.drive_folder_id, name: up.name, mime_type: up.mimeType,
+          size_bytes: pdf.byteLength, web_view_link: up.webViewLink ?? null, path: '', uploader_name: 'Happy Property',
+          uploader_email: null, source: 'portal', created_time: up.createdTime ?? new Date().toISOString(),
+          notified_at: new Date().toISOString(), notify_result: { skipped: 'reservation-agreement' },
+        }, { onConflict: 'file_id' })
+      } catch (e) { errors.push(`Drive: ${(e as Error).message}`) }
+    }
+  }
+
+  // 2. Mail an den Bauträger (englisch, PDF im Anhang). Partner-Kommunikation läuft
+  //    bewusst OHNE lead_id, damit sie nicht wie eine Kundenmail in der Akte steht.
+  const devHtml = `<p>Dear ${esc(ctx.developerName)} team,</p>
+<p>please find attached the reservation agreement for <b>${esc(fields.property_name)}, unit ${esc(fields.unit_number)}</b>, already filled in with the buyer details from the passport${buyers.length > 1 ? 's' : ''}:</p>
+<p>${fields.purchasers.map((p, i) => `${esc(p)} &middot; ${esc(fields.id_numbers[i] ?? '')}`).join('<br>')}</p>
+<p>Purchasing price: ${esc(fields.price_text)}<br>Holding deposit: ${esc(fields.deposit_text)}</p>
+${folderLink ? `<p>The passport copies are in the shared Google Drive folder: <a href="${folderLink}">${folderLink}</a></p>` : ''}
+<p>Please check, sign and seal the agreement and send it to the client for signature.</p>
+<p>Thank you very much!<br>Sven &middot; Happy Property</p>`
+  const devTargets = test ? [SVEN_MAIL] : ctx.devEmails
+  for (const to of devTargets) {
+    const err = await invoke(sb, 'send-email', {
+      to, subject: `${test ? 'TEST · ' : ''}Reservation agreement - ${names} (${unitLabel})`, html: devHtml,
+      attachment, auto: true, lang: 'en', already_translated: true,
+    })
+    if (err) errors.push(`Mail ${to}: ${err}`)
+  }
+
+  // 3. WhatsApp-Hinweis an den Bauträger
+  const devWa = `Hi ${ctx.devPhone?.name.split(' ')[0] ?? ''}, Lotte from Happy Property here 🐾\n\nThe reservation agreement for ${fields.property_name}, unit ${fields.unit_number} (${names}) is filled in and in your inbox (${ctx.devEmails.join(', ')}).${folderLink ? `\n\nPassports and agreement are also in the shared Drive folder:\n${folderLink}` : ''}\n\nPlease sign, seal and send it to the client. Thank you!`
+  if (test || ctx.devPhone) {
+    const err = await invoke(sb, 'send-whatsapp', {
+      event_type: 'reservation_agreement', override_text: (test ? 'TEST · ' : '') + devWa, auto: true, lang: 'en', already_translated: true,
+      lead_data: test ? { lead_name: 'Sven', lead_phone: SVEN_PHONE } : { lead_name: ctx.devPhone!.name, lead_phone: ctx.devPhone!.phone },
+    })
+    if (err) errors.push(`WhatsApp: ${err}`)
+  }
+
+  // 4. Kopie an Sven
+  if (!test) {
+    const err = await invoke(sb, 'send-email', {
+      to: SVEN_MAIL, subject: `Reservierungsvertrag an ${ctx.developerName}: ${leadName(ctx.lead)} (${unitLabel})`,
+      html: `<p>Der Reservierungsvertrag ist automatisch ausgefüllt und an ${esc(ctx.devEmails.join(', '))} gegangen.</p>
+<p>${fields.purchasers.map((p, i) => `${esc(p)} &middot; ${esc(fields.id_numbers[i] ?? '')}`).join('<br>')}</p>
+<p><a href="${CRM_LEAD}${ctx.lead.id}">Kunde im CRM</a></p>`,
+      attachment, auto: true, lang: 'de', already_translated: true,
+    })
+    if (err) errors.push(`Kopie Sven: ${err}`)
+  }
+
+  const mailOk = !errors.some(e => e.startsWith('Mail '))
+  if (!test) {
+    await sb.from('activities').insert({
+      lead_id: ctx.lead.id, deal_id: ctx.deal.id, type: 'note', direction: 'outbound', auto: true,
+      subject: 'Reservierungsvertrag an Bauträger',
+      content: `Reservierungsvertrag ${unitLabel} automatisch ausgefüllt (${fields.purchasers.map((p, i) => `${p} ${fields.id_numbers[i] ?? ''}`).join(', ')}) und an ${ctx.devEmails.join(', ')} geschickt.${errors.length ? ` Probleme: ${errors.join('; ')}` : ''}`,
+      completed_at: new Date().toISOString(),
+    })
+    await sb.from('reservation_agreements').update({
+      status: mailOk ? 'gesendet' : 'fehler', sent_at: mailOk ? new Date().toISOString() : null, sent_to: ctx.devEmails,
+      buyers, data: fields, pdf_path: stored?.path ?? row.pdf_path, unit_document_id: stored?.docId ?? row.unit_document_id,
+      drive_file_id: driveFileId, error: errors.length ? errors.join('; ') : null, review_reason: null, updated_at: new Date().toISOString(),
+    }).eq('id', row.id)
+  }
+  return { ok: mailOk, test, sent_to: devTargets, errors }
+}
+
+// ── Ein Vertrag: prüfen, bauen, senden ───────────────────────────────────────
+async function processRow(sb: Client, row: AgreementRow, m: Mode): Promise<Record<string, unknown>> {
+  const ctx = await loadCtx(sb, row.deal_id)
+  if ('error' in ctx) {
+    await sb.from('reservation_agreements').update({ error: ctx.error, updated_at: new Date().toISOString() }).eq('id', row.id)
+    return { deal: row.deal_id, skipped: ctx.error }
+  }
+  if (DEAD_PHASES.includes(ctx.deal.phase)) {
+    await sb.from('reservation_agreements').update({ status: 'abgebrochen', updated_at: new Date().toISOString() }).eq('id', row.id)
+    return { deal: row.deal_id, abgebrochen: ctx.deal.phase }
+  }
+  const scan = await scanFolder(row, ctx)
+  const { buyers, minors, lastIdAt } = buyersFrom(scan.checked)
+  if (scan.changed) {
+    await sb.from('reservation_agreements').update({ checked_files: scan.checked, last_id_at: lastIdAt, updated_at: new Date().toISOString() }).eq('id', row.id)
+  }
+  const kunde = `${leadName(ctx.lead)} (${ctx.project.name} ${ctx.unit.unit_number})`
+
+  // Nach dem Versand: neuer Ausweis dazugekommen?
+  if (row.status === 'gesendet') {
+    const known = new Set((row.buyers ?? []).map(b => b.document_number || norm(b.full_name)))
+    const extra = buyers.filter(b => !known.has(b.document_number || norm(b.full_name)))
+    if (!extra.length) return { deal: row.deal_id, beobachtet: true }
+    const reason = `Nach dem Versand kam noch ein Ausweis dazu: ${extra.map(b => b.full_name).join(', ')}. Vertrag neu senden?`
+    await sb.from('reservation_agreements').update({ status: 'pruefen', review_reason: reason, sven_notified_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', row.id)
+    await whatsappSven(sb, `🐾 Reservierungsvertrag ${kunde}\n\n${reason}\n\nIm CRM beim Kunden prüfen und neu senden:\n${CRM_LEAD}${ctx.lead.id}`)
+    return { deal: row.deal_id, nachtrag: extra.length }
+  }
+
+  if (!buyers.length || scan.pending) return { deal: row.deal_id, wartet: scan.pending ? 'weitere Dateien in Prüfung' : 'kein Ausweis' }
+  if (lastIdAt && Date.now() - Date.parse(lastIdAt) < QUIET_MIN * 60_000) return { deal: row.deal_id, wartet: 'weitere Ausweise abwarten' }
+
+  const { fields, problems } = fieldsFor(ctx, buyers)
+  const reasons = gate(ctx, buyers, problems, scan.checked, minors)
+  const pdf = await renderAgreement(ctx.template, fields)
+
+  if (reasons.length || m === 'test') {
+    const reason = m === 'test' && !reasons.length ? 'Testmodus: Vertrag ist fertig, ging nur an Sven' : reasons.join(' · ')
+    const stored = await storePdfDraft(sb, row, ctx, pdf)
+    await sb.from('reservation_agreements').update({
+      status: 'pruefen', review_reason: reason, buyers, data: fields, pdf_path: stored, updated_at: new Date().toISOString(),
+    }).eq('id', row.id)
+    if (m === 'test' && !reasons.length) {
+      const res = await sendOut(sb, row, ctx, pdf, fields, buyers, true)
+      await sb.from('reservation_agreements').update({ sven_notified_at: new Date().toISOString() }).eq('id', row.id)
+      return { deal: row.deal_id, test: res }
+    }
+    await whatsappSven(sb, `🐾 Reservierungsvertrag ${kunde} ist ausgefüllt, aber noch NICHT an ${ctx.developerName} gegangen.\n\nBitte prüfen: ${reason}\n\nIm CRM beim Kunden kannst du die Daten korrigieren und den Vertrag senden:\n${CRM_LEAD}${ctx.lead.id}`)
+    await sb.from('reservation_agreements').update({ sven_notified_at: new Date().toISOString() }).eq('id', row.id)
+    return { deal: row.deal_id, pruefen: reason }
+  }
+  return { deal: row.deal_id, ...(await sendOut(sb, row, ctx, pdf, fields, buyers, false)) }
+}
+
+/** Entwurf ablegen (nur Storage, für die Vorschau im CRM). */
+async function storePdfDraft(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array): Promise<string | null> {
+  const path = `unit-documents/${ctx.unit.id}/${Date.now()}-reservation-draft.pdf`
+  const { error } = await sb.storage.from('unit-documents').upload(path, pdf, { contentType: 'application/pdf', upsert: false })
+  if (error) { console.warn('[reservation-agreement] Entwurf:', error.message); return row.pdf_path }
+  return path
+}
+
+// ── Sweep ─────────────────────────────────────────────────────────────────────
+async function sweep(sb: Client): Promise<Record<string, unknown>> {
+  const m = await mode(sb)
+  if (m === 'off') return { ok: true, mode: m }
+  // 1. Neue Reservierungen aufnehmen
+  const { data: deals } = await sb.from('deals').select('id, lead_id, unit_id, phase_changed_at')
+    .eq('phase', 'reservierung').not('unit_id', 'is', null).gte('phase_changed_at', FLOW_START)
+  const created: string[] = []
+  for (const d of (deals ?? []) as Array<{ id: string; lead_id: string; unit_id: string }>) {
+    const { data: ex } = await sb.from('reservation_agreements').select('id').eq('deal_id', d.id).maybeSingle()
+    if (ex) continue
+    const ctx = await loadCtx(sb, d.id)
+    if ('error' in ctx) continue                    // z. B. Bauträger ohne Vorlage → wie bisher, nichts tun
+    const { error } = await sb.from('reservation_agreements').insert({ deal_id: d.id, lead_id: d.lead_id, unit_id: d.unit_id, template_id: ctx.template.id })
+    if (!error) created.push(d.id)
+  }
+  // 2. Offene abarbeiten
+  const since = new Date(Date.now() - WAIT_DAYS * 864e5).toISOString()
+  const watchSince = new Date(Date.now() - WATCH_AFTER_SEND_DAYS * 864e5).toISOString()
+  const { data: rows } = await sb.from('reservation_agreements').select('*')
+    .or(`and(status.eq.wartet_ausweis,created_at.gte.${since}),and(status.eq.gesendet,sent_at.gte.${watchSince})`)
+  const results: Array<Record<string, unknown>> = []
+  for (const r of (rows ?? []) as AgreementRow[]) {
+    try { results.push(await processRow(sb, r, m)) }
+    catch (e) {
+      console.error('[reservation-agreement] sweep', r.deal_id, (e as Error).message)
+      await sb.from('reservation_agreements').update({ error: (e as Error).message.slice(0, 500), updated_at: new Date().toISOString() }).eq('id', r.id)
+      results.push({ deal: r.deal_id, error: (e as Error).message })
+    }
+  }
+  return { ok: true, mode: m, created, results }
+}
+
+// ── Manuelle Aktionen (Sven im CRM) ──────────────────────────────────────────
+async function rowFor(sb: Client, dealId: string, ctx: Ctx): Promise<AgreementRow> {
+  const { data } = await sb.from('reservation_agreements').select('*').eq('deal_id', dealId).maybeSingle()
+  if (data) return data as AgreementRow
+  const { data: ins, error } = await sb.from('reservation_agreements')
+    .insert({ deal_id: dealId, lead_id: ctx.lead.id, unit_id: ctx.unit.id, template_id: ctx.template.id, status: 'pruefen', review_reason: 'Von Hand angelegt' })
+    .select('*').single()
+  if (error) throw new Error(error.message)
+  return ins as AgreementRow
+}
+
+function cleanBuyers(input: unknown): Buyer[] | null {
+  if (!Array.isArray(input)) return null
+  return input.map((b: Record<string, unknown>) => ({
+    full_name: String(b.full_name ?? '').replace(/\s+/g, ' ').trim(),
+    document_number: String(b.document_number ?? '').replace(/\s+/g, '').toUpperCase(),
+    document_type: String(b.document_type ?? 'passport'), nationality: String(b.nationality ?? ''),
+    date_of_birth: String(b.date_of_birth ?? ''), expiry_date: String(b.expiry_date ?? ''),
+    file_id: String(b.file_id ?? ''), file_name: String(b.file_name ?? 'von Hand'),
+  })).filter(b => b.full_name)
+}
+
+const SAMPLE: AgreementFields = {
+  date: todayCy(), property_name: 'MITO MAMBA', address: 'Chloraka, Paphos, 8220, Cyprus', unit_number: 'A1',
+  purchasers: ['MAX MUSTERMANN', 'ERIKA MUSTERMANN'], id_numbers: ['C01X00T47', 'C01X00T48'], property_kind: 'apartment',
+  price_text: 'EUR 634,800 + VAT', deposit_text: 'EUR 20,000 + 19% VAT = EUR 23,800',
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
+  const denied = await gateCaller(req, 'reservation-agreement', { service: true, roles: ['admin'] }, CORS)
+  if (denied) return denied
+  const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  try {
+    const body = await req.json().catch(() => ({})) as Record<string, unknown>
+    const action = String(body.action ?? '')
+
+    if (action === 'sweep') {
+      // pg_net bricht nach 5 s ab → Antwort sofort, Arbeit im Hintergrund.
+      const job = sweep(sb).then(r => console.log('[reservation-agreement] sweep', JSON.stringify(r).slice(0, 2000)))
+        .catch(e => console.error('[reservation-agreement] sweep', (e as Error).message))
+      const rt = (globalThis as { EdgeRuntime?: { waitUntil(p: Promise<unknown>): void } }).EdgeRuntime
+      if (rt && !body.wait) { rt.waitUntil(job); return json({ ok: true, started: true }) }
+      await job
+      return json({ ok: true, done: true })
+    }
+
+    if (action === 'preview_template') {
+      const t = body.template as TemplateRow | undefined
+      if (!t?.company_name) return json({ error: 'Vorlage fehlt' }, 400)
+      const pdf = await renderAgreement(t, { ...SAMPLE, ...(body.sample as Partial<AgreementFields> ?? {}) })
+      return json({ ok: true, pdf_base64: b64(pdf) })
+    }
+
+    const dealId = String(body.deal_id ?? '')
+    if (!dealId) return json({ error: 'deal_id fehlt' }, 400)
+
+    if (action === 'status') {
+      const { data } = await sb.from('reservation_agreements').select('*').eq('deal_id', dealId).maybeSingle()
+      const ctx = await loadCtx(sb, dealId)
+      return json({ ok: true, row: data ?? null, template: 'error' in ctx ? null : { id: ctx.template.id, name: ctx.template.name }, reason: 'error' in ctx ? ctx.error : null, mode: await mode(sb) })
+    }
+
+    const ctx = await loadCtx(sb, dealId)
+    if ('error' in ctx) return json({ error: ctx.error }, 400)
+
+    if (action === 'preview' || action === 'send') {
+      const row = await rowFor(sb, dealId, ctx)
+      let buyers = cleanBuyers(body.buyers)
+      let minors: string[] = []
+      let checked = row.checked_files ?? {}
+      if (!buyers) {
+        const scan = await scanFolder(row, ctx)
+        checked = scan.checked
+        if (scan.changed) await sb.from('reservation_agreements').update({ checked_files: checked, updated_at: new Date().toISOString() }).eq('id', row.id)
+        const found = buyersFrom(checked)
+        buyers = found.buyers
+        minors = found.minors
+      }
+      const { fields, problems } = fieldsFor(ctx, buyers)
+      const reasons = gate(ctx, buyers, problems, checked, minors)
+      const pdf = await renderAgreement(ctx.template, fields)
+      if (action === 'preview') {
+        await sb.from('reservation_agreements').update({ buyers, data: fields, updated_at: new Date().toISOString() }).eq('id', row.id)
+        return json({ ok: true, pdf_base64: b64(pdf), fields, buyers, reasons })
+      }
+      // send: Sven hat geprüft. Harte Hindernisse bleiben harte Hindernisse.
+      const hard = [...problems, ...(buyers.length ? [] : ['Keine Käufer']), ...buyers.filter(b => !b.document_number).map(b => `Nummer fehlt bei ${b.full_name}`), ...(ctx.devEmails.length ? [] : ['Keine E-Mail beim Bauträger'])]
+      if (hard.length) return json({ error: hard.join(' · ') }, 400)
+      const res = await sendOut(sb, row, ctx, pdf, fields, buyers, body.test === true)
+      return json({ ok: true, ...res, reasons })
+    }
+
+    return json({ error: 'Unbekannte Aktion' }, 400)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[reservation-agreement]', msg)
+    return json({ error: msg }, 500)
+  }
+})

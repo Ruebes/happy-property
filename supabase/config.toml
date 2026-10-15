@@ -262,3 +262,6 @@ verify_jwt = false
 # (Service-Role, eigener Guard gateCaller).
 [functions.anfrage-paket]
 verify_jwt = false
+
+[functions.reservation-agreement]
+verify_jwt = false

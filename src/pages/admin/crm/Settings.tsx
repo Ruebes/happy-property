@@ -6,6 +6,7 @@ import { checkCalendarStatus } from '../../../lib/googleCalendar'
 import type { CalendarStatus } from '../../../lib/googleCalendar'
 import type { Developer } from '../../../lib/crmTypes'
 import DeveloperContactsModal from '../../../components/crm/DeveloperContactsModal'
+import ReservationTemplateModal from '../../../components/crm/ReservationTemplateModal'
 
 // ── Add Developer Modal ───────────────────────────────────────────────────────
 
@@ -100,6 +101,7 @@ export default function Settings() {
   const [toggling, setToggling]       = useState<string | null>(null)
   const [toast, setToast]             = useState('')
   const [contactsDev, setContactsDev] = useState<Developer | null>(null)
+  const [reservationDev, setReservationDev] = useState<Developer | null>(null)
 
   // ── Google Calendar integration state (server-seitig via Service-Account) ──
   const [calStatus, setCalStatus]         = useState<CalendarStatus | null>(null)
@@ -246,6 +248,13 @@ export default function Settings() {
                           <span className="font-medium text-gray-900 text-sm">{dev.name}</span>
                         </div>
                         <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setReservationDev(dev)}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500
+                                       hover:border-orange-200 hover:text-orange-600 hover:bg-orange-50 transition-colors"
+                          >
+                            {t('reservationTpl.button', 'Reservierungsvorlage')}
+                          </button>
                           <button
                             onClick={() => setContactsDev(dev)}
                             className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500
@@ -453,6 +462,14 @@ export default function Settings() {
         <DeveloperContactsModal
           developer={contactsDev}
           onClose={() => setContactsDev(null)}
+        />
+      )}
+
+      {/* Reservierungsvertrag-Vorlage (Automatik nach Ausweis-Upload) */}
+      {reservationDev && (
+        <ReservationTemplateModal
+          developer={reservationDev}
+          onClose={() => setReservationDev(null)}
         />
       )}
     </DashboardLayout>

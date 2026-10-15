@@ -587,6 +587,64 @@ export interface DeveloperContact {
   updated_at:   string
 }
 
+// Reservierungsvertrag-Vorlage je Bauträger (z. B. „Reservierung Mito"). Die Edge
+// Function reservation-agreement füllt sie mit den Ausweisdaten des Kunden aus.
+export interface ReservationTemplateBank {
+  account_name?:   string
+  account_number?: string
+  iban?:           string
+  swift?:          string
+  bank_name?:      string
+}
+export interface ReservationTemplate {
+  id:                string
+  developer_id:      string
+  name:              string
+  is_active:         boolean
+  auto_send:         boolean        // false = jeder Vertrag geht erst an Sven zur Prüfung
+  logo_text:         string | null
+  company_name:      string
+  title:             string
+  accent_color:      string
+  company_address:   string | null
+  company_tel:       string | null
+  property_prefix:   string | null  // "MITO" → "MITO MAMBA"
+  project_addresses: Record<string, string>  // crm_projects.id → Adresse auf dem Vertrag
+  bank:              ReservationTemplateBank
+  notes:             string | null
+  created_at:        string
+  updated_at:        string
+}
+
+export type ReservationAgreementStatus = 'wartet_ausweis' | 'pruefen' | 'gesendet' | 'fehler' | 'abgebrochen'
+export interface ReservationBuyer {
+  full_name:       string
+  document_number: string
+  document_type?:  string
+  nationality?:    string
+  date_of_birth?:  string
+  expiry_date?:    string
+  file_id?:        string
+  file_name?:      string
+}
+export interface ReservationAgreement {
+  id:               string
+  deal_id:          string
+  lead_id:          string
+  unit_id:          string | null
+  template_id:      string | null
+  status:           ReservationAgreementStatus
+  buyers:           ReservationBuyer[]
+  review_reason:    string | null
+  error:            string | null
+  pdf_path:         string | null
+  drive_file_id:    string | null
+  sent_at:          string | null
+  sent_to:          string[] | null
+  created_at:       string
+  updated_at:       string
+}
+
 // Freistehende Geschäftskontakte (Anwälte, Finanzierer, Partner, sonstige) —
 // nicht an einen Developer gebunden. Wählbar als Empfänger für Mail/WhatsApp.
 export interface BusinessContact {
