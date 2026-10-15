@@ -251,6 +251,8 @@ export async function docSubmit(sb: SupabaseClient, body: Record<string, unknown
         html: `<p>Testlauf: So sieht das Dokument nach der Unterschrift aus (${stamped.placement === 'field' ? 'Unterschriftsfeld gefunden' : 'kein Feld gefunden, Unterschriftsseite angehängt'}). Es wurde nichts abgelegt und nichts an Anwalt, Kunde oder Bauträger geschickt.</p>`,
         attachment, auto: true, lang: 'de', already_translated: true,
       })
+      // Test wie im echten Ablauf: Bestätigung auch per WhatsApp, aber nur an Sven
+      await whatsappSven(sb, `TEST · ✅ ${name} hat ${row.title} digital unterschrieben.\n\nIm echten Ablauf läge es jetzt am Objekt im Eigentümerportal und im Drive-Ordner, und Timotheos hätte es per Mail. Das PDF ist in deinem Postfach.`)
       return { status: 200, body: { ok: true, test: true, mail_error: err ?? null, pdf_base64: b64(pdf) } }
     }
 

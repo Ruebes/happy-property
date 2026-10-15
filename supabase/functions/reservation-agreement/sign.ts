@@ -155,6 +155,8 @@ export async function signSubmit(sb: SupabaseClient, body: Record<string, unknow
         html: `<p>Testlauf: So sieht der Vertrag nach der Unterschrift aus. Es wurde nichts abgelegt und nichts an Kunden oder Bauträger geschickt.</p><p>Unterschrieben von ${esc(name)}, ${esc(place)}, ${esc(date)}</p>`,
         attachment, auto: true, lang: 'de', already_translated: true,
       })
+      // Test wie im echten Ablauf: Bestätigung auch per WhatsApp, aber nur an Sven
+      await whatsappSven(sb, `TEST · ✅ ${name} hat den Reservierungsvertrag ${leadName(ctx.lead)} (${unitLabel}) digital unterschrieben.\n\nIm echten Ablauf läge er jetzt an der Wohnung unter Verträge und im Drive-Ordner. Das PDF ist in deinem Postfach.`)
       return { status: 200, body: { ok: true, test: true, mail_error: err ?? null, pdf_base64: b64(pdf) } }
     }
 
