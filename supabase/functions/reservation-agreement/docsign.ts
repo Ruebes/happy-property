@@ -34,7 +34,8 @@ interface DocCtx {
   company: string
   place: string
   emails: string[]
-  wa: { name: string; phone: string } | null
+  /** video = eigenes WhatsApp-Video des Kontakts (crm_developer_contacts.sign_wa_video), sonst Standardbild */
+  wa: { name: string; phone: string; video: string | null } | null
   role: string | null
   lang: 'de' | 'en'
 }
@@ -61,8 +62,8 @@ async function docCtx(sb: SupabaseClient, dealId: string): Promise<DocCtx | { er
   const { data: tpl } = await sb.from('reservation_templates').select('company_name, sign_place').eq('developer_id', developer.id).eq('is_active', true).maybeSingle()
   const t = tpl as { company_name?: string; sign_place?: string | null } | null
   const { data: contacts } = await sb.from('crm_developer_contacts')
-    .select('name, email, phone, whatsapp, role, language, is_primary, drive_access').eq('developer_id', developer.id).order('is_primary', { ascending: false })
-  const cs = (contacts ?? []) as Array<{ name: string | null; email: string | null; phone: string | null; whatsapp: string | null; role: string | null; language: string | null; is_primary: boolean; drive_access: boolean }>
+    .select('name, email, phone, whatsapp, role, language, is_primary, drive_access, sign_wa_video').eq('developer_id', developer.id).order('is_primary', { ascending: false })
+  const cs = (contacts ?? []) as Array<{ name: string | null; email: string | null; phone: string | null; whatsapp: string | null; role: string | null; language: string | null; is_primary: boolean; drive_access: boolean; sign_wa_video: string | null }>
   const withDrive = cs.filter(c => c.drive_access && c.email?.trim())
   const main = (withDrive.length ? withDrive : cs)[0]
   const waC = (withDrive.length ? withDrive : cs).find(c => (c.whatsapp || c.phone)?.trim())
@@ -71,7 +72,7 @@ async function docCtx(sb: SupabaseClient, dealId: string): Promise<DocCtx | { er
     company: t?.company_name || developer.name.toUpperCase(),
     place: placeOf({ sign_place: t?.sign_place }),
     emails: (withDrive.length ? withDrive : cs.filter(c => c.email?.trim()).slice(0, 1)).map(c => c.email!.trim()),
-    wa: waC ? { name: waC.name ?? developer.name, phone: (waC.whatsapp || waC.phone)!.trim() } : null,
+    wa: waC ? { name: waC.name ?? developer.name, phone: (waC.whatsapp || waC.phone)!.trim(), video: waC.sign_wa_video?.trim() || null } : null,
     role: main?.role?.trim() || null,
     lang: langOf((waC ?? main)?.language),
   }
@@ -157,7 +158,7 @@ export async function docCreate(sb: SupabaseClient, body: Record<string, unknown
   if (test || c.wa) {
     const err = await invoke(sb, 'send-whatsapp', {
       event_type: 'sign_document', override_text: (test ? 'TEST · ' : '') + tx.wa, auto: true, lang: c.lang, already_translated: true,
-      file_url: WA_IMAGE, file_name: 'document.jpg',
+      ...(c.wa?.video ? { file_url: c.wa.video, file_name: 'document.mp4' } : { file_url: WA_IMAGE, file_name: 'document.jpg' }),
       lead_data: test ? { lead_name: 'Sven', lead_phone: SVEN_PHONE } : { lead_name: c.wa!.name, lead_phone: c.wa!.phone },
     })
     if (err) errors.push(`WhatsApp: ${err}`)

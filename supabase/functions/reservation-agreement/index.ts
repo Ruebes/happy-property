@@ -117,7 +117,8 @@ export interface Ctx {
   developerName: string
   template: TemplateDb
   devEmails: string[]
-  devPhone: { name: string; phone: string } | null
+  /** video = eigenes WhatsApp-Video des Kontakts (crm_developer_contacts.sign_wa_video), sonst Standardbild */
+  devPhone: { name: string; phone: string; video: string | null } | null
   /** Sprache des WhatsApp-Empfängers = Sprache der Unterschriftsseite (crm_developer_contacts.language) */
   devLang: 'de' | 'en'
   /** Sprache je Mail-Empfänger */
@@ -162,8 +163,8 @@ export async function loadCtx(sb: Client, dealId: string, fallbackTemplate?: Tem
   const tpl = active ?? fallbackTemplate ?? null
   if (!tpl) return { error: `Keine Reservierungsvorlage für ${p.developer}` }
   const { data: contacts } = await sb.from('crm_developer_contacts')
-    .select('name, email, phone, whatsapp, is_primary, drive_access, language').eq('developer_id', devId).order('is_primary', { ascending: false })
-  const cs = (contacts ?? []) as Array<{ name: string | null; email: string | null; phone: string | null; whatsapp: string | null; is_primary: boolean; drive_access: boolean; language: string | null }>
+    .select('name, email, phone, whatsapp, is_primary, drive_access, language, sign_wa_video').eq('developer_id', devId).order('is_primary', { ascending: false })
+  const cs = (contacts ?? []) as Array<{ name: string | null; email: string | null; phone: string | null; whatsapp: string | null; is_primary: boolean; drive_access: boolean; language: string | null; sign_wa_video: string | null }>
   // Mail an alle mit Haken „Drive-Zugang nach Reservierung", sonst an den Hauptkontakt
   // (gleiche Regel wie die Drive-Freigabe in schedule-message).
   const withDrive = cs.filter(c => c.drive_access && c.email?.trim())
@@ -172,7 +173,7 @@ export async function loadCtx(sb: Client, dealId: string, fallbackTemplate?: Tem
   return {
     deal: d, lead: lead as Ctx['lead'], unit: u, subUnits, project: p, developerName: (dev as { name: string }).name,
     template: tpl as TemplateDb, devEmails,
-    devPhone: waContact ? { name: waContact.name ?? p.developer, phone: (waContact.whatsapp || waContact.phone)!.trim() } : null,
+    devPhone: waContact ? { name: waContact.name ?? p.developer, phone: (waContact.whatsapp || waContact.phone)!.trim(), video: waContact.sign_wa_video?.trim() || null } : null,
     devLang: (waContact ?? (withDrive.length ? withDrive : cs)[0])?.language === 'de' ? 'de' : 'en',
     devMailLang: Object.fromEntries(cs.filter(c => c.email?.trim()).map(c => [c.email!.trim(), c.language === 'de' ? 'de' : 'en'])),
   }
@@ -527,7 +528,7 @@ ${btn('Sign the reservation agreement')}
   if (test || ctx.devPhone) {
     const err = await invoke(sb, 'send-whatsapp', {
       event_type: 'reservation_agreement', override_text: (test ? 'TEST · ' : '') + devWa, auto: true, lang: L, already_translated: true,
-      file_url: DEV_WA_IMAGE, file_name: 'reservation.jpg',
+      ...(ctx.devPhone?.video ? { file_url: ctx.devPhone.video, file_name: 'reservation.mp4' } : { file_url: DEV_WA_IMAGE, file_name: 'reservation.jpg' }),
       lead_data: test ? { lead_name: 'Sven', lead_phone: SVEN_PHONE } : { lead_name: ctx.devPhone!.name, lead_phone: ctx.devPhone!.phone },
     })
     if (err) errors.push(`WhatsApp: ${err}`)
