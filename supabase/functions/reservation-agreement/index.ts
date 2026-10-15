@@ -37,7 +37,7 @@
 // Deploy: supabase functions deploy reservation-agreement --no-verify-jwt
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { gateCaller } from '../_shared/callerGate.ts'
-import { saToken, listTree, download, thumbnail } from './drive.ts'
+import { saToken, listTree, download, thumbnail, type DriveFile } from './drive.ts'
 import { checkFile, type FileCheck, type IdPerson } from './ausweis.ts'
 import { renderAgreement, type AgreementFields, type PropertyKind, type TemplateRow } from './pdf.ts'
 import { signView, signSubmit } from './sign.ts'
@@ -58,7 +58,9 @@ const FLOW_START = '2026-10-15T00:00:00Z'
 const QUIET_MIN = 30                 // Wartezeit nach dem letzten Ausweis
 const WAIT_DAYS = 45                 // so lange auf einen Ausweis warten
 const WATCH_AFTER_SEND_DAYS = 30     // nach dem Versand auf den unterschriebenen Vertrag + weitere Ausweise achten
-const MAX_CHECKS_PER_RUN = 10        // KI-Prüfungen je Vertrag und Lauf
+const SCAN_PARALLEL = 3              // KI-Prüfungen gleichzeitig
+const SCAN_BUDGET_MS = 100_000       // danach keine neue Prüfung mehr starten (Rest im nächsten Lauf)
+const INTERACTIVE_SCAN_MS = 70_000   // Knopf im CRM: Antwort muss vor dem Function-Limit kommen
 const MAX_BYTES = 15 * 1024 * 1024
 const MAX_ATTEMPTS = 3
 const AI_MIME = /^(application\/pdf|image\/(jpeg|png|webp|gif))$/
@@ -157,13 +159,21 @@ export async function loadCtx(sb: Client, dealId: string): Promise<Ctx | { error
 }
 
 // ── Ausweise im Ordner prüfen ─────────────────────────────────────────────────
-async function scanFolder(row: Pick<AgreementRow, 'checked_files' | 'drive_file_id'>, ctx: Ctx): Promise<{ checked: Record<string, CheckedFile>; changed: boolean; pending: number }> {
-  const checked = { ...(row.checked_files ?? {}) }
+/**
+ * Neue Dateien im Kundenordner durch die KI-Prüfung schicken. Läuft 3 Dateien parallel mit
+ * Zeitbudget (eine Prüfung dauert 20-40 s, die Function darf nicht ewig laufen) und speichert
+ * nach JEDER Datei, damit ein Abbruch keine fertigen Prüfungen verliert. Was nicht mehr ins
+ * Budget passt, zählt als pending und kommt im nächsten Lauf dran.
+ */
+async function scanFolder(sb: Client, row: Pick<AgreementRow, 'id' | 'checked_files' | 'drive_file_id'>, ctx: Ctx, budgetMs = SCAN_BUDGET_MS): Promise<{ checked: Record<string, CheckedFile>; changed: boolean; pending: number }> {
+  const started = Date.now()
+  const checked: Record<string, CheckedFile> = { ...(row.checked_files ?? {}) }
   if (!ctx.lead.drive_folder_id) return { checked, changed: false, pending: 0 }
   const token = await saToken()
   const files = (await listTree(token, ctx.lead.drive_folder_id))
     .sort((a, b) => (a.createdTime ?? '').localeCompare(b.createdTime ?? ''))
-  let changed = false, done = 0, pending = 0
+  let changed = false
+  const todo: DriveFile[] = []
   for (const f of files) {
     const prev = checked[f.id]
     if (prev && (prev.is_id !== undefined || prev.skipped || (prev.failed ?? 0) >= MAX_ATTEMPTS)) continue
@@ -171,23 +181,34 @@ async function scanFolder(row: Pick<AgreementRow, 'checked_files' | 'drive_file_
       checked[f.id] = { name: f.name, at: new Date().toISOString(), created: f.createdTime ?? null, skipped: 'eigene Datei' }
       changed = true; continue
     }
-    const isImage = f.mimeType.startsWith('image/')
-    if (!isImage && f.mimeType !== 'application/pdf') {
+    if (!f.mimeType.startsWith('image/') && f.mimeType !== 'application/pdf') {
       checked[f.id] = { name: f.name, at: new Date().toISOString(), created: f.createdTime ?? null, skipped: f.mimeType }
       changed = true; continue
     }
-    if (done >= MAX_CHECKS_PER_RUN) { pending++; continue }
-    done++
-    changed = true
+    todo.push(f)
+  }
+  // Speichern nacheinander (nie zwei Schreibvorgänge mit unterschiedlichem Stand gleichzeitig)
+  let saving: Promise<unknown> = Promise.resolve()
+  const persist = () => {
+    const snapshot = { ...checked }
+    saving = saving.then(async () => {
+      const { error } = await sb.from('reservation_agreements').update({ checked_files: snapshot, updated_at: new Date().toISOString() }).eq('id', row.id)
+      if (error) console.warn('[reservation-agreement] Zwischenstand:', error.message)
+    })
+    return saving
+  }
+  if (changed) await persist()
+
+  let next = 0, pending = 0
+  const checkOne = async (f: DriveFile) => {
+    const prev = checked[f.id]
     const base = { name: f.name, at: new Date().toISOString(), created: f.createdTime ?? null, mime: f.mimeType }
     try {
       const size = f.size ? Number(f.size) : 0
-      let src: { bytes: Uint8Array; mime: string } | null = null
-      if (AI_MIME.test(f.mimeType) && size <= MAX_BYTES) src = await download(token, f)
-      else src = await thumbnail(token, f)          // HEIC-Fotos, sehr große Dateien
-      if (!src) { checked[f.id] = { ...base, skipped: `nicht lesbar (${f.mimeType}, ${Math.round(size / 1e6)} MB)` }; continue }
+      const src = AI_MIME.test(f.mimeType) && size <= MAX_BYTES ? await download(token, f) : await thumbnail(token, f)   // HEIC, sehr große Dateien
+      if (!src) { checked[f.id] = { ...base, skipped: `nicht lesbar (${f.mimeType}, ${Math.round(size / 1e6)} MB)` }; return }
       const res: FileCheck | null = await checkFile(src.bytes, src.mime, f.name)
-      if (!res) { checked[f.id] = { ...base, failed: (prev?.failed ?? 0) + 1 }; continue }
+      if (!res) { checked[f.id] = { ...base, failed: (prev?.failed ?? 0) + 1 }; return }
       const isId = res.kind === 'identity_document'
       checked[f.id] = {
         ...base, is_id: isId, kind: res.kind, persons: isId ? res.persons : [], note: res.note,
@@ -198,6 +219,17 @@ async function scanFolder(row: Pick<AgreementRow, 'checked_files' | 'drive_file_
       checked[f.id] = { ...base, failed: (prev?.failed ?? 0) + 1, note: (e as Error).message.slice(0, 200) }
     }
   }
+  const worker = async () => {
+    while (next < todo.length) {
+      if (Date.now() - started > budgetMs) { pending += todo.length - next; next = todo.length; return }
+      const f = todo[next++]
+      await checkOne(f)
+      changed = true
+      await persist()
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(SCAN_PARALLEL, todo.length) }, worker))
+  await saving
   return { checked, changed, pending }
 }
 
@@ -379,10 +411,16 @@ async function sendOut(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array,
   // 2. Unterschriftslink (/sign/r/<token>). Der Test bekommt einen eigenen Token und eigene
   //    Daten (test_payload), damit er den echten Vertrag nie überschreibt.
   const tokenCol = test ? 'test_sign_token' : 'sign_token'
-  const signToken = (test ? row.test_sign_token : row.sign_token) || newToken()
+  // Erneut senden, nachdem schon unterschrieben wurde: neuer Link, die alte Unterschrift gilt
+  // nicht für den neuen Stand (der unterschriebene alte Vertrag bleibt an der Wohnung liegen).
+  const resign = !test && !!row.seller_signed_at
+  const signToken = (test ? row.test_sign_token : (resign ? null : row.sign_token)) || newToken()
   const signPatch: Record<string, unknown> = { [tokenCol]: signToken, updated_at: new Date().toISOString() }
   if (test) signPatch.test_payload = { fields, template: ctx.template }
-  else { signPatch.data = fields; signPatch.template_snapshot = ctx.template }
+  else {
+    signPatch.data = fields; signPatch.template_snapshot = ctx.template
+    if (resign) Object.assign(signPatch, { seller_signed_at: null, seller_signer_name: null, seller_sign_meta: null, signed_pdf_path: null, signed_file_id: null })
+  }
   const { error: tokErr } = await sb.from('reservation_agreements').update(signPatch).eq('id', row.id)
   if (tokErr) throw new Error(`Unterschriftslink: ${tokErr.message}`)
   const signLink = SIGN_BASE + signToken
@@ -463,10 +501,10 @@ async function processRow(sb: Client, row: AgreementRow, m: Mode): Promise<Recor
     await sb.from('reservation_agreements').update({ status: 'abgebrochen', updated_at: new Date().toISOString() }).eq('id', row.id)
     return { deal: row.deal_id, abgebrochen: ctx.deal.phase }
   }
-  const scan = await scanFolder(row, ctx)
+  const scan = await scanFolder(sb, row, ctx)
   const { buyers, minors, lastIdAt } = buyersFrom(scan.checked)
   if (scan.changed) {
-    await sb.from('reservation_agreements').update({ checked_files: scan.checked, last_id_at: lastIdAt, updated_at: new Date().toISOString() }).eq('id', row.id)
+    await sb.from('reservation_agreements').update({ last_id_at: lastIdAt, updated_at: new Date().toISOString() }).eq('id', row.id)
   }
   const kunde = `${leadName(ctx.lead)} (${ctx.project.name} ${ctx.unit.unit_number})`
 
@@ -498,7 +536,7 @@ async function processRow(sb: Client, row: AgreementRow, m: Mode): Promise<Recor
     const reason = m === 'test' && !reasons.length ? 'Testmodus: Vertrag ist fertig, ging nur an Sven' : reasons.join(' · ')
     const stored = await storePdfDraft(sb, row, ctx, pdf)
     await sb.from('reservation_agreements').update({
-      status: 'pruefen', review_reason: reason, buyers, data: fields, pdf_path: stored, updated_at: new Date().toISOString(),
+      status: 'pruefen', review_reason: reason, buyers, pdf_path: stored, updated_at: new Date().toISOString(),
     }).eq('id', row.id)
     if (m === 'test' && !reasons.length) {
       const res = await sendOut(sb, row, ctx, pdf, fields, buyers, true)
@@ -649,9 +687,9 @@ Deno.serve(async (req) => {
       let minors: string[] = []
       let checked = row.checked_files ?? {}
       if (!buyers) {
-        const scan = await scanFolder(row, ctx)
+        const scan = await scanFolder(sb, row, ctx, INTERACTIVE_SCAN_MS)
         checked = scan.checked
-        if (scan.changed) await sb.from('reservation_agreements').update({ checked_files: checked, updated_at: new Date().toISOString() }).eq('id', row.id)
+        if (scan.pending) return json({ error: `Die KI prüft noch ${scan.pending} Datei(en) im Drive-Ordner. Bitte in einer Minute noch einmal klicken.` }, 409)
         const found = buyersFrom(checked)
         buyers = found.buyers
         minors = found.minors
@@ -659,10 +697,8 @@ Deno.serve(async (req) => {
       const { fields, problems } = fieldsFor(ctx, buyers)
       const reasons = gate(ctx, buyers, problems, checked, minors)
       const pdf = await renderAgreement(ctx.template, fields)
-      if (action === 'preview') {
-        await sb.from('reservation_agreements').update({ buyers, data: fields, updated_at: new Date().toISOString() }).eq('id', row.id)
-        return json({ ok: true, pdf_base64: b64(pdf), fields, buyers, reasons })
-      }
+      // Vorschau ändert den Vertrag NICHT: row.data ist das, was der Bauträger unterschreibt.
+      if (action === 'preview') return json({ ok: true, pdf_base64: b64(pdf), fields, buyers, reasons })
       // send: Sven hat geprüft. Harte Hindernisse bleiben harte Hindernisse.
       const hard = [...problems, ...(buyers.length ? [] : ['Keine Käufer']), ...buyers.filter(b => !b.document_number).map(b => `Nummer fehlt bei ${b.full_name}`), ...(ctx.devEmails.length ? [] : ['Keine E-Mail beim Bauträger'])]
       if (hard.length) return json({ error: hard.join(' · ') }, 400)
