@@ -44,6 +44,7 @@ type Ev = {
   dateLabel: string; timeLabel: string
   zoomUrl: string; zoomId: string; zoomPw: string
   list: string; thanksUrl: string; landingUrl: string
+  waImage?: string  // Bild zur WhatsApp-Bestätigung, ersetzt die graue Zoom-Linkvorschau
 }
 const EVENTS: Record<string, Ev> = {
   // Schlüssel bleibt 'aerzte-2026-10-11' (Formular + verschickte .ics-Links nutzen ihn); Termin am 2.10. auf 18.10., am 14.10. auf 15.11. verschoben (11 Uhr MEZ = 10:00 UTC).
@@ -57,6 +58,7 @@ const EVENTS: Record<string, Ev> = {
     list: 'Masterclass Ärzte 15.11.2026',
     thanksUrl: 'https://steuervorteil-zypern-immobilien.com/masterclass-fuer-aerzte-apotheker-danke/',
     landingUrl: 'https://steuervorteil-zypern-immobilien.com/masterclass-fuer-aerzte-apotheker-anmeldung/',
+    waImage: 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/landing-assets/mc-aerzte/wa-bestaetigung-1511.jpg',
   },
 }
 const FN_URL = () => `${Deno.env.get('SUPABASE_URL')}/functions/v1/masterclass-register`
@@ -303,6 +305,7 @@ Deno.serve(async (req) => {
     const waRes = await fetch(`${base}/send-whatsapp`, { method: 'POST', headers: auth, body: JSON.stringify({
       event_type: 'masterclass_confirmation', lead_id: leadId, auto: true, lang: 'de', already_translated: true,
       lead_data: { lead_name: `${first} ${last}`, lead_phone: phone, lead_email: email }, override_text: conf.wa,
+      ...(ev.waImage ? { file_url: ev.waImage, file_name: 'Masterclass-Zoom-Zugang.jpg' } : {}),
     }) })
     if (!waRes.ok) console.error('[masterclass-register] send-whatsapp:', waRes.status, await waRes.text())
   }
