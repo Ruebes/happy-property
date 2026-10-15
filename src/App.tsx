@@ -54,6 +54,7 @@ const Zusage = lazy(() => import('./pages/Zusage'))
 const ShortLink = lazy(() => import('./pages/ShortLink'))
 const RevolutCallback = lazy(() => import('./pages/RevolutCallback'))
 const Invoice  = lazy(() => import('./pages/Invoice'))
+const ReservationSign = lazy(() => import('./pages/ReservationSign'))
 
 // Role-Dashboards
 const AdminDashboard      = lazy(() => import('./pages/admin/Dashboard'))
@@ -186,6 +187,8 @@ export default function App() {
             <Route path="/"            element={<Navigate to="/login" replace />} />
             <Route path="/login"       element={<Login />} />
             <Route path="/sign/:token" element={<Sign />} />
+            {/* Reservierungsvertrag digital unterschreiben (Bauträger, per Token, kein Login) */}
+            <Route path="/sign/r/:token" element={<ReservationSign />} />
             <Route path="/set-password" element={<SetPassword />} />
             {/* Öffentliches Sales-Deck (per Token, kein Login) */}
             <Route path="/termin" element={<Funnel />} />

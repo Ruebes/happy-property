@@ -16,6 +16,15 @@ export interface TemplateRow {
 
 export type PropertyKind = 'villa' | 'townhouse' | 'apartment'
 
+/** Digitale Unterschrift des Bauträgers (Touch-Unterschrift + Name in Druckbuchstaben). */
+export interface SellerSignature {
+  png: Uint8Array          // Unterschrift vom Handy (transparentes PNG)
+  name: string             // Druckbuchstaben
+  place: string            // vom System gesetzt
+  date: string             // vom System gesetzt, dd/mm/yyyy
+  signedAtUtc: string      // für den Prüfvermerk
+}
+
 export interface AgreementFields {
   date: string              // 15/10/2026
   property_name: string     // MITO MAMBA
@@ -68,7 +77,7 @@ function wrap(font: PDFFont, size: number, text: string, width: number): string[
   return lines
 }
 
-export async function renderAgreement(t: TemplateRow, f: AgreementFields): Promise<Uint8Array> {
+export async function renderAgreement(t: TemplateRow, f: AgreementFields, seller?: SellerSignature): Promise<Uint8Array> {
   const pdf = await PDFDocument.create()
   pdf.setTitle(`${t.title} ${f.property_name} ${f.unit_number}`)
   pdf.setProducer('Happy Property CRM')
@@ -177,8 +186,21 @@ export async function renderAgreement(t: TemplateRow, f: AgreementFields): Promi
     rect(X0, y, MID - X0, h)
     rect(MID, y, X1 - MID, h)
     text('Seal:', X0 + PAD, y - PAD - LS + 1, LS)
-    text('Sales Signed BY:', X0 + PAD, y - h + PAD + 2, LS)
     text('Buyer Signed BY:', MID + PAD, y - PAD - LS + 1, LS)
+    if (seller) {
+      // Unterschrift in die Verkäufer-Zelle, darunter Name, Ort/Datum und Prüfvermerk
+      const img = await pdf.embedPng(seller.png)
+      const boxW = MID - X0 - PAD * 2 - 60, boxH = 52
+      const sc = Math.min(boxW / img.width, boxH / img.height)
+      const w = img.width * sc, hh = img.height * sc
+      page.drawImage(img, { x: X0 + PAD + 60, y: y - h + PAD + 46 + (boxH - hh) / 2, width: w, height: hh })
+      const cellW = MID - X0 - PAD * 2
+      text(`Sales Signed BY: ${seller.name}`, X0 + PAD, y - h + PAD + 30, LS, bold, DARK, cellW)
+      text(`Place, date: ${seller.place}, ${seller.date}`, X0 + PAD, y - h + PAD + 17, 8.5, reg, DARK, cellW)
+      text(`Signed electronically ${seller.signedAtUtc} via Happy Property`, X0 + PAD, y - h + PAD + 4, 6.5, reg, rgb(0.45, 0.45, 0.5), cellW)
+    } else {
+      text('Sales Signed BY:', X0 + PAD, y - h + PAD + 2, LS)
+    }
     y -= h
   }
 

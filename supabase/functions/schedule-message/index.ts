@@ -293,8 +293,8 @@ Deno.serve(async (req: Request) => {
       // Nachricht an den Bauträger bei Reservierung: was er jetzt tun soll
       reservierung_ablauf: unitDevHasResTemplate
         ? 'As soon as we have the client\'s passport details, we will send you the filled-in reservation agreement automatically. '
-          + 'Please then sign and seal it and upload the signed version to this Drive folder. The client and the lawyer have access there, '
-          + 'so there is no need to send it to the client separately.'
+          + 'No printing needed: you can sign it directly on your phone via the link we send you. The signed agreement is then stored '
+          + 'in this Drive folder for the client and the lawyer, so there is no need to send it to the client separately.'
         : 'Please:\n1) prepare the reservation,\n2) upload it to the same Drive folder, and\n3) send it directly to the client.',
       doc_vollmacht:  docVollmacht,
       doc_unterlagen: docUnterlagen,

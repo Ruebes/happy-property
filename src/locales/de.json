@@ -1,4 +1,28 @@
 {
+  "reservationSign": {
+    "property": "Objekt",
+    "unit": "Einheit",
+    "purchasers": "Käufer",
+    "price": "Kaufpreis",
+    "deposit": "Anzahlung",
+    "viewPdf": "Ganzen Vertrag ansehen (PDF)",
+    "signHere": "Ihre Unterschrift",
+    "clear": "Löschen",
+    "signHint": "Mit dem Finger im Feld unterschreiben.",
+    "nameLabel": "Ihr Name in Druckbuchstaben",
+    "placeDate": "Ort und Datum werden automatisch eingesetzt:",
+    "agree": "Ich habe den Vertrag geprüft und unterschreibe für {{company}}.",
+    "submit": "Vertrag unterschreiben",
+    "doneTitle": "Unterschrieben, vielen Dank!",
+    "doneText": "Der unterschriebene Vertrag liegt im gemeinsamen Drive-Ordner für Kunde und Anwalt. Eine Kopie kommt per E-Mail.",
+    "download": "Unterschriebenen Vertrag öffnen",
+    "testBanner": "TEST: Es wird nichts abgelegt und nichts an den Kunden geschickt.",
+    "notFound": "Dieser Link ist nicht (mehr) gültig. Bitte wenden Sie sich an Happy Property.",
+    "errName": "Bitte den vollständigen Namen in Druckbuchstaben eingeben.",
+    "errSignature": "Bitte im Feld mit dem Finger unterschreiben.",
+    "errAlready": "Dieser Vertrag ist bereits unterschrieben.",
+    "errGeneric": "Etwas ist schiefgelaufen. Bitte in einer Minute erneut versuchen."
+  },
   "reservation": {
     "title": "Reservierungsvertrag",
     "subtitle": "Wird automatisch ausgefüllt, sobald der Ausweis im Drive-Ordner liegt.",
@@ -13,7 +37,10 @@
     },
     "modeTest": "Testmodus",
     "modeOff": "Aus",
-    "waitingSigned": "Wartet auf die unterschriebene Fassung im Drive-Ordner, wird dann automatisch an der Wohnung unter Verträge abgelegt.",
+    "waitingSigned": "Wartet auf die digitale Unterschrift des Bauträgers (Link per WhatsApp + Mail). Danach liegt der Vertrag automatisch im Drive-Ordner und an der Wohnung unter Verträge.",
+    "signedBy": "Unterschrieben von",
+    "linkCopied": "Unterschriftslink kopiert",
+    "copyLink": "Unterschriftslink für den Bauträger kopieren",
     "sentAt": "Geschickt am",
     "buyers": "Käufer laut Ausweis",
     "name": "Vor- und Nachname",
@@ -53,7 +80,8 @@
     "saved": "Vorlage gespeichert",
     "notSaved": "Nicht gespeichert (keine Berechtigung?)",
     "companyRequired": "Firmenname fehlt",
-    "button": "Reservierungsvorlage"
+    "button": "Reservierungsvorlage",
+    "signPlace": "Ort bei digitaler Unterschrift"
   },
   "app": {
     "name": "Happy Property",

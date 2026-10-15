@@ -1,4 +1,28 @@
 {
+  "reservationSign": {
+    "property": "Property",
+    "unit": "Unit",
+    "purchasers": "Purchasers",
+    "price": "Purchasing price",
+    "deposit": "Holding deposit",
+    "viewPdf": "View the full agreement (PDF)",
+    "signHere": "Your signature",
+    "clear": "Clear",
+    "signHint": "Sign with your finger in the box.",
+    "nameLabel": "Your name in block letters",
+    "placeDate": "Place and date are added automatically:",
+    "agree": "I have checked the agreement and sign it on behalf of {{company}}.",
+    "submit": "Sign agreement",
+    "doneTitle": "Signed, thank you!",
+    "doneText": "The signed agreement is stored in the shared Drive folder for the client and the lawyer. You will also receive a copy by email.",
+    "download": "Open signed agreement",
+    "testBanner": "TEST: nothing is stored or sent to the client.",
+    "notFound": "This signing link is not valid (anymore). Please contact Happy Property.",
+    "errName": "Please type your full name in block letters.",
+    "errSignature": "Please sign in the box with your finger.",
+    "errAlready": "This agreement has already been signed.",
+    "errGeneric": "Something went wrong. Please try again in a minute."
+  },
   "reservation": {
     "title": "Reservation agreement",
     "subtitle": "Filled in automatically as soon as the ID is in the Drive folder.",
@@ -13,7 +37,10 @@
     },
     "modeTest": "Test mode",
     "modeOff": "Off",
-    "waitingSigned": "Waiting for the signed version in the Drive folder, then filed with the unit under Contracts automatically.",
+    "waitingSigned": "Waiting for the developer's digital signature (link via WhatsApp + email). Then the agreement is stored automatically in the Drive folder and with the unit under Contracts.",
+    "signedBy": "Signed by",
+    "linkCopied": "Signing link copied",
+    "copyLink": "Copy signing link for the developer",
     "sentAt": "Sent on",
     "buyers": "Buyers according to ID",
     "name": "First and last name",
@@ -53,7 +80,8 @@
     "saved": "Template saved",
     "notSaved": "Not saved (no permission?)",
     "companyRequired": "Company name missing",
-    "button": "Reservation template"
+    "button": "Reservation template",
+    "signPlace": "Place for the digital signature"
   },
   "app": {
     "name": "Happy Property",

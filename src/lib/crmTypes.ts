@@ -612,6 +612,7 @@ export interface ReservationTemplate {
   project_addresses: Record<string, string>  // crm_projects.id → Adresse auf dem Vertrag
   bank:              ReservationTemplateBank
   notes:             string | null
+  sign_place:        string | null  // Ort, den das System beim digitalen Unterschreiben einsetzt
   created_at:        string
   updated_at:        string
 }
@@ -641,6 +642,9 @@ export interface ReservationAgreement {
   drive_file_id:    string | null
   sent_at:          string | null
   sent_to:          string[] | null
+  sign_token:       string | null   // Link /sign/r/<token> für die digitale Unterschrift des Bauträgers
+  seller_signed_at: string | null
+  seller_signer_name: string | null
   created_at:       string
   updated_at:       string
 }

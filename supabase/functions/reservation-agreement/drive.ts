@@ -1,14 +1,17 @@
-// Google-Drive-Zugriff für reservation-agreement: nur LESEN, über den Service-Account
-// (sieht alle Kundenordner, wie owner-drive).
+// Google-Drive-Zugriff für reservation-agreement. Gleiche zwei Wege wie owner-drive:
+//   LESEN über den Service-Account (sieht alle Kundenordner),
+//   HOCHLADEN (nur das digital unterschriebene PDF) über Svens Google-Konto
+//   (connector_secrets GOOGLE_DRIVE_REFRESH_TOKEN), weil der Service-Account keinen Speicher hat.
+import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 
 const FOLDER_MIME = 'application/vnd.google-apps.folder'
 const MAX_DEPTH = 3
 const MAX_FOLDERS = 40
-const FILE_FIELDS = 'id,name,mimeType,size,createdTime,thumbnailLink'
+const FILE_FIELDS = 'id,name,mimeType,size,createdTime,thumbnailLink,webViewLink'
 
 export interface DriveFile {
   id: string; name: string; mimeType: string; size?: string
-  createdTime?: string; thumbnailLink?: string
+  createdTime?: string; thumbnailLink?: string; webViewLink?: string
 }
 
 function b64url(bytes: Uint8Array): string {
@@ -92,4 +95,41 @@ export async function thumbnail(token: string, f: DriveFile): Promise<{ bytes: U
   const mime = (r.headers.get('content-type') ?? 'image/jpeg').split(';')[0]
   if (!/^image\/(jpeg|png|webp|gif)$/.test(mime)) return null
   return { bytes: new Uint8Array(await r.arrayBuffer()), mime }
+}
+
+async function secret(sb: SupabaseClient, key: string): Promise<string> {
+  const { data } = await sb.from('connector_secrets').select('value').eq('key', key).maybeSingle()
+  return ((data as { value?: string } | null)?.value ?? '').trim()
+}
+export async function uploadToken(sb: SupabaseClient): Promise<string | null> {
+  const [cid, csec, rtok] = await Promise.all([
+    secret(sb, 'YOUTUBE_CLIENT_ID'), secret(sb, 'YOUTUBE_CLIENT_SECRET'), secret(sb, 'GOOGLE_DRIVE_REFRESH_TOKEN'),
+  ])
+  if (!cid || !csec || !rtok) return null
+  const tr = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: cid, client_secret: csec, refresh_token: rtok, grant_type: 'refresh_token' }),
+  })
+  const td = await tr.json() as { access_token?: string; error?: string }
+  if (!td.access_token) { console.error('[reservation-agreement] Upload-Token:', td.error); return null }
+  return td.access_token
+}
+
+/** Resumable-Upload in einen Ordner (mit Svens Upload-Token). */
+export async function uploadFile(token: string, folderId: string, name: string, mime: string, bytes: Uint8Array): Promise<DriveFile> {
+  const init = await fetch(`https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true&fields=${FILE_FIELDS}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': mime, 'X-Upload-Content-Length': String(bytes.byteLength) },
+    body: JSON.stringify({ name, parents: [folderId] }),
+  })
+  if (!init.ok) {
+    const e = await init.json().catch(() => ({})) as { error?: { message?: string } }
+    throw new Error(`Upload-Start ${init.status}: ${e.error?.message ?? 'Fehler'}`)
+  }
+  const loc = init.headers.get('location')
+  if (!loc) throw new Error('Upload-Start ohne Location-Header')
+  const put = await fetch(loc, { method: 'PUT', headers: { 'Content-Type': mime }, body: bytes.slice() })
+  const d = await put.json() as DriveFile & { error?: { message?: string } }
+  if (!put.ok || !d.id) throw new Error(`Upload ${put.status}: ${d.error?.message ?? 'Fehler'}`)
+  return d
 }

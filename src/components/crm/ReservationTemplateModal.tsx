@@ -14,7 +14,7 @@ const emptyForm = (dev: Developer): Form => ({
   developer_id: dev.id, name: `Reservierung ${dev.name}`, is_active: true, auto_send: true,
   logo_text: dev.name.toUpperCase(), company_name: dev.name.toUpperCase(), title: 'Reservation agreement',
   accent_color: '#e3874a', company_address: '', company_tel: '', property_prefix: dev.name.toUpperCase(),
-  project_addresses: {}, bank: {}, notes: '',
+  project_addresses: {}, bank: {}, notes: '', sign_place: '',
 })
 
 export default function ReservationTemplateModal({ developer, onClose }: { developer: Developer; onClose: () => void }) {
@@ -87,7 +87,7 @@ export default function ReservationTemplateModal({ developer, onClose }: { devel
 
   const inputCls = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400'
   const label = 'block text-xs font-medium text-gray-600 mb-1'
-  const field = (k: 'name' | 'company_name' | 'logo_text' | 'title' | 'property_prefix' | 'company_address' | 'company_tel', text: string, span = false) => (
+  const field = (k: 'name' | 'company_name' | 'logo_text' | 'title' | 'property_prefix' | 'company_address' | 'company_tel' | 'sign_place', text: string, span = false) => (
     <div className={span ? 'col-span-2' : ''}>
       <label className={label}>{text}</label>
       <input value={form[k] ?? ''} onChange={e => set(k, e.target.value)} className={inputCls} />
@@ -144,6 +144,7 @@ export default function ReservationTemplateModal({ developer, onClose }: { devel
                 {field('property_prefix', t('reservationTpl.prefix', 'Vorsatz Objektname (z. B. MITO)'))}
                 {field('company_address', t('reservationTpl.address', 'Firmenadresse'), true)}
                 {field('company_tel', t('reservationTpl.tel', 'Firmentelefon'))}
+                {field('sign_place', t('reservationTpl.signPlace', 'Ort bei digitaler Unterschrift'))}
                 <div>
                   <label className={label}>{t('reservationTpl.color', 'Akzentfarbe')}</label>
                   <input type="color" value={form.accent_color} onChange={e => set('accent_color', e.target.value)}
@@ -197,7 +198,7 @@ export default function ReservationTemplateModal({ developer, onClose }: { devel
               {t('common.close', 'Schließen')}
             </button>
             <button onClick={save} disabled={loading || saving}
-              className="px-4 py-2 text-sm font-medium rounded-lg text-white bg-[#ff795d] hover:opacity-90 disabled:opacity-50">
+              className="px-4 py-2 text-sm font-medium rounded-lg text-white bg-hp-highlight hover:opacity-90 disabled:opacity-50">
               {saving ? '…' : t('common.save', 'Speichern')}
             </button>
           </div>

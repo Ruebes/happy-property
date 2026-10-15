@@ -115,8 +115,19 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
       )}
       {row?.status === 'gesendet' && (
         <p className="text-xs text-gray-500">
-          {t('reservation.waitingSigned', 'Wartet auf die unterschriebene Fassung im Drive-Ordner, wird dann automatisch an der Wohnung unter Verträge abgelegt.')}
+          {t('reservation.waitingSigned', 'Wartet auf die digitale Unterschrift des Bauträgers (Link per WhatsApp + Mail). Danach liegt der Vertrag automatisch im Drive-Ordner und an der Wohnung unter Verträge.')}
         </p>
+      )}
+      {row?.status === 'unterschrieben' && row.seller_signer_name && row.seller_signed_at && (
+        <p className="text-xs text-green-700">
+          ✍️ {t('reservation.signedBy', 'Unterschrieben von')} {row.seller_signer_name} · {fmtDate(row.seller_signed_at)}
+        </p>
+      )}
+      {row?.sign_token && row.status !== 'unterschrieben' && (
+        <button onClick={() => { navigator.clipboard?.writeText(`${window.location.origin}/sign/r/${row.sign_token}`).then(() => setMsg({ ok: true, text: t('reservation.linkCopied', 'Unterschriftslink kopiert') })).catch(() => setMsg({ ok: false, text: `${window.location.origin}/sign/r/${row.sign_token}` })) }}
+          className="text-xs text-orange-600 hover:underline">
+          🔗 {t('reservation.copyLink', 'Unterschriftslink für den Bauträger kopieren')}
+        </button>
       )}
       {row?.review_reason && row.status === 'pruefen' && (
         <p className="text-xs text-amber-800 bg-amber-100/70 rounded-lg px-3 py-2">{row.review_reason}</p>
@@ -163,7 +174,7 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
           {busy === 'test' ? '…' : `🧪 ${t('reservation.test', 'Test an mich')}`}
         </button>
         <button onClick={() => send(false)} disabled={!!busy}
-          className={`${btn} border-transparent text-white bg-[#ff795d] hover:opacity-90`}>
+          className={`${btn} border-transparent text-white bg-hp-highlight hover:opacity-90`}>
           {busy === 'send' ? '…' : `📤 ${row?.status === 'gesendet' || row?.status === 'unterschrieben' ? t('reservation.resend', 'Erneut an Bauträger senden') : t('reservation.send', 'An Bauträger senden')}`}
         </button>
       </div>

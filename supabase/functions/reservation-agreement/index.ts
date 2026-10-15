@@ -30,12 +30,17 @@
 //                                                         test=true → nur an Sven
 //   { action:'check_file', base64, mime, name }           Diagnose: eine Datei durch die KI-Prüfung
 //
+// Öffentlich (nur mit Unterschrifts-Token, Seite /sign/r/:token, siehe sign.ts):
+//   { action:'sign_view',   token }                       Vertragsdaten + PDF zum Unterschreiben
+//   { action:'sign_submit', token, signature, name }      Unterschrift des Bauträgers einsetzen
+//
 // Deploy: supabase functions deploy reservation-agreement --no-verify-jwt
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { gateCaller } from '../_shared/callerGate.ts'
 import { saToken, listTree, download, thumbnail } from './drive.ts'
 import { checkFile, type FileCheck, type IdPerson } from './ausweis.ts'
 import { renderAgreement, type AgreementFields, type PropertyKind, type TemplateRow } from './pdf.ts'
+import { signView, signSubmit } from './sign.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -44,9 +49,10 @@ const CORS = {
 }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
 
-const SVEN_PHONE = '+35795096409'
-const SVEN_MAIL = 'sven@happy-property.com'
-const CRM_LEAD = 'https://portal.happy-property.com/admin/crm/leads/'
+export const SVEN_PHONE = '+35795096409'
+export const SVEN_MAIL = 'sven@happy-property.com'
+export const CRM_LEAD = 'https://portal.happy-property.com/admin/crm/leads/'
+const SIGN_BASE = 'https://portal.happy-property.com/sign/r/'
 // Nur Deals, die NACH dem Start auf Reservierung gingen (kein Rückwirken auf alte Deals).
 const FLOW_START = '2026-10-15T00:00:00Z'
 const QUIET_MIN = 30                 // Wartezeit nach dem letzten Ausweis
@@ -64,9 +70,9 @@ const DEV_WA_IMAGE = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object
 type Client = SupabaseClient
 type Mode = 'on' | 'test' | 'off'
 
-interface TemplateDb extends TemplateRow {
+export interface TemplateDb extends TemplateRow {
   id: string; name: string; developer_id: string; is_active: boolean; auto_send: boolean
-  property_prefix: string | null; project_addresses: Record<string, string>
+  property_prefix: string | null; project_addresses: Record<string, string>; sign_place: string | null
 }
 interface Buyer {
   full_name: string; document_number: string; document_type: string; nationality: string
@@ -79,14 +85,17 @@ interface CheckedFile {
   kind?: FileCheck['kind']; signed?: boolean; unit?: string
   failed?: number; skipped?: string
 }
-interface AgreementRow {
+export interface AgreementRow {
   id: string; deal_id: string; lead_id: string; unit_id: string | null; template_id: string | null
   status: string; buyers: Buyer[]; checked_files: Record<string, CheckedFile>
   last_id_at: string | null; review_reason: string | null; pdf_path: string | null
   unit_document_id: string | null; drive_file_id: string | null; sent_at: string | null
   sven_notified_at: string | null; created_at: string; signed_file_id: string | null
+  data: AgreementFields | null; template_snapshot: TemplateDb | null
+  sign_token: string | null; test_sign_token: string | null; test_payload: { fields: AgreementFields; template: TemplateDb } | null
+  seller_signed_at: string | null; seller_signer_name: string | null; signed_pdf_path: string | null
 }
-interface Ctx {
+export interface Ctx {
   deal: { id: string; lead_id: string; unit_id: string | null; phase: string }
   lead: { id: string; first_name: string | null; last_name: string | null; email: string | null; drive_folder_id: string | null; drive_folder_url: string | null }
   unit: { id: string; unit_number: string; type: string | null; price_net: number | null; project_id: string }
@@ -99,10 +108,10 @@ interface Ctx {
   devPhone: { name: string; phone: string } | null
 }
 
-const leadName = (l: Ctx['lead']) => [l.first_name, l.last_name].map(x => (x ?? '').trim()).filter(Boolean).join(' ') || l.email || 'Kunde'
+export const leadName = (l: Ctx['lead']) => [l.first_name, l.last_name].map(x => (x ?? '').trim()).filter(Boolean).join(' ') || l.email || 'Kunde'
 const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 const eurEn = (n: number) => `EUR ${n.toLocaleString('en-US', { maximumFractionDigits: 2 })}`
-const todayCy = () => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Nicosia', day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date())
+export const todayCy = () => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Nicosia', day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date())
 
 async function mode(sb: Client): Promise<Mode> {
   const { data } = await sb.from('crm_settings').select('value').eq('key', 'reservation_agreement_mode').maybeSingle()
@@ -111,7 +120,7 @@ async function mode(sb: Client): Promise<Mode> {
 }
 
 // ── Kontext eines Deals laden ─────────────────────────────────────────────────
-async function loadCtx(sb: Client, dealId: string): Promise<Ctx | { error: string }> {
+export async function loadCtx(sb: Client, dealId: string): Promise<Ctx | { error: string }> {
   const { data: deal } = await sb.from('deals').select('id, lead_id, unit_id, phase').eq('id', dealId).maybeSingle()
   if (!deal) return { error: 'Deal nicht gefunden' }
   const d = deal as Ctx['deal']
@@ -283,28 +292,28 @@ function gate(ctx: Ctx, buyers: Buyer[], fieldProblems: string[], checked: Recor
 }
 
 // ── Versand ───────────────────────────────────────────────────────────────────
-function b64(bytes: Uint8Array): string {
+export function b64(bytes: Uint8Array): string {
   let bin = ''
   const CH = 0x8000
   for (let i = 0; i < bytes.length; i += CH) bin += String.fromCharCode(...bytes.subarray(i, i + CH))
   return btoa(bin)
 }
-const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+export const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
-async function invoke(sb: Client, fn: string, body: Record<string, unknown>): Promise<string | null> {
+export async function invoke(sb: Client, fn: string, body: Record<string, unknown>): Promise<string | null> {
   const { data, error } = await sb.functions.invoke(fn, { body })
   const d = data as { error?: string; success?: boolean } | null
   return error?.message || d?.error || (d?.success === false ? 'success=false' : null)
 }
 
-async function whatsappSven(sb: Client, text: string): Promise<string | null> {
+export async function whatsappSven(sb: Client, text: string): Promise<string | null> {
   return await invoke(sb, 'send-whatsapp', {
     event_type: 'reservation_agreement', override_text: text, auto: true, lang: 'de', already_translated: true,
     lead_data: { lead_name: 'Sven', lead_phone: SVEN_PHONE },
   })
 }
 
-function fileNameFor(ctx: Ctx): string {
+export function fileNameFor(ctx: Ctx): string {
   return `${ctx.template.title} ${ctx.project.name} ${ctx.unit.unit_number} - ${leadName(ctx.lead)}.pdf`.replace(/[\\/:*?"<>|]+/g, ' ')
 }
 
@@ -367,16 +376,27 @@ async function sendOut(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array,
   //    nur im Storage, damit das CRM ihn zeigen kann.
   const draftPath = test ? row.pdf_path : await storePdfDraft(sb, row, ctx, pdf)
 
+  // 2. Unterschriftslink (/sign/r/<token>). Der Test bekommt einen eigenen Token und eigene
+  //    Daten (test_payload), damit er den echten Vertrag nie überschreibt.
+  const tokenCol = test ? 'test_sign_token' : 'sign_token'
+  const signToken = (test ? row.test_sign_token : row.sign_token) || newToken()
+  const signPatch: Record<string, unknown> = { [tokenCol]: signToken, updated_at: new Date().toISOString() }
+  if (test) signPatch.test_payload = { fields, template: ctx.template }
+  else { signPatch.data = fields; signPatch.template_snapshot = ctx.template }
+  const { error: tokErr } = await sb.from('reservation_agreements').update(signPatch).eq('id', row.id)
+  if (tokErr) throw new Error(`Unterschriftslink: ${tokErr.message}`)
+  const signLink = SIGN_BASE + signToken
+
   // 2. Mail an den Bauträger (englisch, PDF im Anhang). Partner-Kommunikation läuft
   //    bewusst OHNE lead_id, damit sie nicht wie eine Kundenmail in der Akte steht.
   const devHtml = `<p>Dear ${esc(ctx.developerName)} team,</p>
 <p>please find attached the reservation agreement for <b>${esc(fields.property_name)}, unit ${esc(fields.unit_number)}</b>, already filled in with the buyer details from the passport${buyers.length > 1 ? 's' : ''}:</p>
 <p>${fields.purchasers.map((p, i) => `${esc(p)} &middot; ${esc(fields.id_numbers[i] ?? '')}`).join('<br>')}</p>
 <p>Purchasing price: ${esc(fields.price_text)}<br>Holding deposit: ${esc(fields.deposit_text)}</p>
-${folderLink
-  ? `<p>Please check, sign and seal the agreement and <b>upload the signed version to the shared Google Drive folder</b>, where you also find the passport copies:<br><a href="${folderLink}">${folderLink}</a></p>
-<p>The client and the lawyer have access to this folder, so please do not send it to the client separately. As soon as it is in the folder, we file it automatically.</p>`
-  : `<p>Please check, sign and seal the agreement and reply to this email with the signed version.</p>`}
+<p><b>No printing needed:</b> please check the agreement and sign it directly on your phone (finger signature + your name). Place and date are filled in automatically:</p>
+<p><a href="${signLink}" style="display:inline-block;background:#1a2332;color:#ffffff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:600">Sign the reservation agreement</a></p>
+<p style="font-size:13px;color:#6b7280">${signLink}</p>
+<p>The signed agreement is then stored automatically in the shared Google Drive folder, where the client and the lawyer have access, so there is no need to send it to the client.${folderLink ? ` Passport copies: <a href="${folderLink}">${folderLink}</a>` : ''}</p>
 <p>Thank you very much!<br>Sven &middot; Happy Property</p>`
   const devTargets = test ? [SVEN_MAIL] : ctx.devEmails
   for (const to of devTargets) {
@@ -388,9 +408,7 @@ ${folderLink
   }
 
   // 3. WhatsApp-Hinweis an den Bauträger
-  const devWa = `Hi ${ctx.devPhone?.name.split(' ')[0] ?? ''}, Lotte from Happy Property here 🐾\n\nThe reservation agreement for ${fields.property_name}, unit ${fields.unit_number} (${names}) is filled in and in your inbox (${ctx.devEmails.join(', ')}).\n\n${folderLink
-    ? `Please sign and seal it and upload the signed version to the shared Drive folder (client and lawyer have access there, no need to send it to the client):\n${folderLink}`
-    : 'Please sign and seal it and reply to the email with the signed version.'}\n\nThank you!`
+  const devWa = `Hi ${ctx.devPhone?.name.split(' ')[0] ?? ''}, Lotte from Happy Property here 🐾\n\nThe reservation agreement for ${fields.property_name}, unit ${fields.unit_number} (${names}) is filled in.\n\nNo printing needed, you can check and sign it right here on your phone (place and date are filled in automatically):\n${signLink}\n\nThe signed version goes straight to the shared Drive folder for the client and the lawyer. Thank you!`
   if (test || ctx.devPhone) {
     const err = await invoke(sb, 'send-whatsapp', {
       event_type: 'reservation_agreement', override_text: (test ? 'TEST · ' : '') + devWa, auto: true, lang: 'en', already_translated: true,
@@ -404,7 +422,8 @@ ${folderLink
   if (!test) {
     const err = await invoke(sb, 'send-email', {
       to: SVEN_MAIL, subject: `Reservierungsvertrag an ${ctx.developerName}: ${leadName(ctx.lead)} (${unitLabel})`,
-      html: `<p>Der Reservierungsvertrag ist automatisch ausgefüllt und an ${esc(ctx.devEmails.join(', '))} gegangen. ${esc(ctx.developerName)} lädt die unterschriebene Fassung in den Drive-Ordner; sobald sie dort liegt, wird sie an der Wohnung unter Verträge abgelegt.</p>
+      html: `<p>Der Reservierungsvertrag ist automatisch ausgefüllt und an ${esc(ctx.devEmails.join(', '))} gegangen. ${esc(ctx.developerName)} unterschreibt am Handy über den Link; danach liegt der Vertrag automatisch im Drive-Ordner und an der Wohnung unter Verträge.</p>
+<p>Unterschriftslink (falls du ihn weiterleiten musst): <a href="${signLink}">${signLink}</a></p>
 <p>${fields.purchasers.map((p, i) => `${esc(p)} &middot; ${esc(fields.id_numbers[i] ?? '')}`).join('<br>')}</p>
 <p><a href="${CRM_LEAD}${ctx.lead.id}">Kunde im CRM</a></p>`,
       attachment, auto: true, lang: 'de', already_translated: true,
@@ -425,7 +444,12 @@ ${folderLink
       buyers, data: fields, pdf_path: draftPath, error: errors.length ? errors.join('; ') : null, review_reason: null, updated_at: new Date().toISOString(),
     }).eq('id', row.id)
   }
-  return { ok: mailOk, test, sent_to: devTargets, errors }
+  return { ok: mailOk, test, sent_to: devTargets, errors, sign_link: signLink }
+}
+
+function newToken(): string {
+  const b = crypto.getRandomValues(new Uint8Array(18))
+  return Array.from(b, x => x.toString(16).padStart(2, '0')).join('')
 }
 
 // ── Ein Vertrag: prüfen, bauen, senden ───────────────────────────────────────
@@ -559,6 +583,20 @@ const SAMPLE: AgreementFields = {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
+  // Öffentliche Unterschriftsseite: nur mit gültigem Token, kein Login (sign.ts prüft alles)
+  if (req.method === 'POST') {
+    const peek = await req.clone().json().catch(() => ({})) as Record<string, unknown>
+    if (peek.action === 'sign_view' || peek.action === 'sign_submit') {
+      const sbPub = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+      try {
+        const res = peek.action === 'sign_view' ? await signView(sbPub, peek) : await signSubmit(sbPub, peek, req)
+        return json(res.body, res.status)
+      } catch (e) {
+        console.error('[reservation-agreement] sign', (e as Error).message)
+        return json({ error: 'Something went wrong. Please try again in a minute.' }, 500)
+      }
+    }
+  }
   const denied = await gateCaller(req, 'reservation-agreement', { service: true, roles: ['admin'] }, CORS)
   if (denied) return denied
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
