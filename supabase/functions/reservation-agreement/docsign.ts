@@ -13,7 +13,7 @@ import { stampDocument } from './stamp.ts'
 import { uploadToken, uploadFile } from './drive.ts'
 import { loadSeal, saveSeal, sealDataUrl, pngFromInput, clientIp, LOCK_MINUTES, MAX_SEAL_BYTES } from './seal.ts'
 import { cleanName, cleanSignature, sha256Hex, placeOf, langOf } from './sign.ts'
-import { b64, esc, invoke, whatsappSven, whatsappPdf, SVEN_MAIL, SVEN_PHONE, CRM_LEAD, todayCy } from './index.ts'
+import { b64, esc, invoke, whatsappSven, whatsappPdf, markOwnUpload, notifyCustomerSigned, SVEN_MAIL, SVEN_PHONE, CRM_LEAD, todayCy } from './index.ts'
 
 type Res = { status: number; body: Record<string, unknown> }
 const SIGN_BASE = 'https://portal.happy-property.com/sign/d/'
@@ -303,7 +303,9 @@ export async function docSubmit(sb: SupabaseClient, body: Record<string, unknown
       try {
         const tok = await uploadToken(sb)
         if (!tok) throw new Error('Drive-Upload nicht verbunden')
-        driveId = (await uploadFile(tok, l.drive_folder_id, fname, 'application/pdf', pdf)).id
+        const up = await uploadFile(tok, l.drive_folder_id, fname, 'application/pdf', pdf)
+        driveId = up.id
+        await markOwnUpload(sb, row.lead_id, l.drive_folder_id, up, pdf.byteLength)
       } catch (e) { problems.push(`Drive: ${(e as Error).message}`) }
     } else problems.push('Kunde hat keinen Drive-Ordner')
 
@@ -361,6 +363,13 @@ export async function docSubmit(sb: SupabaseClient, body: Record<string, unknown
       content: `${name} (${company}) hat ${row.title} digital unterschrieben. Abgelegt am Objekt${driveId ? ', im Drive-Ordner' : ''} und an den Anwalt geschickt.${problems.length ? ` Probleme: ${problems.join('; ')}` : ''}`,
       completed_at: new Date().toISOString(),
     })
+    if (driveId) {
+      const what = row.kind === 'specification'
+        ? { de: 'Die Spezifikation für deine Wohnung', en: 'The specification for your property' }
+        : { de: `Das Dokument „${row.title}"`, en: `The document "${row.title}"` }
+      const err = await notifyCustomerSigned(sb, row.lead_id, what)
+      if (err) problems.push(`Kunde WhatsApp: ${err}`)
+    }
     await whatsappSven(sb, `✅ ${name} (${company}) hat ${row.title} für ${kunde} digital unterschrieben.\n\nLiegt am Objekt im Eigentümerportal${driveId ? ' und im Drive-Ordner' : ''}, Anwalt hat es per Mail.${problems.length ? `\n\nAchtung: ${problems.join('; ')}` : ''}\n\n${CRM_LEAD}${row.lead_id}`)
     return { status: 200, body: { ok: true, test: false, pdf_base64: b64(pdf) } }
   } catch (e) {

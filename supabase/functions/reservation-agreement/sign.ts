@@ -11,7 +11,7 @@ import { renderAgreement, type AgreementFields } from './pdf.ts'
 import { uploadToken, uploadFile } from './drive.ts'
 import { loadSeal, saveSeal, sealDataUrl, pngFromInput, clientIp, LOCK_MINUTES, MAX_SEAL_BYTES } from './seal.ts'
 import {
-  loadCtx, leadName, todayCy, b64, esc, invoke, whatsappSven, whatsappPdf, fileNameFor,
+  loadCtx, leadName, todayCy, b64, esc, invoke, whatsappSven, whatsappPdf, fileNameFor, markOwnUpload, notifyCustomerSigned,
   SVEN_MAIL, SVEN_PHONE, CRM_LEAD, type AgreementRow, type TemplateDb,
 } from './index.ts'
 
@@ -181,7 +181,9 @@ export async function signSubmit(sb: SupabaseClient, body: Record<string, unknow
       try {
         const tok = await uploadToken(sb)
         if (!tok) throw new Error('Drive-Upload nicht verbunden')
-        driveId = (await uploadFile(tok, ctx.lead.drive_folder_id, fname, 'application/pdf', pdf)).id
+        const up = await uploadFile(tok, ctx.lead.drive_folder_id, fname, 'application/pdf', pdf)
+        driveId = up.id
+        await markOwnUpload(sb, ctx.lead.id, ctx.lead.drive_folder_id, up, pdf.byteLength)
       } catch (e) { problems.push(`Drive: ${(e as Error).message}`) }
     } else problems.push('Kunde hat keinen Drive-Ordner')
 
@@ -223,6 +225,10 @@ export async function signSubmit(sb: SupabaseClient, body: Record<string, unknow
         : `Thank you, ${name}! Here is your signed reservation agreement (${p.fields.property_name}, unit ${p.fields.unit_number}).${driveId ? ' It is also stored in the shared Drive folder for the client and the lawyer.' : ''}`
       const err = await whatsappPdf(sb, ctx.devPhone, waText, path, fname, de ? 'de' : 'en')
       if (err) problems.push(`WhatsApp-PDF: ${err}`)
+    }
+    if (driveId) {
+      const err = await notifyCustomerSigned(sb, ctx.lead.id, { de: 'Der Reservierungsvertrag für deine Wohnung', en: 'The reservation agreement for your property' })
+      if (err) problems.push(`Kunde WhatsApp: ${err}`)
     }
     await whatsappSven(sb, `✅ ${name} (${p.template.company_name}) hat den Reservierungsvertrag ${leadName(ctx.lead)} (${unitLabel}) digital unterschrieben.\n\nLiegt an der Wohnung unter Verträge${driveId ? ' und im Drive-Ordner' : ''}.${problems.length ? `\n\nAchtung: ${problems.join('; ')}` : ''}\n\n${CRM_LEAD}${ctx.lead.id}`)
     return { status: 200, body: { ok: true, test: false, pdf_base64: b64(pdf) } }

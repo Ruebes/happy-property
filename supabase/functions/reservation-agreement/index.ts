@@ -41,6 +41,8 @@
 // Deploy: supabase functions deploy reservation-agreement --no-verify-jwt
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { gateCaller } from '../_shared/callerGate.ts'
+import { lotteBild } from '../_shared/lotte.ts'
+import { resolveLang } from '../_shared/recipientLang.ts'
 import { saToken, listTree, download, thumbnail, uploadToken, uploadFile, type DriveFile } from './drive.ts'
 import { checkFile, type FileCheck, type IdPerson } from './ausweis.ts'
 import { renderAgreement, type AgreementFields, type PropertyKind, type TemplateRow } from './pdf.ts'
@@ -382,6 +384,40 @@ export async function whatsappPdf(sb: Client, to: { name: string; phone: string 
   })
 }
 
+/**
+ * Vom System in den Drive-Kundenordner gelegte Datei als „schon gemeldet" eintragen. Sonst meldet
+ * owner-drive sie an ALLE mit Ordnerzugriff, auch an Bauträger anderer Wohnungen desselben Kunden
+ * (15.10.: Aaron/EMMETRE bekam die Mito-Spezifikation von Jelena gemeldet). Gezielt informiert
+ * wird stattdessen über notifyCustomerSigned.
+ */
+export async function markOwnUpload(sb: Client, leadId: string, folderId: string, file: DriveFile, sizeBytes: number): Promise<void> {
+  const { error } = await sb.from('drive_folder_files').upsert({
+    file_id: file.id, lead_id: leadId, folder_id: folderId, name: file.name, mime_type: file.mimeType,
+    size_bytes: sizeBytes, web_view_link: file.webViewLink ?? null, path: '', uploader_name: 'Happy Property',
+    uploader_email: null, source: 'portal', created_time: file.createdTime ?? new Date().toISOString(),
+    notified_at: new Date().toISOString(), notify_result: { skipped: 'Unterschrift, gezielt gemeldet' },
+  }, { onConflict: 'file_id' })
+  if (error) console.warn('[reservation-agreement] drive_folder_files:', error.message)
+}
+
+/** Nur der Kunde bekommt eine Lotte-Nachricht, dass das unterschriebene Dokument in seinem Ordner liegt. */
+export async function notifyCustomerSigned(sb: Client, leadId: string, what: { de: string; en: string }): Promise<string | null> {
+  const { data } = await sb.from('leads').select('id, first_name, email, phone, whatsapp, drive_folder_id, drive_folder_url').eq('id', leadId).maybeSingle()
+  const l = data as { id: string; first_name: string | null; email: string | null; phone: string | null; whatsapp: string | null; drive_folder_id: string | null; drive_folder_url: string | null } | null
+  const phone = (l?.whatsapp || l?.phone || '').trim()
+  if (!l || !phone || !l.drive_folder_id) return null
+  const lang = await resolveLang(sb, { email: l.email, phone, lead_id: l.id })
+  const link = l.drive_folder_url ?? `https://drive.google.com/drive/folders/${l.drive_folder_id}`
+  const first = (l.first_name ?? '').trim()
+  const text = lang === 'en'
+    ? `Hi ${first} 🐾\n\nLotte from Happy Property here. ${what.en} has now been signed by the developer. You will find it in your Google Drive folder:\n${link}\n\nBest, Lotte`
+    : `Hallo ${first} 🐾\n\nhier ist Lotte von Happy Property. ${what.de} ist jetzt vom Bauträger unterschrieben. Du findest das Dokument in deinem Google-Drive-Ordner:\n${link}\n\nLiebe Grüße, Lotte`
+  return await invoke(sb, 'send-whatsapp', {
+    event_type: 'drive_upload', override_text: text, auto: true, lang, already_translated: true,
+    lead_id: l.id, persona_image: lotteBild(), lead_data: { lead_name: first || 'Kunde', lead_phone: phone },
+  })
+}
+
 export async function whatsappSven(sb: Client, text: string): Promise<string | null> {
   return await invoke(sb, 'send-whatsapp', {
     event_type: 'reservation_agreement', override_text: text, auto: true, lang: 'de', already_translated: true,
@@ -689,7 +725,9 @@ async function retryDrive(sb: Client, row: AgreementRow): Promise<Record<string,
   const tok = await uploadToken(sb)
   if (!tok) return { deal: row.deal_id, drive: 'Upload nicht verbunden' }
   const name = `${row.template_snapshot?.title ?? 'Reservation agreement'} ${row.data?.property_name ?? ''} ${row.data?.unit_number ?? ''} (signed).pdf`.replace(/[\\/:*?"<>|]+/g, ' ')
-  const up = await uploadFile(tok, folder, name, 'application/pdf', new Uint8Array(await file.arrayBuffer()))
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  const up = await uploadFile(tok, folder, name, 'application/pdf', bytes)
+  await markOwnUpload(sb, row.lead_id, folder, up, bytes.byteLength)
   await sb.from('reservation_agreements').update({
     signed_file_id: up.id, own_file_ids: [...(row.own_file_ids ?? []), up.id], error: null, updated_at: new Date().toISOString(),
   }).eq('id', row.id)
