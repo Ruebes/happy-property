@@ -3,8 +3,18 @@ import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { DECK_LOGO } from '../lib/deckTypes'
 
-// Erlaubte Zielhosts: Zusage-Seite (AppointmentModal rsvpHref) und Google-Kalender (buildGcalHref).
-const SHORT_LINK_HOSTS = new Set(['portal.happy-property.com', 'calendar.google.com'])
+// Erlaubte Ziele: Zusage-Seite (AppointmentModal rsvpHref), Google-Kalender (buildGcalHref)
+// und die Kurzlinks aus send-whatsapp (shortenable: Maps, eigene Seiten, Storage-Dateien).
+// Beide Listen gleich halten, sonst zeigt /s/<code> „ungültig“.
+const SHORT_LINK_HOSTS = new Set(['portal.happy-property.com', 'calendar.google.com', 'steuervorteil-zypern-immobilien.com'])
+const SUPABASE_HOST = (() => { try { return new URL(import.meta.env.VITE_SUPABASE_URL as string).host } catch { return '' } })()
+
+function allowedTarget(url: URL): boolean {
+  if (url.protocol !== 'https:') return false
+  if (SHORT_LINK_HOSTS.has(url.hostname)) return true
+  if ((url.hostname === 'www.google.com' || url.hostname === 'maps.google.com') && url.pathname.startsWith('/maps')) return true
+  return !!SUPABASE_HOST && url.host === SUPABASE_HOST && url.pathname.startsWith('/storage/v1/object/')
+}
 
 // ── Kurzlink-Weiterleitung (/s/:code) — für lange Kalender-/Zusage-URLs ──────
 export default function ShortLink() {
@@ -25,11 +35,11 @@ export default function ShortLink() {
           const old = await supabase.from('short_links').select('target').eq('code', code ?? '').maybeSingle()
           target = (old.data as { target?: string } | null)?.target ?? null
         }
-        // Nur die Ziele, die das Terminmodal anlegt (Zusage-/Kalenderlinks): https auf
-        // bekannten Hosts, sonst kein offener Redirect über portal.../s/<code>.
+        // Nur bekannte Ziele (siehe allowedTarget), sonst kein offener Redirect
+        // über portal.../s/<code>.
         let url: URL | null = null
         try { url = target ? new URL(target) : null } catch { url = null }
-        if (!url || url.protocol !== 'https:' || !SHORT_LINK_HOSTS.has(url.hostname)) { setInvalid(true); return }
+        if (!url || !allowedTarget(url)) { setInvalid(true); return }
         window.location.replace(url.href)
       } catch {
         setInvalid(true)

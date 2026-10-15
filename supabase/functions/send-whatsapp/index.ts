@@ -120,6 +120,48 @@ function docName(u: string, label: string): string {
   return base
 }
 
+// ── Lange Links kürzen ────────────────────────────────────────────────────────
+// WhatsApp zeigt Links ungekürzt: ein Google-Kalender-, Maps- oder Signed-Storage-
+// Link füllt zehn Zeilen (Sven 15.10.26: „sieht nicht schön aus“). Links ab 90
+// Zeichen auf bekannten Zielen laufen deshalb über portal.happy-property.com/s/<code>
+// (Tabelle short_links, Weiterleitung in src/pages/ShortLink.tsx mit derselben
+// Ziel-Liste). Gleiches Ziel = gleicher Code, damit der Doppel-Schutz (Text-Hash)
+// bei einem zweiten Versand derselben Nachricht weiter greift.
+const SHORTEN_MIN = 90
+const SHORT_CHARS = 'abcdefghijkmnpqrstuvwxyz23456789'
+
+function shortenable(u: string): boolean {
+  try {
+    const x = new URL(u)
+    if (x.protocol !== 'https:') return false
+    const supa = new URL(Deno.env.get('SUPABASE_URL') ?? 'https://invalid').host
+    if (['portal.happy-property.com', 'calendar.google.com', 'steuervorteil-zypern-immobilien.com'].includes(x.host)) return true
+    if (['www.google.com', 'maps.google.com'].includes(x.host) && x.pathname.startsWith('/maps')) return true
+    return x.host === supa && x.pathname.startsWith('/storage/v1/object/')
+  } catch { return false }
+}
+
+// deno-lint-ignore no-explicit-any
+async function shortenLongLinks(sb: any, text: string): Promise<string> {
+  const urls = [...new Set((text.match(/https?:\/\/[^\s<>"]+/g) ?? []).map(u => u.replace(/[).,;:!?]+$/, '')))]
+    .filter(u => u.length >= SHORTEN_MIN && shortenable(u))
+  for (const u of urls) {
+    try {
+      const { data: found } = await sb.from('short_links').select('code').eq('target', u).limit(1)
+      let code: string | null = (found as { code: string }[] | null)?.[0]?.code ?? null
+      for (let i = 0; !code && i < 3; i++) {
+        const c = Array.from(crypto.getRandomValues(new Uint8Array(7)), b => SHORT_CHARS[b % SHORT_CHARS.length]).join('')
+        const { error } = await sb.from('short_links').insert({ code: c, target: u })
+        if (!error) code = c
+      }
+      if (code) text = text.split(u).join(`https://portal.happy-property.com/s/${code}`)
+    } catch (e) {
+      console.warn('[send-whatsapp] Kurzlink fehlgeschlagen, Link bleibt lang:', e instanceof Error ? e.message : e)
+    }
+  }
+  return text
+}
+
 function extractDocs(text: string): { text: string; docs: DocFile[] } {
   const docs: DocFile[] = []
   const out: string[] = []
@@ -312,6 +354,8 @@ Deno.serve(async (req) => {
       const ex = extractDocs(message)
       if (ex.docs.length) { docs = ex.docs; message = ex.text; console.log(`[send-whatsapp] ${docs.length} PDF(s) als Datei: ${docs.map(d => d.name).join(', ')}`) }
     }
+    // Übrige lange Links (Kalender, Maps, Storage) auf Kurzlinks umstellen.
+    if (typeof message === 'string' && message.includes('http')) message = await shortenLongLinks(supabase, message)
     // Bestand der Text nur aus dem Link, wird das erste PDF selbst zur Nachricht.
     if ((typeof message !== 'string' || !message.trim()) && !attachUrl && docs.length) {
       const d = docs.shift()!
