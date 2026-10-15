@@ -668,23 +668,26 @@ async function generateLotteImage(sb: SupabaseClient, postId: string, prompt: st
 // Collage aus 2-4 fast gleichen Bildern (Posts 7., 14., 17. und 21.10.2026).
 // Deshalb schaut Claude vor dem Speichern drauf. Fällt die Prüfung selbst aus,
 // geht das Bild durch, damit der Post nicht ohne Bild bleibt.
-async function isCollage(url: string): Promise<boolean> {
+async function collageCheck(url: string): Promise<{ collage: boolean; answer: string }> {
   const key = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
-  if (!key) return false
+  if (!key) return { collage: false, answer: 'ANTHROPIC_API_KEY fehlt' }
   try {
     const small = `${url.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/')}?width=768&quality=70`
     const r = await claude(key, {
-      system: 'You check generated images before they are posted on social media. Answer with exactly one word: SINGLE if it is one single photo, COLLAGE if it is split into several panels, a grid, a contact sheet, or shows the same subject more than once side by side.',
-      messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'url', url: small } }, { type: 'text', text: 'SINGLE or COLLAGE?' }] }],
+      system: 'You check AI-generated images before they are posted on social media. Image generators sometimes return a collage instead of one photo: the canvas is split into 2, 3 or 4 panels (2x2 grid, side by side, stacked) that show almost the same scene, so the same dog appears several times. Look for straight seams where the background suddenly jumps and for the subject repeated. Reply with only the number of separate panels the image consists of (1 = one continuous photo).',
+      messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'url', url: small } }, { type: 'text', text: 'How many panels?' }] }],
       max_tokens: 10,
     })
-    const t = ((r.content ?? []) as Array<{ type: string; text?: string }>).find(b => b.type === 'text')?.text ?? ''
-    return /COLLAGE/i.test(t)
+    const t = (((r.content ?? []) as Array<{ type: string; text?: string }>).find(b => b.type === 'text')?.text ?? '').trim()
+    const n = Number(t.match(/\d+/)?.[0] ?? '1')
+    return { collage: n > 1, answer: t }
   } catch (e) {
-    console.warn('[social-agent] Collage-Prüfung ausgefallen:', e instanceof Error ? e.message : String(e))
-    return false
+    const msg = e instanceof Error ? e.message : String(e)
+    console.warn('[social-agent] Collage-Prüfung ausgefallen:', msg)
+    return { collage: false, answer: `Fehler: ${msg}` }
   }
 }
+async function isCollage(url: string): Promise<boolean> { return (await collageCheck(url)).collage }
 
 // News-Recherche → Ideen (social_ideas). avoid = Themen, die schon liefen.
 async function newsScan(sb: SupabaseClient, anthropicKey: string, avoid: string[] = []): Promise<Array<{ id: string; headline: string; core: string; source_url: string | null; angle: string }>> {
@@ -1834,7 +1837,7 @@ Regeln:
     if (body.action === 'collage_check') {
       const url = String(body.url ?? '')
       if (!url.startsWith(`${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/`)) return json({ error: 'nur ad-creatives-Bilder' }, 400)
-      return json({ ok: true, collage: await isCollage(url) })
+      return json({ ok: true, ...(await collageCheck(url)) })
     }
     // ── Higgsfield-Jobtyp prüfen, ohne ein Bild zu erzeugen (ungültiges Format) ──
     if (body.action === 'hf_probe') {
