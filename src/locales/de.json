@@ -1339,7 +1339,9 @@
       "detached": "✅ Immobilie vom Kunden getrennt",
       "detachFailed": "Trennen fehlgeschlagen",
       "confirmMove": "„{{label}}“ gehört bisher {{from}}. Wirklich auf {{to}} umhängen?\n\nDer bisherige Eigentümer verliert den Zugriff im Portal, eingeladene Mit-Eigentümer dieser Wohnung werden entfernt.",
-      "currentOwner": "aktuell: {{name}}"
+      "currentOwner": "aktuell: {{name}}",
+      "coOwner": "Mit-Eigentümer",
+      "coOwnerOf": "Mit-Eigentümer, Eigentümer: {{name}}"
     },
     "invite": {
       "emailSent": "Einladungs-E-Mail wird automatisch versendet",

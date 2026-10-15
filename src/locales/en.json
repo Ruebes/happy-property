@@ -1339,7 +1339,9 @@
       "detached": "✅ Property detached from customer",
       "detachFailed": "Detach failed",
       "confirmMove": "“{{label}}” currently belongs to {{from}}. Really move it to {{to}}?\n\nThe previous owner loses portal access; invited co-owners of this unit are removed.",
-      "currentOwner": "current: {{name}}"
+      "currentOwner": "current: {{name}}",
+      "coOwner": "Co-owner",
+      "coOwnerOf": "Co-owner, owner: {{name}}"
     },
     "invite": {
       "emailSent": "Invitation email will be sent automatically",

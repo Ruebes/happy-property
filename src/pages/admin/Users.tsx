@@ -173,6 +173,8 @@ export default function AdminUsers() {
   // ── State ────────────────────────────────────────────────
   const [users, setUsers]           = useState<UserProfile[]>([])
   const [allProps, setAllProps]     = useState<Property[]>([])
+  // Mit-Eigentümer (property_co_owners): gleiche Rechte wie der Eigentümer, aber nicht owner_id
+  const [coOwners, setCoOwners]     = useState<{ property_id: string; profile_id: string }[]>([])
   const [loading, setLoading]       = useState(true)
   const [search, setSearch]         = useState('')
   const [roleFilter, setRoleFilter] = useState<string>('all')
@@ -262,6 +264,8 @@ export default function AdminUsers() {
       .select('id, project_name, unit_number, owner_id, type, bedrooms, size_sqm, purchase_price_gross, property_status')
       .order('project_name')
     setAllProps((data as Property[]) ?? [])
+    const { data: co } = await supabase.from('property_co_owners').select('property_id, profile_id')
+    setCoOwners((co as { property_id: string; profile_id: string }[]) ?? [])
   }, [])
 
   const fetchVerwaltungen = useCallback(async () => {
@@ -713,7 +717,11 @@ export default function AdminUsers() {
   const ownerProps = editUser
     ? allProps.filter(p => p.owner_id === editUser.id)
     : []
-  const unassignedProps = allProps.filter(p => editUser && p.owner_id !== editUser.id)
+  const coOwnedIds = new Set(editUser
+    ? coOwners.filter(c => c.profile_id === editUser.id).map(c => c.property_id)
+    : [])
+  const coOwnedProps = allProps.filter(p => coOwnedIds.has(p.id))
+  const unassignedProps = allProps.filter(p => editUser && p.owner_id !== editUser.id && !coOwnedIds.has(p.id))
 
 
   // ── Role filter tabs ─────────────────────────────────────
@@ -1277,7 +1285,7 @@ export default function AdminUsers() {
                   <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-widest
                                  font-body mb-3">{t('users.properties.title')}</h3>
 
-                  {ownerProps.length === 0 ? (
+                  {ownerProps.length === 0 && coOwnedProps.length === 0 ? (
                     <p className="text-xs text-gray-400 font-body mb-3">
                       {t('users.properties.none')}
                     </p>
@@ -1355,6 +1363,34 @@ export default function AdminUsers() {
                           </div>
                         </div>
                       ))}
+                    </div>
+                  )}
+
+                  {/* Mit-Eigentümer: nur Anzeige, Trennen läuft über die Wohnung des Haupteigentümers */}
+                  {coOwnedProps.length > 0 && (
+                    <div className="space-y-2 mb-3">
+                      {coOwnedProps.map(p => {
+                        const mainOwner = users.find(u => u.id === p.owner_id)?.full_name
+                        return (
+                          <button key={p.id} type="button"
+                                  onClick={() => navigate(`/admin/properties/${p.id}`)}
+                                  className="w-full text-left rounded-xl border border-gray-100 bg-white px-3 py-2.5
+                                             shadow-sm hover:shadow-md hover:border-orange-200 transition-all group">
+                            <p className="text-sm font-semibold text-hp-black font-body
+                                         group-hover:text-orange-500 transition-colors leading-tight">
+                              {p.project_name}
+                              {p.unit_number && (
+                                <span className="font-normal text-gray-400 ml-1.5">#{p.unit_number}</span>
+                              )}
+                            </p>
+                            <span className="inline-block mt-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-orange-50 text-orange-600 font-body font-medium">
+                              {mainOwner
+                                ? t('users.properties.coOwnerOf', 'Mit-Eigentümer, Eigentümer: {{name}}', { name: mainOwner })
+                                : t('users.properties.coOwner', 'Mit-Eigentümer')}
+                            </span>
+                          </button>
+                        )
+                      })}
                     </div>
                   )}
 
