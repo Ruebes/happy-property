@@ -23,6 +23,7 @@ export interface SellerSignature {
   place: string            // vom System gesetzt
   date: string             // vom System gesetzt, dd/mm/yyyy
   signedAtUtc: string      // für den Prüfvermerk
+  seal?: Uint8Array | null // Firmenstempel (transparentes PNG), wenn der Bauträger „mit Stempel" wählt
 }
 
 export interface AgreementFields {
@@ -55,7 +56,8 @@ function safe(font: PDFFont, s: string): string {
   let out = ''
   for (const ch of s) {
     try { font.encodeText(ch); out += ch; continue } catch { /* weiter */ }
-    const base = ch.normalize('NFD').replace(/[̀-ͯ]/g, '')
+    // NFKD zerlegt auch Ligaturen (ﬁ → fi), dann Akzente weg
+    const base = ch.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
     try { font.encodeText(base); out += base } catch { out += '?' }
   }
   return out
@@ -77,7 +79,19 @@ function wrap(font: PDFFont, size: number, text: string, width: number): string[
   return lines
 }
 
+/**
+ * Eine A4-Seite. Passt der Inhalt nicht (z. B. 3+ Käufer), wird kompakter gesetzt; passt es
+ * dann immer noch nicht, wirft die Funktion, statt Zeilen über den Seitenrand zu schreiben.
+ */
 export async function renderAgreement(t: TemplateRow, f: AgreementFields, seller?: SellerSignature): Promise<Uint8Array> {
+  const normal = await renderOnce(t, f, seller, false)
+  if (normal.bottom >= 24) return normal.bytes
+  const compact = await renderOnce(t, f, seller, true)
+  if (compact.bottom >= 12) return compact.bytes
+  throw new Error('Zu viele Käufer für eine Vertragsseite, bitte von Hand anlegen')
+}
+
+async function renderOnce(t: TemplateRow, f: AgreementFields, seller: SellerSignature | undefined, compact: boolean): Promise<{ bytes: Uint8Array; bottom: number }> {
   const pdf = await PDFDocument.create()
   pdf.setTitle(`${t.title} ${f.property_name} ${f.unit_number}`)
   pdf.setProducer('Happy Property CRM')
@@ -112,8 +126,8 @@ export async function renderAgreement(t: TemplateRow, f: AgreementFields, seller
   y -= 12
 
   // ── Tabelle ──
-  const LS = 9.5, LH = 15
-  const row = (label: string, values: string[], minH = 30) => {
+  const LS = compact ? 8.8 : 9.5, LH = compact ? 12.5 : 15
+  const row = (label: string, values: string[], minH = compact ? 24 : 30) => {
     const h = Math.max(minH, PAD * 2 + values.length * LH)
     rect(X0, y, MID - X0, h)
     rect(MID, y, X1 - MID, h)
@@ -147,14 +161,16 @@ export async function renderAgreement(t: TemplateRow, f: AgreementFields, seller
     }
     y -= h
   }
-  row('Purchasing price:', [f.price_text], 26)
-  row('Holding Deposit:', [f.deposit_text], 26)
+  row('Purchasing price:', [f.price_text], compact ? 22 : 26)
+  row('Holding Deposit:', [f.deposit_text], compact ? 22 : 26)
 
   // Bedingungen
   {
-    const NS = 8.6, NL = 12.6
-    const lines = wrap(reg, NS, (t.notes ?? '').replace(/\n\s*\n/g, '\n'), X1 - X0 - PAD * 2)
-    const h = Math.max(150, PAD * 2 + LH + lines.length * NL + 10)
+    const NS = compact ? 7.6 : 8.6, NL = compact ? 10.6 : 12.6
+    // safe() vor dem Messen: Ligaturen wie „ﬁ" aus kopierten Texten würden sonst werfen
+    const notes = (t.notes ?? '').replace(/\n\s*\n/g, '\n').split('\n').map(l => safe(reg, l)).join('\n')
+    const lines = wrap(reg, NS, notes, X1 - X0 - PAD * 2)
+    const h = Math.max(compact ? 90 : 150, PAD * 2 + LH + lines.length * NL + 10)
     rect(X0, y, X1 - X0, h)
     text('Notes:', X0 + PAD, y - PAD - LS + 1, LS)
     lines.forEach((l, i) => text(l, X0 + PAD, y - PAD - LS - LH - i * NL + 1, NS))
@@ -182,18 +198,27 @@ export async function renderAgreement(t: TemplateRow, f: AgreementFields, seller
 
   // Stempel + Unterschriften
   {
-    const h = 125
+    const h = compact ? 112 : 125
     rect(X0, y, MID - X0, h)
     rect(MID, y, X1 - MID, h)
     text('Seal:', X0 + PAD, y - PAD - LS + 1, LS)
     text('Buyer Signed BY:', MID + PAD, y - PAD - LS + 1, LS)
     if (seller) {
-      // Unterschrift in die Verkäufer-Zelle, darunter Name, Ort/Datum und Prüfvermerk
+      // Verkäufer-Zelle: links der Stempel (optional), rechts daneben die Unterschrift,
+      // darunter Name, Ort/Datum und Prüfvermerk
+      const fit = (img: { width: number; height: number }, bx: number, by: number, bw: number, bh: number) => {
+        const sc = Math.min(bw / img.width, bh / img.height)
+        return { x: bx + (bw - img.width * sc) / 2, y: by + (bh - img.height * sc) / 2, width: img.width * sc, height: img.height * sc }
+      }
+      const boxY = y - h + PAD + 44, boxH = 58
+      let sigX = X0 + PAD + 60
+      if (seller.seal) {
+        const sealImg = await pdf.embedPng(seller.seal)
+        page.drawImage(sealImg, fit(sealImg, X0 + PAD + 22, boxY, 70, boxH))
+        sigX = X0 + PAD + 100
+      }
       const img = await pdf.embedPng(seller.png)
-      const boxW = MID - X0 - PAD * 2 - 60, boxH = 52
-      const sc = Math.min(boxW / img.width, boxH / img.height)
-      const w = img.width * sc, hh = img.height * sc
-      page.drawImage(img, { x: X0 + PAD + 60, y: y - h + PAD + 46 + (boxH - hh) / 2, width: w, height: hh })
+      page.drawImage(img, fit(img, sigX, boxY, MID - PAD - sigX, 52))
       const cellW = MID - X0 - PAD * 2
       text(`Sales Signed BY: ${seller.name}`, X0 + PAD, y - h + PAD + 30, LS, bold, DARK, cellW)
       text(`Place, date: ${seller.place}, ${seller.date}`, X0 + PAD, y - h + PAD + 17, 8.5, reg, DARK, cellW)
@@ -214,8 +239,8 @@ export async function renderAgreement(t: TemplateRow, f: AgreementFields, seller
   fullRow('Company Address:', t.company_address ?? '')
   fullRow('Company TEL:', t.company_tel ?? '')
 
-  y -= 22
+  y -= compact ? 16 : 22
   centered(t.company_name, y, 11, bold, accent)
 
-  return await pdf.save()
+  return { bytes: await pdf.save(), bottom: y }
 }

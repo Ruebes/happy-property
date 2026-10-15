@@ -36,7 +36,7 @@ export async function saToken(): Promise<string> {
   const key = await importPrivateKey(sa.private_key)
   const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(unsigned))
   const res = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal: AbortSignal.timeout(20_000),
     body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: `${unsigned}.${b64url(new Uint8Array(sig))}` }),
   })
   const data = await res.json() as { access_token?: string; error_description?: string }
@@ -46,7 +46,7 @@ export async function saToken(): Promise<string> {
 }
 
 async function driveGet<T>(token: string, url: string): Promise<T> {
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(30_000) })
   const d = await r.json() as T & { error?: { message?: string } }
   if (!r.ok) throw new Error(`Drive ${r.status}: ${d.error?.message ?? 'Fehler'}`)
   return d
@@ -81,7 +81,7 @@ export async function download(token: string, f: DriveFile): Promise<{ bytes: Ui
   const url = native
     ? `https://www.googleapis.com/drive/v3/files/${f.id}/export?mimeType=application/pdf`
     : `https://www.googleapis.com/drive/v3/files/${f.id}?alt=media&supportsAllDrives=true`
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(60_000) })
   if (!r.ok) throw new Error(`Drive-Download ${r.status}`)
   return { bytes: new Uint8Array(await r.arrayBuffer()), mime: native ? 'application/pdf' : f.mimeType }
 }
@@ -90,7 +90,7 @@ export async function download(token: string, f: DriveFile): Promise<{ bytes: Ui
 export async function thumbnail(token: string, f: DriveFile): Promise<{ bytes: Uint8Array; mime: string } | null> {
   if (!f.thumbnailLink) return null
   const url = f.thumbnailLink.replace(/=s\d+$/, '=s2000')
-  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(30_000) })
   if (!r.ok) return null
   const mime = (r.headers.get('content-type') ?? 'image/jpeg').split(';')[0]
   if (!/^image\/(jpeg|png|webp|gif)$/.test(mime)) return null
@@ -107,7 +107,7 @@ export async function uploadToken(sb: SupabaseClient): Promise<string | null> {
   ])
   if (!cid || !csec || !rtok) return null
   const tr = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal: AbortSignal.timeout(20_000),
     body: new URLSearchParams({ client_id: cid, client_secret: csec, refresh_token: rtok, grant_type: 'refresh_token' }),
   })
   const td = await tr.json() as { access_token?: string; error?: string }
@@ -120,7 +120,7 @@ export async function uploadFile(token: string, folderId: string, name: string, 
   const init = await fetch(`https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true&fields=${FILE_FIELDS}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': mime, 'X-Upload-Content-Length': String(bytes.byteLength) },
-    body: JSON.stringify({ name, parents: [folderId] }),
+    body: JSON.stringify({ name, parents: [folderId] }), signal: AbortSignal.timeout(30_000),
   })
   if (!init.ok) {
     const e = await init.json().catch(() => ({})) as { error?: { message?: string } }
@@ -128,7 +128,7 @@ export async function uploadFile(token: string, folderId: string, name: string, 
   }
   const loc = init.headers.get('location')
   if (!loc) throw new Error('Upload-Start ohne Location-Header')
-  const put = await fetch(loc, { method: 'PUT', headers: { 'Content-Type': mime }, body: bytes.slice() })
+  const put = await fetch(loc, { method: 'PUT', headers: { 'Content-Type': mime }, body: bytes.slice(), signal: AbortSignal.timeout(60_000) })
   const d = await put.json() as DriveFile & { error?: { message?: string } }
   if (!put.ok || !d.id) throw new Error(`Upload ${put.status}: ${d.error?.message ?? 'Fehler'}`)
   return d

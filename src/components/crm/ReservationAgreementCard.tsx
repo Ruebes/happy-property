@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ReservationAgreement, ReservationBuyer } from '../../lib/crmTypes'
 import { reservationCall, openPdfWindow, showPdf } from '../../lib/reservationAgreement'
@@ -28,6 +28,10 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
   const [st, setSt] = useState<StatusResponse | null>(null)
   const [buyers, setBuyers] = useState<ReservationBuyer[]>([])
   const [editing, setEditing] = useState(false)
+  // Sven hat Käuferdaten von Hand geändert: diese Liste gilt, bis gesendet wurde
+  const [manual, setManualState] = useState(false)
+  const manualRef = useRef(false)
+  const setManual = (v: boolean) => { manualRef.current = v; setManualState(v) }
   const [busy, setBusy] = useState<'' | 'preview' | 'send' | 'test'>('')
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -35,7 +39,7 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
     try {
       const r = await reservationCall<StatusResponse>({ action: 'status', deal_id: dealId })
       setSt(r)
-      setBuyers(r.row?.buyers ?? [])
+      if (!manualRef.current) setBuyers(r.row?.buyers ?? [])
     } catch {
       setSt(null)
     }
@@ -53,7 +57,7 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
     abgebrochen:    t('reservation.status.cancelled', 'Abgebrochen'),
   }
   const fmtDate = (s: string) => new Date(s).toLocaleString(i18n.language === 'en' ? 'en-GB' : 'de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-  const edited = editing ? buyers.filter(b => b.full_name.trim()) : undefined
+  const edited = manual ? buyers.filter(b => b.full_name.trim()) : undefined
 
   const preview = async () => {
     const win = openPdfWindow()
@@ -61,7 +65,7 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
     try {
       const r = await reservationCall<{ pdf_base64: string; buyers: ReservationBuyer[]; reasons: string[] }>({ action: 'preview', deal_id: dealId, buyers: edited })
       showPdf(win, r.pdf_base64)
-      if (!editing) setBuyers(r.buyers)
+      if (!manual) setBuyers(r.buyers)
       if (r.reasons.length) setMsg({ ok: false, text: r.reasons.join(' · ') })
     } catch (e) {
       win?.close()
@@ -78,6 +82,7 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
         ? { ok: false, text: r.errors.join(' · ') }
         : { ok: true, text: test ? t('reservation.testSent', 'Test ging an dich (Mail + WhatsApp).') : t('reservation.sentOk', 'Vertrag ist an den Bauträger raus.') })
       setEditing(false)
+      if (!test) setManual(false)
       await load()
     } catch (e) {
       setMsg({ ok: false, text: (e as Error).message })
@@ -142,13 +147,13 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
               {buyers.map((b, i) => (
                 <div key={i} className="grid grid-cols-[1fr_9rem_auto] gap-1.5 items-center">
                   <input value={b.full_name} className={inputCls} placeholder={t('reservation.name', 'Vor- und Nachname')}
-                    onChange={e => setBuyers(bs => bs.map((x, j) => j === i ? { ...x, full_name: e.target.value } : x))} />
+                    onChange={e => { setManual(true); setBuyers(bs => bs.map((x, j) => j === i ? { ...x, full_name: e.target.value } : x)) }} />
                   <input value={b.document_number} className={`${inputCls} font-mono`} placeholder={t('reservation.number', 'Passnummer')}
-                    onChange={e => setBuyers(bs => bs.map((x, j) => j === i ? { ...x, document_number: e.target.value } : x))} />
-                  <button onClick={() => setBuyers(bs => bs.filter((_, j) => j !== i))} className="text-gray-400 hover:text-red-500 text-sm px-1">✕</button>
+                    onChange={e => { setManual(true); setBuyers(bs => bs.map((x, j) => j === i ? { ...x, document_number: e.target.value } : x)) }} />
+                  <button onClick={() => { setManual(true); setBuyers(bs => bs.filter((_, j) => j !== i)) }} className="text-gray-400 hover:text-red-500 text-sm px-1">✕</button>
                 </div>
               ))}
-              <button onClick={() => setBuyers(bs => [...bs, { full_name: '', document_number: '' }])}
+              <button onClick={() => { setManual(true); setBuyers(bs => [...bs, { full_name: '', document_number: '' }]) }}
                 className="text-xs text-orange-600 hover:underline">+ {t('reservation.addBuyer', 'Käufer hinzufügen')}</button>
             </>
           ) : buyers.map((b, i) => (

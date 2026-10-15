@@ -9,16 +9,18 @@
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { renderAgreement, type AgreementFields } from './pdf.ts'
 import { uploadToken, uploadFile } from './drive.ts'
+import { loadSeal, saveSeal, sealDataUrl, pngFromInput, clientIp, LOCK_MINUTES, MAX_SEAL_BYTES } from './seal.ts'
 import {
   loadCtx, leadName, todayCy, b64, esc, invoke, whatsappSven, fileNameFor,
   SVEN_MAIL, CRM_LEAD, type AgreementRow, type TemplateDb,
 } from './index.ts'
 
+const DEAD = ['deal_verloren', 'archiviert']
+
 type Res = { status: number; body: Record<string, unknown> }
 const TOKEN_RE = /^[0-9a-f]{36}$/
 const MAX_SIG_BYTES = 400_000
 const MIN_SIG_BYTES = 400                 // leeres Feld ergibt ein winziges PNG
-const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
 
 async function findRow(sb: SupabaseClient, token: unknown): Promise<{ row: AgreementRow; test: boolean } | null> {
   const t = String(token ?? '').trim().toLowerCase()
@@ -35,7 +37,8 @@ function payloadOf(row: AgreementRow, test: boolean): { fields: AgreementFields;
   return row.data && row.template_snapshot ? { fields: row.data, template: row.template_snapshot } : null
 }
 
-const placeOf = (t: TemplateDb) => (t.sign_place ?? '').trim() || 'Cyprus'
+export const placeOf = (t: { sign_place?: string | null }) => (t.sign_place ?? '').trim() || 'Cyprus'
+export const langOf = (v: unknown): 'de' | 'en' => (v === 'de' ? 'de' : 'en')
 
 export async function signView(sb: SupabaseClient, body: Record<string, unknown>): Promise<Res> {
   const hit = await findRow(sb, body.token)
@@ -43,7 +46,13 @@ export async function signView(sb: SupabaseClient, body: Record<string, unknown>
   const { row, test } = hit
   const p = payloadOf(row, test)
   if (!p || row.status === 'abgebrochen') return { status: 404, body: { error: 'not_found' } }
+  if (!test) {
+    const { data: deal } = await sb.from('deals').select('phase, unit_id').eq('id', row.deal_id).maybeSingle()
+    const d = deal as { phase?: string; unit_id?: string | null } | null
+    if (!d || DEAD.includes(d.phase ?? '') || d.unit_id !== row.unit_id) return { status: 404, body: { error: 'not_found' } }
+  }
   const signed = !test && !!row.seller_signed_at && !!row.signed_pdf_path
+  const seal = signed ? null : await loadSeal(sb, p.template.developer_id)
   let pdf: Uint8Array
   if (signed) {
     const { data, error } = await sb.storage.from('unit-documents').download(row.signed_pdf_path!)
@@ -63,33 +72,29 @@ export async function signView(sb: SupabaseClient, body: Record<string, unknown>
       fields: p.fields,
       place: placeOf(p.template),
       date: todayCy(),
+      lang: langOf(row.signer_lang),
+      seal: sealDataUrl(seal),
       pdf_base64: b64(pdf),
     },
   }
 }
 
 /** Druckbuchstaben: Großbuchstaben (auch mit Akzent), Leerzeichen, Punkt, Bindestrich, Apostroph. */
-function cleanName(raw: unknown): string | null {
-  const n = String(raw ?? '').normalize('NFC').replace(/\s+/g, ' ').trim().toUpperCase()
+// Nur lateinische Buchstaben (inkl. Umlaute/Akzente): die PDF-Schrift kann kein Kyrillisch/Griechisch.
+export const NAME_RE = /^[A-ZÀ-ÖØ-ÞĀ-ſ][A-ZÀ-ÖØ-ÞĀ-ſ .'-]*[A-ZÀ-ÖØ-ÞĀ-ſ.]$/
+export function cleanName(raw: unknown): string | null {
+  const n = String(raw ?? '').normalize('NFC').replace(/[’‘ʼ´`]/g, "'").replace(/\s+/g, ' ').trim().toUpperCase()
   if (n.length < 3 || n.length > 80) return null
-  if (!/^[\p{Lu}][\p{Lu} .'\-]*[\p{Lu}.]$/u.test(n)) return null
-  if (!/\p{Lu}{2,}/u.test(n)) return null
+  if (!NAME_RE.test(n)) return null
+  if (!/[A-ZÀ-ÖØ-ÞĀ-ſ]{2,}/.test(n)) return null
   return n
 }
 
-function cleanSignature(raw: unknown): Uint8Array | null {
-  const s = String(raw ?? '').replace(/^data:image\/png;base64,/, '')
-  if (!s || s.length > MAX_SIG_BYTES * 1.4 || !/^[A-Za-z0-9+/=]+$/.test(s)) return null
-  let bin: string
-  try { bin = atob(s) } catch { return null }
-  if (bin.length < MIN_SIG_BYTES || bin.length > MAX_SIG_BYTES) return null
-  const bytes = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-  if (!PNG_MAGIC.every((v, i) => bytes[i] === v)) return null
-  return bytes
+export function cleanSignature(raw: unknown): Uint8Array | null {
+  return pngFromInput(raw, MAX_SIG_BYTES, MIN_SIG_BYTES)
 }
 
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
+export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const h = await crypto.subtle.digest('SHA-256', bytes.slice())
   return Array.from(new Uint8Array(h), x => x.toString(16).padStart(2, '0')).join('')
 }
@@ -104,30 +109,42 @@ export async function signSubmit(sb: SupabaseClient, body: Record<string, unknow
   if (!name) return { status: 400, body: { error: 'invalid_name' } }
   const png = cleanSignature(body.signature)
   if (!png) return { status: 400, body: { error: 'invalid_signature' } }
+  // Stempel: neues Foto (bereits freigestellt im Browser) oder der gespeicherte
+  const newSeal = body.seal ? pngFromInput(body.seal, MAX_SEAL_BYTES) : null
+  if (body.seal && !newSeal) return { status: 400, body: { error: 'invalid_seal' } }
+  const useSeal = body.use_seal === true
 
   const now = new Date()
   const signedAtUtc = now.toISOString().replace('T', ' ').slice(0, 16) + ' UTC'
   const place = placeOf(p.template)
   const date = todayCy()
 
+  const ctx = await loadCtx(sb, row.deal_id, p.template)
+  if ('error' in ctx) return { status: 404, body: { error: 'not_found' } }
+  if (!test && (DEAD.includes(ctx.deal.phase) || ctx.unit.id !== row.unit_id)) return { status: 404, body: { error: 'not_found' } }
+
   // Genau einmal unterschreiben: Sperre setzen, bevor gearbeitet wird (Doppelklick, zwei Tabs).
+  // Die Sperre läuft nach LOCK_MINUTES ab, falls die Function mittendrin abbricht.
   if (!test) {
+    const stale = new Date(now.getTime() - LOCK_MINUTES * 60_000).toISOString()
     const { data: lock } = await sb.from('reservation_agreements')
       .update({ seller_signed_at: now.toISOString(), updated_at: now.toISOString() })
-      .eq('id', row.id).is('seller_signed_at', null).select('id')
+      .eq('id', row.id).eq('sign_token', row.sign_token!)
+      .or(`seller_signed_at.is.null,and(signed_pdf_path.is.null,seller_signed_at.lt.${stale})`).select('id')
     if (!lock?.length) return { status: 409, body: { error: 'already_signed' } }
   }
 
   try {
-    const pdf = await renderAgreement(p.template, p.fields, { png, name, place, date, signedAtUtc })
+    // Neuer Stempel gilt ab jetzt für alle Dokumente dieses Bauträgers (im Test nur für dieses PDF)
+    if (newSeal && !test) await saveSeal(sb, p.template.developer_id, newSeal, `${name} (Unterschriftsseite)`)
+    const seal = useSeal ? (newSeal ?? await loadSeal(sb, p.template.developer_id)) : null
+    const pdf = await renderAgreement(p.template, p.fields, { png, name, place, date, signedAtUtc, seal })
     const hash = await sha256Hex(pdf)
     const meta = {
-      name, place, date, signed_at: now.toISOString(), pdf_sha256: hash,
-      ip: (req.headers.get('x-forwarded-for') ?? '').split(',')[0].trim() || null,
+      name, place, date, signed_at: now.toISOString(), pdf_sha256: hash, with_seal: !!seal, new_seal: !!newSeal,
+      ip: clientIp(req),
       user_agent: (req.headers.get('user-agent') ?? '').slice(0, 300) || null,
     }
-    const ctx = await loadCtx(sb, row.deal_id)
-    if ('error' in ctx) throw new Error(ctx.error)
     const unitLabel = `${ctx.project.name} ${ctx.unit.unit_number}`
     const fname = fileNameFor(ctx).replace(/\.pdf$/, ` (signed ${p.template.company_name}).pdf`)
     const attachment = { filename: fname.replace(/[()]/g, '').replace(/\s*-\s*/g, '_').replace(/\s+/g, '_'), content_base64: b64(pdf), content_type: 'application/pdf' }
@@ -163,9 +180,12 @@ export async function signSubmit(sb: SupabaseClient, body: Record<string, unknow
       } catch (e) { problems.push(`Drive: ${(e as Error).message}`) }
     } else problems.push('Kunde hat keinen Drive-Ordner')
 
+    const checked = { ...(row.checked_files ?? {}) }
+    if (driveId) checked[driveId] = { name: fname, at: new Date().toISOString(), created: new Date().toISOString(), skipped: 'eigene Datei' }
     await sb.from('reservation_agreements').update({
       status: 'unterschrieben', seller_signer_name: name, seller_sign_meta: meta, signed_pdf_path: path,
-      unit_document_id: (doc as { id: string }).id, signed_file_id: driveId,
+      unit_document_id: (doc as { id: string }).id, signed_file_id: driveId, checked_files: checked,
+      own_file_ids: driveId ? [...(row.own_file_ids ?? []), driveId] : (row.own_file_ids ?? []),
       error: problems.length ? problems.join('; ') : null, review_reason: null, updated_at: new Date().toISOString(),
     }).eq('id', row.id)
     await sb.from('activities').insert({
@@ -176,11 +196,18 @@ export async function signSubmit(sb: SupabaseClient, body: Record<string, unknow
     })
 
     // 3. Kopie an den Unterzeichner (Bauträger-Kontakte) und Meldung an Sven
+    const de = langOf(row.signer_lang) === 'de'
+    const unitTxt = `${esc(p.fields.property_name)}, ${de ? 'Einheit' : 'unit'} ${esc(p.fields.unit_number)}`
+    const where = driveId
+      ? (de ? '<p>Er liegt im gemeinsamen Google-Drive-Ordner für Kunde und Anwalt.</p>' : '<p>It has been stored in the shared Google Drive folder for the client and the lawyer.</p>')
+      : ''
     for (const to of ctx.devEmails) {
       const err = await invoke(sb, 'send-email', {
-        to, subject: `Signed: reservation agreement ${p.fields.property_name} ${p.fields.unit_number}`,
-        html: `<p>Thank you, ${esc(name)}! Attached is your copy of the signed reservation agreement for <b>${esc(p.fields.property_name)}, unit ${esc(p.fields.unit_number)}</b> (${esc(p.fields.purchasers.join(', '))}).</p><p>It has been stored in the shared Google Drive folder for the client and the lawyer.</p><p>Best regards<br>Sven &middot; Happy Property</p>`,
-        attachment, auto: true, lang: 'en', already_translated: true,
+        to, subject: de ? `Unterschrieben: Reservierungsvertrag ${p.fields.property_name} ${p.fields.unit_number}` : `Signed: reservation agreement ${p.fields.property_name} ${p.fields.unit_number}`,
+        html: de
+          ? `<p>Danke, ${esc(name)}! Anbei Ihre Kopie des unterschriebenen Reservierungsvertrags für <b>${unitTxt}</b> (${esc(p.fields.purchasers.join(', '))}).</p>${where}<p>Viele Grüße<br>Sven &middot; Happy Property</p>`
+          : `<p>Thank you, ${esc(name)}! Attached is your copy of the signed reservation agreement for <b>${unitTxt}</b> (${esc(p.fields.purchasers.join(', '))}).</p>${where}<p>Best regards<br>Sven &middot; Happy Property</p>`,
+        attachment, auto: true, lang: de ? 'de' : 'en', already_translated: true,
       })
       if (err) problems.push(`Kopie ${to}: ${err}`)
     }

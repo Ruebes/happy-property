@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import type { Developer, ReservationTemplate, ReservationTemplateBank } from '../../lib/crmTypes'
 import { reservationCall, openPdfWindow, showPdf } from '../../lib/reservationAgreement'
+import { processSealImage } from '../../lib/sealImage'
 
 // Reservierungsvertrag-Vorlage eines Bauträgers bearbeiten („Reservierung Mito").
 // Die Edge Function reservation-agreement füllt sie aus, sobald der Kunde seinen
@@ -26,6 +27,9 @@ export default function ReservationTemplateModal({ developer, onClose }: { devel
   const [saving, setSaving] = useState(false)
   const [previewing, setPreviewing] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  // Firmenstempel des Bauträgers (gilt für alle seine Dokumente; Bauträger kann ihn auch beim Unterschreiben hochladen)
+  const [seal, setSeal] = useState<string | null>(null)
+  const [sealBusy, setSealBusy] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -45,6 +49,8 @@ export default function ReservationTemplateModal({ developer, onClose }: { devel
       }
       setProjects((proj ?? []) as Array<{ id: string; name: string; location: string | null }>)
       setLoading(false)
+      reservationCall<{ seal: string | null }>({ action: 'seal_get', developer_id: developer.id })
+        .then(r => { if (alive) setSeal(r.seal) }).catch(() => { /* ohne Stempel weiter */ })
     })()
     return () => { alive = false }
   }, [developer])
@@ -83,6 +89,27 @@ export default function ReservationTemplateModal({ developer, onClose }: { devel
       win?.close()
       setMsg({ ok: false, text: (e as Error).message })
     } finally { setPreviewing(false) }
+  }
+
+  const uploadSeal = async (file: File | undefined) => {
+    if (!file) return
+    setSealBusy(true); setMsg(null)
+    try {
+      const png = await processSealImage(file)
+      const r = await reservationCall<{ seal: string | null }>({ action: 'seal_set', developer_id: developer.id, png })
+      setSeal(r.seal)
+      setMsg({ ok: true, text: t('reservationTpl.sealSaved', 'Stempel gespeichert') })
+    } catch (e) {
+      const m = (e as Error).message
+      setMsg({ ok: false, text: m === 'seal_not_found' ? t('reservationTpl.sealNotFound', 'Auf dem Foto wurde kein Stempel erkannt (auf weißes Papier stempeln, von oben fotografieren).') : m })
+    } finally { setSealBusy(false) }
+  }
+  const deleteSeal = async () => {
+    if (!window.confirm(t('reservationTpl.sealDeleteConfirm', 'Stempel löschen?'))) return
+    setSealBusy(true)
+    try { const r = await reservationCall<{ seal: string | null }>({ action: 'seal_delete', developer_id: developer.id }); setSeal(r.seal) }
+    catch (e) { setMsg({ ok: false, text: (e as Error).message }) }
+    finally { setSealBusy(false) }
   }
 
   const inputCls = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400'
@@ -178,6 +205,23 @@ export default function ReservationTemplateModal({ developer, onClose }: { devel
                   </div>
                 </div>
               )}
+
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{t('reservationTpl.seal', 'Firmenstempel')}</p>
+                <div className="flex items-center gap-3">
+                  {seal
+                    ? <img src={seal} alt="" className="h-20 w-20 object-contain bg-gray-50 rounded-lg border border-gray-100" />
+                    : <div className="h-20 w-20 rounded-lg border border-dashed border-gray-200 flex items-center justify-center text-[10px] text-gray-400 text-center px-1">{t('reservationTpl.sealNone', 'kein Stempel')}</div>}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-medium text-orange-600 cursor-pointer hover:underline">
+                      {sealBusy ? '…' : seal ? t('reservationTpl.sealReplace', 'Neues Stempelfoto hochladen') : t('reservationTpl.sealUpload', 'Stempelfoto hochladen')}
+                      <input type="file" accept="image/*" className="hidden" disabled={sealBusy} onChange={e => uploadSeal(e.target.files?.[0])} />
+                    </label>
+                    {seal && <button onClick={deleteSeal} disabled={sealBusy} className="block text-xs text-gray-500 hover:text-red-600">{t('reservationTpl.sealDelete', 'Stempel löschen')}</button>}
+                    <p className="text-[11px] text-gray-400 max-w-xs">{t('reservationTpl.sealHint', 'Gilt für alle Dokumente dieses Bauträgers. Der Bauträger kann ihn auch selbst beim Unterschreiben hochladen und jedes Mal mit oder ohne Stempel unterschreiben.')}</p>
+                  </div>
+                </div>
+              </div>
 
               <div>
                 <label className={label}>{t('reservationTpl.notes', 'Bedingungen (Notes), Absätze mit Leerzeile trennen')}</label>

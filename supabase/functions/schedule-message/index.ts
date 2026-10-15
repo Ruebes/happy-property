@@ -184,7 +184,10 @@ Deno.serve(async (req: Request) => {
             unitDevEmails = ((withDrive ?? []) as { email?: string | null }[]).map(x => (x.email ?? '').trim()).filter(Boolean)
             const { data: resTpl } = await supabase.from('reservation_templates')
               .select('id').eq('developer_id', devId).eq('is_active', true).limit(1).maybeSingle()
-            unitDevHasResTemplate = !!resTpl
+            // Nur wenn die Automatik wirklich scharf ist (Modus on), sonst der bisherige Text
+            const { data: resMode } = await supabase.from('crm_settings').select('value').eq('key', 'reservation_agreement_mode').maybeSingle()
+            const modeOn = String((resMode as { value?: unknown } | null)?.value ?? '').replace(/"/g, '').trim() === 'on'
+            unitDevHasResTemplate = !!resTpl && modeOn
           }
         }
       }
