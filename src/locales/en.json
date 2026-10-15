@@ -103,7 +103,8 @@
     "sealDeleteConfirm": "Delete seal?",
     "sealSaved": "Seal saved",
     "sealNotFound": "No seal found on the photo (stamp on white paper, photograph from above).",
-    "sealHint": "Used for all documents of this developer. The developer can also upload it when signing and choose each time to sign with or without seal."
+    "sealHint": "Used for all documents of this developer. The developer can also upload it when signing and choose each time to sign with or without seal.",
+    "sealUnreadable": "The photo could not be read (please use JPG or PNG)."
   },
   "signDocs": {
     "title": "Documents for signature",
@@ -122,7 +123,9 @@
     "linkCopied": "Link copied",
     "titlePh": "Title (empty = \"Specification project unit\")",
     "test": "Test to me",
-    "send": "Send to developer for signature"
+    "send": "Send to developer for signature",
+    "cancel": "Withdraw",
+    "cancelConfirm": "Withdraw the document? The link sent to the developer becomes invalid."
   },
   "app": {
     "name": "Happy Property",

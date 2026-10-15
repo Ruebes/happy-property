@@ -116,6 +116,7 @@ export async function stampDocument(src: Uint8Array, s: DocSigner, seal: Uint8Ar
   const lang = field?.lang ?? 'en'
   const date = dateFor(lang)
   const doc = await PDFDocument.load(src, { ignoreEncryption: true })
+  if (doc.isEncrypted) throw new Error('PDF ist geschützt und kann nicht unterschrieben werden')
   const reg = await doc.embedFont(StandardFonts.Helvetica)
   const bold = await doc.embedFont(StandardFonts.HelveticaBold)
   const sig = await doc.embedPng(s.png)
@@ -127,15 +128,17 @@ export async function stampDocument(src: Uint8Array, s: DocSigner, seal: Uint8Ar
 
   // 1. Fußband auf jeder Seite: kleine Unterschrift + Name + Ort/Datum, unten rechts
   for (const page of doc.getPages()) {
-    const W = page.getWidth()
+    // Gedrehte Seiten (Querformat-Scans) bekommen kein Band, es stünde sonst seitlich
+    if (page.getRotation().angle % 360 !== 0) continue
+    const box = page.getCropBox()
     const t1 = safe(bold, `${s.name} · ${s.company}`), t2 = safe(reg, placeDate)
     const tw = Math.max(bold.widthOfTextAtSize(t1, 6.5), reg.widthOfTextAtSize(t2, 6))
-    const right = W - 45
+    const right = box.x + box.width - 45, base = box.y
     // heller Untergrund, damit das Band auch auf dunklen Seiten (Titelblatt) lesbar ist
-    page.drawRectangle({ x: right - tw - 82, y: 3, width: tw + 88, height: 30, color: rgb(1, 1, 1), opacity: 0.9 })
-    page.drawText(t1, { x: right - bold.widthOfTextAtSize(t1, 6.5), y: 19, size: 6.5, font: bold, color: DARK })
-    page.drawText(t2, { x: right - reg.widthOfTextAtSize(t2, 6), y: 10, size: 6, font: reg, color: GREY })
-    drawFit(page, sig, right - tw - 76, 6, 70, 24)
+    page.drawRectangle({ x: right - tw - 82, y: base + 3, width: tw + 88, height: 30, color: rgb(1, 1, 1), opacity: 0.9 })
+    page.drawText(t1, { x: right - bold.widthOfTextAtSize(t1, 6.5), y: base + 19, size: 6.5, font: bold, color: DARK })
+    page.drawText(t2, { x: right - reg.widthOfTextAtSize(t2, 6), y: base + 10, size: 6, font: reg, color: GREY })
+    drawFit(page, sig, right - tw - 76, base + 6, 70, 24)
   }
 
   // 2. Unterschriftsfeld des Bauträgers

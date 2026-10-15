@@ -73,7 +73,7 @@ async function docCtx(sb: SupabaseClient, dealId: string): Promise<DocCtx | { er
     emails: (withDrive.length ? withDrive : cs.filter(c => c.email?.trim()).slice(0, 1)).map(c => c.email!.trim()),
     wa: waC ? { name: waC.name ?? developer.name, phone: (waC.whatsapp || waC.phone)!.trim() } : null,
     role: main?.role?.trim() || null,
-    lang: langOf(main?.language),
+    lang: langOf((waC ?? main)?.language),
   }
 }
 
@@ -121,7 +121,10 @@ export async function docCreate(sb: SupabaseClient, body: Record<string, unknown
   if ('error' in c) return { status: 400, body: { error: c.error } }
   const pdf = pdfFromInput(body.file_base64)
   if (!pdf) return { status: 400, body: { error: 'Bitte ein PDF bis 15 MB hochladen.' } }
-  try { await PDFDocument.load(pdf, { ignoreEncryption: true }) } catch { return { status: 400, body: { error: 'Das PDF lässt sich nicht öffnen.' } } }
+  try {
+    const probe = await PDFDocument.load(pdf, { ignoreEncryption: true })
+    if (probe.isEncrypted) return { status: 400, body: { error: 'Das PDF ist geschützt (Passwort/Rechte). Bitte eine ungeschützte Fassung hochladen.' } }
+  } catch { return { status: 400, body: { error: 'Das PDF lässt sich nicht öffnen.' } } }
   const test = body.test === true
   if (!test && !c.emails.length) return { status: 400, body: { error: `Beim Bauträger ${c.developer.name} ist keine E-Mail hinterlegt` } }
   const kind = body.kind === 'other' ? 'other' : 'specification'
@@ -130,6 +133,11 @@ export async function docCreate(sb: SupabaseClient, body: Record<string, unknown
   const path = `unit-documents/${c.unit!.id}/${Date.now()}-sign-source.pdf`
   const { error: upErr } = await sb.storage.from('unit-documents').upload(path, pdf, { contentType: 'application/pdf', upsert: false })
   if (upErr) return { status: 500, body: { error: `Speichern: ${upErr.message}` } }
+  // Neue Fassung ersetzt eine noch offene alte (gleicher Deal, gleiche Art): alter Link wird ungültig
+  if (!test) {
+    await sb.from('sign_documents').update({ status: 'abgebrochen', updated_at: new Date().toISOString() })
+      .eq('deal_id', dealId).eq('kind', kind).eq('test', false).eq('status', 'offen')
+  }
   const token = newToken()
   const { data: ins, error } = await sb.from('sign_documents').insert({
     kind, title, deal_id: dealId, lead_id: c.lead.id, unit_id: c.unit!.id, developer_id: c.developer.id,
@@ -181,9 +189,18 @@ async function storageBytes(sb: SupabaseClient, path: string): Promise<Uint8Arra
   return error || !data ? null : new Uint8Array(await data.arrayBuffer())
 }
 
+/** Deal verloren oder andere Wohnung → Link ungültig (sonst landet das Dokument an der falschen Wohnung). */
+async function dealGone(sb: SupabaseClient, row: DocRow): Promise<boolean> {
+  if (!row.deal_id || row.test) return false
+  const { data: deal } = await sb.from('deals').select('phase, unit_id').eq('id', row.deal_id).maybeSingle()
+  const d = deal as { phase?: string; unit_id?: string | null } | null
+  return !d || ['deal_verloren', 'archiviert'].includes(d.phase ?? '') || (!!row.unit_id && d.unit_id !== row.unit_id)
+}
+
 export async function docView(sb: SupabaseClient, body: Record<string, unknown>): Promise<Res> {
   const row = await findDoc(sb, body.token)
   if (!row || row.status === 'abgebrochen') return { status: 404, body: { error: 'not_found' } }
+  if (row.status === 'offen' && await dealGone(sb, row)) return { status: 404, body: { error: 'not_found' } }
   const signed = !row.test && row.status === 'unterschrieben' && !!row.signed_pdf_path
   const pdf = await storageBytes(sb, signed ? row.signed_pdf_path! : row.source_path)
   if (!pdf) return { status: 500, body: { error: 'pdf_missing' } }
@@ -205,10 +222,7 @@ export async function docView(sb: SupabaseClient, body: Record<string, unknown>)
 export async function docSubmit(sb: SupabaseClient, body: Record<string, unknown>, req: Request): Promise<Res> {
   const row = await findDoc(sb, body.token)
   if (!row || row.status === 'abgebrochen') return { status: 404, body: { error: 'not_found' } }
-  if (row.deal_id && !row.test) {
-    const { data: deal } = await sb.from('deals').select('phase').eq('id', row.deal_id).maybeSingle()
-    if (['deal_verloren', 'archiviert'].includes((deal as { phase?: string } | null)?.phase ?? '')) return { status: 404, body: { error: 'not_found' } }
-  }
+  if (await dealGone(sb, row)) return { status: 404, body: { error: 'not_found' } }
   const name = cleanName(body.name)
   if (!name) return { status: 400, body: { error: 'invalid_name' } }
   const png = cleanSignature(body.signature)
@@ -265,6 +279,8 @@ export async function docSubmit(sb: SupabaseClient, body: Record<string, unknown
     const path = `unit-documents/${row.unit_id}/${Date.now()}-signed-document.pdf`
     const { error: upErr } = await sb.storage.from('unit-documents').upload(path, pdf, { contentType: 'application/pdf', upsert: false })
     if (upErr) throw new Error(`Speichern: ${upErr.message}`)
+    // Sofort als unterschrieben markieren: bricht die Function danach ab, wird nicht doppelt unterschrieben
+    await sb.from('sign_documents').update({ status: 'unterschrieben', signer_name: name, sign_meta: meta, signed_pdf_path: path, updated_at: new Date().toISOString() }).eq('id', row.id)
     let docId: string | null = null
     if (row.unit_id) {
       const { data: unit } = await sb.from('crm_project_units').select('project_id').eq('id', row.unit_id).maybeSingle()
@@ -334,7 +350,7 @@ export async function docSubmit(sb: SupabaseClient, body: Record<string, unknown
     await whatsappSven(sb, `✅ ${name} (${company}) hat ${row.title} für ${kunde} digital unterschrieben.\n\nLiegt am Objekt im Eigentümerportal${driveId ? ' und im Drive-Ordner' : ''}, Anwalt hat es per Mail.${problems.length ? `\n\nAchtung: ${problems.join('; ')}` : ''}\n\n${CRM_LEAD}${row.lead_id}`)
     return { status: 200, body: { ok: true, test: false, pdf_base64: b64(pdf) } }
   } catch (e) {
-    if (!row.test) await sb.from('sign_documents').update({ signed_at: null, error: `Unterschrift: ${(e as Error).message}`.slice(0, 500) }).eq('id', row.id).eq('status', 'offen')
+    if (!row.test) await sb.from('sign_documents').update({ signed_at: null, error: `Unterschrift: ${(e as Error).message}`.slice(0, 500) }).eq('id', row.id).eq('status', 'offen').is('signed_pdf_path', null)
     throw e
   }
 }

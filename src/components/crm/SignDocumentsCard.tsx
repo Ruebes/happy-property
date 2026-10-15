@@ -30,7 +30,7 @@ function fileToBase64(file: File): Promise<string> {
   })
 }
 
-export default function SignDocumentsCard({ leadId }: { leadId: string }) {
+export default function SignDocumentsCard({ leadId, initialDealId }: { leadId: string; initialDealId?: string }) {
   const { t, i18n } = useTranslation()
   const [units, setUnits] = useState<DealUnit[]>([])
   const [dealId, setDealId] = useState('')
@@ -38,21 +38,22 @@ export default function SignDocumentsCard({ leadId }: { leadId: string }) {
   const [file, setFile] = useState<File | null>(null)
   const [title, setTitle] = useState('')
   const [busy, setBusy] = useState<'' | 'send' | 'test'>('')
+  const [fileKey, setFileKey] = useState(0)          // leert das Datei-Feld nach dem Senden
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   const load = useCallback(async () => {
     const { data } = await supabase.from('deals')
       .select('id, phase, unit:crm_project_units!deals_unit_id_fkey(unit_number, project:crm_projects(name))')
-      .eq('lead_id', leadId).not('unit_id', 'is', null).order('created_at', { ascending: false })
+      .eq('lead_id', leadId).not('unit_id', 'is', null).not('phase', 'in', '(archiviert,deal_verloren)').order('created_at', { ascending: false })
     const rows = (data ?? []) as unknown as Array<{ id: string; phase: string; unit: { unit_number: string; project: { name: string } | null } | null }>
     const list = rows.map(r => ({ id: r.id, label: `${r.unit?.project?.name ?? ''} ${r.unit?.unit_number ?? ''}`.trim() }))
     setUnits(list)
-    setDealId(d => d || list[0]?.id || '')
+    setDealId(d => d || (initialDealId && list.some(u => u.id === initialDealId) ? initialDealId : list[0]?.id) || '')
     try {
       const r = await reservationCall<{ docs: SignDoc[] }>({ action: 'doc_list', lead_id: leadId })
       setDocs(r.docs)
     } catch { setDocs([]) }
-  }, [leadId])
+  }, [leadId, initialDealId])
   useEffect(() => { load() }, [load])
 
   if (!units.length) return null
@@ -68,11 +69,17 @@ export default function SignDocumentsCard({ leadId }: { leadId: string }) {
       })
       setMsg(r.errors?.length ? { ok: false, text: r.errors.join(' · ') }
         : { ok: true, text: test ? t('signDocs.testSent', 'Test ging an dich (Mail + WhatsApp mit Unterschriftslink).') : t('signDocs.sent', 'Ist beim Bauträger zur Unterschrift.') })
-      if (!test) { setFile(null); setTitle('') }
+      if (!test) { setFile(null); setTitle(''); setFileKey(k => k + 1) }
       await load()
     } catch (e) {
       setMsg({ ok: false, text: (e as Error).message })
     } finally { setBusy('') }
+  }
+
+  const cancel = async (id: string) => {
+    if (!window.confirm(t('signDocs.cancelConfirm', 'Dokument zurückziehen? Der Link an den Bauträger wird ungültig.'))) return
+    try { await reservationCall({ action: 'doc_cancel', id }); await load() }
+    catch (e) { setMsg({ ok: false, text: (e as Error).message }) }
   }
 
   const openSigned = async (path: string) => {
@@ -117,6 +124,9 @@ export default function SignDocumentsCard({ leadId }: { leadId: string }) {
                     onClick={() => navigator.clipboard?.writeText(`${window.location.origin}/sign/d/${d.token}`).then(() => setMsg({ ok: true, text: t('signDocs.linkCopied', 'Link kopiert') }))}
                     className="text-xs text-gray-500 hover:text-gray-800">🔗</button>
                 )}
+                {d.status === 'offen' && !d.test && (
+                  <button title={t('signDocs.cancel', 'Zurückziehen')} onClick={() => cancel(d.id)} className="text-xs text-gray-400 hover:text-red-600">✕</button>
+                )}
                 {d.signed_pdf_path && (
                   <button onClick={() => openSigned(d.signed_pdf_path!)} className="text-xs text-gray-500 hover:text-gray-800">📄</button>
                 )}
@@ -136,7 +146,7 @@ export default function SignDocumentsCard({ leadId }: { leadId: string }) {
         <input value={title} onChange={e => setTitle(e.target.value)} placeholder={t('signDocs.titlePh', 'Titel (leer = „Spezifikation Projekt Einheit")')}
           className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-orange-400" />
         <label className="sm:col-span-2 flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
-          <input type="file" accept="application/pdf" onChange={e => setFile(e.target.files?.[0] ?? null)} className="text-xs" />
+          <input key={fileKey} type="file" accept="application/pdf" onChange={e => setFile(e.target.files?.[0] ?? null)} className="text-xs" />
         </label>
       </div>
 

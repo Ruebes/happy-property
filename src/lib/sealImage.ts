@@ -22,6 +22,8 @@ export async function processSealImage(file: File): Promise<string> {
     c.width = w; c.height = h
     const ctx = c.getContext('2d', { willReadFrequently: true })
     if (!ctx) throw new Error('image_unreadable')
+    // auf Weiß legen: transparente PNG-Stempel würden sonst als Schwarz (Helligkeit 0) gelesen
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, h)
     ctx.drawImage(img, 0, 0, w, h)
     const id = ctx.getImageData(0, 0, w, h)
     const d = id.data

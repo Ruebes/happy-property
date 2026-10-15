@@ -103,7 +103,8 @@
     "sealDeleteConfirm": "Stempel löschen?",
     "sealSaved": "Stempel gespeichert",
     "sealNotFound": "Auf dem Foto wurde kein Stempel erkannt (auf weißes Papier stempeln, von oben fotografieren).",
-    "sealHint": "Gilt für alle Dokumente dieses Bauträgers. Der Bauträger kann ihn auch selbst beim Unterschreiben hochladen und jedes Mal mit oder ohne Stempel unterschreiben."
+    "sealHint": "Gilt für alle Dokumente dieses Bauträgers. Der Bauträger kann ihn auch selbst beim Unterschreiben hochladen und jedes Mal mit oder ohne Stempel unterschreiben.",
+    "sealUnreadable": "Das Foto ließ sich nicht lesen (bitte JPG oder PNG verwenden)."
   },
   "signDocs": {
     "title": "Dokumente zur Unterschrift",
@@ -122,7 +123,9 @@
     "linkCopied": "Link kopiert",
     "titlePh": "Titel (leer = „Spezifikation Projekt Einheit\")",
     "test": "Test an mich",
-    "send": "An Bauträger zur Unterschrift"
+    "send": "An Bauträger zur Unterschrift",
+    "cancel": "Zurückziehen",
+    "cancelConfirm": "Dokument zurückziehen? Der Link an den Bauträger wird ungültig."
   },
   "app": {
     "name": "Happy Property",

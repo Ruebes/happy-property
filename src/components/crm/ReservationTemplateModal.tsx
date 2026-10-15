@@ -30,6 +30,7 @@ export default function ReservationTemplateModal({ developer, onClose }: { devel
   // Firmenstempel des Bauträgers (gilt für alle seine Dokumente; Bauträger kann ihn auch beim Unterschreiben hochladen)
   const [seal, setSeal] = useState<string | null>(null)
   const [sealBusy, setSealBusy] = useState(false)
+  const [sealInputKey, setSealInputKey] = useState(0)   // gleiche Datei erneut wählbar
 
   useEffect(() => {
     let alive = true
@@ -101,8 +102,9 @@ export default function ReservationTemplateModal({ developer, onClose }: { devel
       setMsg({ ok: true, text: t('reservationTpl.sealSaved', 'Stempel gespeichert') })
     } catch (e) {
       const m = (e as Error).message
-      setMsg({ ok: false, text: m === 'seal_not_found' ? t('reservationTpl.sealNotFound', 'Auf dem Foto wurde kein Stempel erkannt (auf weißes Papier stempeln, von oben fotografieren).') : m })
-    } finally { setSealBusy(false) }
+      setMsg({ ok: false, text: m === 'seal_not_found' ? t('reservationTpl.sealNotFound', 'Auf dem Foto wurde kein Stempel erkannt (auf weißes Papier stempeln, von oben fotografieren).')
+        : m === 'image_unreadable' ? t('reservationTpl.sealUnreadable', 'Das Foto ließ sich nicht lesen (bitte JPG oder PNG verwenden).') : m })
+    } finally { setSealBusy(false); setSealInputKey(k => k + 1) }
   }
   const deleteSeal = async () => {
     if (!window.confirm(t('reservationTpl.sealDeleteConfirm', 'Stempel löschen?'))) return
@@ -215,7 +217,7 @@ export default function ReservationTemplateModal({ developer, onClose }: { devel
                   <div className="space-y-1.5">
                     <label className="block text-xs font-medium text-orange-600 cursor-pointer hover:underline">
                       {sealBusy ? '…' : seal ? t('reservationTpl.sealReplace', 'Neues Stempelfoto hochladen') : t('reservationTpl.sealUpload', 'Stempelfoto hochladen')}
-                      <input type="file" accept="image/*" className="hidden" disabled={sealBusy} onChange={e => uploadSeal(e.target.files?.[0])} />
+                      <input key={sealInputKey} type="file" accept="image/*" className="hidden" disabled={sealBusy} onChange={e => uploadSeal(e.target.files?.[0])} />
                     </label>
                     {seal && <button onClick={deleteSeal} disabled={sealBusy} className="block text-xs text-gray-500 hover:text-red-600">{t('reservationTpl.sealDelete', 'Stempel löschen')}</button>}
                     <p className="text-[11px] text-gray-400 max-w-xs">{t('reservationTpl.sealHint', 'Gilt für alle Dokumente dieses Bauträgers. Der Bauträger kann ihn auch selbst beim Unterschreiben hochladen und jedes Mal mit oder ohne Stempel unterschreiben.')}</p>

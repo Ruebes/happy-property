@@ -27,7 +27,7 @@ import ReservationAgreementCard from '../../../components/crm/ReservationAgreeme
 import SignDocumentsCard from '../../../components/crm/SignDocumentsCard'
 import type { CrmAppointment } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
-import { detachPropertyFromOwner, detachConfirmText, dealInPortal, fetchUnitPropertyId, isForeignOwnedProperty, leadProfileIds } from '../../../lib/detachProperty'
+import { detachPropertyFromOwner, detachConfirmText, dealInPortal, fetchUnitPropertyId, isForeignOwnedProperty, leadProfileIds, PORTAL_PHASES } from '../../../lib/detachProperty'
 
 type TabId = 'overview' | 'notes' | 'activities' | 'ai' | 'emails' | 'tasks' | 'documents' | 'appointments' | 'scheduled' | 'portal' | 'wohnung'
 
@@ -2616,6 +2616,15 @@ export default function LeadDetail() {
                   </div>
                 )}
 
+                {/* ── Reservierungsvertrag + Dokumente zur digitalen Unterschrift (Spezifikation):
+                     in allen Kauf-Phasen ab Reservierung, nicht nur im Kaufvertrag ── */}
+                {profile?.role === 'admin' && PORTAL_PHASES.includes(deal.phase) && (
+                  <div className="space-y-4">
+                    {deal.unit_id && <ReservationAgreementCard dealId={deal.id} />}
+                    <SignDocumentsCard leadId={deal.lead_id} initialDealId={deal.id} />
+                  </div>
+                )}
+
                 {/* kaufvertrag */}
                 {deal.phase === 'kaufvertrag' && (
                   <div className="space-y-4">
@@ -2641,11 +2650,6 @@ export default function LeadDetail() {
                         📝 {t('crm.notifyLawyer', 'Anwalt informieren')}
                       </button>
                     </div>
-
-                    {/* ── Reservierungsvertrag (Automatik je Bauträger-Vorlage) ── */}
-                    {profile?.role === 'admin' && deal.unit_id && <ReservationAgreementCard dealId={deal.id} />}
-                    {/* ── Dokumente zur digitalen Unterschrift (Spezifikation) ── */}
-                    {profile?.role === 'admin' && <SignDocumentsCard leadId={deal.lead_id} />}
 
                     {/* ── Wohnungszuweisung ──────────────────────────── */}
                     <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 space-y-3">

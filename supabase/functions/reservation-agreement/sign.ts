@@ -72,7 +72,7 @@ export async function signView(sb: SupabaseClient, body: Record<string, unknown>
       fields: p.fields,
       place: placeOf(p.template),
       date: todayCy(),
-      lang: langOf(row.signer_lang),
+      lang: langOf(test ? (row.test_payload as { lang?: string } | null)?.lang : row.signer_lang),
       seal: sealDataUrl(seal),
       pdf_base64: b64(pdf),
     },

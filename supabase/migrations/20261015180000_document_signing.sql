@@ -63,3 +63,6 @@ alter table public.reservation_agreements add column if not exists own_file_ids 
 --    die Tabellen (Service-Role); das CRM holt alles über reservation-agreement (Admin-Guard).
 drop policy if exists reservation_agreements_team_lesen on public.reservation_agreements;
 drop policy if exists sign_documents_team_lesen on public.sign_documents;
+
+-- 6) Review 2: Versand-Sperre mit Ablaufzeit (Sweep und Knopf im CRM können sonst gleichzeitig senden)
+alter table public.reservation_agreements add column if not exists sending_at timestamptz;

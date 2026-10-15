@@ -105,7 +105,7 @@ export interface AgreementRow {
   data: AgreementFields | null; template_snapshot: TemplateDb | null
   sign_token: string | null; test_sign_token: string | null; test_payload: { fields: AgreementFields; template: TemplateDb } | null
   seller_signed_at: string | null; seller_signer_name: string | null; signed_pdf_path: string | null; signer_lang: string | null
-  own_file_ids: string[] | null; updated_at: string
+  own_file_ids: string[] | null; updated_at: string; sending_at: string | null
 }
 export interface Ctx {
   deal: { id: string; lead_id: string; unit_id: string | null; phase: string }
@@ -118,8 +118,10 @@ export interface Ctx {
   template: TemplateDb
   devEmails: string[]
   devPhone: { name: string; phone: string } | null
-  /** Sprache des Bauträger-Kontakts (crm_developer_contacts.language): Seite + Nachrichten */
+  /** Sprache des WhatsApp-Empfängers = Sprache der Unterschriftsseite (crm_developer_contacts.language) */
   devLang: 'de' | 'en'
+  /** Sprache je Mail-Empfänger */
+  devMailLang: Record<string, 'de' | 'en'>
 }
 
 export const leadName = (l: Ctx['lead']) => [l.first_name, l.last_name].map(x => (x ?? '').trim()).filter(Boolean).join(' ') || l.email || 'Kunde'
@@ -171,7 +173,8 @@ export async function loadCtx(sb: Client, dealId: string, fallbackTemplate?: Tem
     deal: d, lead: lead as Ctx['lead'], unit: u, subUnits, project: p, developerName: (dev as { name: string }).name,
     template: tpl as TemplateDb, devEmails,
     devPhone: waContact ? { name: waContact.name ?? p.developer, phone: (waContact.whatsapp || waContact.phone)!.trim() } : null,
-    devLang: ((withDrive.length ? withDrive : cs)[0]?.language === 'de' ? 'de' : 'en'),
+    devLang: (waContact ?? (withDrive.length ? withDrive : cs)[0])?.language === 'de' ? 'de' : 'en',
+    devMailLang: Object.fromEntries(cs.filter(c => c.email?.trim()).map(c => [c.email!.trim(), c.language === 'de' ? 'de' : 'en'])),
   }
 }
 
@@ -394,7 +397,7 @@ async function fileSigned(sb: Client, row: AgreementRow, ctx: Ctx, fileId: strin
   }
   const docId = (ins as { id: string }).id
   await sb.from('reservation_agreements').update({
-    status: 'unterschrieben', signed_file_id: fileId, unit_document_id: docId, review_reason: null, error: null, updated_at: new Date().toISOString(),
+    status: 'unterschrieben', signed_file_id: fileId, unit_document_id: docId, sign_token: null, review_reason: null, error: null, updated_at: new Date().toISOString(),
   }).eq('id', row.id)
   await sb.from('activities').insert({
     lead_id: ctx.lead.id, deal_id: ctx.deal.id, type: 'note', direction: 'inbound', auto: true,
@@ -424,6 +427,18 @@ function signedAgreementOf(checked: Record<string, CheckedFile>, ctx: Ctx, row: 
 }
 
 async function sendOut(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array, fields: AgreementFields, buyers: Buyer[], test: boolean): Promise<Record<string, unknown>> {
+  // Versand-Sperre: Sweep und Knopf im CRM dürfen nie gleichzeitig senden (läuft nach 10 Min ab)
+  if (!test) {
+    const stale = new Date(Date.now() - 10 * 60_000).toISOString()
+    const { data: claim } = await sb.from('reservation_agreements').update({ sending_at: new Date().toISOString() })
+      .eq('id', row.id).or(`sending_at.is.null,sending_at.lt.${stale}`).select('id')
+    if (!claim?.length) throw new Error('Der Vertrag wird gerade schon gesendet. Bitte in ein paar Minuten nachsehen.')
+  }
+  try { return await sendOutLocked(sb, row, ctx, pdf, fields, buyers, test) }
+  finally { if (!test) await sb.from('reservation_agreements').update({ sending_at: null }).eq('id', row.id) }
+}
+
+async function sendOutLocked(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array, fields: AgreementFields, buyers: Buyer[], test: boolean): Promise<Record<string, unknown>> {
   const fname = fileNameFor(ctx)
   // Mail-Anhang ohne Leerzeichen: denomailer kürzt Namen mit Leerzeichen sonst auf das erste Wort.
   const attachment = { filename: fname.replace(/\s*-\s*/g, '_').replace(/\s+/g, '_'), content_base64: b64(pdf), content_type: 'application/pdf' }
@@ -446,8 +461,9 @@ async function sendOut(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array,
   // einen anderen Stand unterschreiben als den, den der Bauträger gesehen hat.
   const signToken = test ? (row.test_sign_token || newToken()) : newToken()
   const signPatch: Record<string, unknown> = { [tokenCol]: signToken, updated_at: new Date().toISOString() }
-  if (test) signPatch.test_payload = { fields, template: ctx.template }
+  if (test) signPatch.test_payload = { fields, template: ctx.template, lang: ctx.devLang }
   else Object.assign(signPatch, {
+    unit_id: ctx.unit.id, template_id: ctx.template.id,
     data: fields, template_snapshot: ctx.template, signer_lang: ctx.devLang,
     seller_signed_at: null, seller_signer_name: null, seller_sign_meta: null, signed_pdf_path: null, signed_file_id: null,
   })
@@ -458,11 +474,11 @@ async function sendOut(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array,
   // 2. Mail an den Bauträger (englisch, PDF im Anhang). Partner-Kommunikation läuft
   //    bewusst OHNE lead_id, damit sie nicht wie eine Kundenmail in der Akte steht.
   const L = ctx.devLang
+  const htmlFor = (lang: 'de' | 'en') => lang === 'de' ? devHtmlDe : devHtmlEn
   const lines = fields.purchasers.map((p, i) => `${esc(p)} &middot; ${esc(fields.id_numbers[i] ?? '')}`).join('<br>')
   const btn = (label: string) => `<p><a href="${signLink}" style="display:inline-block;background:#1a2332;color:#ffffff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:600">${label}</a></p>
 <p style="font-size:13px;color:#6b7280">${signLink}</p>`
-  const devHtml = L === 'de'
-    ? `<p>Hallo ${esc(ctx.developerName)}-Team,</p>
+  const devHtmlDe = `<p>Hallo ${esc(ctx.developerName)}-Team,</p>
 <p>anbei der Reservierungsvertrag für <b>${esc(fields.property_name)}, Einheit ${esc(fields.unit_number)}</b>, bereits ausgefüllt mit den Käuferdaten aus ${buyers.length > 1 ? 'den Pässen' : 'dem Pass'}:</p>
 <p>${lines}</p>
 <p>Kaufpreis: ${esc(fields.price_text)}<br>Anzahlung: ${esc(fields.deposit_text)}</p>
@@ -470,7 +486,7 @@ async function sendOut(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array,
 ${btn('Reservierungsvertrag unterschreiben')}
 <p>Der unterschriebene Vertrag liegt danach automatisch im gemeinsamen Google-Drive-Ordner, auf den Kunde und Anwalt Zugriff haben. Bitte nicht separat an den Kunden schicken.${folderLink ? ` Passkopien: <a href="${folderLink}">${folderLink}</a>` : ''}</p>
 <p>Vielen Dank!<br>Sven &middot; Happy Property</p>`
-    : `<p>Dear ${esc(ctx.developerName)} team,</p>
+  const devHtmlEn = `<p>Dear ${esc(ctx.developerName)} team,</p>
 <p>please find attached the reservation agreement for <b>${esc(fields.property_name)}, unit ${esc(fields.unit_number)}</b>, already filled in with the buyer details from the passport${buyers.length > 1 ? 's' : ''}:</p>
 <p>${lines}</p>
 <p>Purchasing price: ${esc(fields.price_text)}<br>Holding deposit: ${esc(fields.deposit_text)}</p>
@@ -480,9 +496,10 @@ ${btn('Sign the reservation agreement')}
 <p>Thank you very much!<br>Sven &middot; Happy Property</p>`
   const devTargets = test ? [SVEN_MAIL] : ctx.devEmails
   for (const to of devTargets) {
+    const ML = test ? L : (ctx.devMailLang[to] ?? L)
     const err = await invoke(sb, 'send-email', {
-      to, subject: `${test ? 'TEST · ' : ''}${L === 'de' ? 'Reservierungsvertrag' : 'Reservation agreement'} - ${names} (${unitLabel})`, html: devHtml,
-      attachment, auto: true, lang: L, already_translated: true,
+      to, subject: `${test ? 'TEST · ' : ''}${ML === 'de' ? 'Reservierungsvertrag' : 'Reservation agreement'} - ${names} (${unitLabel})`, html: htmlFor(ML),
+      attachment, auto: true, lang: ML, already_translated: true,
     })
     if (err) errors.push(`Mail ${to}: ${err}`)
   }
@@ -539,6 +556,27 @@ function newToken(): string {
 }
 
 // ── Ein Vertrag: prüfen, bauen, senden ───────────────────────────────────────
+/**
+ * Gespeicherte Käufer (ggf. von Sven korrigiert) + KI-Funde zusammenführen:
+ * - eine neue Aufnahme derselben Person ersetzt eine leere oder abgelaufene Nummer
+ * - neue Personen kommen nur dazu, wenn ihre Datei NACH dem letzten Versand kam
+ *   (sonst würde eine von Sven gelöschte Person, z. B. der erwachsene Sohn, zurückkehren)
+ */
+function mergeBuyers(row: AgreementRow, found: Buyer[], checked: Record<string, CheckedFile>): Buyer[] {
+  const saved = (row.buyers ?? []).map(b => ({ ...b }))
+  if (!saved.length) return found
+  const expired = (e: string) => !!e && Date.parse(e) < Date.now()
+  for (const f of found) {
+    const same = saved.find(k => norm(k.full_name) === norm(f.full_name))
+    if (same && f.document_number && !expired(f.expiry_date) && (!same.document_number || expired(same.expiry_date))) {
+      Object.assign(same, { document_number: f.document_number, document_type: f.document_type, expiry_date: f.expiry_date, file_id: f.file_id, file_name: f.file_name })
+    }
+  }
+  const since = row.sent_at ?? ''
+  const extra = found.filter(f => !knownBuyer(saved, f) && (checked[f.file_id]?.created ?? '') > since)
+  return [...saved, ...extra]
+}
+
 /** Ist ein KI-erkannter Käufer schon bekannt (gleiche Nummer ODER gleicher Name)? */
 function knownBuyer(list: Buyer[], b: Buyer): boolean {
   return list.some(k => (!!b.document_number && k.document_number === b.document_number) || norm(k.full_name) === norm(b.full_name))
@@ -549,6 +587,7 @@ async function processRow(sb: Client, initial: AgreementRow, m: Mode): Promise<R
   const { data: fresh } = await sb.from('reservation_agreements').select('*').eq('id', initial.id).maybeSingle()
   const row = fresh as AgreementRow | null
   if (!row || row.status !== initial.status) return { deal: initial.deal_id, skipped: 'Stand geändert' }
+  if (row.seller_signed_at) return { deal: row.deal_id, skipped: 'Unterschrift läuft' }
   const ctx = await loadCtx(sb, row.deal_id, row.template_snapshot)
   if ('error' in ctx) {
     await sb.from('reservation_agreements').update({ error: ctx.error, updated_at: new Date().toISOString() }).eq('id', row.id)
@@ -594,13 +633,11 @@ async function processRow(sb: Client, initial: AgreementRow, m: Mode): Promise<R
   if (!buyers.length || scan.pending || retrying) return { deal: row.deal_id, wartet: scan.pending || retrying ? 'weitere Dateien in Prüfung' : 'kein Ausweis' }
   if (lastIdAt && Date.now() - Date.parse(lastIdAt) < QUIET_MIN * 60_000) return { deal: row.deal_id, wartet: 'weitere Ausweise abwarten' }
 
-  // Zugriff sichern: nur weiter, wenn niemand den Vertrag seit dem Lesen angefasst hat
-  const { data: cur } = await sb.from('reservation_agreements').select('status, updated_at').eq('id', row.id).maybeSingle()
-  const c = cur as { status: string; updated_at: string } | null
-  if (!c || c.status !== row.status) return { deal: row.deal_id, skipped: 'Stand geändert' }
-  const { data: claim } = await sb.from('reservation_agreements').update({ updated_at: new Date().toISOString() })
-    .eq('id', row.id).eq('updated_at', c.updated_at).select('id')
-  if (!claim?.length) return { deal: row.deal_id, skipped: 'parallel bearbeitet' }
+  // Stand kurz vor dem Bauen noch einmal prüfen (Sven kann inzwischen im CRM gesendet haben);
+  // gegen gleichzeitiges Senden schützt die Versand-Sperre in sendOut
+  const { data: cur } = await sb.from('reservation_agreements').select('status, sending_at').eq('id', row.id).maybeSingle()
+  const c = cur as { status: string; sending_at: string | null } | null
+  if (!c || c.status !== row.status || c.sending_at) return { deal: row.deal_id, skipped: 'Stand geändert' }
 
   const { fields, problems } = fieldsFor(ctx, buyers)
   const reasons = gate(ctx, buyers, problems, scan.checked, minors)
@@ -696,7 +733,19 @@ async function sweep(sb: Client): Promise<Record<string, unknown>> {
 // ── Manuelle Aktionen (Sven im CRM) ──────────────────────────────────────────
 async function rowFor(sb: Client, dealId: string, ctx: Ctx): Promise<AgreementRow> {
   const { data } = await sb.from('reservation_agreements').select('*').eq('deal_id', dealId).maybeSingle()
-  if (data) return data as AgreementRow
+  const existing = data as AgreementRow | null
+  if (existing && existing.unit_id !== ctx.unit.id) {
+    // Kunde hat die Wohnung gewechselt: alter Vertrag ist erledigt, neu aufsetzen (Dateiprüfungen bleiben)
+    const { data: reset, error } = await sb.from('reservation_agreements').update({
+      unit_id: ctx.unit.id, template_id: ctx.template.id, status: 'wartet_ausweis', buyers: [], sign_token: null,
+      data: null, template_snapshot: null, review_reason: null, error: null, sent_at: null, sent_to: null,
+      seller_signed_at: null, seller_signer_name: null, seller_sign_meta: null, signed_pdf_path: null, signed_file_id: null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', existing.id).select('*').single()
+    if (error) throw new Error(error.message)
+    return reset as AgreementRow
+  }
+  if (existing) return existing
   const { data: ins, error } = await sb.from('reservation_agreements')
     .insert({ deal_id: dealId, lead_id: ctx.lead.id, unit_id: ctx.unit.id, template_id: ctx.template.id })
     .select('*').single()
@@ -827,8 +876,7 @@ Deno.serve(async (req) => {
         checked = scan.checked
         if (scan.pending) return json({ error: `Die KI prüft noch ${scan.pending} Datei(en) im Drive-Ordner. Bitte in einer Minute noch einmal klicken.` }, 409)
         const found = buyersFrom(checked)
-        const saved = row.buyers ?? []
-        buyers = saved.length ? [...saved, ...found.buyers.filter(b => !knownBuyer(saved, b))] : found.buyers
+        buyers = mergeBuyers(row, found.buyers, checked)
         minors = found.minors
       }
       const { fields, problems } = fieldsFor(ctx, buyers)
