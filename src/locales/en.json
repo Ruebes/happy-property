@@ -8,10 +8,12 @@
       "sent": "Sent to developer",
       "error": "Sending failed",
       "cancelled": "Cancelled",
+      "signed": "Signed, filed with the unit",
       "notStarted": "Starts with stage Reservation"
     },
     "modeTest": "Test mode",
     "modeOff": "Off",
+    "waitingSigned": "Waiting for the signed version in the Drive folder, then filed with the unit under Contracts automatically.",
     "sentAt": "Sent on",
     "buyers": "Buyers according to ID",
     "name": "First and last name",

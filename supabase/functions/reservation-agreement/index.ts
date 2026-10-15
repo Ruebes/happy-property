@@ -6,14 +6,18 @@
 //      aktiver Vorlage (reservation_templates, z. B. „Reservierung Mito")
 //      → Zeile in reservation_agreements (status wartet_ausweis).
 //   2. Kunde lädt seinen Ausweis in den Drive-Kundenordner. Jede neue Datei läuft
-//      einmal durch die KI (ausweis.ts): Ausweis ja/nein, Name, Passnummer.
+//      einmal durch die KI (ausweis.ts): Ausweis / Reservierungsvertrag / sonstiges,
+//      bei Ausweisen Name + Passnummer.
 //   3. 30 Minuten nach dem letzten Ausweis (Paare laden oft nacheinander hoch)
 //      wird der Vertrag ausgefüllt (pdf.ts) und geprüft (Name passt zum Kunden,
 //      Nummer lesbar, nicht abgelaufen, Preis da). Alles gut → PDF per Mail an den
-//      Bauträger + WhatsApp-Hinweis, Ablage im Drive-Ordner und an der Wohnung,
-//      Kopie an Sven. Sonst → status pruefen + WhatsApp an Sven.
-//   4. Nach dem Versand wird der Ordner 7 Tage weiter beobachtet: kommt noch ein
-//      Ausweis dazu, meldet sich das System bei Sven.
+//      Bauträger + WhatsApp-Hinweis, Kopie an Sven. Sonst → status pruefen +
+//      WhatsApp an Sven.
+//   4. Der Bauträger unterschreibt und lädt den Vertrag in den Drive-Ordner (dort
+//      sehen ihn Kunde und Anwalt, Sven 15.10.: NICHT direkt an den Kunden). Sobald
+//      die unterschriebene Fassung dort liegt, wird sie an der Wohnung abgelegt
+//      (crm_unit_documents, im Portal unter „Verträge") → status unterschrieben.
+//      Bis dahin (max. 30 Tage) achtet das System auch auf nachgereichte Ausweise.
 //
 // Schalter crm_settings.reservation_agreement_mode: on | test (alles nur an Sven) | off.
 //
@@ -24,12 +28,13 @@
 //   { action:'preview_template', template, sample? }      Vorlage mit Beispieldaten (base64)
 //   { action:'send',    deal_id, buyers?, test? }         jetzt bauen + senden (Svens Knopf);
 //                                                         test=true → nur an Sven
+//   { action:'check_file', base64, mime, name }           Diagnose: eine Datei durch die KI-Prüfung
 //
 // Deploy: supabase functions deploy reservation-agreement --no-verify-jwt
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { gateCaller } from '../_shared/callerGate.ts'
-import { saToken, uploadToken, listTree, download, thumbnail, uploadFile, type DriveFile } from './drive.ts'
-import { checkId, type IdCheck, type IdPerson } from './ausweis.ts'
+import { saToken, listTree, download, thumbnail } from './drive.ts'
+import { checkFile, type FileCheck, type IdPerson } from './ausweis.ts'
 import { renderAgreement, type AgreementFields, type PropertyKind, type TemplateRow } from './pdf.ts'
 
 const CORS = {
@@ -46,7 +51,7 @@ const CRM_LEAD = 'https://portal.happy-property.com/admin/crm/leads/'
 const FLOW_START = '2026-10-15T00:00:00Z'
 const QUIET_MIN = 30                 // Wartezeit nach dem letzten Ausweis
 const WAIT_DAYS = 45                 // so lange auf einen Ausweis warten
-const WATCH_AFTER_SEND_DAYS = 7      // nach dem Versand auf weitere Ausweise achten
+const WATCH_AFTER_SEND_DAYS = 30     // nach dem Versand auf den unterschriebenen Vertrag + weitere Ausweise achten
 const MAX_CHECKS_PER_RUN = 10        // KI-Prüfungen je Vertrag und Lauf
 const MAX_BYTES = 15 * 1024 * 1024
 const MAX_ATTEMPTS = 3
@@ -66,7 +71,9 @@ interface Buyer {
 }
 interface CheckedFile {
   name: string; at: string; created?: string | null
+  mime?: string
   is_id?: boolean; persons?: IdPerson[]; note?: string
+  kind?: FileCheck['kind']; signed?: boolean; unit?: string
   failed?: number; skipped?: string
 }
 interface AgreementRow {
@@ -74,7 +81,7 @@ interface AgreementRow {
   status: string; buyers: Buyer[]; checked_files: Record<string, CheckedFile>
   last_id_at: string | null; review_reason: string | null; pdf_path: string | null
   unit_document_id: string | null; drive_file_id: string | null; sent_at: string | null
-  sven_notified_at: string | null; created_at: string
+  sven_notified_at: string | null; created_at: string; signed_file_id: string | null
 }
 interface Ctx {
   deal: { id: string; lead_id: string; unit_id: string | null; phase: string }
@@ -144,7 +151,7 @@ async function scanFolder(row: Pick<AgreementRow, 'checked_files' | 'drive_file_
   for (const f of files) {
     const prev = checked[f.id]
     if (prev && (prev.is_id !== undefined || prev.skipped || (prev.failed ?? 0) >= MAX_ATTEMPTS)) continue
-    if (f.id === row.drive_file_id || f.name.toLowerCase().startsWith(ctx.template.title.toLowerCase())) {
+    if (f.id === row.drive_file_id) {
       checked[f.id] = { name: f.name, at: new Date().toISOString(), created: f.createdTime ?? null, skipped: 'eigene Datei' }
       changed = true; continue
     }
@@ -156,16 +163,20 @@ async function scanFolder(row: Pick<AgreementRow, 'checked_files' | 'drive_file_
     if (done >= MAX_CHECKS_PER_RUN) { pending++; continue }
     done++
     changed = true
-    const base = { name: f.name, at: new Date().toISOString(), created: f.createdTime ?? null }
+    const base = { name: f.name, at: new Date().toISOString(), created: f.createdTime ?? null, mime: f.mimeType }
     try {
       const size = f.size ? Number(f.size) : 0
       let src: { bytes: Uint8Array; mime: string } | null = null
       if (AI_MIME.test(f.mimeType) && size <= MAX_BYTES) src = await download(token, f)
       else src = await thumbnail(token, f)          // HEIC-Fotos, sehr große Dateien
       if (!src) { checked[f.id] = { ...base, skipped: `nicht lesbar (${f.mimeType}, ${Math.round(size / 1e6)} MB)` }; continue }
-      const res: IdCheck | null = await checkId(src.bytes, src.mime, f.name)
+      const res: FileCheck | null = await checkFile(src.bytes, src.mime, f.name)
       if (!res) { checked[f.id] = { ...base, failed: (prev?.failed ?? 0) + 1 }; continue }
-      checked[f.id] = { ...base, is_id: res.is_identity_document, persons: res.is_identity_document ? res.persons : [], note: res.note }
+      const isId = res.kind === 'identity_document'
+      checked[f.id] = {
+        ...base, is_id: isId, kind: res.kind, persons: isId ? res.persons : [], note: res.note,
+        ...(res.kind === 'reservation_agreement' ? { signed: res.seller_signed, unit: res.unit_number } : {}),
+      }
     } catch (e) {
       console.error('[reservation-agreement] Prüfung', f.name, (e as Error).message)
       checked[f.id] = { ...base, failed: (prev?.failed ?? 0) + 1, note: (e as Error).message.slice(0, 200) }
@@ -289,22 +300,46 @@ function fileNameFor(ctx: Ctx): string {
   return `${ctx.template.title} ${ctx.project.name} ${ctx.unit.unit_number} - ${leadName(ctx.lead)}.pdf`.replace(/[\\/:*?"<>|]+/g, ' ')
 }
 
-async function storePdf(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array): Promise<{ path: string; docId: string | null }> {
-  const path = `unit-documents/${ctx.unit.id}/${Date.now()}-reservation-agreement.pdf`
-  const { error: upErr } = await sb.storage.from('unit-documents').upload(path, pdf, { contentType: 'application/pdf', upsert: false })
+/** Unterschriebene Fassung aus dem Drive-Ordner an der Wohnung ablegen (Portal: „Verträge"). */
+async function fileSigned(sb: Client, row: AgreementRow, ctx: Ctx, fileId: string, c: CheckedFile): Promise<Record<string, unknown>> {
+  const token = await saToken()
+  const src = await download(token, { id: fileId, name: c.name, mimeType: c.mime ?? 'application/pdf' })
+  const ext = src.mime === 'application/pdf' ? 'pdf' : (src.mime.split('/')[1] ?? 'bin').replace('jpeg', 'jpg')
+  const path = `unit-documents/${ctx.unit.id}/${Date.now()}-reservation-signed.${ext}`
+  const { error: upErr } = await sb.storage.from('unit-documents').upload(path, src.bytes, { contentType: src.mime, upsert: false })
   if (upErr) throw new Error(`Speichern fehlgeschlagen: ${upErr.message}`)
-  const meta = {
+  const { data: ins, error } = await sb.from('crm_unit_documents').insert({
+    unit_id: ctx.unit.id, project_id: ctx.project.id,
     name: `Reservation ${ctx.project.name} ${ctx.unit.unit_number}`,
-    file_path: path, file_name: fileNameFor(ctx), file_size: pdf.byteLength, doc_type: 'sonstiges',
-    notes: 'Reservierungsvereinbarung, automatisch ausgefüllt (noch ohne Unterschriften)',
+    file_path: path, file_name: c.name, file_size: src.bytes.byteLength, doc_type: 'sonstiges',
+    notes: 'Reservierungsvereinbarung, unterschrieben (aus dem Google-Drive-Ordner)',
+  }).select('id').single()
+  if (error) {
+    await sb.storage.from('unit-documents').remove([path])
+    throw new Error(`Ablage an der Wohnung fehlgeschlagen: ${error.message}`)
   }
-  if (row.unit_document_id) {
-    const { data } = await sb.from('crm_unit_documents').update(meta).eq('id', row.unit_document_id).select('id')
-    if (data?.length) return { path, docId: row.unit_document_id }
-  }
-  const { data: ins, error } = await sb.from('crm_unit_documents').insert({ ...meta, unit_id: ctx.unit.id, project_id: ctx.project.id }).select('id').single()
-  if (error) console.warn('[reservation-agreement] crm_unit_documents:', error.message)
-  return { path, docId: (ins as { id?: string } | null)?.id ?? null }
+  const docId = (ins as { id: string }).id
+  await sb.from('reservation_agreements').update({
+    status: 'unterschrieben', signed_file_id: fileId, unit_document_id: docId, review_reason: null, error: null, updated_at: new Date().toISOString(),
+  }).eq('id', row.id)
+  await sb.from('activities').insert({
+    lead_id: ctx.lead.id, deal_id: ctx.deal.id, type: 'note', direction: 'inbound', auto: true,
+    subject: 'Reservierungsvertrag unterschrieben',
+    content: `Unterschriebener Reservierungsvertrag ${ctx.project.name} ${ctx.unit.unit_number} liegt im Drive-Ordner („${c.name}") und ist an der Wohnung unter Verträge abgelegt.`,
+    completed_at: new Date().toISOString(),
+  })
+  return { deal: row.deal_id, unterschrieben: c.name }
+}
+
+/** Vom Bauträger unterschriebener Reservierungsvertrag für DIESE Wohnung im Ordner? (jüngster) */
+function signedAgreementOf(checked: Record<string, CheckedFile>, ctx: Ctx, row: AgreementRow): [string, CheckedFile] | null {
+  const key = (u: string) => u.toUpperCase().replace(/[^A-Z0-9]/g, '')
+  const unit = key(ctx.unit.unit_number)
+  const hits = Object.entries(checked)
+    .filter(([id, c]) => c.kind === 'reservation_agreement' && c.signed && id !== row.drive_file_id && id !== row.signed_file_id
+      && !!c.unit && (key(c.unit) === unit || key(c.unit).endsWith(unit)))
+    .sort(([, a], [, b]) => (b.created ?? '').localeCompare(a.created ?? ''))
+  return hits[0] ?? null
 }
 
 async function sendOut(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array, fields: AgreementFields, buyers: Buyer[], test: boolean): Promise<Record<string, unknown>> {
@@ -316,28 +351,10 @@ async function sendOut(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array,
   const names = fields.purchasers.join(', ')
   const errors: string[] = []
 
-  // 1. Ablage: an der Wohnung (CRM) und im Drive-Kundenordner. Der Drive-Eintrag
-  //    wird gleich als „gemeldet" vermerkt, damit owner-drive nicht alle Ordner-
-  //    Mitglieder über einen noch unterschriebenen Entwurf informiert.
-  let stored: { path: string; docId: string | null } | null = null
-  let driveFileId: string | null = row.drive_file_id
-  if (!test) {
-    stored = await storePdf(sb, row, ctx, pdf)
-    if (ctx.lead.drive_folder_id) {
-      try {
-        const tok = await uploadToken(sb)
-        if (!tok) throw new Error('Drive-Upload nicht verbunden')
-        const up: DriveFile = await uploadFile(tok, ctx.lead.drive_folder_id, fname, 'application/pdf', pdf)
-        driveFileId = up.id
-        await sb.from('drive_folder_files').upsert({
-          file_id: up.id, lead_id: ctx.lead.id, folder_id: ctx.lead.drive_folder_id, name: up.name, mime_type: up.mimeType,
-          size_bytes: pdf.byteLength, web_view_link: up.webViewLink ?? null, path: '', uploader_name: 'Happy Property',
-          uploader_email: null, source: 'portal', created_time: up.createdTime ?? new Date().toISOString(),
-          notified_at: new Date().toISOString(), notify_result: { skipped: 'reservation-agreement' },
-        }, { onConflict: 'file_id' })
-      } catch (e) { errors.push(`Drive: ${(e as Error).message}`) }
-    }
-  }
+  // 1. Der unsignierte Entwurf geht NICHT in den Drive-Ordner (Kunde und Anwalt sollen
+  //    dort nur die unterschriebene Fassung sehen) und nicht an die Wohnung. Er liegt
+  //    nur im Storage, damit das CRM ihn zeigen kann.
+  const draftPath = test ? row.pdf_path : await storePdfDraft(sb, row, ctx, pdf)
 
   // 2. Mail an den Bauträger (englisch, PDF im Anhang). Partner-Kommunikation läuft
   //    bewusst OHNE lead_id, damit sie nicht wie eine Kundenmail in der Akte steht.
@@ -345,8 +362,10 @@ async function sendOut(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array,
 <p>please find attached the reservation agreement for <b>${esc(fields.property_name)}, unit ${esc(fields.unit_number)}</b>, already filled in with the buyer details from the passport${buyers.length > 1 ? 's' : ''}:</p>
 <p>${fields.purchasers.map((p, i) => `${esc(p)} &middot; ${esc(fields.id_numbers[i] ?? '')}`).join('<br>')}</p>
 <p>Purchasing price: ${esc(fields.price_text)}<br>Holding deposit: ${esc(fields.deposit_text)}</p>
-${folderLink ? `<p>The passport copies are in the shared Google Drive folder: <a href="${folderLink}">${folderLink}</a></p>` : ''}
-<p>Please check, sign and seal the agreement and send it to the client for signature.</p>
+${folderLink
+  ? `<p>Please check, sign and seal the agreement and <b>upload the signed version to the shared Google Drive folder</b>, where you also find the passport copies:<br><a href="${folderLink}">${folderLink}</a></p>
+<p>The client and the lawyer have access to this folder, so please do not send it to the client separately. As soon as it is in the folder, we file it automatically.</p>`
+  : `<p>Please check, sign and seal the agreement and reply to this email with the signed version.</p>`}
 <p>Thank you very much!<br>Sven &middot; Happy Property</p>`
   const devTargets = test ? [SVEN_MAIL] : ctx.devEmails
   for (const to of devTargets) {
@@ -358,7 +377,9 @@ ${folderLink ? `<p>The passport copies are in the shared Google Drive folder: <a
   }
 
   // 3. WhatsApp-Hinweis an den Bauträger
-  const devWa = `Hi ${ctx.devPhone?.name.split(' ')[0] ?? ''}, Lotte from Happy Property here 🐾\n\nThe reservation agreement for ${fields.property_name}, unit ${fields.unit_number} (${names}) is filled in and in your inbox (${ctx.devEmails.join(', ')}).${folderLink ? `\n\nPassports and agreement are also in the shared Drive folder:\n${folderLink}` : ''}\n\nPlease sign, seal and send it to the client. Thank you!`
+  const devWa = `Hi ${ctx.devPhone?.name.split(' ')[0] ?? ''}, Lotte from Happy Property here 🐾\n\nThe reservation agreement for ${fields.property_name}, unit ${fields.unit_number} (${names}) is filled in and in your inbox (${ctx.devEmails.join(', ')}).\n\n${folderLink
+    ? `Please sign and seal it and upload the signed version to the shared Drive folder (client and lawyer have access there, no need to send it to the client):\n${folderLink}`
+    : 'Please sign and seal it and reply to the email with the signed version.'}\n\nThank you!`
   if (test || ctx.devPhone) {
     const err = await invoke(sb, 'send-whatsapp', {
       event_type: 'reservation_agreement', override_text: (test ? 'TEST · ' : '') + devWa, auto: true, lang: 'en', already_translated: true,
@@ -371,7 +392,7 @@ ${folderLink ? `<p>The passport copies are in the shared Google Drive folder: <a
   if (!test) {
     const err = await invoke(sb, 'send-email', {
       to: SVEN_MAIL, subject: `Reservierungsvertrag an ${ctx.developerName}: ${leadName(ctx.lead)} (${unitLabel})`,
-      html: `<p>Der Reservierungsvertrag ist automatisch ausgefüllt und an ${esc(ctx.devEmails.join(', '))} gegangen.</p>
+      html: `<p>Der Reservierungsvertrag ist automatisch ausgefüllt und an ${esc(ctx.devEmails.join(', '))} gegangen. ${esc(ctx.developerName)} lädt die unterschriebene Fassung in den Drive-Ordner; sobald sie dort liegt, wird sie an der Wohnung unter Verträge abgelegt.</p>
 <p>${fields.purchasers.map((p, i) => `${esc(p)} &middot; ${esc(fields.id_numbers[i] ?? '')}`).join('<br>')}</p>
 <p><a href="${CRM_LEAD}${ctx.lead.id}">Kunde im CRM</a></p>`,
       attachment, auto: true, lang: 'de', already_translated: true,
@@ -389,8 +410,7 @@ ${folderLink ? `<p>The passport copies are in the shared Google Drive folder: <a
     })
     await sb.from('reservation_agreements').update({
       status: mailOk ? 'gesendet' : 'fehler', sent_at: mailOk ? new Date().toISOString() : null, sent_to: ctx.devEmails,
-      buyers, data: fields, pdf_path: stored?.path ?? row.pdf_path, unit_document_id: stored?.docId ?? row.unit_document_id,
-      drive_file_id: driveFileId, error: errors.length ? errors.join('; ') : null, review_reason: null, updated_at: new Date().toISOString(),
+      buyers, data: fields, pdf_path: draftPath, error: errors.length ? errors.join('; ') : null, review_reason: null, updated_at: new Date().toISOString(),
     }).eq('id', row.id)
   }
   return { ok: mailOk, test, sent_to: devTargets, errors }
@@ -413,6 +433,12 @@ async function processRow(sb: Client, row: AgreementRow, m: Mode): Promise<Recor
     await sb.from('reservation_agreements').update({ checked_files: scan.checked, last_id_at: lastIdAt, updated_at: new Date().toISOString() }).eq('id', row.id)
   }
   const kunde = `${leadName(ctx.lead)} (${ctx.project.name} ${ctx.unit.unit_number})`
+
+  // Unterschriebene Fassung vom Bauträger im Ordner? → an der Wohnung ablegen, fertig.
+  // Greift auch, wenn der Bauträger den Vertrag selbst gemacht hat (status wartet/pruefen).
+  const signed = signedAgreementOf(scan.checked, ctx, row)
+  if (signed) return await fileSigned(sb, row, ctx, signed[0], signed[1])
+  if (row.status === 'pruefen') return { deal: row.deal_id, beobachtet: true }
 
   // Nach dem Versand: neuer Ausweis dazugekommen?
   if (row.status === 'gesendet') {
@@ -478,7 +504,7 @@ async function sweep(sb: Client): Promise<Record<string, unknown>> {
   const since = new Date(Date.now() - WAIT_DAYS * 864e5).toISOString()
   const watchSince = new Date(Date.now() - WATCH_AFTER_SEND_DAYS * 864e5).toISOString()
   const { data: rows } = await sb.from('reservation_agreements').select('*')
-    .or(`and(status.eq.wartet_ausweis,created_at.gte.${since}),and(status.eq.gesendet,sent_at.gte.${watchSince})`)
+    .or(`and(status.eq.wartet_ausweis,created_at.gte.${since}),and(status.eq.pruefen,created_at.gte.${since}),and(status.eq.gesendet,sent_at.gte.${watchSince})`)
   const results: Array<Record<string, unknown>> = []
   for (const r of (rows ?? []) as AgreementRow[]) {
     try { results.push(await processRow(sb, r, m)) }
@@ -543,6 +569,16 @@ Deno.serve(async (req) => {
       if (!t?.company_name) return json({ error: 'Vorlage fehlt' }, 400)
       const pdf = await renderAgreement(t, { ...SAMPLE, ...(body.sample as Partial<AgreementFields> ?? {}) })
       return json({ ok: true, pdf_base64: b64(pdf) })
+    }
+
+    if (action === 'check_file') {
+      // Diagnose: eine Datei so prüfen, wie es der Sweep tut (nichts wird gespeichert)
+      const data = String(body.base64 ?? '')
+      if (!data) return json({ error: 'base64 fehlt' }, 400)
+      const bin = atob(data)
+      const bytes = new Uint8Array(bin.length)
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+      return json({ ok: true, result: await checkFile(bytes, String(body.mime ?? 'application/pdf'), String(body.name ?? 'datei')) })
     }
 
     const dealId = String(body.deal_id ?? '')

@@ -8,10 +8,12 @@
       "sent": "An Bauträger geschickt",
       "error": "Fehler beim Versand",
       "cancelled": "Abgebrochen",
+      "signed": "Unterschrieben, an der Wohnung abgelegt",
       "notStarted": "Startet mit Phase Reservierung"
     },
     "modeTest": "Testmodus",
     "modeOff": "Aus",
+    "waitingSigned": "Wartet auf die unterschriebene Fassung im Drive-Ordner, wird dann automatisch an der Wohnung unter Verträge abgelegt.",
     "sentAt": "Geschickt am",
     "buyers": "Käufer laut Ausweis",
     "name": "Vor- und Nachname",

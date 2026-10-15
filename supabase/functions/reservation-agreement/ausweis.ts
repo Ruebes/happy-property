@@ -1,6 +1,7 @@
-// Ausweis-Erkennung: Ist die Datei ein Reisepass / Personalausweis, und wenn ja,
-// wer steht drin? Eine Datei kann mehrere Ausweise enthalten (z. B. beide Pässe
-// eines Ehepaars in einem PDF).
+// Datei-Erkennung im Kundenordner: Ausweis (Reisepass / Personalausweis, mit
+// Name + Nummer je Person) oder vom Bauträger unterschriebener Reservierungs-
+// vertrag (mit Wohnungsnummer)? Eine Datei kann mehrere Ausweise enthalten
+// (z. B. beide Pässe eines Ehepaars in einem PDF).
 import { callAnthropic, toolInput } from '../_shared/anthropic.ts'
 
 export interface IdPerson {
@@ -12,28 +13,34 @@ export interface IdPerson {
   date_of_birth: string     // YYYY-MM-DD oder ''
   expiry_date: string       // YYYY-MM-DD oder ''
 }
-export interface IdCheck {
-  is_identity_document: boolean
+export interface FileCheck {
+  kind: 'identity_document' | 'reservation_agreement' | 'other'
   persons: IdPerson[]
+  /** Nur bei reservation_agreement: trägt der Vertrag eine Unterschrift oder einen Stempel des Verkäufers? */
+  seller_signed: boolean
+  /** Nur bei reservation_agreement: Wohnungsnummer laut Vertrag */
+  unit_number: string
   note: string
 }
 
 const TOOL = {
-  name: 'record_id_check',
-  description: 'Record whether the file is an identity document and the data of every person shown on it.',
+  name: 'record_file_check',
+  description: 'Record what kind of document the file is and the data needed from it.',
   strict: true,
   input_schema: {
     type: 'object',
     additionalProperties: false,
-    required: ['is_identity_document', 'persons', 'note'],
+    required: ['kind', 'persons', 'seller_signed', 'unit_number', 'note'],
     properties: {
-      is_identity_document: {
-        type: 'boolean',
-        description: 'true only if the file itself is a photo or scan of a passport data page or a national identity card (front or back). Contracts, reservation forms, bank statements or letters that merely mention an ID number are NOT identity documents.',
+      kind: {
+        type: 'string', enum: ['identity_document', 'reservation_agreement', 'other'],
+        description: 'identity_document: the file itself is a photo or scan of a passport data page or a national identity card (front or back). '
+          + 'reservation_agreement: a property reservation agreement / reservation form between a developer and buyers. '
+          + 'other: anything else (purchase contracts, bank statements, letters, brochures). A document that merely mentions an ID number is NOT an identity document.',
       },
       persons: {
         type: 'array',
-        description: 'One entry per identity document visible in the file. Empty if is_identity_document is false.',
+        description: 'Only for identity_document: one entry per identity document visible in the file. Empty otherwise.',
         items: {
           type: 'object',
           additionalProperties: false,
@@ -49,7 +56,9 @@ const TOOL = {
           },
         },
       },
-      note: { type: 'string', description: 'Short remark, e.g. what kind of document it is if not an ID, or which field was hard to read.' },
+      seller_signed: { type: 'boolean', description: 'Only for reservation_agreement: true if the seller/developer side carries a handwritten signature or a company seal. false for an empty, unsigned form and for every other kind.' },
+      unit_number: { type: 'string', description: 'Only for reservation_agreement: the property unit number written on it, e.g. A1. Empty string otherwise.' },
+      note: { type: 'string', description: 'Short remark, e.g. what kind of document it is, or which field was hard to read.' },
     },
   },
 }
@@ -62,7 +71,7 @@ function b64(bytes: Uint8Array): string {
 }
 
 /** Prüft eine Datei. Rückgabe null = Prüfung nicht möglich (nächste Runde erneut versuchen). */
-export async function checkId(bytes: Uint8Array, mime: string, fileName: string): Promise<IdCheck | null> {
+export async function checkFile(bytes: Uint8Array, mime: string, fileName: string): Promise<FileCheck | null> {
   const isPdf = mime === 'application/pdf'
   const block = isPdf
     ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64(bytes) } }
@@ -71,21 +80,21 @@ export async function checkId(bytes: Uint8Array, mime: string, fileName: string)
     model: 'claude-opus-5-5',
     fallbackModels: ['claude-sonnet-4-6'],
     max_tokens: 16000,
-    label: 'reservation-ausweis',
-    system: 'You check files that real-estate buyers uploaded to their own folder for a property reservation. '
-      + 'Decide whether the file is an identity document (passport or national ID card) and, if so, read the data of each person exactly. '
-      + 'Accuracy of the document number matters most: it goes into a legal reservation agreement. '
-      + 'Always answer by calling the tool record_id_check exactly once.',
+    label: 'reservation-datei',
+    system: 'You check files in a real-estate buyer\'s shared folder during a property reservation. '
+      + 'Decide whether a file is an identity document (passport or national ID card), a reservation agreement, or something else. '
+      + 'For identity documents read the data of each person exactly; the document number goes into a legal reservation agreement, so accuracy matters most. '
+      + 'Always answer by calling the tool record_file_check exactly once.',
     messages: [{
       role: 'user',
-      content: [block, { type: 'text', text: `File name: ${fileName}\nCall record_id_check with the result.` }],
+      content: [block, { type: 'text', text: `File name: ${fileName}\nCall record_file_check with the result.` }],
     }],
     tools: [TOOL],
     tool_choice: { type: 'auto' },
   })
   if (!res.ok) { console.error('[reservation-agreement] KI-Prüfung', fileName, res.error); return null }
-  const out = toolInput<IdCheck>(res)
-  if (!out || typeof out.is_identity_document !== 'boolean' || !Array.isArray(out.persons)) {
+  const out = toolInput<FileCheck>(res)
+  if (!out || !['identity_document', 'reservation_agreement', 'other'].includes(out.kind) || !Array.isArray(out.persons)) {
     console.warn('[reservation-agreement] KI ohne Tool-Ergebnis', fileName, res.stop_reason)
     return null
   }

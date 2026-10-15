@@ -616,7 +616,7 @@ export interface ReservationTemplate {
   updated_at:        string
 }
 
-export type ReservationAgreementStatus = 'wartet_ausweis' | 'pruefen' | 'gesendet' | 'fehler' | 'abgebrochen'
+export type ReservationAgreementStatus = 'wartet_ausweis' | 'pruefen' | 'gesendet' | 'unterschrieben' | 'fehler' | 'abgebrochen'
 export interface ReservationBuyer {
   full_name:       string
   document_number: string

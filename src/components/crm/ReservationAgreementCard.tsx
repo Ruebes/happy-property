@@ -18,6 +18,7 @@ const STATUS_STYLE: Record<string, string> = {
   wartet_ausweis: 'bg-gray-100 text-gray-600',
   pruefen:        'bg-amber-100 text-amber-800',
   gesendet:       'bg-green-100 text-green-700',
+  unterschrieben: 'bg-green-600 text-white',
   fehler:         'bg-red-100 text-red-700',
   abgebrochen:    'bg-gray-100 text-gray-400',
 }
@@ -47,6 +48,7 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
     wartet_ausweis: t('reservation.status.waiting', 'Wartet auf Ausweis'),
     pruefen:        t('reservation.status.review', 'Bitte prüfen'),
     gesendet:       t('reservation.status.sent', 'An Bauträger geschickt'),
+    unterschrieben: t('reservation.status.signed', 'Unterschrieben, an der Wohnung abgelegt'),
     fehler:         t('reservation.status.error', 'Fehler beim Versand'),
     abgebrochen:    t('reservation.status.cancelled', 'Abgebrochen'),
   }
@@ -106,9 +108,14 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
         </div>
       </div>
 
-      {row?.status === 'gesendet' && row.sent_at && (
+      {(row?.status === 'gesendet' || row?.status === 'unterschrieben') && row.sent_at && (
         <p className="text-xs text-green-700">
           {t('reservation.sentAt', 'Geschickt am')} {fmtDate(row.sent_at)}{row.sent_to?.length ? ` · ${row.sent_to.join(', ')}` : ''}
+        </p>
+      )}
+      {row?.status === 'gesendet' && (
+        <p className="text-xs text-gray-500">
+          {t('reservation.waitingSigned', 'Wartet auf die unterschriebene Fassung im Drive-Ordner, wird dann automatisch an der Wohnung unter Verträge abgelegt.')}
         </p>
       )}
       {row?.review_reason && row.status === 'pruefen' && (
@@ -157,7 +164,7 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
         </button>
         <button onClick={() => send(false)} disabled={!!busy}
           className={`${btn} border-transparent text-white bg-[#ff795d] hover:opacity-90`}>
-          {busy === 'send' ? '…' : `📤 ${row?.status === 'gesendet' ? t('reservation.resend', 'Erneut an Bauträger senden') : t('reservation.send', 'An Bauträger senden')}`}
+          {busy === 'send' ? '…' : `📤 ${row?.status === 'gesendet' || row?.status === 'unterschrieben' ? t('reservation.resend', 'Erneut an Bauträger senden') : t('reservation.send', 'An Bauträger senden')}`}
         </button>
       </div>
     </div>
