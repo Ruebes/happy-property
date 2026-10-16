@@ -10,6 +10,7 @@
 // Deploy:  supabase functions deploy connectors --no-verify-jwt
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { getWaProvider, setWaProvider, evoConfig, evoConnectionState, evoNumber } from '../_shared/waProvider.ts'
+import { gadsAccessToken, gadsListAccessible, gadsCustomerInfo, cleanCustomerId } from '../_shared/googleAds.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -19,7 +20,10 @@ const CORS = {
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
 
 // Im CRM änderbare Tokens (Ablage in connector_secrets, Env als Fallback).
-const EDITABLE = new Set(['LINKEDIN_ACCESS_TOKEN', 'META_ACCESS_TOKEN', 'YOUTUBE_CLIENT_ID', 'YOUTUBE_CLIENT_SECRET', 'YOUTUBE_REFRESH_TOKEN', 'DROPBOX_APP_KEY'])
+const EDITABLE = new Set(['LINKEDIN_ACCESS_TOKEN', 'META_ACCESS_TOKEN', 'YOUTUBE_CLIENT_ID', 'YOUTUBE_CLIENT_SECRET', 'YOUTUBE_REFRESH_TOKEN', 'DROPBOX_APP_KEY', 'GOOGLE_ADS_CUSTOMER_ID', 'GOOGLE_ADS_LOGIN_CUSTOMER_ID'])
+// Google-Ads-Kontonummern: nur 10 Ziffern speichern (Bindestriche aus der Oberfläche entfernen)
+const GADS_ID_KEYS = new Set(['GOOGLE_ADS_CUSTOMER_ID', 'GOOGLE_ADS_LOGIN_CUSTOMER_ID'])
+const fmtGadsId = (id: string) => id.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3')
 
 async function secretOf(sb: SupabaseClient, key: string): Promise<string> {
   const { data } = await sb.from('connector_secrets').select('value').eq('key', key).maybeSingle()
@@ -57,6 +61,34 @@ const CHECKS: Check[] = [
   { key: 'YOUTUBE_REFRESH_TOKEN', label: 'YouTube — Refresh-Token', editable: true, run: async (sb) => {
     const v = await secretOf(sb, 'YOUTUBE_REFRESH_TOKEN')
     return v ? { ok: true, detail: 'Hinterlegt.' } : { ok: false, detail: 'Fehlt.' }
+  } },
+  // Google Ads (YouTube- und Google-Werbung): verbunden über yt-oauth?target=gads.
+  // Zugriffsstufe hängt am Cloud-Projekt des OAuth-Clients (kein Developer-Token mehr).
+  { key: 'GOOGLE_ADS', label: 'Google Ads (YouTube- & Google-Werbung)', run: async (sb) => {
+    const [rtok, account, cust, login] = await Promise.all([secretOf(sb, 'GOOGLE_ADS_REFRESH_TOKEN'), secretOf(sb, 'GOOGLE_ADS_ACCOUNT'), secretOf(sb, 'GOOGLE_ADS_CUSTOMER_ID'), secretOf(sb, 'GOOGLE_ADS_LOGIN_CUSTOMER_ID')])
+    if (!rtok) return { ok: false, detail: 'Nicht verbunden. „Verbinden" klicken und mit dem Google-Konto zustimmen, das in Google Ads Administrator ist.' }
+    const at = await gadsAccessToken(sb)
+    const wer = account ? `Verbunden als ${account}` : 'Verbunden'
+    const customerId = cleanCustomerId(cust)
+    try {
+      if (!customerId) {
+        const ids = await gadsListAccessible(at)
+        return { ok: false, detail: `${wer}, aber kein Werbekonto eingestellt. Gefunden: ${ids.map(fmtGadsId).join(', ') || 'keins'}. Unten bei „Kunden-ID" eintragen.` }
+      }
+      const c = await gadsCustomerInfo({ accessToken: at, customerId, loginCustomerId: cleanCustomerId(login), developerToken: '' })
+      if (c.manager) return { ok: false, detail: `${wer}, aber ${fmtGadsId(customerId)} ist ein Verwaltungskonto. Bei „Kunden-ID" das Werbekonto darunter eintragen, die Verwaltungskonto-ID gehört ins Feld darunter.` }
+      return { ok: true, detail: `${wer} · Werbekonto ${c.name || 'ohne Name'} (${fmtGadsId(customerId)}, ${c.currency})${c.testAccount ? ' · TESTKONTO' : ''}` }
+    } catch (e) {
+      return { ok: false, detail: `${wer}, aber Google verweigert den Zugriff: ${(e as Error).message.slice(0, 160)}. Im Google-Cloud-Projekt die Google Ads API aktivieren und Zugriffsstufe „Explorer" beantragen.` }
+    }
+  } },
+  { key: 'GOOGLE_ADS_CUSTOMER_ID', label: 'Google Ads, Kunden-ID (Werbekonto)', editable: true, run: async (sb) => {
+    const v = cleanCustomerId(await secretOf(sb, 'GOOGLE_ADS_CUSTOMER_ID'))
+    return v ? { ok: true, detail: fmtGadsId(v) } : { ok: false, detail: 'Fehlt. Steht in Google Ads oben rechts (Format 123-456-7890). Wird beim Verbinden automatisch gesetzt, wenn es nur ein Konto gibt.' }
+  } },
+  { key: 'GOOGLE_ADS_LOGIN_CUSTOMER_ID', label: 'Google Ads, Verwaltungskonto-ID (nur bei Zugriff über MCC)', editable: true, run: async (sb) => {
+    const v = cleanCustomerId(await secretOf(sb, 'GOOGLE_ADS_LOGIN_CUSTOMER_ID'))
+    return { ok: true, detail: v ? fmtGadsId(v) : 'Nicht nötig (direkter Zugriff aufs Werbekonto).' }
   } },
   { key: 'HIGGSFIELD', label: 'Higgsfield (Bild-KI)', run: async (sb) => {
     // Bewusst OHNE Token-Refresh: das würde den rotierenden Refresh-Token
@@ -214,8 +246,12 @@ Deno.serve(async (req) => {
     if (body.action === 'set') {
       const key = (body.key ?? '').trim()
       if (!EDITABLE.has(key)) return json({ error: 'Dieser Connector ist hier nicht änderbar.' }, 400)
-      const value = (body.value ?? '').trim()
+      let value = (body.value ?? '').trim()
       if (!value) return json({ error: 'Wert fehlt.' }, 400)
+      if (GADS_ID_KEYS.has(key)) {
+        value = cleanCustomerId(value)
+        if (!value) return json({ error: 'Bitte die 10-stellige Kunden-ID eintragen (z. B. 123-456-7890).' }, 400)
+      }
       const { error } = await sb.from('connector_secrets').upsert({ key, value, updated_at: new Date().toISOString() })
       if (error) return json({ error: error.message }, 500)
       return json({ ok: true })

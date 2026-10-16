@@ -169,6 +169,10 @@ verify_jwt = false
 [functions.meta-ads-tools]
 verify_jwt = false
 
+# Google Ads (16.10.2026): Guard authorizeCaller im Code (Service-Key/Cron, admin/verwalter, Recht werbung).
+[functions.google-ads-sync]
+verify_jwt = false
+
 [functions.studio]
 verify_jwt = false
 

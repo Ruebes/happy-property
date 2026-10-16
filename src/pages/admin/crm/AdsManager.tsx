@@ -9,6 +9,7 @@ import { ToastProvider, useToast } from '../../../components/ui/Toast'
 import { ConfirmProvider } from '../../../components/ui/ConfirmDialog'
 import EinstellungenModal from '../../../components/crm/werbung/EinstellungenModal'
 import VorschauModal from '../../../components/crm/werbung/VorschauModal'
+import GoogleWerbung from '../../../components/crm/werbung/GoogleWerbung'
 import { WerbeKontext, useWerbeDaten, type WerbeKontextWert } from '../../../components/crm/werbung/useWerbeDaten'
 import { supabase } from '../../../lib/supabase'
 import { lazyWithReload } from '../../../lib/lazyWithReload'
@@ -219,11 +220,10 @@ function Werbemanager() {
       </div>
 
       {segment !== 'meta' ? (
-        <div className="rounded-2xl border border-dashed border-gray-300 bg-white p-10 text-center text-gray-500">
-          <p className="text-3xl mb-2">🚧</p>
-          <p className="font-semibold text-gray-700">{SEG_LABEL[segment]} {t('crm.ads.comingSoon', 'ist noch nicht angebunden')}</p>
-          <p className="text-sm mt-1">{t('crm.ads.comingSoonSub', 'META läuft bereits - weitere Kanäle folgen hier im gleichen Format.')}</p>
-        </div>
+        <ContentErrorBoundary scope={`Werbemanager/${segment}`}>
+          <GoogleWerbung segment={segment} days={days} canSync={segments.includes(segment)}
+            canConnect={profile?.role === 'admin' || profile?.role === 'verwalter'} showToast={showToast} />
+        </ContentErrorBoundary>
       ) : (
         <WerbeKontext.Provider value={kontext}>
           <Tabs tabs={tabItems} value={tab} onChange={wechsleReiter} urlParam="tab" idBase="werbung"

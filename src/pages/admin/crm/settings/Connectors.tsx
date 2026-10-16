@@ -84,7 +84,7 @@ export default function Connectors() {
   // ── Google verbinden (YouTube / Drive): yt-oauth gibt die Zustimmungs-URL nur
   // eingeloggten Admins/Verwaltern heraus (signierter state). Den Tab im Klick
   // öffnen, sonst blockt Safari ihn nach dem await als Popup.
-  const connectGoogle = async (target: 'youtube' | 'drive') => {
+  const connectGoogle = async (target: 'youtube' | 'drive' | 'gads') => {
     const win = window.open('about:blank', '_blank')
     if (win) win.opener = null
     try {
@@ -124,7 +124,11 @@ export default function Connectors() {
 
   const [ytOpen, setYtOpen] = useState(false)
   const ytConns = conns.filter(c => c.key.startsWith('YOUTUBE_'))
-  const restConns = conns.filter(c => !c.key.startsWith('YOUTUBE_'))
+  // Google Ads: Hauptkarte GOOGLE_ADS + die beiden Kontonummern, aufklappbar wie YouTube
+  const [gadsOpen, setGadsOpen] = useState(false)
+  const gadsMain = conns.find(c => c.key === 'GOOGLE_ADS')
+  const gadsConns = conns.filter(c => c.key.startsWith('GOOGLE_ADS_'))
+  const restConns = conns.filter(c => !c.key.startsWith('YOUTUBE_') && !c.key.startsWith('GOOGLE_ADS'))
   const ytOk = ytConns.length > 0 && ytConns.every(c => c.ok)
 
   const renderCard = (c: (typeof conns)[number], nested = false) => (
@@ -227,6 +231,23 @@ export default function Connectors() {
                   <span className={`text-gray-400 transition-transform ${ytOpen ? 'rotate-180' : ''}`}>▾</span>
                 </button>
                 {ytOpen && <div className="px-4 pb-4 space-y-2 border-t border-gray-50 pt-3">{ytConns.map(c => renderCard(c, true))}</div>}
+              </div>
+            )}
+            {gadsMain && (
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm">
+                <button onClick={() => setGadsOpen(o => !o)} className="w-full flex items-center gap-3 p-4 text-left">
+                  <span className="text-xl">{gadsMain.ok ? '✅' : '❌'}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium text-gray-900 text-sm">{gadsMain.label}</p>
+                    <p className={`text-xs mt-0.5 ${gadsMain.ok ? 'text-gray-500' : 'text-red-600'}`}>{gadsMain.detail}</p>
+                  </div>
+                  <a href="#" role="button" onClick={e => { e.preventDefault(); e.stopPropagation(); void connectGoogle('gads') }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50 shrink-0">
+                    🔗 {t('crm.conn.gadsConnect', 'Verbinden')}
+                  </a>
+                  <span className={`text-gray-400 transition-transform ${gadsOpen ? 'rotate-180' : ''}`}>▾</span>
+                </button>
+                {gadsOpen && <div className="px-4 pb-4 space-y-2 border-t border-gray-50 pt-3">{gadsConns.map(c => renderCard(c, true))}</div>}
               </div>
             )}
           </div>
