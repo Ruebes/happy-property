@@ -75,11 +75,11 @@ Deno.serve(async (req) => {
       SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type,
              ad_group.id, ad_group.name, ad_group.status,
              ad_group_ad.ad.id, ad_group_ad.ad.name, ad_group_ad.status,
-             ad_group_ad.policy_summary.approval_status
+             ad_group_ad.policy_summary.approval_status, ad_group_ad.policy_summary.policy_topic_entries
       FROM ad_group_ad
       WHERE ad_group_ad.status != 'REMOVED'`)
 
-    // Vorschaubilder: YouTube-Video je Anzeige (Video- und Demand-Gen-Videoanzeigen).
+    // Vorschaubilder: YouTube-Video je Anzeige (In-Stream, responsive Video- und Demand-Gen-Videoanzeigen).
     // Eigene Abfrage, damit ein Feldfehler den Sync nicht stoppt.
     const thumbs = new Map<string, string>()
     try {
@@ -89,11 +89,12 @@ Deno.serve(async (req) => {
       const ytOf = new Map(assets.map(a => [a.asset?.resourceName, a.asset?.youtubeVideoAsset?.youtubeVideoId]))
       const vids = await gadsSearch<Row>(ctx, `
         SELECT ad_group_ad.ad.id, ad_group_ad.ad.video_ad.video.asset,
+               ad_group_ad.ad.video_responsive_ad.videos,
                ad_group_ad.ad.demand_gen_video_responsive_ad.videos
         FROM ad_group_ad WHERE ad_group_ad.status != 'REMOVED'`)
       for (const v of vids) {
         const ad = v.adGroupAd?.ad ?? {}
-        const res = ad.videoAd?.video?.asset ?? ad.demandGenVideoResponsiveAd?.videos?.[0]?.asset
+        const res = ad.videoAd?.video?.asset ?? ad.videoResponsiveAd?.videos?.[0]?.asset ?? ad.demandGenVideoResponsiveAd?.videos?.[0]?.asset
         const yt = res ? ytOf.get(res) : undefined
         if (yt) thumbs.set(String(ad.id), `https://i.ytimg.com/vi/${yt}/hqdefault.jpg`)
       }
@@ -106,6 +107,9 @@ Deno.serve(async (req) => {
       const campaignStatus = String(r.campaign?.status ?? '')
       const groupStatus = String(r.adGroup?.status ?? '')
       const adStatus = String(r.adGroupAd?.status ?? '')
+      // Abgelehnte Anzeige liefert nie aus, auch wenn Kampagne und Anzeige eingeschaltet sind
+      const policy = r.adGroupAd?.policySummary ?? {}
+      const abgelehnt = policy.approvalStatus === 'DISAPPROVED'
       return {
         ad_id: `gads_${adId}`,
         platform: platformOf(String(r.campaign?.advertisingChannelType ?? '')),
@@ -117,8 +121,11 @@ Deno.serve(async (req) => {
         ad_name: r.adGroupAd?.ad?.name || r.adGroup?.name || null,
         status: statusOf(adStatus),
         configured_status: statusOf(adStatus),
-        effective_status: campaignStatus !== 'ENABLED' ? 'CAMPAIGN_PAUSED' : groupStatus !== 'ENABLED' ? 'ADSET_PAUSED' : statusOf(adStatus),
-        review_feedback: r.adGroupAd?.policySummary?.approvalStatus ? { approval_status: r.adGroupAd.policySummary.approvalStatus } : null,
+        effective_status: campaignStatus !== 'ENABLED' ? 'CAMPAIGN_PAUSED' : groupStatus !== 'ENABLED' ? 'ADSET_PAUSED' : abgelehnt ? 'DISAPPROVED' : statusOf(adStatus),
+        review_feedback: policy.approvalStatus ? {
+          approval_status: policy.approvalStatus,
+          topics: (policy.policyTopicEntries ?? []).map((t: Row) => t.topic).filter(Boolean),
+        } : null,
         thumbnail_url: thumbs.get(adId) ?? null,
         updated_at: jetzt,
       }
