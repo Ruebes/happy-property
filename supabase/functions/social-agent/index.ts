@@ -605,11 +605,11 @@ async function driveVideoToStorage(token: string, file: DriveFile, path: string)
   return `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
 }
 
-// Lotte-Bild: trainierte Soul-ID allein. Soul + Referenzfotos aus „Lotte Bilder"
-// liefert seit ca. 1.10.2026 fast immer eine Collage aus 2-6 Feldern statt eines
-// Fotos (Gegenprobe 15.10.: Soul ohne Referenzen = sauberes Einzelbild). Die
-// Fotos aus dem Ordner dienen nur noch, wenn keine Soul-ID da ist (nano_banana),
-// danach die bisherige Persona-Kette.
+// Lotte-Bild: trainierte Soul-ID allein, im Format 4:3. Seit ca. 1.10.2026 lieferte
+// Soul v2 bei 1:1 fast immer eine Collage aus 2-6 Feldern oder gekachelte Ränder,
+// mit und ohne Referenzfotos aus „Lotte Bilder" (Tests 15./16.10.). Die Fotos aus
+// dem Ordner dienen nur noch, wenn keine Soul-ID da ist (nano_banana), danach die
+// bisherige Persona-Kette.
 async function generateLotteImage(sb: SupabaseClient, postId: string, prompt: string): Promise<string> {
   const cfg = await personaCfg(sb)
   const soul = cfg.lotte_soul_id
@@ -639,7 +639,9 @@ async function generateLotteImage(sb: SupabaseClient, postId: string, prompt: st
   }
   const full = `${prompt.replace(AI_LOOK_WORDS, '').replace(/\s{2,}/g, ' ').trim()}. The dog is Lotte, a chocolate brown labrador retriever (the trained character), she must look exactly like the trained character: same coat color, same face, same build. Candid smartphone photo taken by her owner, natural daylight with real shadows, true-to-life colors, real fur texture, slightly imperfect framing. ONE single photo filling the whole frame, Lotte appears exactly once. No collage, no grid, no split screen, no multiple panels. No bokeh, no HDR, no cinematic grading, no text, no watermark.`
   const tries: Array<[string, Record<string, unknown>]> = []
-  if (soul) tries.push(['text2image_soul_v2', { prompt: full, aspect_ratio: '1:1', quality: '2k', custom_reference_id: soul }])
+  // 4:3 statt 1:1: Soul v2 kachelt quadratische Bilder seit ca. 1.10.2026 (Rand
+  // wiederholt sich, 1.5k und 2k gleich), 4:3 kommt sauber (Test 16.10.).
+  if (soul) tries.push(['text2image_soul_v2', { prompt: full, aspect_ratio: '4:3', quality: '2k', custom_reference_id: soul }])
   if (!soul && refs.length) tries.push(['nano_banana', { prompt: `Create a new photorealistic image: ${full}`, aspect_ratio: '1:1', image_references: refs }])
   // Höchstens 3 Bilder je Aufruf, sonst reißt die Laufzeit der Function.
   let budget = 3
