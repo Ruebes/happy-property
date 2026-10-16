@@ -2264,7 +2264,7 @@ Regeln:
         // FB- + IG-Direktnachrichten (Conversations)
         for (const plat of ['messenger', 'instagram'] as const) {
           try {
-            const convs = await fetch(`${G}/${pageId}/conversations?platform=${plat}&fields=id,messages.limit(15){id,from,message,created_time}&limit=25&access_token=${pageToken}`).then(r => r.json()) as { data?: Array<{ id: string; messages?: { data?: Array<{ id: string; from?: { name?: string; id?: string }; message?: string; created_time?: string }> } }>; error?: { message?: string } }
+            const convs = await fetch(`${G}/${pageId}/conversations?platform=${plat}&fields=id,messages.limit(15){id,from,message,created_time}&limit=25&access_token=${pageToken}`).then(r => r.json()) as { data?: Array<{ id: string; messages?: { data?: Array<{ id: string; from?: { name?: string; username?: string; id?: string }; message?: string; created_time?: string }> } }>; error?: { message?: string } }
             if (convs.error) throw new Error(convs.error.message)
             for (const conv of convs.data ?? []) {
               // Zeitpunkt UNSERER letzten Antwort in dieser Konversation — alles
@@ -2274,7 +2274,7 @@ Regeln:
               for (const m of conv.messages?.data ?? []) {
                 if (!m.message || m.from?.id === pageId || m.from?.id === igId) continue
                 if (lastOurs && new Date(m.created_time ?? 0).getTime() <= lastOurs) continue
-                await up({ _bucket: plat === 'messenger' ? 'fb_msgs' : 'ig_msgs', platform: plat === 'messenger' ? 'facebook' : 'instagram', kind: 'message', external_id: m.id, thread_ref: conv.id, author_name: m.from?.name ?? null, author_id: m.from?.id ?? null, text: m.message, happened_at: m.created_time ?? null, raw: m })
+                await up({ _bucket: plat === 'messenger' ? 'fb_msgs' : 'ig_msgs', platform: plat === 'messenger' ? 'facebook' : 'instagram', kind: 'message', external_id: m.id, thread_ref: conv.id, author_name: m.from?.name ?? m.from?.username ?? null, author_id: m.from?.id ?? null, text: m.message, happened_at: m.created_time ?? null, raw: m })
               }
             }
           } catch (e) { errs.push(`${plat}_msgs: ${(e as Error).message}`) }
