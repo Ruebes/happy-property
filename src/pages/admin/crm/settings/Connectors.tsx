@@ -181,8 +181,9 @@ export default function Connectors() {
                 )}
                 {editKey === c.key && (
                   <div className="mt-3 flex items-end gap-2 flex-wrap">
-                    <input type="password" value={editVal} onChange={e => setEditVal(e.target.value)}
-                      placeholder={t('crm.conn.tokenPh', 'Neuen Token einfügen …')}
+                    {/* Google-Ads-Kontonummern sind kein Geheimnis: sichtbar und mit eigenem Hinweis */}
+                    <input type={c.key.startsWith('GOOGLE_ADS_') ? 'text' : 'password'} value={editVal} onChange={e => setEditVal(e.target.value)}
+                      placeholder={c.key.startsWith('GOOGLE_ADS_') ? t('crm.conn.gadsIdPh', '10-stellige Nummer, z. B. 123-456-7890') : t('crm.conn.tokenPh', 'Neuen Token einfügen …')}
                       className="flex-1 min-w-[240px] rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-100 focus:border-orange-400" />
                     <button onClick={() => void saveToken(c.key)} disabled={busy === c.key || !editVal.trim()}
                       className="px-4 py-2 rounded-xl text-white text-sm font-medium disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>
