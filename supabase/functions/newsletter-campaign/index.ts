@@ -22,6 +22,7 @@ import { bounceKey, loadBouncedKeys, loadBounceTimes } from '../_shared/emailBou
 import { echteNummer } from '../_shared/phonePlausible.ts'
 import { htmlToWhatsapp } from '../_shared/htmlToWhatsapp.ts'
 import { gateCaller } from '../_shared/callerGate.ts'
+import { SlotBook, abGroup, berlinWeekHour, detectSendPattern, nextOccurrence, weekHourLabel, type SendSample } from './sendTime.ts'
 
 // ── Eigenes-HTML-Modus (content_mode='html') ─────────────────────────────────
 // Sven fügt fertiges HTML ein → wird als HTML verschickt (Text-Fallback macht
@@ -547,11 +548,133 @@ async function loadAudience(sb: SupabaseClient): Promise<Array<{ id: string; fir
     .filter(l => l.email && l.email.includes('@') && !active.has(l.id) && !opt.has(l.id)) as Array<{ id: string; first_name: string | null; last_name: string | null; email: string; phone: string | null }>
 }
 
+// ── Persoenliche Versandzeit (siehe sendTime.ts) ─────────────────────────────
+// Laedt in wenigen Sammelabfragen Versand + Oeffnungen der letzten HTML-Newsletter
+// und plant fuer alle Mail-Empfaenger einen Slot: erst die persoenlichen
+// (Muster + A/B-Gruppe 'personal'), dann alle anderen im normalen Takt, der die
+// schon belegten Slots ueberspringt. Schalter: crm_settings
+// newsletter_send_time_mode = off|on (fehlt = on).
+type SendTimeGroup = 'personal' | 'holdout'
+interface SendTimePlan {
+  slots: Map<string, { at: Date; group: SendTimeGroup | null }>
+  stats: { mode: string; mail_recipients: number; with_history: number; pattern: number; personal: number; holdout: number; out_of_window: number; targets: Record<string, number>; personal_slots: Record<string, number> }
+}
+const personKey = (r: { lead_id: string | null; subscriber_id: string | null }) => r.lead_id ? `l:${r.lead_id}` : `s:${r.subscriber_id}`
+
+async function fetchAll<T>(q: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>): Promise<T[]> {
+  const out: T[] = []
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await q(from, from + 999)
+    if (error) throw new Error(error.message)
+    out.push(...(data ?? []))
+    if (!data || data.length < 1000) break
+  }
+  return out
+}
+
+async function sendTimeModeOn(sb: SupabaseClient): Promise<boolean> {
+  const { data } = await sb.from('crm_settings').select('value').eq('key', 'newsletter_send_time_mode').maybeSingle()
+  return String((data as { value?: string } | null)?.value ?? 'on').trim().toLowerCase() !== 'off'
+}
+
+async function planSendTimes(
+  sb: SupabaseClient, campId: string, base: number,
+  audience: Array<{ lead_id: string | null; subscriber_id: string | null; email: string }>,
+): Promise<SendTimePlan> {
+  const mail = audience.filter(a => !!a.email)
+  const on = await sendTimeModeOn(sb)
+  const stats: SendTimePlan['stats'] = { mode: on ? 'on' : 'off', mail_recipients: mail.length, with_history: 0, pattern: 0, personal: 0, holdout: 0, out_of_window: 0, targets: {}, personal_slots: {} }
+  const book = new SlotBook(MAIL_STEP_SEC, MAIL_JITTER_SEC, clampToWindow)
+  const slots: SendTimePlan['slots'] = new Map()
+  const personal: Array<{ key: string; target: Date }> = []
+  const group = new Map<string, SendTimeGroup>()
+
+  if (on && mail.length) {
+    // Letzte HTML-Kampagnen (ohne die aktuelle); je Person zaehlen davon die 4 juengsten.
+    const { data: cs } = await sb.from('newsletter_campaigns').select('id')
+      .eq('content_mode', 'html').neq('id', campId).neq('status', 'draft')
+      .order('created_at', { ascending: false }).limit(8)
+    const ids = ((cs ?? []) as Array<{ id: string }>).map(c => c.id)
+    if (ids.length) {
+      const sent = await fetchAll<{ id: string; lead_id: string | null; subscriber_id: string | null; campaign_id: string; sent_at: string | null }>((f, t) =>
+        sb.from('scheduled_messages').select('id, lead_id, subscriber_id, campaign_id, sent_at')
+          .in('campaign_id', ids).eq('status', 'sent').eq('type', 'email').eq('event_type', 'newsletter')
+          .order('id').range(f, t))
+      const opens = await fetchAll<{ id: string; lead_id: string | null; subscriber_id: string | null; token: string; occurred_at: string }>((f, t) =>
+        sb.from('engagement_events').select('id, lead_id, subscriber_id, token, occurred_at')
+          .eq('type', 'newsletter_open').in('token', ids)
+          .order('id').range(f, t))
+      const openIdx = new Map<string, number[]>()
+      const addOpen = (k: string, ts: number) => { const a = openIdx.get(k); if (a) a.push(ts); else openIdx.set(k, [ts]) }
+      for (const o of opens) {
+        const ts = new Date(o.occurred_at).getTime()
+        if (o.lead_id) addOpen(`l:${o.lead_id}|${o.token}`, ts)
+        if (o.subscriber_id) addOpen(`s:${o.subscriber_id}|${o.token}`, ts)
+      }
+      const hist = new Map<string, Array<{ camp: string; sentAt: number }>>()
+      for (const r of sent) {
+        if (!r.sent_at) continue
+        const k = personKey(r)
+        const a = hist.get(k) ?? []
+        a.push({ camp: r.campaign_id, sentAt: new Date(r.sent_at).getTime() })
+        hist.set(k, a)
+      }
+      for (const a of mail) {
+        const key = personKey(a)
+        const h = hist.get(key)
+        if (!h?.length) continue
+        stats.with_history++
+        const samples: SendSample[] = h.sort((x, y) => y.sentAt - x.sentAt).slice(0, 4)
+          .map(x => ({ sentAt: x.sentAt, opens: openIdx.get(`${key}|${x.camp}`) ?? [] }))
+        const wh = detectSendPattern(samples)
+        if (wh === null) continue
+        stats.pattern++
+        const lbl = weekHourLabel(wh)
+        stats.targets[lbl] = (stats.targets[lbl] ?? 0) + 1
+        const g = abGroup(key, campId)
+        group.set(key, g)
+        if (g === 'holdout') { stats.holdout++; continue }
+        stats.personal++
+        const target = nextOccurrence(base, wh)
+        if (!target) { stats.out_of_window++; continue }
+        personal.push({ key, target })
+      }
+    }
+  }
+
+  personal.sort((x, y) => x.target.getTime() - y.target.getTime())
+  for (const p of personal) {
+    const at = book.take(p.target)
+    slots.set(p.key, { at, group: 'personal' })
+    const lbl = weekHourLabel(berlinWeekHour(at))
+    stats.personal_slots[lbl] = (stats.personal_slots[lbl] ?? 0) + 1
+  }
+  const next = book.pacer(base)
+  for (const a of mail) {
+    const key = personKey(a)
+    if (slots.has(key)) continue
+    slots.set(key, { at: next(), group: group.get(key) ?? null })
+  }
+  return { slots, stats }
+}
+
+// Fehler in der Planung duerfen den Launch nie stoppen: dann normaler Takt.
+async function planSendTimesSafe(...a: Parameters<typeof planSendTimes>): Promise<SendTimePlan | null> {
+  try {
+    const p = await planSendTimes(...a)
+    console.log('[newsletter] Versandzeit-Plan:', JSON.stringify(p.stats))
+    return p
+  } catch (e) {
+    console.error('[newsletter] Versandzeit-Plan fehlgeschlagen, normaler Takt:', e)
+    return null
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: CORS })
   try {
     const body = await req.json() as {
-      action: 'draft_text' | 'test_mail' | 'launch' | 'status' | 'audience' | 'preview' | 'unsubscribe' | 'add_recipient' | 'add_subscribers' | 'rebuild_pending' | 'whatsapp_nachholen'
+      action: 'draft_text' | 'test_mail' | 'launch' | 'status' | 'audience' | 'preview' | 'unsubscribe' | 'add_recipient' | 'add_subscribers' | 'rebuild_pending' | 'whatsapp_nachholen' | 'send_time_preview'
       dry?: boolean
       lead_id?: string
       deck_token?: string
@@ -714,6 +837,23 @@ Deno.serve(async (req: Request) => {
         return json({ ok: true })
       }
       return json({ error: 'token fehlt' }, 400)
+    }
+
+    // ── Vorschau persoenliche Versandzeit (Trockenlauf, schreibt nichts) ─────
+    // {campaign_id?, start_at?}: ohne campaign_id die juengste HTML-Kampagne;
+    // Zielgruppe 'all' (mit deren Ausschluessen).
+    if (body.action === 'send_time_preview') {
+      let q = sb.from('newsletter_campaigns').select('id, exclude_lead_ids')
+      q = body.campaign_id ? q.eq('id', body.campaign_id) : q.eq('content_mode', 'html').order('created_at', { ascending: false })
+      const { data: pc } = await q.limit(1).maybeSingle()
+      if (!pc) return json({ error: 'Kampagne nicht gefunden' }, 404)
+      const pcamp = pc as { id: string; exclude_lead_ids?: string[] | null }
+      const aud = await combined('all', [], pcamp.exclude_lead_ids ?? [])
+      const startAt = body.start_at ? new Date(body.start_at).getTime() : NaN
+      const base = startAt > Date.now() ? startAt : Date.now() + 120e3
+      const { slots, stats } = await planSendTimes(sb, pcamp.id, base, aud)
+      const last = [...slots.values()].reduce((m, v) => Math.max(m, v.at.getTime()), 0)
+      return json({ ok: true, campaign_id: pcamp.id, base: new Date(base).toISOString(), audience: aud.length, last_mail_at: last ? new Date(last).toISOString() : null, ...stats })
     }
 
     // Ab hier: Kampagne nötig
@@ -1084,6 +1224,7 @@ Deno.serve(async (req: Request) => {
             const startAt = body.start_at ? new Date(body.start_at) : null
             const base = startAt && startAt.getTime() > Date.now() ? startAt.getTime() : Date.now() + 120e3
             const nextSlot = makePacer(base)
+            const plan = await planSendTimesSafe(sb, String(camp.id), base, audience)
             let done = 0, skipped = 0
             for (const lead of audience) {
               try {
@@ -1093,11 +1234,13 @@ Deno.serve(async (req: Request) => {
                 const hatMail = !!lead.email, hatTel = !hatMail && !!lead.phone
                 const typ = hatMail ? 'email' : 'whatsapp'
                 const affiliateUrl = await affiliateUrlFor(sb, lead)
-                const slot = nextSlot(typ)
+                const st = typ === 'email' ? plan?.slots.get(personKey(lead)) : undefined
+                const slot = st?.at ?? nextSlot(typ)
                 const { error: se } = await sb.from('scheduled_messages').insert({
                   lead_id: lead.lead_id, subscriber_id: lead.subscriber_id,
                   type: typ, event_type: 'newsletter', campaign_id: camp.id,
                   status: 'pending', scheduled_at: slot.toISOString(),
+                  ...(st?.group ? { send_time_group: st.group } : {}),
                   email_subject: hatMail ? personalize(camp.subject, first) : null,
                   email_body: hatMail ? customEmailHtml(raw, first, unsubUrlFor(lead), affiliateUrl, await terminUrlFor(sb, lead, String(camp.id)), String(camp.id), lead.lead_id ? `l:${lead.lead_id}` : `s:${lead.subscriber_id}`) : null,
                   whatsapp_text: hatTel
@@ -1143,6 +1286,7 @@ Deno.serve(async (req: Request) => {
           const startAt = body.start_at ? new Date(body.start_at) : null
           const base = startAt && startAt.getTime() > Date.now() ? startAt.getTime() : Date.now() + 120e3
           const nextSlot = makePacer(base)
+          const plan = await planSendTimesSafe(sb, String(camp.id), base, audience)
           let done = 0, skipped = 0
           for (const lead of audience) {
             // Pro-Empfänger-Fehlerbehandlung: EIN problematischer Lead darf nie
@@ -1190,11 +1334,13 @@ Deno.serve(async (req: Request) => {
               const typ = hatMail ? 'email' : 'whatsapp'
               const waText = hatTel ? buildWhatsappText(camp, first, deckTokens, { campaignId: String(camp.id), affiliateUrl }) : null
               const waBild = hatTel ? properties.map(p => projectImages[p.project_id]).find(Boolean) ?? null : null
-              const slot = nextSlot(typ)
+              const st = typ === 'email' ? plan?.slots.get(personKey(lead)) : undefined
+              const slot = st?.at ?? nextSlot(typ)
               const { error: se } = await sb.from('scheduled_messages').insert({
                 lead_id: lead.lead_id, subscriber_id: lead.subscriber_id,
                 type: typ, event_type: 'newsletter', campaign_id: camp.id,
                 status: 'pending', scheduled_at: slot.toISOString(),
+                ...(st?.group ? { send_time_group: st.group } : {}),
                 email_subject: hatMail ? subject : null, email_body: hatMail ? html : null,
                 whatsapp_text: waText, whatsapp_image_url: waBild,
                 recipient: 'client', appointment_condition: 'none',
