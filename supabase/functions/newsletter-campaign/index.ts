@@ -527,16 +527,21 @@ async function loadListAudience(
   return out
 }
 
-// Zielgruppe: Leads ohne aktiven Deal, ohne Opt-out, mit E-Mail
-async function loadAudience(sb: SupabaseClient): Promise<Array<{ id: string; first_name: string | null; last_name: string | null; email: string; phone?: string | null }>> {
-  const [{ data: leads }, { data: deals }, { data: optouts }] = await Promise.all([
-    sb.from('leads').select('id, first_name, last_name, email, phone').is('newsletter_optout_at', null),
-    sb.from('deals').select('lead_id, phase, archived_from_phase'),
-    sb.from('communication_optouts').select('lead_id'),
-  ])
-  const active = new Set((deals ?? []).filter((d: { phase: string; archived_from_phase: string | null }) =>
+// Leads mit aktivem Pipeline-Deal (nicht verloren/archiviert) bekommen keinen Newsletter.
+async function loadPipelineLeadIds(sb: SupabaseClient): Promise<Set<string>> {
+  const { data: deals } = await sb.from('deals').select('lead_id, phase, archived_from_phase')
+  return new Set((deals ?? []).filter((d: { phase: string; archived_from_phase: string | null }) =>
     d.phase !== 'deal_verloren' && d.phase !== 'archiviert' && !d.archived_from_phase,
   ).map((d: { lead_id: string }) => d.lead_id))
+}
+
+// Zielgruppe: Leads ohne aktiven Deal, ohne Opt-out, mit E-Mail
+async function loadAudience(sb: SupabaseClient): Promise<Array<{ id: string; first_name: string | null; last_name: string | null; email: string; phone?: string | null }>> {
+  const [{ data: leads }, active, { data: optouts }] = await Promise.all([
+    sb.from('leads').select('id, first_name, last_name, email, phone').is('newsletter_optout_at', null),
+    loadPipelineLeadIds(sb),
+    sb.from('communication_optouts').select('lead_id'),
+  ])
   const opt = new Set((optouts ?? []).map((o: { lead_id: string }) => o.lead_id))
   return ((leads ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null }>)
     .filter(l => l.email && l.email.includes('@') && !active.has(l.id) && !opt.has(l.id)) as Array<{ id: string; first_name: string | null; last_name: string | null; email: string; phone: string | null }>
@@ -594,8 +599,11 @@ Deno.serve(async (req: Request) => {
     const combined = async (mode: string, ids: string[], excludeLeadIds: string[] = [], stats?: { per_whatsapp: number; ohne_nummer: number }) => {
       const bounced = await loadBouncedKeys(sb)
       const seenMail = new Set<string>(), seenTel = new Set<string>()
-      if (excludeLeadIds.length) {
-        const { data: ex } = await sb.from('leads').select('email, alt_emails, phone').in('id', excludeLeadIds)
+      // Pipeline-Leads sperren ihre Adressen ebenfalls: steht jemand mit aktivem Deal
+      // zusaetzlich in einer Liste, darf er nicht ueber den Abonnenten-Weg reinrutschen.
+      const sperrIds = [...new Set([...excludeLeadIds, ...await loadPipelineLeadIds(sb)])]
+      if (sperrIds.length) {
+        const { data: ex } = await sb.from('leads').select('email, alt_emails, phone').in('id', sperrIds)
         for (const r of (ex ?? []) as Array<{ email: string | null; alt_emails: string[] | null; phone: string | null }>) {
           for (const m of [r.email, ...(r.alt_emails ?? [])]) { const k = mailKey(m); if (k) seenMail.add(k) }
           const t = telKey(r.phone); if (t) seenTel.add(t)
