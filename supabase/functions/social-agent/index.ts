@@ -31,7 +31,8 @@ import { Image } from '../_vendor/imagescript/ImageScript.js'
 import { initWasm, Resvg } from 'https://esm.sh/@resvg/resvg-wasm@2.6.2'
 import { hfGenerateBytes as hfGen, hfUploadImage as hfUp, type HfStore } from '../_shared/higgsfield.ts'
 import { CI, CI_FONT, loadCiFonts } from '../_shared/brand.ts'
-import { slideSvg, coverOverlaySvg, composeCover, normalizeSlides, hookOverlaySvg, type CarSlide } from './carousel.ts'
+import { slideSvg, coverOverlaySvg, composeCover, normalizeSlides, hookOverlaySvg, slideOverflow, type CarSlide } from './carousel.ts'
+import { seamCheck, smallUrl, type SeamCheck } from './imageGuard.ts'
 
 declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
 
@@ -637,16 +638,19 @@ async function generateLotteImage(sb: SupabaseClient, postId: string, prompt: st
       }
     } catch (e) { console.warn('[social-agent] Lotte-Ordner nicht lesbar:', e instanceof Error ? e.message : String(e)) }
   }
-  const full = `${prompt.replace(AI_LOOK_WORDS, '').replace(/\s{2,}/g, ' ').trim()}. The dog is Lotte, a chocolate brown labrador retriever (the trained character), she must look exactly like the trained character: same coat color, same face, same build. Candid smartphone photo taken by her owner, natural daylight with real shadows, true-to-life colors, real fur texture, slightly imperfect framing. ONE single photo filling the whole frame, Lotte appears exactly once. No collage, no grid, no split screen, no multiple panels. No bokeh, no HDR, no cinematic grading, no text, no watermark.`
+  // Kein „no collage, no grid …" mehr im Prompt: Wörter wie collage/grid/panels
+  // wirken bei Bild-KIs eher als Anregung (mit dem Zusatz kam am 16.10. in 4:3
+  // wieder eine Collage, ohne ihn vier saubere Bilder).
+  const full = `${prompt.replace(AI_LOOK_WORDS, '').replace(/\s{2,}/g, ' ').trim()}. The dog is Lotte, a chocolate brown labrador retriever (the trained character), she must look exactly like the trained character: same coat color, same face, same build. Candid smartphone photo taken by her owner, natural daylight with real shadows, true-to-life colors, real fur texture, slightly imperfect framing. One single photo, Lotte appears exactly once. No bokeh, no HDR, no cinematic grading, no text, no watermark.`
   const tries: Array<[string, Record<string, unknown>]> = []
   // 4:3 statt 1:1: Soul v2 kachelt quadratische Bilder seit ca. 1.10.2026 (Rand
-  // wiederholt sich, 1.5k und 2k gleich), 4:3 kommt sauber (Test 16.10.).
+  // wiederholt sich, 1.5k und 2k gleich), 4:3 kommt meist sauber (Test 16.10.).
   if (soul) tries.push(['text2image_soul_v2', { prompt: full, aspect_ratio: '4:3', quality: '2k', custom_reference_id: soul }])
   if (!soul && refs.length) tries.push(['nano_banana', { prompt: `Create a new photorealistic image: ${full}`, aspect_ratio: '1:1', image_references: refs }])
   // Höchstens 3 Bilder je Aufruf, sonst reißt die Laufzeit der Function.
   let budget = 3
   for (const [job, params] of tries) {
-    for (let attempt = 1; attempt <= 2 && budget > 0; attempt++) {
+    for (let attempt = 1; attempt <= 3 && budget > 0; attempt++) {
       budget--
       try {
         const bytes = await hfGenerateBytes(sb, job, params)
@@ -654,8 +658,9 @@ async function generateLotteImage(sb: SupabaseClient, postId: string, prompt: st
         const { error: upErr } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/png', upsert: true })
         if (upErr) throw new Error(`Upload: ${upErr.message}`)
         const url = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
-        if (await isCollage(url)) {
-          console.warn(`[social-agent] Lotte-Bild via ${job} ist eine Collage (Versuch ${attempt}), wird verworfen`)
+        const check = await imageDefect(url)
+        if (check.defect) {
+          console.warn(`[social-agent] Lotte-Bild via ${job} kaputt (Versuch ${attempt}: ${check.reason}), wird verworfen`)
           await sb.storage.from('ad-creatives').remove([path])
           continue
         }
@@ -664,21 +669,28 @@ async function generateLotteImage(sb: SupabaseClient, postId: string, prompt: st
       } catch (e) { console.warn(`[social-agent] Lotte-Bild via ${job} fehlgeschlagen:`, e instanceof Error ? e.message : String(e)); break }
     }
   }
-  return await generatePersonaImage(sb, postId, prompt, ['lotte'])
+  // Letzter Rückfall (OpenAI mit Referenzfotos) wird genauso geprüft. Ist auch der
+  // kaputt, lieber KEIN Bild: der Autopilot versucht es später noch einmal und
+  // meldet sich nach drei Fehlschlägen bei Sven, statt eine Collage zu posten.
+  const url = await generatePersonaImage(sb, postId, prompt, ['lotte'])
+  const check = await imageDefect(url)
+  if (check.defect) {
+    await sb.from('social_posts').update({ image_urls: [], image_url: null, updated_at: new Date().toISOString() }).eq('id', postId)
+    throw new Error(`Kein sauberes Lotte-Bild (${check.reason}).`)
+  }
+  return url
 }
 
-// Soul + Referenzfotos liefert bei Lotte immer wieder statt EINES Fotos eine
-// Collage aus 2-4 fast gleichen Bildern (Posts 7., 14., 17. und 21.10.2026).
-// Deshalb schaut Claude vor dem Speichern drauf. Fällt die Prüfung selbst aus,
-// geht das Bild durch, damit der Post nicht ohne Bild bleibt.
+// Claude zählt die Bildfelder. Fällt die Prüfung selbst aus, zählt nur die
+// Pixel-Prüfung (imageDefect), damit ein Post nicht wegen eines API-Fehlers
+// ohne Bild bleibt.
 async function collageCheck(url: string): Promise<{ collage: boolean; answer: string }> {
   const key = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
   if (!key) return { collage: false, answer: 'ANTHROPIC_API_KEY fehlt' }
   try {
-    const small = `${url.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/')}?width=768&quality=70`
     const r = await claude(key, {
-      system: 'You check AI-generated images before they are posted on social media. Image generators sometimes return a collage instead of one photo: the canvas is split into 2, 3 or 4 panels (2x2 grid, side by side, stacked) that show almost the same scene, so the same dog appears several times. Look for straight seams where the background suddenly jumps and for the subject repeated. Reply with only the number of separate panels the image consists of (1 = one continuous photo).',
-      messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'url', url: small } }, { type: 'text', text: 'How many panels?' }] }],
+      system: 'You check AI-generated images before they are posted on social media. Image generators sometimes return a collage instead of one photo: the canvas is split into 2 to 6 panels (2x2 grid, side by side, stacked, or a strip at one edge that repeats part of the picture) that show almost the same scene, so the same subject appears several times. Look for straight seams where the background suddenly jumps and for the subject repeated. Reply with only the number of separate panels the image consists of (1 = one continuous photo).',
+      messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'url', url: smallUrl(url, 768) } }, { type: 'text', text: 'How many panels?' }] }],
       // Großzügig: mit 10 Tokens kam am 16.10. gar kein Text zurück (Prüfung lief leer).
       max_tokens: 1000,
     })
@@ -693,7 +705,19 @@ async function collageCheck(url: string): Promise<{ collage: boolean; answer: st
     return { collage: false, answer: `Fehler: ${msg}` }
   }
 }
-async function isCollage(url: string): Promise<boolean> { return (await collageCheck(url)).collage }
+
+// Ist ein KI-Bild kaputt (Collage, gekachelter Rand)? Pixel-Prüfung (imageGuard.ts)
+// und Claude unabhängig voneinander, eine Meldung reicht.
+async function imageDefect(url: string): Promise<{ defect: boolean; reason: string; seam: SeamCheck | null; claude: string }> {
+  let seam: SeamCheck | null = null
+  try { seam = await seamCheck(url) } catch (e) { console.warn('[social-agent] Pixel-Prüfung ausgefallen:', e instanceof Error ? e.message : String(e)) }
+  const c = await collageCheck(url)
+  const cut = seam ? `Schnitt über ${Math.round(seam.cov * 100)} % der Höhe` : ''
+  if (seam?.hard) return { defect: true, reason: `Pixel: ${cut}`, seam, claude: c.answer }
+  if (c.collage) return { defect: true, reason: `Claude: ${c.answer} Bildfelder`, seam, claude: c.answer }
+  if (seam?.soft) return { defect: true, reason: `Pixel: ${cut}, Inhalt wiederholt sich`, seam, claude: c.answer }
+  return { defect: false, reason: seam ? `ok (${cut})` : 'ok (nur Claude geprüft)', seam, claude: c.answer }
+}
 
 // News-Recherche → Ideen (social_ideas). avoid = Themen, die schon liefen.
 async function newsScan(sb: SupabaseClient, anthropicKey: string, avoid: string[] = []): Promise<Array<{ id: string; headline: string; core: string; source_url: string | null; angle: string }>> {
@@ -1103,7 +1127,25 @@ Caption: Zeile 1 = Such-Satz mit Stichwort (z. B. "Immobilien in Paphos: ..."), 
     try { rawSlides = clean(JSON.parse(txt)) } catch { /* unten prüfen */ }
     if (TRANSLIT.test(JSON.stringify(rawSlides))) throw new Error('Karussell-Texte ohne echte Umlaute, wird neu erstellt.')
   }
-  const slides = normalizeSlides(rawSlides)
+  let slides = normalizeSlides(rawSlides)
+  // Zu lange Texte würden beim Rendern mit „…" enden (Merk-Slide 19.10.2026).
+  // Einmal gezielt kürzen lassen; wird es dadurch nicht besser, bleibt der alte Stand.
+  const overflows = (list: CarSlide[]) => list.flatMap((sl, i) => slideOverflow(sl).map(o => ({ slide: i + 1, ...o })))
+  const over = overflows(slides)
+  if (over.length) {
+    try {
+      const fix = await claude(anthropicKey, {
+        system: 'Du kürzt Texte für Instagram-Karussell-Folien, damit sie vollständig auf die Folie passen. Ändere NUR die genannten Felder, alles andere bleibt Zeichen für Zeichen gleich. Kürze auf höchstens die angegebene Zeichenzahl, ohne den Sinn oder Zahlen zu verändern: ganze Sätze bzw. vollständige Stichpunkte, keine Auslassungspunkte, keine Gedankenstriche, echte Umlaute. Gib das komplette JSON-Array zurück, nur JSON.',
+        messages: [{ role: 'user', content: `FOLIEN:\n${JSON.stringify(slides)}\n\nZU LANG:\n${over.map(o => `- Folie ${o.slide}, Feld ${o.field}: höchstens ${o.max} Zeichen${o.field === 'items' ? ' je Punkt' : ''}`).join('\n')}` }],
+        max_tokens: 4000,
+      })
+      const txt = (((fix.content ?? []) as Array<{ type: string; text?: string }>).find(b => b.type === 'text')?.text ?? '').trim().replace(/^```(json)?|```$/g, '').trim()
+      const fixed = normalizeSlides(clean(JSON.parse(txt)))
+      if (fixed.length === slides.length && overflows(fixed).length < over.length) slides = fixed
+    } catch (e) { console.warn('[social-agent] Folientexte kürzen fehlgeschlagen:', e instanceof Error ? e.message : String(e)) }
+    const left = overflows(slides)
+    if (left.length) console.warn('[social-agent] Folientexte weiter zu lang:', JSON.stringify(left.map(o => `${o.slide}:${o.field}`)))
+  }
   const n = slides.length
   const base = Deno.env.get('SUPABASE_URL')
   const ts = Date.now()
@@ -1778,6 +1820,33 @@ Regeln:
       return json({ ok: true, pending: false, last: (st as { value?: string } | null)?.value ?? null, text: zuletzt || undefined })
     }
 
+    // ── Eine einzelne Karussell-Folie neu rendern (Text korrigieren) ────────────
+    // body: post_id, index (1-basiert), slide ({type, ...} wie im Karussell-Tool).
+    // Die Folientexte werden nicht gespeichert, nur die fertigen Bilder; so lässt
+    // sich eine Folie korrigieren, ohne das ganze Karussell neu zu schreiben.
+    // Das Titelbild (Folie 1, mit Foto) geht hierüber nicht.
+    if (body.action === 'replace_slide') {
+      const { data: row } = await sb.from('social_posts').select('id, status, format, image_urls').eq('id', String(body.post_id ?? '')).maybeSingle()
+      const post = row as { id: string; status: string; format: string | null; image_urls: string[] | null } | null
+      if (!post) return json({ error: 'Post nicht gefunden' }, 404)
+      if (post.status === 'gepostet') return json({ error: 'Post ist schon gelaufen' }, 400)
+      const urls = Array.isArray(post.image_urls) ? [...post.image_urls] : []
+      const idx = Number(body.index)
+      if (post.format !== 'carousel' || !Number.isInteger(idx) || idx < 2 || idx > urls.length) return json({ error: `index muss zwischen 2 und ${urls.length} liegen (Karussell)` }, 400)
+      const sl = (body as Record<string, unknown>).slide as CarSlide | undefined
+      const TYPES = ['stake', 'fact', 'point', 'list', 'recap', 'cta']
+      if (!sl || typeof sl !== 'object' || !TYPES.includes(String(sl.type))) return json({ error: `slide.type muss eines von ${TYPES.join(', ')} sein` }, 400)
+      const over = slideOverflow(sl)
+      if (over.length && body.force !== true) return json({ error: 'Text passt nicht vollständig auf die Folie', overflow: over }, 400)
+      const bytes = await svgToPng(slideSvg(sl, idx - 1, urls.length))
+      const path = `social/${post.id}-car-${Date.now()}-${idx}.png`
+      const { error: upErr } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/png', upsert: true })
+      if (upErr) return json({ error: `Upload: ${upErr.message}` }, 500)
+      urls[idx - 1] = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
+      await sb.from('social_posts').update({ image_urls: urls, updated_at: new Date().toISOString() }).eq('id', post.id)
+      return json({ ok: true, url: urls[idx - 1] })
+    }
+
     if (body.action === 'recarousel') {
       if (!body.post_id) return json({ error: 'post_id fehlt' }, 400)
       if (!anthropicKey) return json({ error: 'ANTHROPIC_API_KEY fehlt' }, 500)
@@ -1843,7 +1912,8 @@ Regeln:
     if (body.action === 'collage_check') {
       const url = String(body.url ?? '')
       if (!url.startsWith(`${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/`)) return json({ error: 'nur ad-creatives-Bilder' }, 400)
-      return json({ ok: true, ...(await collageCheck(url)) })
+      const r = await imageDefect(url)
+      return json({ ok: true, collage: r.defect, reason: r.reason, answer: r.claude, seam: r.seam })
     }
     // ── Higgsfield-Jobtyp prüfen, ohne ein Bild zu erzeugen (ungültiges Format) ──
     if (body.action === 'hf_probe') {
@@ -2840,10 +2910,10 @@ Regeln:
       const nowIso = new Date(nowMs).toISOString()
       const dayStartIso = cyAt(cyYmd(new Date(nowMs)), '00:00').toISOString()
       const apCfg = await autopilotCfg(sb)
-      const { data: due } = await sb.from('social_posts').select('id, platforms, content, scheduled_for, post_results, autopilot_slot')
+      const { data: due } = await sb.from('social_posts').select('id, platforms, content, scheduled_for, post_results, autopilot_slot, topic, image_url, image_prompt')
         .eq('status', 'geplant').lte('scheduled_for', nowIso)
         .order('scheduled_for', { ascending: true }).limit(100)
-      type DueRow = { id: string; platforms: string[]; content: string | null; scheduled_for: string; post_results: Record<string, { pending?: boolean }> | null; autopilot_slot: string | null }
+      type DueRow = { id: string; platforms: string[]; content: string | null; scheduled_for: string; post_results: Record<string, { pending?: boolean }> | null; autopilot_slot: string | null; topic: string | null; image_url: string | null; image_prompt: string | null }
       const isPending = (p: DueRow) => Object.values(p.post_results ?? {}).some(r => r && typeof r === 'object' && r.pending)
       const dueAll = (due as DueRow[] | null) ?? []
       // Autopilot-Posts, die mehr als 3 h überfällig sind (z. B. nach einer Pause),
@@ -2882,6 +2952,29 @@ Regeln:
           return !(isMeta(pl) && metaFull) && !(pl.includes('linkedin') && liFull) && !(pl.includes('youtube') && ytFull)
         })
         if (!next) return json({ ok: true, skipped: 'Tageslimit erreicht (FB/Insta 3, LinkedIn 1, YouTube 1 pro Tag).' })
+        // Letzte Kontrolle vor dem Posten: Lotte-Bilder kamen von Higgsfield im
+        // Oktober 2026 immer wieder als Collage oder mit gekacheltem Rand, und zwei
+        // davon sind so rausgegangen. Kaputt = NICHT posten, neues Bild erzeugen;
+        // der nächste Lauf (30 Min) prüft erneut und postet dann. Nach zwei
+        // Neuversuchen bekommt Sven eine Aufgabe, gepostet wird trotzdem nicht.
+        if (next.topic === 'weisheit') {
+          // Ohne Bild (letzter Versuch ging schief) ebenfalls nicht posten.
+          const chk = next.image_url ? await imageDefect(next.image_url) : { defect: true, reason: 'kein Bild' }
+          if (chk.defect) {
+            const prevGuard = (next.post_results as Record<string, unknown> | null)?.image_guard as { tries?: number } | undefined
+            const tries = (prevGuard?.tries ?? 0) + 1
+            await sb.from('social_posts').update({ post_results: { ...(next.post_results ?? {}), image_guard: { tries, reason: chk.reason, at: nowIso } }, updated_at: nowIso }).eq('id', next.id)
+            if (tries <= 2) {
+              const job = generateLotteImage(sb, next.id, next.image_prompt || (next.content ?? '').slice(0, 400)).catch(e => console.error('[social-agent] Lotte-Bild vor dem Posten:', e))
+              if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(job); else await job
+            } else {
+              await taskForSven(sb, 'Lotte-Post nicht gepostet: Bild kaputt',
+                `Der Lotte-Post für ${new Date(next.scheduled_for).toLocaleString('de-DE', { timeZone: 'Asia/Nicosia' })} wurde NICHT veröffentlicht, weil das Bild auch nach zwei neuen Versuchen fehlerhaft war (${chk.reason}). Bitte im Social Studio ein Bild einsetzen oder den Post löschen.`,
+                `Lotte-Post nicht gepostet`)
+            }
+            return json({ ok: true, skipped: `Lotte-Bild kaputt (${chk.reason}), wird nicht gepostet${tries <= 2 ? ', neues Bild läuft' : ''}.` })
+          }
+        }
         body.post_id = next.id
       }
       body.action = 'publish'   // unten normal veröffentlichen

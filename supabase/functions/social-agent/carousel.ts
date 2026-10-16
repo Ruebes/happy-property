@@ -76,8 +76,8 @@ function frame(i: number, n: number, dark: boolean, swipeHinweis = true): string
 // Der Titel ist der Hook: kurz und groß, höchstens 3 Zeilen (ig-carousel:
 // „Das Cover ist 80 % des Ergebnisses. Sechs Wörter. Groß.").
 export function coverOverlaySvg(s: Extract<CarSlide, { type: 'cover' }>, n: number, swipeHinweis = true): string {
-  const title = wrap(s.title, 16, 3)
-  const sub = wrap(s.subtitle ?? '', 37, 2)
+  const title = wrap(s.title, ...LIM.coverTitle)
+  const sub = wrap(s.subtitle ?? '', ...LIM.coverSub)
   const titleLh = 104
   const subLh = 48
   const blockH = title.length * titleLh + (s.subtitle ? 40 + sub.length * subLh : 0)
@@ -111,23 +111,63 @@ export function coverPlainSvg(s: Extract<CarSlide, { type: 'cover' }>, n: number
 
 // Punkte-Slides (list, recap) muessen in den Platz zwischen Titel und Fusszeile
 // passen. Statt zu hoffen, dass die KI kurz schreibt, wird hier die naechstbeste
-// Stufe gewaehlt, die wirklich hineinpasst; die letzte Stufe kuerzt notfalls mit …
+// Stufe gewaehlt, in die ALLE Punkte VOLLSTÄNDIG passen. Gekürzt wird nicht mehr:
+// Am 19.10.2026 fehlten 8 px, die alte letzte Stufe zwang jeden Punkt auf eine
+// Zeile mit „…" („Stempelsteuer auf Kaufverträge auf…"), der Merk-Slide war wertlos.
 const ROW_STEPS = [
   { f: 36, lh: 50, gap: 44, ml: 3, cw: 33 },
   { f: 34, lh: 46, gap: 38, ml: 3, cw: 35 },
   { f: 32, lh: 44, gap: 32, ml: 2, cw: 37 },
   { f: 30, lh: 40, gap: 26, ml: 2, cw: 40 },
+  { f: 28, lh: 38, gap: 22, ml: 3, cw: 43 },
+  { f: 26, lh: 36, gap: 18, ml: 3, cw: 46 },
 ]
 const ROWS_BOTTOM = 1180
-function fitRows(items: string[], yStart: number): { step: typeof ROW_STEPS[number]; rows: string[][] } {
-  for (const step of ROW_STEPS) {
-    const rows = items.map(it => wrap(it, step.cw, step.ml))
-    const h = rows.reduce((a, r) => a + r.length * step.lh + step.gap, 0)
-    if (yStart + h <= ROWS_BOTTOM) return { step, rows }
+function fitRows(items: string[], yStart: number): { step: typeof ROW_STEPS[number]; rows: string[][]; dropped: number } {
+  // Passt auch die kleinste Stufe nicht, fällt lieber ein Punkt am Ende weg
+  // (mindestens 3 bleiben), als dass Punkte abgeschnitten werden.
+  for (let n = items.length; n >= Math.min(3, items.length); n--) {
+    for (const step of ROW_STEPS) {
+      const rows = items.slice(0, n).map(it => wrap(it, step.cw))
+      if (rows.some(r => r.length > step.ml)) continue
+      const h = rows.reduce((a, r) => a + r.length * step.lh + step.gap, 0)
+      if (yStart + h <= ROWS_BOTTOM) return { step, rows, dropped: items.length - n }
+    }
   }
   const step = ROW_STEPS[ROW_STEPS.length - 1]
-  // Letzte Stufe reicht nicht: jeden Punkt auf eine Zeile zwingen.
-  return { step, rows: items.map(it => wrap(it, step.cw, 1)) }
+  // Nur noch theoretisch (Punkte mit weit über 100 Zeichen): auf eine Zeile kürzen.
+  return { step, rows: items.slice(0, 3).map(it => wrap(it, step.cw, 1)), dropped: Math.max(0, items.length - 3) }
+}
+
+// Umbruch-Grenzen je Feld [Zeichen pro Zeile, Zeilen]. slideSvg nutzt sie, und
+// slideOverflow meldet vor dem Rendern, welche Texte sonst mit „…" enden würden.
+const LIM = {
+  coverTitle: [16, 3], coverSub: [37, 2], stake: [20, 6],
+  ctaTitle: [19, 4], ctaBody: [36, 5], ctaButton: [30, 1],
+  factValue: [9, 2], factLabel: [28, 3], factText: [40, 7], factSource: [56, 1],
+  pointsTitle: [22, 2], pointTitle: [22, 4], pointBody: [38, 10],
+} as const satisfies Record<string, readonly [number, number]>
+const ROWS_START = { recap: (titleLines: number) => 320 + titleLines * 76 + 80, list: (titleLines: number) => 320 + titleLines * 76 + 70 }
+
+export interface Overflow { field: string; text: string; max: number }
+export function slideOverflow(s: CarSlide): Overflow[] {
+  const out: Overflow[] = []
+  const chk = (field: string, text: string | undefined, [cw, ml]: readonly [number, number]) => {
+    if (text && wrap(text, cw).length > ml) out.push({ field, text, max: Math.floor(cw * ml * 0.85) })
+  }
+  if (s.type === 'cover') { chk('title', s.title, LIM.coverTitle); chk('subtitle', s.subtitle, LIM.coverSub) }
+  else if (s.type === 'stake') chk('text', s.text, LIM.stake)
+  else if (s.type === 'cta') { chk('title', s.title, LIM.ctaTitle); chk('body', s.body, LIM.ctaBody); chk('button', s.button, LIM.ctaButton) }
+  else if (s.type === 'fact') { chk('value', s.value, LIM.factValue); chk('label', s.label, LIM.factLabel); chk('text', s.text, LIM.factText); chk('source', s.source, LIM.factSource) }
+  else if (s.type === 'point') { chk('title', s.title, LIM.pointTitle); chk('body', s.body, LIM.pointBody) }
+  else if (s.type === 'recap' || s.type === 'list') {
+    chk('title', s.title, LIM.pointsTitle)
+    const items = (s.items ?? []).slice(0, s.type === 'recap' ? 6 : 5)
+    const yStart = ROWS_START[s.type](wrap(s.title, LIM.pointsTitle[0], LIM.pointsTitle[1]).length)
+    const fit = fitRows(items, yStart)
+    if (fit.dropped || fit.rows.some(r => r.some(l => l.endsWith('…')))) out.push({ field: 'items', text: items.join(' | '), max: 50 })
+  }
+  return out
 }
 
 export function slideSvg(s: CarSlide, i: number, n: number, swipeHinweis = true): string {
@@ -135,7 +175,7 @@ export function slideSvg(s: CarSlide, i: number, n: number, swipeHinweis = true)
   // Einsatz-Slide: das zweite Cover. Im Raster sieht man auch diesen Slide, also
   // steht hier keine Hinführung, sondern der Satz, der die Sache scharf macht.
   if (s.type === 'stake') {
-    const text = wrap(s.text, 20, 6)
+    const text = wrap(s.text, ...LIM.stake)
     // Mitte zwischen Kopfzeile (150) und Fusslinie (1222) ist 686. y ist die
     // Grundlinie der ERSTEN Zeile, deshalb die halbe Blockhöhe gegenrechnen.
     const yT = Math.round(723 - (text.length - 1) * 44)
@@ -146,11 +186,11 @@ export function slideSvg(s: CarSlide, i: number, n: number, swipeHinweis = true)
     </svg>`
   }
   if (s.type === 'cta') {
-    const title = wrap(s.title, 19, 4)
-    const body = wrap(s.body ?? '', 36, 5)
+    const title = wrap(s.title, ...LIM.ctaTitle)
+    const body = wrap(s.body ?? '', ...LIM.ctaBody)
     const yT = 470
     const yB = yT + title.length * 92 + 50
-    const btn = s.button ? wrap(s.button, 30, 1)[0] : ''
+    const btn = s.button ? wrap(s.button, ...LIM.ctaButton)[0] : ''
     const btnW = Math.min(840, Math.max(460, btn.length * 23 + 120))
     const yBtn = Math.max(yB + body.length * 50 + 60, 880)
     return `${svgOpen}<rect width="${CAR_W}" height="${CAR_H}" fill="${CI.navy}"/>
@@ -163,9 +203,9 @@ export function slideSvg(s: CarSlide, i: number, n: number, swipeHinweis = true)
     </svg>`
   }
   if (s.type === 'fact') {
-    const val = wrap(s.value, 9, 2)
-    const label = wrap(s.label, 28, 3)
-    const text = wrap(s.text ?? '', 40, 7)
+    const val = wrap(s.value, ...LIM.factValue)
+    const label = wrap(s.label, ...LIM.factLabel)
+    const text = wrap(s.text ?? '', ...LIM.factText)
     const yV = 470
     const yL = yV + (val.length - 1) * 160 + 110
     const yX = yL + label.length * 58 + 60
@@ -175,15 +215,15 @@ export function slideSvg(s: CarSlide, i: number, n: number, swipeHinweis = true)
       <rect x="${PAD}" y="${yL - 62}" width="90" height="8" rx="4" fill="${CI.coral}"/>
       <text ${F} font-size="44" fill="${CI.navy}" font-weight="700">${tspans(label, PAD, yL, 58)}</text>
       ${s.text ? `<text ${F} font-size="34" fill="${CI.ink}">${tspans(text, PAD, yX, 48)}</text>` : ''}
-      ${s.source ? `<text ${F} x="${PAD}" y="1180" font-size="24" fill="${CI.mute}">Quelle: ${esc(wrap(s.source, 56, 1)[0])}</text>` : ''}
+      ${s.source ? `<text ${F} x="${PAD}" y="1180" font-size="24" fill="${CI.mute}">Quelle: ${esc(wrap(s.source, ...LIM.factSource)[0])}</text>` : ''}
     </svg>`
   }
   // Merk-Slide: die ganze Sache als Liste, ohne Zusammenhang lesbar. Das ist der
   // Slide, den Leute in die DM schicken, deshalb Nummern und keine Verweise.
   if (s.type === 'recap') {
-    const title = wrap(s.title, 22, 2)
+    const title = wrap(s.title, ...LIM.pointsTitle)
     const items = (s.items ?? []).slice(0, 6)
-    const yStart = 320 + title.length * 76 + 80
+    const yStart = ROWS_START.recap(title.length)
     const { step, rows } = fitRows(items, yStart)
     const r = Math.min(24, Math.round(step.f * 0.68))
     let y = yStart
@@ -202,9 +242,9 @@ export function slideSvg(s: CarSlide, i: number, n: number, swipeHinweis = true)
     </svg>`
   }
   if (s.type === 'list') {
-    const title = wrap(s.title, 22, 2)
+    const title = wrap(s.title, ...LIM.pointsTitle)
     const items = (s.items ?? []).slice(0, 5)
-    const yStart = 320 + title.length * 76 + 70
+    const yStart = ROWS_START.list(title.length)
     const { step, rows } = fitRows(items, yStart)
     let y = yStart
     const body = rows.map(lines => {
@@ -220,8 +260,8 @@ export function slideSvg(s: CarSlide, i: number, n: number, swipeHinweis = true)
     </svg>`
   }
   // point
-  const title = wrap(s.title, 22, 4)
-  const body = wrap(s.body, 38, 10)
+  const title = wrap(s.title, ...LIM.pointTitle)
+  const body = wrap(s.body, ...LIM.pointBody)
   const yT = 380
   const yB = yT + title.length * 78 + 60
   return `${svgOpen}<rect width="${CAR_W}" height="${CAR_H}" fill="${CI.cream}"/>
