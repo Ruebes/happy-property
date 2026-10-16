@@ -677,9 +677,12 @@ async function collageCheck(url: string): Promise<{ collage: boolean; answer: st
     const r = await claude(key, {
       system: 'You check AI-generated images before they are posted on social media. Image generators sometimes return a collage instead of one photo: the canvas is split into 2, 3 or 4 panels (2x2 grid, side by side, stacked) that show almost the same scene, so the same dog appears several times. Look for straight seams where the background suddenly jumps and for the subject repeated. Reply with only the number of separate panels the image consists of (1 = one continuous photo).',
       messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'url', url: small } }, { type: 'text', text: 'How many panels?' }] }],
-      max_tokens: 10,
+      // Großzügig: mit 10 Tokens kam am 16.10. gar kein Text zurück (Prüfung lief leer).
+      max_tokens: 1000,
     })
-    const t = (((r.content ?? []) as Array<{ type: string; text?: string }>).find(b => b.type === 'text')?.text ?? '').trim()
+    const blocks = (r.content ?? []) as Array<{ type: string; text?: string }>
+    const t = (blocks.find(b => b.type === 'text')?.text ?? '').trim()
+    if (!t) return { collage: false, answer: `keine Antwort (stop_reason ${String(r.stop_reason)}, Blöcke ${blocks.map(b => b.type).join(',') || 'keine'})` }
     const n = Number(t.match(/\d+/)?.[0] ?? '1')
     return { collage: n > 1, answer: t }
   } catch (e) {
