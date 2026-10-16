@@ -47,18 +47,18 @@ type Ev = {
   waImage?: string  // Bild zur WhatsApp-Bestätigung, ersetzt die graue Zoom-Linkvorschau
 }
 const EVENTS: Record<string, Ev> = {
-  // Schlüssel bleibt 'aerzte-2026-10-11' (Formular + verschickte .ics-Links nutzen ihn); Termin am 2.10. auf 18.10., am 14.10. auf 15.11. verschoben (11 Uhr MEZ = 10:00 UTC).
+  // Schlüssel bleibt 'aerzte-2026-10-11' (Formular + verschickte .ics-Links nutzen ihn); Termin am 2.10. auf 18.10., am 14.10. auf 15.11. verschoben (11 Uhr MEZ = 10:00 UTC). Seit 16.10. für alle Kapitalanleger (neue Seite, Liste heißt intern weiter „Masterclass Ärzte 15.11.2026“).
   'aerzte-2026-10-11': {
-    title: 'Masterclass für Ärzte & Apotheker: Immobilien auf Zypern & Steuern zurückholen',
-    short: 'Masterclass für Ärzte & Apotheker',
+    title: 'Live-Masterclass: Immobilien auf Zypern als Kapitalanlage',
+    short: 'Live-Masterclass Zypern-Immobilien',
     startIso: '2026-11-15T10:00:00Z', endIso: '2026-11-15T11:00:00Z',
     dateLabel: 'Sonntag, 15. November 2026', timeLabel: '11:00 Uhr (deutsche Zeit)',
     zoomUrl: 'https://us06web.zoom.us/j/84711642809?pwd=uvj0nmrfjlt37KlWv2LBwyfpqa6E8P.1',
     zoomId: '847 1164 2809', zoomPw: '590189',
     list: 'Masterclass Ärzte 15.11.2026',
     thanksUrl: 'https://steuervorteil-zypern-immobilien.com/masterclass-fuer-aerzte-apotheker-danke/',
-    landingUrl: 'https://steuervorteil-zypern-immobilien.com/masterclass-fuer-aerzte-apotheker-anmeldung/',
-    waImage: 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/landing-assets/mc-aerzte/wa-bestaetigung-1511.jpg',
+    landingUrl: 'https://steuervorteil-zypern-immobilien.com/live-masterclass-zypern-immobilien/',
+    waImage: 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/landing-assets/mc-aerzte/wa-bestaetigung-1511-alle.jpg',
   },
 }
 const FN_URL = () => `${Deno.env.get('SUPABASE_URL')}/functions/v1/masterclass-register`
