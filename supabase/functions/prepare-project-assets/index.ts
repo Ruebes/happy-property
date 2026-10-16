@@ -553,10 +553,12 @@ function sortCategorized(cat: CatImage[]) {
 }
 // Supabase-Bild-Transformation → verkleinerte Variante (Vision lehnt große Originale
 // >5MB/hohe Megapixel ab; Originale waren ~4MB → immer Fallback). 1280px reicht für
-// die Raum-Erkennung und ist klein/sicher.
+// die Raum-Erkennung und ist klein/sicher. height + resize=contain sind Pflicht:
+// nur width behält die Originalhöhe und schneidet die Mitte heraus (Vision sah
+// dann nur einen Streifen, Karten-Pin-Koordinaten lagen daneben).
 function thumb(u: string): string {
   if (u.includes('/storage/v1/object/public/')) {
-    return u.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/') + (u.includes('?') ? '&' : '?') + 'width=1280&quality=80'
+    return u.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/') + (u.includes('?') ? '&' : '?') + 'width=1280&height=1280&resize=contain&quality=80'
   }
   return u
 }
@@ -690,7 +692,7 @@ async function categorizeImages(urls: string[]): Promise<CatImage[]> {
 async function detectMapMarker(mapUrl: string): Promise<{ x: number; y: number } | null> {
   if (!ANTHROPIC_API_KEY) return null
   try {
-    const r = await fetch(thumb(mapUrl))   // width=1280, Seitenverhältnis bleibt → %-Koords gültig
+    const r = await fetch(thumb(mapUrl))   // max. 1280x1280 contain, ganzes Bild → %-Koords gültig
     if (!r.ok) return null
     let ct = (r.headers.get('content-type') || 'image/png').split(';')[0].trim().toLowerCase()
     if (!['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(ct)) ct = 'image/png'

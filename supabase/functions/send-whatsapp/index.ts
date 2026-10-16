@@ -57,7 +57,9 @@ function waSize(url: string): string {
   // 1080 statt 1280: Bei 1280 liefert Supabase PNG-Quellen unverändert gross zurück
   // (gemessen 2.402 KB → über dem 2-MB-Limit), bei 1080 greift die WebP-Umwandlung
   // (94 KB). Für WhatsApp ist 1080 px ohnehin mehr als ausreichend.
-  return u + (u.includes('?') ? '&' : '?') + 'width=1080&quality=75'
+  // height + resize=contain sind Pflicht: nur width behält die Originalhöhe und
+  // schneidet die Mitte heraus (2048x1536 → 1080x1536-Streifen, gemessen 16.10.26).
+  return u + (u.includes('?') ? '&' : '?') + 'width=1080&height=1080&resize=contain&quality=75'
 }
 
 // Aus einer YouTube-URL das ECHTE Vorschaubild ermitteln.
