@@ -76,7 +76,8 @@ async function saveGads(
   td: { refresh_token?: string; access_token?: string; scope?: string },
 ): Promise<string> {
   const granted = (td.scope ?? '').split(' ')
-  if (td.scope && !granted.includes(GADS_SCOPE)) return 'Nicht gespeichert: Der Haken für „Google Ads verwalten" fehlte. Bitte erneut verbinden und alle Haken gesetzt lassen.'
+  console.log('[yt-oauth] gads Scopes erteilt:', td.scope ?? '(keine Angabe)')
+  if (td.scope && !granted.includes(GADS_SCOPE)) return 'Nicht gespeichert: Google hat den Zugriff auf Google Ads nicht erteilt. Bitte im CRM erneut auf „Verbinden" klicken und auf der Google-Seite das Kästchen bei „Google Ads-Kampagnen ansehen und verwalten" anhaken, bevor du auf „Weiter" klickst.'
   const put = (key: string, value: string) => sb.from('connector_secrets').upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' })
   await put('GOOGLE_ADS_REFRESH_TOKEN', td.refresh_token!)
   const at = td.access_token ?? ''
@@ -143,7 +144,9 @@ Deno.serve(async (req) => {
       auth.searchParams.set('redirect_uri', SELF)
       auth.searchParams.set('response_type', 'code')
       auth.searchParams.set('scope', target === 'drive' ? 'https://www.googleapis.com/auth/drive'
-        : target === 'gads' ? `${GADS_SCOPE} email`
+        // Nur EIN Scope: Bei mehreren zeigt Google Einzel-Kästchen, die nicht
+        // vorausgewählt sind; Sven klickte am 16.10. durch, ohne anzuhaken.
+        : target === 'gads' ? GADS_SCOPE
         : `${YT_SCOPE} ${YT_ANALYTICS_SCOPE}`)
       auth.searchParams.set('access_type', 'offline')
       auth.searchParams.set('prompt', 'consent')
