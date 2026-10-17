@@ -231,6 +231,11 @@ export function removeFurniture(blocks: Block[], sink: ScrubEvent[]): Block[] {
 // Kaufvertrag fällig. Gilt nur für Baufortschritts-Raten, nie für Raten nach der
 // Übergabe (MITO, reservationCredit 'last').
 const BAU_RATE = /baufortschritt|construction|rohbau|mauerwerk|fliesen|alumin|milestone/i
+// Sven 17.10.26 („Fehler mit Anzahlung beheben"): Steht an einer Stufe „abzüglich
+// Reservierung", zeigt sie den echten Zahlbetrag, die Reservierung ist dort schon
+// abgezogen. Vorher stand der volle Prozentsatz da, und Reservierung + Raten ergaben
+// Bruttopreis PLUS Reservierung (Mail: „11.900 € Reservierung und 145.775 € bei Vertrag").
+const ABZUG_RES = /(abzüglich|less|minus)\b[^·]*reserv/i
 const VERTRAG_RATE = /vertrag|contract/i
 const MONATE_DE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember']
 const MONATE_EN = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
@@ -267,12 +272,18 @@ export function buildPaymentBlock(sched: PaySchedule, basis?: { net: number; gro
       brutto.push(v); rest -= v
     })
   }
+  const resNet = sched.reservation ?? 0
+  const resMwst = sched.reservationVat !== false
+  const resBr = !resNet ? 0 : resMwst ? Math.round(resNet * 1.19) : resNet
+  let abzugIdx = resNet > 0 ? stages.findIndex(s => ABZUG_RES.test(s.sub ?? '')) : -1
+  if (abzugIdx >= 0 && hasBasis && brutto[abzugIdx] > resBr) brutto[abzugIdx] -= resBr
+  else abzugIdx = -1
   const netto = EN ? 'net' : 'netto'
   const stageVal = (s: PayStage, i: number) => hasBasis ? fmt(brutto[i]) : `${s.pct} %`
-  const stageSub = (s: PayStage) => {
+  const stageSub = (s: PayStage, i: number) => {
     const parts: string[] = []
     if (s.sub) parts.push(s.sub)
-    if (hasBasis) parts.push(`${s.pct} % · ${fmt(s.pct / 100 * basis!.net)} ${netto}`)
+    if (hasBasis) parts.push(`${s.pct} % · ${fmt(s.pct / 100 * basis!.net - (i === abzugIdx ? (resMwst ? resNet : resBr / 1.19) : 0))} ${netto}`)
     return parts.length ? parts.join(' · ') : undefined
   }
   const p1: Array<Record<string, unknown>> = []
@@ -285,8 +296,8 @@ export function buildPaymentBlock(sched: PaySchedule, basis?: { net: number; gro
     ].filter(Boolean).join(' · ')
     p1.push({ label: EN ? 'Reservation' : 'Reservierung', sub: resSub, value: fmt(resBrutto) })
   }
-  stages.slice(0, half).forEach((s, i) => p1.push({ label: s.label, sub: stageSub(s), value: stageVal(s, i) }))
-  const p2 = stages.slice(half).map((s, i) => ({ label: s.label, sub: stageSub(s), value: stageVal(s, half + i) }))
+  stages.slice(0, half).forEach((s, i) => p1.push({ label: s.label, sub: stageSub(s, i), value: stageVal(s, i) }))
+  const p2 = stages.slice(half).map((s, i) => ({ label: s.label, sub: stageSub(s, half + i), value: stageVal(s, half + i) }))
   return {
     type: 'payment',
     kicker: EN ? 'Payment plan' : 'Zahlungsplan',
@@ -304,11 +315,11 @@ export function buildPaymentBlock(sched: PaySchedule, basis?: { net: number; gro
     note: hasBasis
       ? (resLast
         ? (EN
-          ? 'The reservation and the full first instalment on signing are due immediately; the reservation is credited against the last instalment. Main amounts gross (incl. VAT); the net amount is shown in addition.'
-          : 'Reservierung und die volle erste Rate bei Vertragsunterzeichnung sind sofort fällig; die Reservierung wird mit der letzten Rate verrechnet. Hauptbeträge brutto (inkl. MwSt); der jeweilige Nettobetrag ist zusätzlich ausgewiesen.')
+          ? `The reservation and the full first instalment on signing are due immediately; the reservation ${abzugIdx >= 0 ? 'is already deducted from the last instalment' : 'is credited against the last instalment'}. Main amounts gross (incl. VAT); the net amount is shown in addition.`
+          : `Reservierung und die volle erste Rate bei Vertragsunterzeichnung sind sofort fällig; die Reservierung ${abzugIdx >= 0 ? 'ist in der letzten Rate schon abgezogen' : 'wird mit der letzten Rate verrechnet'}. Hauptbeträge brutto (inkl. MwSt); der jeweilige Nettobetrag ist zusätzlich ausgewiesen.`)
         : EN
-        ? 'The reservation and the first instalment on signing are due immediately; further instalments follow the construction progress. The reservation is credited against the first instalment. Main amounts gross (incl. VAT); the net amount is shown in addition.'
-        : 'Reservierung und die erste Rate bei Vertragsunterzeichnung sind sofort fällig; weitere Raten folgen mit dem Baufortschritt. Die Reservierung wird auf die erste Rate angerechnet. Hauptbeträge brutto (inkl. MwSt); der jeweilige Nettobetrag ist zusätzlich ausgewiesen.')
+        ? `The reservation and the first instalment on signing are due immediately; further instalments follow the construction progress. ${abzugIdx >= 0 ? `The reservation is already deducted from the ${abzugIdx === 0 ? 'first' : 'marked'} instalment.` : 'The reservation is credited against the first instalment.'} Main amounts gross (incl. VAT); the net amount is shown in addition.`
+        : `Reservierung und die erste Rate bei Vertragsunterzeichnung sind sofort fällig; weitere Raten folgen mit dem Baufortschritt. ${abzugIdx >= 0 ? `Die Reservierung ist in der ${abzugIdx === 0 ? 'ersten Rate' : 'Rate mit dem Vermerk „abzüglich Reservierung"'} schon abgezogen.` : 'Die Reservierung wird auf die erste Rate angerechnet.'} Hauptbeträge brutto (inkl. MwSt); der jeweilige Nettobetrag ist zusätzlich ausgewiesen.`)
       : (resLast
         ? (EN
           ? 'The reservation amount is credited against the last instalment. Percentages refer to the purchase price; final amounts according to the developer terms.'
@@ -341,7 +352,7 @@ function buildPaymentBlockFertig(sched: PaySchedule, basis: { net: number; gross
   const mitMwst = sched.reservationVat !== false
   const resNet = sched.reservation ?? 0
   const resBrutto = !resNet ? 0 : mitMwst ? Math.round(resNet * 1.19) : resNet
-  const abzug = resNet > 0 && /abzüglich reserv|less reserv|minus reserv/i.test(vertrag.sub ?? '')
+  const abzug = resNet > 0 && ABZUG_RES.test(vertrag.sub ?? '')
   // Bruttobeträge wie im Normalfall: jede Stufe gerundet, die letzte ist der Rest.
   const merged = [vertrag.pct + bauPct, ...rest.map(s => s.pct)]
   const brutto: number[] = []

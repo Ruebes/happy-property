@@ -210,7 +210,7 @@ export function zahlungKarte(z: ReturnType<typeof zahlungsUebersicht>, url: stri
   const jetzt = z.jetzt.map(j => /reserv/i.test(j.label)
     ? `${esc(j.value)} für die Reservierung`
     : /vertrag/i.test(j.label)
-      ? `in ca. 2 bis 4 Wochen ${esc(j.value)}${j.pct ? ` (${esc(j.pct)} %)` : ''} bei Vertragsunterzeichnung`
+      ? `in ca. 2 bis 4 Wochen ${esc(j.value)}${j.pct ? ` (${esc(j.pct)} %${j.abzug ? ' abzüglich Reservierung' : ''})` : ''} bei Vertragsunterzeichnung`
       : `${esc(j.value)} ${esc(j.label)}`)
   const liste = (xs: string[]) => xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} und ${xs[xs.length - 1]}`
   // Bau fertig (Sven 17.10.26: „in den nächsten Wochen übergeben, also Zahlung
@@ -316,7 +316,9 @@ export function ratenplan(o: { schedule: unknown; brutto: number; netto: number;
       wann = uebText ? `Bei Übergabe, geplant ${uebText}` : 'Bei Übergabe'
       was = `${String(st.pct).replace('.', ',')} % mit oder kurz vor der Übergabe`
     }
-    if (ab === 'first' && resOffen > 0) { betrag -= resOffen; was += ', abzüglich Reservierung'; resOffen = 0 }
+    // 'last' ohne Raten nach Übergabe (Kuutio: 10 % bei Übergabe abzüglich Reservierung):
+    // die Reservierung geht von der letzten Stufe ab, sonst stand sie doppelt in der Summe.
+    if (resOffen > 0 && (ab === 'first' || st === s.stages[s.stages.length - 1])) { betrag -= resOffen; was += ', abzüglich Reservierung'; resOffen = 0 }
     raten.push({ wann, was, brutto: Math.round(betrag), netto: Math.round(betrag / faktor) })
   }
   const summe = raten.reduce((a, x) => a + x.brutto, 0)

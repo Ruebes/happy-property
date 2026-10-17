@@ -122,19 +122,20 @@ export function faellig(label?: string, sub?: string, u?: Uebergabe | null): str
 // andere ist „später" und wird nur als Summe mit Zeitpunkten genannt.
 const betrag = (v?: string) => { const n = Number(String(v ?? '').replace(/[^\d,]/g, '').replace(',', '.')); return Number.isFinite(n) ? n : 0 }
 export function zahlungsUebersicht(blocks: DeckBlockLite[], uebergabe?: string | null): {
-  jetzt: { label: string; value: string; pct: string | null; wann: string }[]; spaeterSumme: number; spaeterWann: string[]
+  jetzt: { label: string; value: string; pct: string | null; wann: string; abzug: boolean }[]; spaeterSumme: number; spaeterWann: string[]
   spaeter: { value: string; wann: string | null }[]; bauFertig: boolean
 } | null {
   const pay = blocks.find(b => b.type === 'payment')
   const rows = [...(pay?.phase1?.rows ?? []), ...(pay?.phase2?.rows ?? [])]
   if (!rows.length) return null
   const u = uebergabeAus(uebergabe)
-  const jetzt: { label: string; value: string; pct: string | null; wann: string }[] = []
+  const jetzt: { label: string; value: string; pct: string | null; wann: string; abzug: boolean }[] = []
   let spaeterSumme = 0; const spaeterWann: string[] = []; const spaeter: { value: string; wann: string | null }[] = []
   for (const r of rows) {
     const wann = faellig(r.label, r.sub, u)
     if (wann === 'jetzt' || (wann ?? '').startsWith('in ca. 2 bis 4 Wochen')) {
-      jetzt.push({ label: stripHtml(r.label), value: stripHtml(r.value), pct: (r.sub ?? '').match(/(\d+(?:,\d+)?)\s*%/)?.[1] ?? null, wann: wann! })
+      jetzt.push({ label: stripHtml(r.label), value: stripHtml(r.value), pct: (r.sub ?? '').match(/(\d+(?:,\d+)?)\s*%/)?.[1] ?? null, wann: wann!,
+        abzug: /(abzüglich|less|minus)\b[^·]*reserv/i.test(r.sub ?? '') })
     } else {
       spaeterSumme += betrag(r.value)
       spaeter.push({ value: stripHtml(r.value), wann })

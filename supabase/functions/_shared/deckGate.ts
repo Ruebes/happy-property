@@ -234,10 +234,12 @@ export function runDeckGate(blocks: Block[], ctx: DeckContext): GateResult {
         if (!/reserv/i.test(String(r.label ?? ''))) summe += betrag
       }
       // Die aufgeführten Raten müssen in der Summe exakt den Bruttopreis ergeben —
-      // sonst rechnet der Kunde nach und findet eine Lücke. Ausnahme: Plan bei
-      // fertigem Bau (bauFertig) zeigt echte Zahlbeträge, dort ist die Reservierung
-      // in der Vertragsrate schon abgezogen und zählt mit.
-      if (b.bauFertig === true) {
+      // sonst rechnet der Kunde nach und findet eine Lücke. Seit 17.10.26 zeigen
+      // Stufen mit „abzüglich Reservierung" (und der Plan bei fertigem Bau) echte
+      // Zahlbeträge: die Reservierung ist dort schon abgezogen und zählt mit.
+      const resAbgezogen = b.bauFertig === true
+        || (rows as Array<Record<string, unknown>>).some(r => /(abzüglich|less|minus)\b[^·]*reserv/i.test(String(r.sub ?? '')))
+      if (resAbgezogen) {
         for (const r of rows as Array<Record<string, unknown>>) {
           const betrag = parseEuro(String(r.value ?? ''))
           if (betrag != null && /reserv/i.test(String(r.label ?? ''))) summe += betrag
@@ -418,6 +420,12 @@ export function runDeckGate(blocks: Block[], ctx: DeckContext): GateResult {
             const v = i === arr.length - 1 ? rest : Math.round(s.pct / 100 * u.price!.gross)
             addB(v); rest -= v
             addB(Math.round(s.pct / 100 * u.price!.netTotal))
+            // Stufe „abzüglich Reservierung": auch der echte Zahlbetrag ist belegt.
+            const res = ctx.paymentSchedule!.reservation ?? 0
+            if (res > 0 && /(abzüglich|less|minus)\b[^·]*reserv/i.test(s.sub ?? '')) {
+              const resBr = ctx.paymentSchedule!.reservationVat === false ? res : Math.round(res * 1.19)
+              addB(v - resBr); addB(Math.round(s.pct / 100 * u.price!.netTotal) - res)
+            }
           })
         }
       }
