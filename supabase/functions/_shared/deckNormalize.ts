@@ -224,11 +224,34 @@ export function removeFurniture(blocks: Block[], sink: ScrubEvent[]): Block[] {
 // englischen Deck, und nach jedem Feinschliff stand er wieder deutsch drin.
 // Reservierung: netto hinterlegt, gezahlt wird mit 19 % MwSt (Sven 19.9.26) -
 // ausser reservationVat ist ausdruecklich false (MITO bis 12.10.26: 20.000 EUR glatt, seit 13.10.26 netto zzgl. MwSt).
-export function buildPaymentBlock(sched: PaySchedule, basis?: { net: number; gross: number } | null, lang: 'de' | 'en' = 'de'): Block {
+//
+// Bau fertig (Sven 17.10.26: „Genesis wird ja in den nächsten Wochen übergeben,
+// also Zahlung komplett"): Liegt die Übergabe höchstens drei Monate entfernt (oder
+// schon zurück), sind alle Raten nach Baufortschritt erreicht und werden mit dem
+// Kaufvertrag fällig. Gilt nur für Baufortschritts-Raten, nie für Raten nach der
+// Übergabe (MITO, reservationCredit 'last').
+const BAU_RATE = /baufortschritt|construction|rohbau|mauerwerk|fliesen|alumin|milestone/i
+const VERTRAG_RATE = /vertrag|contract/i
+const MONATE_DE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember']
+const MONATE_EN = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+/** completion im Kontext-Format "MM/YYYY"; true, wenn die Übergabe höchstens drei Monate entfernt ist. */
+export function istBauFertig(completion: string | null | undefined, heute = new Date()): boolean {
+  const m = String(completion ?? '').match(/^(\d{1,2})\/(\d{4})$/)
+  if (!m) return false
+  const ziel = Number(m[2]) * 12 + Number(m[1]) - 1
+  return ziel - (heute.getFullYear() * 12 + heute.getMonth()) <= 3
+}
+export type PaymentOpts = { bauFertig?: boolean; completion?: string | null }
+
+export function buildPaymentBlock(sched: PaySchedule, basis?: { net: number; gross: number } | null, lang: 'de' | 'en' = 'de', opts?: PaymentOpts): Block {
   const EN = lang === 'en'
   // MITO: Reservierung mit der letzten Rate verrechnet, Raten nach der Uebergabe
   // statt nach Baufortschritt. Ohne Schalter bleibt alles wie bisher.
   const resLast = sched.reservationCredit === 'last'
+  if (opts?.bauFertig && !resLast) {
+    const fertig = buildPaymentBlockFertig(sched, basis, lang, opts.completion)
+    if (fertig) return fertig
+  }
   const stages = sched.stages ?? []
   const half = Math.ceil(stages.length / 2)
   const fmt = (n: number) => Math.round(n).toLocaleString('de-DE') + ' €'
@@ -293,6 +316,85 @@ export function buildPaymentBlock(sched: PaySchedule, basis?: { net: number; gro
         : EN
         ? 'The reservation amount is credited on signing the contract. Percentages refer to the purchase price; final amounts according to the developer terms.'
         : 'Der Reservierungsbetrag wird bei Vertragsunterzeichnung angerechnet. Prozentsätze bezogen auf den Kaufpreis; finale Beträge gemäß Bauträger-Konditionen.'),
+  }
+}
+
+// Plan bei fertigem Bau: Reservierung sofort, bei Vertragsunterzeichnung die
+// Vertragsrate plus alle Baufortschritts-Raten, danach nur noch die übrigen
+// Stufen (Übergabe). Die Beträge sind echte Zahlbeträge: sieht die Vertragsrate
+// „abzüglich Reservierung" vor, ist die Reservierung dort schon abgezogen, und
+// Reservierung + Raten ergeben genau den Bruttopreis. Markiert mit bauFertig,
+// damit Mail-Karte und Gate den Plan erkennen.
+function buildPaymentBlockFertig(sched: PaySchedule, basis: { net: number; gross: number } | null | undefined, lang: 'de' | 'en', completion?: string | null): Block | null {
+  const EN = lang === 'en'
+  const stages = sched.stages ?? []
+  const vIdx = stages.findIndex(s => VERTRAG_RATE.test(s.label))
+  const bau = stages.filter((s, i) => i !== vIdx && BAU_RATE.test(`${s.label} ${s.sub ?? ''}`))
+  if (vIdx < 0 || !bau.length) return null
+  const vertrag = stages[vIdx]
+  const rest = stages.filter((s, i) => i !== vIdx && !bau.includes(s))
+  const bauPct = bau.reduce((a, s) => a + s.pct, 0)
+  const fmt = (n: number) => Math.round(n).toLocaleString('de-DE') + ' €'
+  const pctTxt = (n: number) => `${Math.round(n * 100) / 100}`.replace('.', EN ? '.' : ',') + ' %'
+  const netto = EN ? 'net' : 'netto'
+  const hasBasis = !!basis && basis.gross > 0
+  const mitMwst = sched.reservationVat !== false
+  const resNet = sched.reservation ?? 0
+  const resBrutto = !resNet ? 0 : mitMwst ? Math.round(resNet * 1.19) : resNet
+  const abzug = resNet > 0 && /abzüglich reserv|less reserv|minus reserv/i.test(vertrag.sub ?? '')
+  // Bruttobeträge wie im Normalfall: jede Stufe gerundet, die letzte ist der Rest.
+  const merged = [vertrag.pct + bauPct, ...rest.map(s => s.pct)]
+  const brutto: number[] = []
+  const nettoB: number[] = merged.map(p => hasBasis ? p / 100 * basis!.net : 0)
+  if (hasBasis) {
+    let r = basis!.gross
+    merged.forEach((p, i) => { const v = i === merged.length - 1 ? r : Math.round(p / 100 * basis!.gross); brutto.push(v); r -= v })
+    if (abzug) { brutto[0] -= resBrutto; nettoB[0] -= mitMwst ? resNet : resBrutto / 1.19 }
+  }
+  const m = String(completion ?? '').match(/^(\d{1,2})\/(\d{4})$/)
+  const wann = m ? `${(EN ? MONATE_EN : MONATE_DE)[Number(m[1]) - 1]} ${m[2]}` : null
+
+  const p1: Array<Record<string, unknown>> = []
+  if (resNet > 0) {
+    const resSub = [
+      mitMwst ? (EN ? `${fmt(resNet)} net plus 19 % VAT` : `${fmt(resNet)} netto zzgl. 19 % MwSt`) : null,
+      EN ? 'due immediately · secures the unit' : 'sofort fällig · sichert die Wohnung',
+    ].filter(Boolean).join(' · ')
+    p1.push({ label: EN ? 'Reservation' : 'Reservierung', sub: resSub, value: fmt(resBrutto) })
+  }
+  p1.push({
+    label: vertrag.label,
+    sub: [
+      EN ? `${pctTxt(vertrag.pct)} + ${pctTxt(bauPct)} construction instalments (already reached, the building is finished)`
+        : `${pctTxt(vertrag.pct)} + ${pctTxt(bauPct)} Raten nach Baufortschritt (schon erreicht, der Bau ist fertig)`,
+      abzug ? (EN ? 'less reservation' : 'abzüglich Reservierung') : null,
+      hasBasis ? `${fmt(nettoB[0])} ${netto}` : null,
+    ].filter(Boolean).join(' · '),
+    value: hasBasis ? fmt(brutto[0]) : pctTxt(vertrag.pct + bauPct),
+  })
+  const p2 = rest.map((s, i) => ({
+    label: s.label,
+    sub: [
+      s.sub,
+      hasBasis ? `${pctTxt(s.pct)} · ${fmt(nettoB[i + 1])} ${netto}` : null,
+      wann && /übergabe|handover/i.test(s.label) ? (EN ? `handover planned ${wann}` : `Übergabe geplant ${wann}`) : null,
+    ].filter(Boolean).join(' · ') || undefined,
+    value: hasBasis ? fmt(brutto[i + 1]) : pctTxt(s.pct),
+  }))
+  const restTitel = p2.length === 1 ? String(p2[0].label) : (EN ? 'Until handover' : 'Bis zur Übergabe')
+  return {
+    type: 'payment',
+    bauFertig: true,
+    kicker: EN ? 'Payment plan' : 'Zahlungsplan',
+    headline: EN ? 'The payment plan at a glance' : 'Der Zahlungsplan im Überblick',
+    intro: EN
+      ? `The apartment is finished: the purchase price is due in full ${p2.length ? 'with the contract and the handover' : 'with the contract'}.`
+      : `Die Wohnung ist fertig gebaut: Der Kaufpreis wird ${p2.length ? 'mit Kaufvertrag und Übergabe' : 'mit dem Kaufvertrag'} komplett fällig.`,
+    phase1: { label: EN ? 'Start' : 'Start', title: EN ? 'Reservation & contract' : 'Reservierung & Vertrag', rows: p1 },
+    ...(p2.length ? { phase2: { label: EN ? 'Handover' : 'Übergabe', title: restTitel, rows: p2 } } : {}),
+    note: EN
+      ? `The apartment is finished and all construction instalments have been reached. The reservation is due immediately; on signing the contract all instalments reached so far are due${abzug ? ' (less the reservation)' : ''}${p2.length ? ', the rest on handover' : ''}.${hasBasis ? ' Main amounts gross (incl. VAT); the net amount is shown in addition.' : ' Percentages refer to the purchase price; final amounts according to the developer terms.'}`
+      : `Die Wohnung ist fertig gebaut, alle Raten nach Baufortschritt sind erreicht. Die Reservierung ist sofort fällig, bei Vertragsunterzeichnung alle bis dahin erreichten Raten${abzug ? ' (abzüglich Reservierung)' : ''}${p2.length ? ', der Rest bei Übergabe' : ''}.${hasBasis ? ' Hauptbeträge brutto (inkl. MwSt); der jeweilige Nettobetrag ist zusätzlich ausgewiesen.' : ' Prozentsätze bezogen auf den Kaufpreis; finale Beträge gemäß Bauträger-Konditionen.'}`,
   }
 }
 
@@ -399,8 +501,9 @@ export function applyDeterministic(inputBlocks: Block[], ctx: DeckContext): Norm
     if (idx >= 0) {
       for (let i = blocks.length - 1; i >= 0; i--) if (blocks[i].type === 'payment') { blocks.splice(i, 1); if (i < at) at-- }
     } else if (at < 0) at = blocks.length
-    blocks.splice(at, 0, buildPaymentBlock(ctx.paymentSchedule, basis, ctx.lang))
-    notes.push(`Zahlungsplan deterministisch gesetzt (${ctx.paymentSource})`)
+    const bauFertig = istBauFertig(ctx.completion)
+    blocks.splice(at, 0, buildPaymentBlock(ctx.paymentSchedule, basis, ctx.lang, { bauFertig, completion: ctx.completion }))
+    notes.push(`Zahlungsplan deterministisch gesetzt (${ctx.paymentSource}${bauFertig ? ', Bau fertig: Raten bei Vertrag' : ''})`)
   }
 
   // 5) Netto/MwSt/Brutto-Box in die Zahlungsplan-Bloecke.

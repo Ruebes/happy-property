@@ -10053,6 +10053,8 @@
     "vatRefundFull": "VAT is refunded in full",
     "vatRefundPartial": "VAT is partly refunded",
     "vatRefundText": "With short-term letting you get the VAT of {{v}} back. We will explain exactly how this works in a personal call.",
+    "vatRefundShortTitle": "VAT is refunded with short-term letting",
+    "vatRefundLongText": "If you let the apartment short-term, you get the VAT of {{v}} back. This calculation assumes long-term letting, so the refund is not included here yet. We will explain exactly how this works in a personal call.",
     "equityStart": "Equity (start)",
     "financing": "Financing",
     "bedrooms": "Bedrooms",

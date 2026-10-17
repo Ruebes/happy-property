@@ -9866,6 +9866,8 @@
     "vatRefundFull": "MwSt wird komplett zurückerstattet",
     "vatRefundPartial": "MwSt wird anteilig zurückerstattet",
     "vatRefundText": "Bei Kurzzeitvermietung bekommst du die Umsatzsteuer von {{v}} zurück. Wie das genau abläuft, erklären wir im persönlichen Gespräch.",
+    "vatRefundShortTitle": "MwSt wird bei Kurzzeitvermietung zurückerstattet",
+    "vatRefundLongText": "Vermietest du die Wohnung kurzzeitig, bekommst du die Umsatzsteuer von {{v}} zurück. Diese Rechnung geht von Langzeitvermietung aus, die Erstattung ist hier noch nicht eingerechnet. Wie das genau abläuft, erklären wir im persönlichen Gespräch.",
     "equityStart": "Eigenkapital (Start)",
     "financing": "Fremdfinanzierung",
     "bedrooms": "Schlafzimmer",

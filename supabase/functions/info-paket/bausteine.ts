@@ -213,6 +213,26 @@ export function zahlungKarte(z: ReturnType<typeof zahlungsUebersicht>, url: stri
       ? `in ca. 2 bis 4 Wochen ${esc(j.value)}${j.pct ? ` (${esc(j.pct)} %)` : ''} bei Vertragsunterzeichnung`
       : `${esc(j.value)} ${esc(j.label)}`)
   const liste = (xs: string[]) => xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} und ${xs[xs.length - 1]}`
+  // Bau fertig (Sven 17.10.26: „in den nächsten Wochen übergeben, also Zahlung
+  // komplett"): kein „nur" und kein „später", der ganze Preis wird jetzt fällig.
+  if (z.bauFertig) {
+    const teile = [
+      ...z.jetzt.map(j => /reserv/i.test(j.label) ? `${esc(j.value)} jetzt für die Reservierung`
+        : /vertrag/i.test(j.label) ? `in ca. 2 bis 4 Wochen ${esc(j.value)} bei Vertragsunterzeichnung`
+        : `${esc(j.value)} ${esc(j.label)}`),
+      ...z.spaeter.map(r => `${esc(r.value)} ${esc(satz(r.wann))}`),
+    ]
+    return `<tr><td style="padding:0 0 14px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${CI.white};border:1px solid ${CI.line};border-radius:12px;">
+    <tr><td class="px" style="padding:20px 22px;">
+      <p style="margin:0 0 8px;font-family:${SERIF};font-size:19px;font-weight:700;color:${CI.navy};">💶 Dein Zahlungsplan</p>
+      <p style="margin:0 0 10px;font-family:${SANS};font-size:15px;line-height:1.6;color:${CI.ink};"><strong>Die Wohnung ist fertig gebaut, deshalb wird der Kaufpreis komplett fällig: ${liste(teile)}.</strong></p>
+      <p style="margin:0 0 14px;font-family:${SANS};font-size:14px;line-height:1.6;color:${CI.ink};">Die Raten nach Baufortschritt sind schon erreicht und deshalb in der Zahlung bei Vertragsunterzeichnung enthalten.</p>
+      ${url ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>${knopf('Kompletten Zahlungsplan ansehen', url, CI.coral)}</tr></table>` : ''}
+    </td></tr>
+  </table>
+</td></tr>`
+  }
   const fett = jetzt.length === 1 ? `Jetzt fällig ist nur ${jetzt[0]}.`
     : jetzt.length === 2 ? `Jetzt fällig sind nur zwei Zahlungen: ${jetzt[0]} und ${jetzt[1]}.`
     : `Jetzt fällig sind nur: ${liste(jetzt)}.`

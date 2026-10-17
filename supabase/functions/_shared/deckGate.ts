@@ -234,7 +234,15 @@ export function runDeckGate(blocks: Block[], ctx: DeckContext): GateResult {
         if (!/reserv/i.test(String(r.label ?? ''))) summe += betrag
       }
       // Die aufgeführten Raten müssen in der Summe exakt den Bruttopreis ergeben —
-      // sonst rechnet der Kunde nach und findet eine Lücke.
+      // sonst rechnet der Kunde nach und findet eine Lücke. Ausnahme: Plan bei
+      // fertigem Bau (bauFertig) zeigt echte Zahlbeträge, dort ist die Reservierung
+      // in der Vertragsrate schon abgezogen und zählt mit.
+      if (b.bauFertig === true) {
+        for (const r of rows as Array<Record<string, unknown>>) {
+          const betrag = parseEuro(String(r.value ?? ''))
+          if (betrag != null && /reserv/i.test(String(r.label ?? ''))) summe += betrag
+        }
+      }
       if (alleBetraege && summe > 0 && summe !== u.price.gross) {
         add({ key: 'zahlungsplan_summe_betrag', severity: 'hoch', block: i,
           what: `Die Raten ergeben ${summe.toLocaleString('de-DE')} € statt des Bruttopreises von ${u.price.gross.toLocaleString('de-DE')} €.`,

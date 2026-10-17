@@ -239,8 +239,11 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
           {/* MwSt-Hinweis im freien Platz der Karte (Sven 11.10.26): bei
               Kurzzeitvermietung kommt die Umsatzsteuer zurück, die Einzelheiten
               erklärt Sven im Gespräch. Steht nur da, wo der Rechner auch eine
-              Erstattung rechnet (vatRefund > 0), anteilig bei Selbstnutzung. */}
-          {r.vatRefund > 0 && (
+              Erstattung rechnet (vatRefund > 0), anteilig bei Selbstnutzung.
+              Sven 17.10.26: „In der Berechnung soll immer stehen, dass MwSt bei
+              Kurzzeitvermietung zurückerstattet wird" - auch in Langzeit-Rechnungen,
+              dort als Hinweis, dass die Erstattung nicht eingerechnet ist. */}
+          {r.vatRefund > 0 ? (
             <div style={{ marginTop: 16, padding: '12px 14px', borderRadius: 10, background: 'rgba(45,138,94,0.08)', border: '1px solid rgba(45,138,94,0.25)' }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, color: GREEN }}>
                 ✓ {r.vatRefund >= r.vatAmt
@@ -249,6 +252,15 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
               </div>
               <div style={{ fontSize: 12.5, lineHeight: 1.55, color: '#444', marginTop: 4 }}>
                 {t('rechnung.vatRefundText', 'Bei Kurzzeitvermietung bekommst du die Umsatzsteuer von {{v}} zurück. Wie das genau abläuft, erklären wir im persönlichen Gespräch.', { v: eur(r.vatRefund) })}
+              </div>
+            </div>
+          ) : r.vatAmt > 0 && (
+            <div style={{ marginTop: 16, padding: '12px 14px', borderRadius: 10, background: 'rgba(45,138,94,0.08)', border: '1px solid rgba(45,138,94,0.25)' }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: GREEN }}>
+                ✓ {t('rechnung.vatRefundShortTitle', 'MwSt wird bei Kurzzeitvermietung zurückerstattet')}
+              </div>
+              <div style={{ fontSize: 12.5, lineHeight: 1.55, color: '#444', marginTop: 4 }}>
+                {t('rechnung.vatRefundLongText', 'Vermietest du die Wohnung kurzzeitig, bekommst du die Umsatzsteuer von {{v}} zurück. Diese Rechnung geht von Langzeitvermietung aus, die Erstattung ist hier noch nicht eingerechnet. Wie das genau abläuft, erklären wir im persönlichen Gespräch.', { v: eur(r.vatAmt) })}
               </div>
             </div>
           )}

@@ -20,6 +20,8 @@ export type DeckBlockLite = {
   specs?: string[]; priceLines?: Row[]; image?: string
   stats?: { label?: string; value?: string; unit?: string }[]; bullets?: { strong?: string; text?: string }[]
   phase1?: Phase; phase2?: Phase; priceSummary?: { net?: string; vat?: string; gross?: string; vatRate?: string }
+  /** Zahlungsplan bei fertigem Bau (deckNormalize): Raten nach Baufortschritt schon bei Vertrag fällig. */
+  bauFertig?: boolean
   groups?: { title?: string; items?: string[] }[]; items?: { image?: string; title?: string; caption?: string }[]
 }
 
@@ -121,7 +123,7 @@ export function faellig(label?: string, sub?: string, u?: Uebergabe | null): str
 const betrag = (v?: string) => { const n = Number(String(v ?? '').replace(/[^\d,]/g, '').replace(',', '.')); return Number.isFinite(n) ? n : 0 }
 export function zahlungsUebersicht(blocks: DeckBlockLite[], uebergabe?: string | null): {
   jetzt: { label: string; value: string; pct: string | null; wann: string }[]; spaeterSumme: number; spaeterWann: string[]
-  spaeter: { value: string; wann: string | null }[]
+  spaeter: { value: string; wann: string | null }[]; bauFertig: boolean
 } | null {
   const pay = blocks.find(b => b.type === 'payment')
   const rows = [...(pay?.phase1?.rows ?? []), ...(pay?.phase2?.rows ?? [])]
@@ -139,7 +141,7 @@ export function zahlungsUebersicht(blocks: DeckBlockLite[], uebergabe?: string |
       if (wann && !spaeterWann.includes(wann)) spaeterWann.push(wann)
     }
   }
-  return jetzt.length ? { jetzt, spaeterSumme, spaeterWann, spaeter } : null
+  return jetzt.length ? { jetzt, spaeterSumme, spaeterWann, spaeter, bauFertig: pay?.bauFertig === true } : null
 }
 
 export async function baueDatenblatt(o: {
