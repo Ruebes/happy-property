@@ -1,4 +1,6 @@
 // Verifiziert die Engine-Portierung (src/lib/rechner.ts) bit-genau gegen den Original-Rechner.
+// Bewusste Abweichungen vom Original (rot = erwartet): Einrichtung als Gesamtinvestition (11.8.26) und
+// Kurzzeitvermietung mit 3 % linearer DE-AfA statt 5 % degressiv (17.10.26). Langzeit/CY-Sitz bleiben bit-genau.
 // Ausfuehren: npx esbuild src/lib/rechner.ts --format=esm --outfile=/tmp/rechner.mjs && node scripts/verify-rechner.mjs
 import { compute as port } from '/tmp/rechner.mjs'
 

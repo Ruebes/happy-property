@@ -22,7 +22,7 @@
 // Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 // Deploy:  supabase functions deploy subscriber-optin --no-verify-jwt
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
-import { rechnungMail } from '../_shared/persoenlicheRechnung.ts'
+import { rechnungItems, rechnungMail } from '../_shared/persoenlicheRechnung.ts'
 import { lotteBild } from '../_shared/lotte.ts'
 import { ermittleHerkunft, mitHerkunft, herkunftBestaetigt } from '../_shared/herkunft.ts'
 
@@ -121,13 +121,26 @@ const looksLikePhone = (s: string) => /^\+\d{8,15}$/.test(normPhone(s))
 async function sendeRechnung(sb: SupabaseClient, sub: { id: string; first_name: string | null; email: string | null }, props: Record<string, unknown>): Promise<Record<string, unknown>> {
   const ek = String(props.eigenkapital ?? '')
   if (!ek || props.rechnung_gesendet_at || !sub.email) return props
-  const m = rechnungMail(sub.first_name, ek)
-  if (!m) return props
+  const items = rechnungItems(ek)
+  if (!items) return props
   try {
+    // Drei Seiten im Rendite-Rechner: Vergleich, Langzeit, Kurzzeit (rechnen live beim Öffnen)
+    const name = sub.first_name?.trim() || null
+    const neu = async (title: string, its: unknown[]) => {
+      const { data, error } = await sb.from('property_calculations').insert({
+        lead_id: null, recipient_name: name, title, with_calc: true,
+        content: { with_calc: true, recipient_name: name, items: its },
+      }).select('token').single()
+      if (error) throw new Error(error.message)
+      return `https://portal.happy-property.com/rechnung/${(data as { token: string }).token}`
+    }
+    const links = { vergleich: await neu('Plan B: Langzeit und Kurzzeit im Vergleich', [items.lang, items.kurz]), lang: await neu('Plan B: Langzeitvermietung', [items.lang]), kurz: await neu('Plan B: Kurzzeitvermietung', [items.kurz]) }
+    const m = rechnungMail(sub.first_name, ek, links)
+    if (!m) return props
     const { data, error } = await sb.functions.invoke('send-email', { body: { to: sub.email, subject: m.subject, html: m.html, from_name: 'Sven Rüprich · Happy Property', lang: 'de', auto: true } })
     const fehler = error ? (error.message ?? 'invoke error') : ((data as { error?: string } | null)?.error ?? null)
     if (fehler) { console.error('[subscriber-optin] Rechnung:', fehler); return { ...props, rechnung_fehler: String(fehler).slice(0, 200) } }
-    return { ...props, rechnung_gesendet_at: new Date().toISOString(), rechnung_fehler: null }
+    return { ...props, rechnung_gesendet_at: new Date().toISOString(), rechnung_links: links, rechnung_fehler: null }
   } catch (e) {
     console.error('[subscriber-optin] Rechnung:', e)
     return props

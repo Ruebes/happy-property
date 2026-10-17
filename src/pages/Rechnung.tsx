@@ -286,7 +286,7 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
             <KV k={r.letT === 'short' ? t('rechnung.holidayMgmtCommission', 'Ferienverwaltung & Buchungsprovision') : t('rechnung.ongoingCosts', 'Laufende Kosten')}
               v={t('rechnung.pctPlusAnnual', '{{pct}} (+2% p.a.){{hotel}}', { pct: pct(r.mgP), hotel: r.letT === 'short' && r.hotelConcept ? ` · 🏨 ${t('rechnung.hotelConceptShort', 'Hotelkonzept')}` : '' })} />
             <KV k={t('rechnung.loanTerm', 'Laufzeit Kredit')} v={t('rechnung.years', '{{n}} Jahre', { n: r.termY })} />
-            <KV k={t('rechnung.depreciationDE', 'AfA (DE)')} v={t('rechnung.depreciationDEValue', '5% degr. auf 80% brutto')} />
+            <KV k={t('rechnung.depreciationDE', 'AfA (DE)')} v={r.letT === 'short' ? t('rechnung.depreciationDEValueShort', '3% linear auf 80% brutto (Ferienvermietung)') : t('rechnung.depreciationDEValue', '5% degr. auf 80% brutto')} />
           </div>
           <div>
             <KV k={t('rechnung.letType', 'Vermietungsart')} v={r.letT === 'short' ? t('rechnung.shortTermVatRefund', 'Kurzzeit (USt.-Erstattung ~24 Mon.)') : t('rechnung.longTerm', 'Langzeit')} />
@@ -618,7 +618,7 @@ function CompareTable({ rows }: { rows: Row[] }) {
               {sect(t('rechnung.sectionRent10y', 'MIETERTRAG (10 JAHRE)'))}
               {row(t('rechnung.rentGross10y', 'Mieteinnahmen brutto'), r => eur(r.res?.sumR))}
               {row(t('rechnung.rentCosts10y', 'Kosten (Verwaltung + Zinsen)'), r => r.res ? `− ${eur(r.res.sumC)}` : '–')}
-              {row(t('rechnung.rentTaxes10y', 'Steuern (Zypern + DE)'), r => r.res ? `− ${eur(r.res.sumT)}` : '–')}
+              {row(t('rechnung.rentTaxes10y', 'Steuern (Zypern + DE)'), r => r.res ? (r.res.sumT < 0 ? `+ ${eur(-r.res.sumT)} ${t('rechnung.taxRefundShort', '(Erstattung)')}` : `− ${eur(r.res.sumT)}`) : '–')}
               {row(t('rechnung.rentNet10y', 'Mietertrag nach Kosten & Steuern'), r => eur(r.res ? r.res.sumR - r.res.sumC - r.res.sumT : null), rows.map(() => true))}
               {sect(t('rechnung.sectionAfter10y', 'NACH 10 JAHREN'))}
               {row(t('rechnung.valueGain10y', 'Wertzuwachs'), r => eur(r.res ? r.res.propV[9] - r.res.pGross : null))}

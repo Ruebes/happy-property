@@ -798,7 +798,10 @@ function computeCore(p: CalcParams): CalcResult {
     })
     const bDE = pGross * 0.8; let rDE = bDE
     dDE = []
-    for (let k2 = 0; k2 < YEARS; k2++) { const d2 = Math.round(rDE * 0.05 * fA[k2]); dDE.push(d2); rDE = Math.max(0, rDE - d2) }
+    // Kurzzeit/Ferienvermietung dient nicht Wohnzwecken: in Deutschland 3 % linear
+    // (§ 7 Abs. 4 EStG) statt 5 % degressiv (§ 7 Abs. 5a). Bewusste Abweichung vom
+    // Original-Rechner, Sven 17.10.2026.
+    for (let k2 = 0; k2 < YEARS; k2++) { const d2 = letT === 'short' ? Math.min(rDE, Math.round(bDE * 0.03 * fA[k2])) : Math.round(rDE * 0.05 * fA[k2]); dDE.push(d2); rDE = Math.max(0, rDE - d2) }
     const deR = deTx / 100
     // Deutsche Bemessungsgrundlage: alle laufenden Kosten sind Werbungskosten.
     rents.forEach((r, i) => {
