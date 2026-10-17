@@ -152,6 +152,12 @@ const normPhone = (v: string) => v.replace(/[^0-9+]/g, '')
 
 // Ein Lead aus Meta ins CRM übernehmen. Gibt zurück, was passiert ist, damit der
 // Aufrufer eine ehrliche Bilanz bekommt (angelegt / ergänzt / übersprungen).
+// Formular „LF 17/10/26 Plan B Kapital“ liefert die Antwort-Schlüssel statt des Texts
+// (Optionen wurden mit key ek1-ek4 angelegt). Für Notiz und Kapitalbasis zurückübersetzen.
+const ANTWORT_TEXT: Record<string, string> = {
+  ek1: '0 - 50.000€', ek2: '50.000€ - 100.000€', ek3: '100.000€ - 200.000€', ek4: 'Über 200.000€',
+}
+
 async function upsertLead(admin: SupabaseClient, raw: RawLead, metaSpalten: boolean): Promise<{ status: 'created' | 'updated' | 'skipped'; leadId?: string }> {
   const fields = raw.field_data ?? []
   const email = (pick(fields, 'email') || '').toLowerCase()
@@ -169,7 +175,7 @@ async function upsertLead(admin: SupabaseClient, raw: RawLead, metaSpalten: bool
   // Alle übrigen Antworten als Notiz — die Qualifizierung steckt oft genau dort.
   const answers = fields
     .filter(f => !Object.values(FIELD_MAP).some(re => re.test((f.name ?? '').trim())))
-    .map(f => `• ${f.name}: ${(f.values ?? []).join(', ')}`)
+    .map(f => `• ${f.name}: ${(f.values ?? []).map(v => ANTWORT_TEXT[v] ?? v).join(', ')}`)
     .join('\n')
   const herkunft = [raw.campaign_name && `Kampagne: ${raw.campaign_name}`,
                     raw.form_name && `Formular: ${raw.form_name}`,
