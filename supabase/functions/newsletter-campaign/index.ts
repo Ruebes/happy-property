@@ -22,6 +22,7 @@ import { bounceKey, loadBouncedKeys, loadBounceTimes } from '../_shared/emailBou
 import { echteNummer } from '../_shared/phonePlausible.ts'
 import { htmlToWhatsapp } from '../_shared/htmlToWhatsapp.ts'
 import { gateCaller } from '../_shared/callerGate.ts'
+import { isOptedOut, loadNewsletterOptoutKeys, mailVariants, optoutMailKey, optoutTelKey } from '../_shared/newsletterOptout.ts'
 import { SlotBook, abGroup, berlinWeekHour, detectSendPattern, nextOccurrence, weekHourLabel, type SendSample } from './sendTime.ts'
 
 // ── Eigenes-HTML-Modus (content_mode='html') ─────────────────────────────────
@@ -498,7 +499,7 @@ async function loadProjectImages(sb: SupabaseClient, projectIds: string[]): Prom
 // 'exclude' = alle ausser den gewaehlten.
 async function loadListAudience(
   sb: SupabaseClient, mode: string, ids: string[],
-): Promise<Array<{ subscriber_id: string; first_name: string | null; last_name: string | null; email: string; phone: string | null }>> {
+): Promise<Array<{ subscriber_id: string; first_name: string | null; last_name: string | null; email: string; phone: string | null; doi_at: string | null }>> {
   // Nur freigegebene Listen: frisch aus Klaviyo geholte sind inaktiv, bis Sven sie
   // freischaltet — sonst ginge eine neue Liste beim naechsten Versand ungefragt mit.
   const { data: lists } = await sb.from('newsletter_lists').select('id').eq('active', true)
@@ -511,18 +512,18 @@ async function loadListAudience(
   const subIds = [...new Set(((members ?? []) as Array<{ subscriber_id: string }>).map(m => m.subscriber_id))]
   if (!subIds.length) return []
 
-  const out: Array<{ subscriber_id: string; first_name: string | null; last_name: string | null; email: string; phone: string | null }> = []
+  const out: Array<{ subscriber_id: string; first_name: string | null; last_name: string | null; email: string; phone: string | null; doi_at: string | null }> = []
   // In Bloecken laden: .in() mit tausenden IDs sprengt sonst die URL-Laenge.
   for (let i = 0; i < subIds.length; i += 200) {
     const { data: subs } = await sb.from('newsletter_subscribers')
-      .select('id, email, first_name, last_name, phone').in('id', subIds.slice(i, i + 200)).is('optout_at', null)
-    for (const s of ((subs ?? []) as Array<{ id: string; email: string | null; first_name: string | null; last_name: string | null; phone: string | null }>)) {
+      .select('id, email, first_name, last_name, phone, doi_at:properties->>doi_confirmed_at').in('id', subIds.slice(i, i + 200)).is('optout_at', null)
+    for (const s of ((subs ?? []) as Array<{ id: string; email: string | null; first_name: string | null; last_name: string | null; phone: string | null; doi_at: string | null }>)) {
       const mail = s.email && s.email.includes('@') ? s.email : ''
       const tel = (s.phone ?? '').trim()
       // Wer sich nur mit Handynummer angemeldet hat, gehoert genauso zur Zielgruppe —
       // er bekommt den Newsletter dann per WhatsApp statt per Mail.
       if (!mail && !tel) continue
-      out.push({ subscriber_id: s.id, first_name: s.first_name, last_name: s.last_name, email: mail, phone: tel || null })
+      out.push({ subscriber_id: s.id, first_name: s.first_name, last_name: s.last_name, email: mail, phone: tel || null, doi_at: s.doi_at ?? null })
     }
   }
   return out
@@ -705,15 +706,9 @@ Deno.serve(async (req: Request) => {
     // und in mehreren Listen stehen, teils mit anderer Mail, aber gleicher Nummer
     // (Klaviyo-Import hat Telefon-Dubletten). Jeder Mensch bekommt genau EINE
     // Nachricht; Lead geht vor Abonnent (reichere Daten).
-    const mailKey = (m: string | null | undefined) => {
-      const e = (m ?? '').trim().toLowerCase()
-      return e.includes('@') ? e.replace(/@googlemail\.com$/, '@gmail.com') : ''
-    }
-    const telKey = (t: string | null | undefined) => {
-      let d = (t ?? '').replace(/\D/g, '').replace(/^00/, '')
-      if (d.startsWith('0')) d = '49' + d.slice(1)
-      return d.length >= 8 ? d.slice(-10) : ''
-    }
+    // Normalisierung gemeinsam mit dem Abmelde-Abgleich (_shared/newsletterOptout.ts).
+    const mailKey = optoutMailKey
+    const telKey = optoutTelKey
     // Unzustellbare Adressen (email_bounces, Sven 11.10.26): dorthin keine Mail
     // mehr, das kostet nur Plaetze im IONOS-Sendelimit. Mit Nummer geht der
     // Newsletter per WhatsApp, ohne Nummer faellt der Empfaenger raus.
@@ -732,6 +727,10 @@ Deno.serve(async (req: Request) => {
           const t = telKey(r.phone); if (t) seenTel.add(t)
         }
       }
+      // Abmeldungen gelten fuer die Person, nicht fuer den einen Datensatz (Bug
+      // 17.10.26, Kampagne 27e51afb): hat sie sich als Lead abgemeldet, sperrt das
+      // auch ihre Abonnenten-Zeile mit gleicher Mail oder Nummer, und umgekehrt.
+      const opt = await loadNewsletterOptoutKeys(sb)
       const exIds = new Set(excludeLeadIds)
       const isDup = (mail: string, tel: string) => (!!mail && seenMail.has(mail)) || (!!tel && seenTel.has(tel))
       const mark = (mail: string, tel: string) => { if (mail) seenMail.add(mail); if (tel) seenTel.add(tel) }
@@ -739,7 +738,7 @@ Deno.serve(async (req: Request) => {
       for (const l of await loadAudience(sb)) {
         if (exIds.has(l.id)) continue
         const mk = mailKey(l.email), tk = telKey(l.phone)
-        if (/@(test|example)\./.test(mk) || isDup(mk, tk)) continue
+        if (/@(test|example)\./.test(mk) || isDup(mk, tk) || isOptedOut(opt, [l.email], [l.phone])) continue
         mark(mk, tk)
         if (bounced.has(mk)) {
           if (!tk || !echteNummer(l.phone, l.first_name, l.last_name)) { if (stats) stats.ohne_nummer++; continue }
@@ -752,7 +751,7 @@ Deno.serve(async (req: Request) => {
       for (const s of await loadListAudience(sb, mode, ids)) {
         const mk = mailKey(s.email), tk = telKey(s.phone)
         if (!mk && !tk) continue
-        if (/@(test|example)\./.test(mk) || isDup(mk, tk)) continue
+        if (/@(test|example)\./.test(mk) || isDup(mk, tk) || isOptedOut(opt, [s.email], [s.phone], s.doi_at)) continue
         mark(mk, tk)
         if (bounced.has(mk)) {
           if (!tk || !echteNummer(s.phone, s.first_name, s.last_name)) { if (stats) stats.ohne_nummer++; continue }
@@ -815,6 +814,24 @@ Deno.serve(async (req: Request) => {
         const { error: ce } = await sb.from('scheduled_messages').update({ status: 'cancelled' })
           .eq('lead_id', leadId).eq('event_type', 'newsletter').eq('status', 'pending')
         if (ce) console.warn('[newsletter] optout cancel:', ce.message)
+        // Gleichlautende Abonnenten-Zeilen mit abmelden (Bug 17.10.26). Fehler hier
+        // bremsen die Abmeldung nicht: Zielgruppe und Versand gleichen ohnehin ab.
+        try {
+          const { data: lr } = await sb.from('leads').select('email, alt_emails').eq('id', leadId).maybeSingle()
+          const l = lr as { email: string | null; alt_emails: string[] | null } | null
+          const variants = [...new Set([l?.email, ...(l?.alt_emails ?? [])].flatMap(mailVariants))]
+          if (variants.length) {
+            const { data: subs, error: se } = await sb.from('newsletter_subscribers').update({ optout_at: new Date().toISOString() })
+              .in('email', variants).is('optout_at', null).select('id')
+            if (se) console.warn('[newsletter] optout Abonnenten-Abgleich:', se.message)
+            const sIds = ((subs ?? []) as Array<{ id: string }>).map(x => x.id)
+            if (sIds.length) {
+              await sb.from('scheduled_messages').update({ status: 'cancelled' })
+                .in('subscriber_id', sIds).eq('event_type', 'newsletter').eq('status', 'pending')
+              console.log(`[newsletter] Abmeldung Lead ${leadId}: ${sIds.length} Abonnenten-Zeile(n) mit abgemeldet`)
+            }
+          }
+        } catch (e) { console.warn('[newsletter] optout Abonnenten-Abgleich:', e) }
         try {
           await sb.from('activities').insert({
             lead_id: leadId, type: 'note', direction: 'inbound',
@@ -833,6 +850,33 @@ Deno.serve(async (req: Request) => {
         const { error: ce } = await sb.from('scheduled_messages').update({ status: 'cancelled' })
           .eq('subscriber_id', subId).eq('event_type', 'newsletter').eq('status', 'pending')
         if (ce) console.warn('[newsletter] optout cancel (sub):', ce.message)
+        // Umgekehrt: Leads mit derselben Adresse (Haupt- oder Zweitadresse) ebenfalls abmelden.
+        try {
+          const { data: sr } = await sb.from('newsletter_subscribers').select('email').eq('id', subId).maybeSingle()
+          const variants = mailVariants((sr as { email?: string | null } | null)?.email)
+          if (variants.length) {
+            const now = new Date().toISOString()
+            const lIds = new Set<string>()
+            const { data: a, error: ae } = await sb.from('leads').update({ newsletter_optout_at: now })
+              .in('email', variants).is('newsletter_optout_at', null).select('id')
+            if (ae) console.warn('[newsletter] optout Lead-Abgleich:', ae.message)
+            const { data: b, error: be } = await sb.from('leads').update({ newsletter_optout_at: now })
+              .overlaps('alt_emails', variants).is('newsletter_optout_at', null).select('id')
+            if (be) console.warn('[newsletter] optout Lead-Abgleich (alt_emails):', be.message)
+            for (const r of [...(a ?? []), ...(b ?? [])] as Array<{ id: string }>) lIds.add(r.id)
+            if (lIds.size) {
+              await sb.from('scheduled_messages').update({ status: 'cancelled' })
+                .in('lead_id', [...lIds]).eq('event_type', 'newsletter').eq('status', 'pending')
+              await sb.from('activities').insert([...lIds].map(id => ({
+                lead_id: id, type: 'note', direction: 'inbound',
+                subject: 'Newsletter abbestellt',
+                content: 'Der Kontakt hat sich über den Abmelde-Link eines Listen-Newsletters abgemeldet (gleiche E-Mail-Adresse wie die Abonnenten-Zeile).',
+                completed_at: now,
+              })))
+              console.log(`[newsletter] Abmeldung Abonnent ${subId}: ${lIds.size} Lead(s) mit abgemeldet`)
+            }
+          }
+        } catch (e) { console.warn('[newsletter] optout Lead-Abgleich:', e) }
         console.log(`[newsletter] Abmeldung: Abonnent ${subId}`)
         return json({ ok: true })
       }
@@ -964,7 +1008,7 @@ Deno.serve(async (req: Request) => {
       }
       const leadIds = [...per.values()].map(x => x.lead_id).filter(Boolean) as string[]
       const subIds = [...per.values()].map(x => x.subscriber_id).filter(Boolean) as string[]
-      type Person = { first_name: string | null; last_name: string | null; email: string | null; phone: string | null; optout: boolean }
+      type Person = { first_name: string | null; last_name: string | null; email: string | null; phone: string | null; optout: boolean; doi_at?: string | null }
       const people = new Map<string, Person>()
       for (let i = 0; i < leadIds.length; i += 200) {
         const { data } = await sb.from('leads').select('id, first_name, last_name, email, phone, newsletter_optout_at').in('id', leadIds.slice(i, i + 200))
@@ -973,13 +1017,14 @@ Deno.serve(async (req: Request) => {
         }
       }
       for (let i = 0; i < subIds.length; i += 200) {
-        const { data } = await sb.from('newsletter_subscribers').select('id, first_name, last_name, email, phone, optout_at').in('id', subIds.slice(i, i + 200))
-        for (const x of (data ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; optout_at: string | null }>) {
-          people.set(`s:${x.id}`, { first_name: x.first_name, last_name: x.last_name, email: x.email, phone: x.phone, optout: !!x.optout_at })
+        const { data } = await sb.from('newsletter_subscribers').select('id, first_name, last_name, email, phone, optout_at, doi_at:properties->>doi_confirmed_at').in('id', subIds.slice(i, i + 200))
+        for (const x of (data ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; optout_at: string | null; doi_at: string | null }>) {
+          people.set(`s:${x.id}`, { first_name: x.first_name, last_name: x.last_name, email: x.email, phone: x.phone, optout: !!x.optout_at, doi_at: x.doi_at })
         }
       }
       const { data: commOpt } = await sb.from('communication_optouts').select('lead_id')
       const gesperrt = new Set(((commOpt ?? []) as Array<{ lead_id: string }>).map(o => `l:${o.lead_id}`))
+      const optKeys = await loadNewsletterOptoutKeys(sb)
 
       const nextSlot = makePacer(Date.now() + 120e3)
       const geplant: Array<{ name: string; grund: string; um?: string }> = []
@@ -995,7 +1040,7 @@ Deno.serve(async (req: Request) => {
         if (!nichtAngekommen || st.storniert) continue
         const name = `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim() || (p.email ?? k)
         const grund = st.sent ? 'Rückläufer' : 'Versand gescheitert'
-        if (p.optout || gesperrt.has(k)) { ausgelassen.push({ name, grund: 'abgemeldet' }); continue }
+        if (p.optout || gesperrt.has(k) || isOptedOut(optKeys, [p.email], [p.phone], p.doi_at)) { ausgelassen.push({ name, grund: 'abgemeldet' }); continue }
         if (st.wa) { ausgelassen.push({ name, grund: 'hat schon eine WhatsApp' }); continue }
         if (!p.phone || !echteNummer(p.phone, p.first_name, p.last_name)) { ausgelassen.push({ name, grund: 'keine glaubwürdige Nummer' }); continue }
         if (dry) { geplant.push({ name, grund }); continue }
@@ -1019,10 +1064,13 @@ Deno.serve(async (req: Request) => {
     // Launch: eigene Deck-Klone, personalisierte Mail, Abmelde-Link, Pixel) ──
     if (body.action === 'add_recipient') {
       if (!body.lead_id) return json({ error: 'lead_id fehlt' }, 400)
-      const { data: leadRow } = await sb.from('leads').select('id, first_name, last_name, email, newsletter_optout_at').eq('id', body.lead_id).maybeSingle()
-      const lead = leadRow as { id: string; first_name: string | null; last_name: string | null; email: string | null; newsletter_optout_at: string | null } | null
+      const { data: leadRow } = await sb.from('leads').select('id, first_name, last_name, email, alt_emails, phone, whatsapp, newsletter_optout_at').eq('id', body.lead_id).maybeSingle()
+      const lead = leadRow as { id: string; first_name: string | null; last_name: string | null; email: string | null; alt_emails: string[] | null; phone: string | null; whatsapp: string | null; newsletter_optout_at: string | null } | null
       if (!lead?.email) return json({ error: 'Lead hat keine E-Mail' }, 400)
       if (lead.newsletter_optout_at) return json({ error: 'Lead hat den Newsletter abbestellt' }, 409)
+      if (isOptedOut(await loadNewsletterOptoutKeys(sb), [lead.email, ...(lead.alt_emails ?? [])], [lead.phone, lead.whatsapp])) {
+        return json({ error: 'Diese Adresse hat den Newsletter abbestellt (als Abonnent oder anderer Lead)' }, 409)
+      }
       if ((await loadBouncedKeys(sb)).has(bounceKey(lead.email))) return json({ error: 'Mailadresse ist unzustellbar' }, 409)
       if (((camp.exclude_lead_ids ?? []) as string[]).includes(lead.id)) return json({ error: 'Lead ist von dieser Kampagne ausgeschlossen' }, 409)
       const { data: dup } = await sb.from('scheduled_messages').select('id').eq('lead_id', lead.id).eq('campaign_id', camp.id).limit(1)
@@ -1104,16 +1152,18 @@ Deno.serve(async (req: Request) => {
       let geplant = 0
       const uebersprungen: Array<{ id: string; grund: string }> = []
       const bounced = await loadBouncedKeys(sb)
+      const optKeys = await loadNewsletterOptoutKeys(sb)
       for (const subId of ids) {
         try {
           const { data: subRow } = await sb.from('newsletter_subscribers')
-            .select('id, first_name, last_name, email, phone, optout_at').eq('id', subId).maybeSingle()
-          const sub = subRow as { id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; optout_at: string | null } | null
+            .select('id, first_name, last_name, email, phone, optout_at, doi_at:properties->>doi_confirmed_at').eq('id', subId).maybeSingle()
+          const sub = subRow as { id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; optout_at: string | null; doi_at: string | null } | null
           if (!sub) { uebersprungen.push({ id: subId, grund: 'unbekannt' }); continue }
           if (sub.optout_at) { uebersprungen.push({ id: subId, grund: 'abgemeldet' }); continue }
           const mail = (sub.email ?? '').trim()
           if (!mail.includes('@')) { uebersprungen.push({ id: subId, grund: 'keine E-Mail' }); continue }
           if (bounced.has(bounceKey(mail))) { uebersprungen.push({ id: subId, grund: 'Mail unzustellbar' }); continue }
+          if (isOptedOut(optKeys, [mail], [sub.phone], sub.doi_at)) { uebersprungen.push({ id: subId, grund: 'abgemeldet (als Lead oder andere Abonnenten-Zeile)' }); continue }
           const { data: dup } = await sb.from('scheduled_messages').select('id')
             .eq('subscriber_id', sub.id).eq('campaign_id', camp.id).limit(1)
           if (dup && dup.length) { uebersprungen.push({ id: subId, grund: 'hat die Kampagne schon' }); continue }

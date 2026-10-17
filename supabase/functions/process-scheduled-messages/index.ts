@@ -29,6 +29,7 @@ import { withSocialFooter } from '../_shared/socialFooter.ts'
 import { buildIcs, toB64 } from '../_shared/ics.ts'
 import { bookingUrl } from '../_shared/bookingLink.ts'
 import { isHardSmtpBounce, recordBounce } from '../_shared/emailBounce.ts'
+import { isOptedOut, loadNewsletterOptoutKeys, type OptoutKeys } from '../_shared/newsletterOptout.ts'
 import { NO_WHATSAPP_RE, markWaUnreachable, clearWaUnreachable } from '../_shared/phonePlausible.ts'
 
 // Wiederholung bei TimelinesAI-Kontingent (403 quota_exceeded): 8 x 10 Min = 80 Min,
@@ -607,6 +608,8 @@ Deno.serve(async (req: Request) => {
       ((beforeRulesData ?? []) as Array<{ id: string; delay_minutes: number; event_type: string }>).map(r => [r.id, r]),
     )
     const refiredLeads = new Set<string>()
+    // Newsletter-Abmeldungen ueber Lead/Abonnent hinweg, einmal je Lauf geladen.
+    let optoutKeys: OptoutKeys | null = null
 
     // ── Schritt 2: Jede Nachricht senden ─────────────────────────────────────
     for (const msg of messages as {
@@ -748,11 +751,39 @@ Deno.serve(async (req: Request) => {
 
         // ── B/D) Termin-Bedingung erneut prüfen (Zustand kann sich seit Planung geändert haben) ──
         // Newsletter-Abmeldung zwischen Planung und Versand: Mail überspringen.
-        if (msg.event_type === 'newsletter' && msg.lead_id) {
-          const { data: ol } = await supabase.from('leads').select('newsletter_optout_at').eq('id', msg.lead_id).maybeSingle()
-          if ((ol as { newsletter_optout_at?: string | null } | null)?.newsletter_optout_at) {
+        // Auch über Lead und Abonnent hinweg (Bug 17.10.26, Kampagne 27e51afb): wer
+        // sich als Lead abgemeldet hat, bekommt den Newsletter nicht über eine
+        // Abonnenten-Zeile mit derselben Adresse, und umgekehrt.
+        if (msg.event_type === 'newsletter' && (msg.lead_id || msg.subscriber_id)) {
+          let grund = ''
+          let mails: Array<string | null> = [], tels: Array<string | null> = [], consentAt: string | null = null
+          if (msg.subscriber_id) {
+            const { data: os } = await supabase.from('newsletter_subscribers').select('email, phone, optout_at, doi_at:properties->>doi_confirmed_at').eq('id', msg.subscriber_id).maybeSingle()
+            const s = os as { email: string | null; phone: string | null; optout_at: string | null; doi_at: string | null } | null
+            if (s?.optout_at) grund = 'Newsletter abbestellt'
+            mails = [s?.email ?? null]; tels = [s?.phone ?? null]; consentAt = s?.doi_at ?? null
+          } else {
+            const { data: ol } = await supabase.from('leads').select('newsletter_optout_at, alt_emails').eq('id', msg.lead_id).maybeSingle()
+            const o = ol as { newsletter_optout_at?: string | null; alt_emails?: string[] | null } | null
+            if (o?.newsletter_optout_at) grund = 'Newsletter abbestellt'
+            mails = [lead.email, ...(o?.alt_emails ?? [])]; tels = [lead.phone, lead.whatsapp]
+          }
+          if (!grund) {
+            try {
+              optoutKeys ??= await loadNewsletterOptoutKeys(supabase)
+            } catch (e) {
+              // Ohne Abgleich kein Versand: zurück auf pending, nächster Lauf prüft neu.
+              console.warn(`[process-scheduled] Abmelde-Abgleich fehlgeschlagen (${msg.id}):`, e)
+              await supabase.from('scheduled_messages').update({ status: 'pending', error_message: 'Abmelde-Abgleich fehlgeschlagen, neuer Versuch im nächsten Lauf' }).eq('id', msg.id)
+              processed.push({ id: msg.id, result: 'retry:optout_check' })
+              continue
+            }
+            // Nummer nur, wenn per WhatsApp verschickt wird; bei Mails zählt die Adresse.
+            if (isOptedOut(optoutKeys, mails, msg.type === 'email' ? [] : tels, consentAt)) grund = 'Newsletter abbestellt (dieselbe Adresse als Lead bzw. Abonnent abgemeldet)'
+          }
+          if (grund) {
             await supabase.from('scheduled_messages')
-              .update({ status: 'skipped', sent_at: new Date().toISOString(), error_message: 'Newsletter abbestellt' })
+              .update({ status: 'skipped', sent_at: new Date().toISOString(), error_message: grund })
               .eq('id', msg.id)
             processed.push({ id: msg.id, result: 'skipped_newsletter_optout' })
             continue
