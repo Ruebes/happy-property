@@ -22,6 +22,7 @@
 // Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 // Deploy:  supabase functions deploy subscriber-optin --no-verify-jwt
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
+import { rechnungMail } from '../_shared/persoenlicheRechnung.ts'
 import { lotteBild } from '../_shared/lotte.ts'
 import { ermittleHerkunft, mitHerkunft, herkunftBestaetigt } from '../_shared/herkunft.ts'
 
@@ -116,6 +117,23 @@ function normPhone(raw: string): string {
 const looksLikePhone = (s: string) => /^\+\d{8,15}$/.test(normPhone(s))
 
 // Liste per Name finden oder anlegen (Sven kann ein Formular auf jeden Listennamen zeigen).
+// Persönliche Rechnung zum Eigenkapital (Plan-B-Seite): einmal je Abonnent, nach Bestätigung.
+async function sendeRechnung(sb: SupabaseClient, sub: { id: string; first_name: string | null; email: string | null }, props: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const ek = String(props.eigenkapital ?? '')
+  if (!ek || props.rechnung_gesendet_at || !sub.email) return props
+  const m = rechnungMail(sub.first_name, ek)
+  if (!m) return props
+  try {
+    const { data, error } = await sb.functions.invoke('send-email', { body: { to: sub.email, subject: m.subject, html: m.html, from_name: 'Sven Rüprich · Happy Property', lang: 'de', auto: true } })
+    const fehler = error ? (error.message ?? 'invoke error') : ((data as { error?: string } | null)?.error ?? null)
+    if (fehler) { console.error('[subscriber-optin] Rechnung:', fehler); return { ...props, rechnung_fehler: String(fehler).slice(0, 200) } }
+    return { ...props, rechnung_gesendet_at: new Date().toISOString(), rechnung_fehler: null }
+  } catch (e) {
+    console.error('[subscriber-optin] Rechnung:', e)
+    return props
+  }
+}
+
 async function resolveList(sb: SupabaseClient, name: string): Promise<{ id: string; name: string } | null> {
   const clean = name.trim().slice(0, 80)
   if (!clean) return null
@@ -264,7 +282,8 @@ Deno.serve(async (req) => {
       // Willkommensnachricht nur EINMAL (Doppelklicks auf den Bestätigungslink)
       const sendWelcome = !props.welcome_sent_at
       if (sendWelcome) props.welcome_sent_at = new Date().toISOString()
-      await sb.from('newsletter_subscribers').update({ properties: listId ? herkunftBestaetigt(props, listId) : props, optout_at: null }).eq('id', s.id)
+      const propsMitRechnung = await sendeRechnung(sb, s, props)
+      await sb.from('newsletter_subscribers').update({ properties: listId ? herkunftBestaetigt(propsMitRechnung, listId) : propsMitRechnung, optout_at: null }).eq('id', s.id)
       if (listId) {
         await sb.from('newsletter_list_members').upsert({ list_id: listId, subscriber_id: s.id }, { onConflict: 'list_id,subscriber_id' })
         await enrollInListSequences(sb, s.id, listId)
@@ -331,7 +350,9 @@ Deno.serve(async (req) => {
     // Schon bestätigt (DOI früher ODER aus Klaviyo importiert) → direkt zur Liste, keine neue DOI-Mail.
     if (ex && alreadyConfirmed && !ex.optout_at) {
       const h = await ermittleHerkunft(sb, body.herkunft)
-      await sb.from('newsletter_subscribers').update({ properties: { ...mitHerkunft(ex.properties ?? {}, h, list, true), ...ekProps } }).eq('id', ex.id)
+      const exRow = ex as unknown as { id: string; first_name?: string | null; email?: string | null }
+      const neuProps = await sendeRechnung(sb, { id: ex.id, first_name: cleanText(body.first_name, 80) || exRow.first_name || null, email: email || exRow.email || null }, { ...mitHerkunft(ex.properties ?? {}, h, list, true), ...ekProps })
+      await sb.from('newsletter_subscribers').update({ properties: neuProps }).eq('id', ex.id)
       await sb.from('newsletter_list_members').upsert({ list_id: list.id, subscriber_id: ex.id }, { onConflict: 'list_id,subscriber_id' })
       await enrollInListSequences(sb, ex.id, list.id)
       return json({ ok: true, already_confirmed: true, added: true, channel })
