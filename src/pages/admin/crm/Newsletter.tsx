@@ -9,7 +9,7 @@ import UnitPickerModal from '../../../components/crm/UnitPickerModal'
 import DeckChat from '../../../components/crm/DeckChat'
 import { NumberStepper } from '../../../components/NumberStepper'
 import { DEFAULT_PARAMS, type CalcParams } from '../../../lib/rechner'
-import { htmlToText, htmlToWhatsapp } from '../../../lib/htmlDerive'
+import { htmlToText, htmlToWhatsapp, splitWhatsappParts, WA_PART_LIMIT } from '../../../lib/htmlDerive'
 import type { CrmProjectUnit, DeckAssetsCache } from '../../../lib/crmTypes'
 
 // ── Newsletter-Kampagne (individuell, KEINE Massenmail) ──────────────────────
@@ -104,6 +104,136 @@ function CalcParamsPanel({ value, onChange }: { value: CalcParams; onChange: (p:
   )
 }
 
+// ── WhatsApp-Text in drei Nachrichten (Sven 17.10.26) ────────────────────────
+// Geht nur an Empfänger ohne zustellbare Mail. Inhalt, Immobilie der Woche,
+// Empfehlung: je eine Nachricht mit eigenem Bild, getrennt durch eine Zeile ---.
+const WA_TEMPLATE = [
+  'Hallo {{vorname}},',
+  '',
+  'meine Mails kommen bei dir leider nicht an. Deshalb kurz hier mein Newsletter:',
+  '',
+  '*Thema des Newsletters*',
+  'Zwei, drei Sätze zum Thema.',
+  '',
+  'Ausführlich in meinem Blogartikel:',
+  'https://steuervorteil-zypern-immobilien.com/',
+  '',
+  'Lass uns kurz sprechen:',
+  '📅 {{termin_link}}',
+  '---',
+  '*Immobilie der Woche: Ort · Zimmer · m²*',
+  'Preis und zwei Sätze zur Wohnung.',
+  'https://portal.happy-property.com/deck/',
+  '---',
+  'Schick mir gern deine aktuelle Mailadresse, dann kommt der nächste Newsletter wieder per Mail.',
+  '',
+  'Liebe Grüße aus Paphos',
+  'Sven',
+  '',
+  'Keine Nachrichten mehr? Hier abmelden: {{abmelden}}',
+].join('\n')
+
+// Länge nach dem Einsetzen, grob geschätzt: Termin-Link rund 170 Zeichen,
+// Abmeldelink rund 80. Die letzte Nachricht bekommt den Tippgeber-Block (rund
+// 270) und, falls {{abmelden}} fehlt, die Abmeldezeile (rund 120).
+function waPartEstimates(parts: string[]): number[] {
+  const hatTipp = parts.some(p => /tippgeber|empfehl/i.test(p))
+  const hatAbmelden = parts.some(p => p.includes('{{abmelden}}'))
+  return parts.map((p, i) => {
+    // Platzhalter selbst zählen schon mit (15 bzw. 12 Zeichen), daher +155 / +70.
+    let n = p.length + (p.split('{{termin_link}}').length - 1) * 155 + (p.split('{{abmelden}}').length - 1) * 70
+    if (i === parts.length - 1) n += (hatTipp ? 0 : 270) + (hatAbmelden ? 0 : 120)
+    return n
+  })
+}
+
+async function uploadWaImage(file: File): Promise<string | null> {
+  const ext = (file.name.split('.').pop() ?? 'jpg').toLowerCase()
+  const path = `newsletter/wa/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+  const { error } = await supabase.storage.from('deck-assets').upload(path, file, { cacheControl: '3600', upsert: false })
+  if (error) { console.error('[Newsletter] WhatsApp-Bild:', error.message); return null }
+  return supabase.storage.from('deck-assets').getPublicUrl(path).data.publicUrl
+}
+
+function WaPartsEditor({ value, onChange, images, onImages, inputClass }: {
+  value: string; onChange: (v: string) => void
+  images: string[]; onImages: (v: string[]) => void
+  inputClass: string
+}) {
+  const { t } = useTranslation()
+  const [uploading, setUploading] = useState<number | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const target = useRef(0)
+  const parts = splitWhatsappParts(value)
+  const est = waPartEstimates(parts)
+  const slots = Math.max(3, parts.length)
+  const setImg = (i: number, url: string) => {
+    const next = Array.from({ length: Math.max(slots, images.length) }, (_, k) => images[k] ?? '')
+    next[i] = url
+    onImages(next)
+  }
+  const imgLabel = (i: number) => i === 0
+    ? t('crm.newsletter.waImg1', 'Bild Nachricht 1 (z. B. Vorschaubild von Artikel oder Video)')
+    : i === 1 ? t('crm.newsletter.waImg2', 'Bild Nachricht 2 (Objektfoto, leer = Titelbild des Exposés)')
+    : i === 2 ? t('crm.newsletter.waImg3', 'Bild Nachricht 3 (leer = Svens Porträt)')
+    : t('crm.newsletter.waImgN', 'Bild Nachricht {{n}}', { n: i + 1 })
+  const pick = async (f: File | undefined) => {
+    if (!f) return
+    const i = target.current
+    setUploading(i)
+    try {
+      const url = await uploadWaImage(f)
+      if (url) setImg(i, url)
+      else alert(t('crm.newsletter.waUploadError', 'Bild konnte nicht hochgeladen werden.'))
+    } finally {
+      setUploading(null)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+  return (
+    <>
+      <div className="flex items-center justify-between mt-4 mb-1 gap-2">
+        <label className="block text-xs font-semibold text-gray-500">{t('crm.newsletter.waLabel', 'WhatsApp-Text (drei Nachrichten)')} <span className="text-gray-400 font-normal">({'{{vorname}}'}, {'{{termin_link}}'}, {'{{abmelden}}'} {t('crm.newsletter.possible', 'möglich')})</span></label>
+        {!value.trim() && (
+          <button type="button" onClick={() => onChange(WA_TEMPLATE)} className="text-[11px] font-medium text-[#ff795d] hover:underline shrink-0">
+            {t('crm.newsletter.waTemplate', 'Vorlage mit 3 Nachrichten einfügen')}
+          </button>
+        )}
+      </div>
+      <textarea value={value} onChange={e => onChange(e.target.value)} rows={12} className={`${inputClass} text-sm font-mono`}
+        placeholder={t('crm.newsletter.waPh', 'Leer lassen = WhatsApp-Version wird automatisch aus dem HTML gebaut (dann nur eine lange Nachricht).')} />
+      <p className="mt-1 text-[11px] text-gray-400">{t('crm.newsletter.waPartsHint', 'Geht nur an Empfänger, deren Mail nicht ankommt. Drei Nachrichten: 1 Inhalt mit Artikel- und Termin-Link, 2 Immobilie der Woche, 3 Bitte um die Mailadresse, Gruß und Abmeldelink. Trenne sie mit einer Zeile, die nur aus --- besteht. Der persönliche Tippgeber-Link kommt automatisch an den Anfang der letzten Nachricht. *fett* und Links funktionieren.')}</p>
+      {value.trim() && (
+        <p className={`mt-1 text-[11px] ${parts.length === 3 && est.every(n => n <= WA_PART_LIMIT) ? 'text-gray-500' : 'text-amber-700'}`}>
+          {t('crm.newsletter.waPartsCount', '{{n}} Nachricht(en), ca. {{chars}} Zeichen', { n: parts.length, chars: est.map(n => n.toLocaleString('de-DE')).join(' · ') })}
+          {parts.length !== 3 && <> · {t('crm.newsletter.waPartsNot3', 'Sven will immer 3 Nachrichten (Inhalt, Immobilie, Empfehlung).')}</>}
+          {est.some(n => n > WA_PART_LIMIT) && <> · {t('crm.newsletter.waPartTooLong', 'Eine Nachricht ist länger als {{max}} Zeichen, bitte kürzen.', { max: WA_PART_LIMIT.toLocaleString('de-DE') })}</>}
+        </p>
+      )}
+      <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={e => void pick(e.target.files?.[0])} />
+      <div className="mt-3 space-y-2">
+        {Array.from({ length: slots }, (_, i) => {
+          const url = images[i] ?? ''
+          return (
+            <div key={i}>
+              <span className="block text-[11px] font-medium text-gray-500 mb-0.5">{imgLabel(i)}</span>
+              <div className="flex items-center gap-2">
+                {/^https:\/\//.test(url.trim()) && <img src={url.trim()} alt="" className="w-10 h-10 rounded object-cover border border-gray-200 shrink-0" />}
+                <input value={url} onChange={e => setImg(i, e.target.value)} className={`${inputClass} text-xs`} placeholder="https://…" />
+                <button type="button" disabled={uploading !== null} onClick={() => { target.current = i; fileRef.current?.click() }}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 shrink-0">
+                  {uploading === i ? t('crm.newsletter.waUploading', 'Lädt …') : t('crm.newsletter.waUpload', 'Hochladen')}
+                </button>
+              </div>
+            </div>
+          )
+        })}
+        <p className="text-[11px] text-gray-400">{t('crm.newsletter.waImgDefault', 'Ohne eigenes Bild: Titelbild des verlinkten Exposés, sonst Svens Porträt. Nie das Lotte-Foto.')}</p>
+      </div>
+    </>
+  )
+}
+
 export default function Newsletter() {
   const { t } = useTranslation()
   const { profile } = useAuth()
@@ -133,6 +263,7 @@ export default function Newsletter() {
   const [contentMode, setContentMode] = useState<'structured' | 'html'>('structured')
   const [htmlBody, setHtmlBody] = useState('')
   const [waBody, setWaBody] = useState('')
+  const [waImages, setWaImages] = useState<string[]>([])   // Bild-URL je WhatsApp-Nachricht
 
   const showToastMsg = (m: string) => { setToast(m); setTimeout(() => setToast(''), 4000) }
 
@@ -190,6 +321,7 @@ export default function Newsletter() {
       content_mode: contentMode,
       html_body: contentMode === 'html' ? htmlBody : null,
       whatsapp_body: contentMode === 'html' && waBody.trim() ? waBody : null,
+      whatsapp_images: contentMode === 'html' && waImages.some(x => x.trim()) ? waImages.map(x => x.trim() || null) : null,
       created_by: profile?.id ?? null,
       updated_at: new Date().toISOString(),
     }
@@ -203,7 +335,7 @@ export default function Newsletter() {
     const id = (data as { id: string }).id
     setCampaignId(id)
     return id
-  }, [campaignId, title, subject, intro, outro, props, listMode, listIds, contentMode, htmlBody, waBody, profile])
+  }, [campaignId, title, subject, intro, outro, props, listMode, listIds, contentMode, htmlBody, waBody, waImages, profile])
 
   // Wohnung aus dem Picker in einen Projekt-Slot einsortieren
   const addUnit = (unit: CrmProjectUnit, project: { id: string; name: string }) => {
@@ -240,7 +372,9 @@ export default function Newsletter() {
     } finally { setBusyKey('') }
   }
 
-  const [preview, setPreview] = useState<{ subject: string; html: string; whatsapp?: string } | null>(null)
+  type WaPart = { text: string; image: string | null }
+  type PreviewData = { subject: string; html: string; whatsapp?: string; whatsapp_parts?: WaPart[]; whatsapp_limit?: number }
+  const [preview, setPreview] = useState<PreviewData | null>(null)
   const [previewTab, setPreviewTab] = useState<'html' | 'text' | 'whatsapp'>('html')
   const showPreview = async () => {
     setBusyKey('preview')
@@ -250,10 +384,10 @@ export default function Newsletter() {
       if (!id) return
       const { data, error } = await supabase.functions.invoke('newsletter-campaign', { body: { action: 'preview', campaign_id: id } })
       if (error) throw new Error(error.message)
-      const d = data as { ok?: boolean; subject?: string; html?: string; whatsapp?: string } | null
+      const d = data as ({ ok?: boolean } & Partial<PreviewData>) | null
       if (!d?.ok || !d.html) throw new Error('keine Vorschau')
       setPreviewTab('html')
-      setPreview({ subject: d.subject ?? '', html: d.html, whatsapp: d.whatsapp })
+      setPreview({ subject: d.subject ?? '', html: d.html, whatsapp: d.whatsapp, whatsapp_parts: d.whatsapp_parts, whatsapp_limit: d.whatsapp_limit })
     } catch (err) {
       console.error('[Newsletter] preview:', err)
       showToastMsg(`❌ ${t('crm.newsletter.previewError', 'Vorschau fehlgeschlagen')}`)
@@ -266,10 +400,10 @@ export default function Newsletter() {
     try {
       const { data, error } = await supabase.functions.invoke('newsletter-campaign', { body: { action: 'preview', campaign_id: id } })
       if (error) throw new Error(error.message)
-      const d = data as { ok?: boolean; subject?: string; html?: string; whatsapp?: string } | null
+      const d = data as ({ ok?: boolean } & Partial<PreviewData>) | null
       if (!d?.ok || !d.html) throw new Error('keine Vorschau')
       setPreviewTab('html')
-      setPreview({ subject: d.subject ?? '', html: d.html, whatsapp: d.whatsapp })
+      setPreview({ subject: d.subject ?? '', html: d.html, whatsapp: d.whatsapp, whatsapp_parts: d.whatsapp_parts, whatsapp_limit: d.whatsapp_limit })
     } catch (err) {
       console.error('[Newsletter] viewCampaign:', err)
       showToastMsg(`❌ ${t('crm.newsletter.previewError', 'Vorschau fehlgeschlagen')}`)
@@ -278,7 +412,7 @@ export default function Newsletter() {
 
   const resetWizard = () => {
     setCampaignId(null); setTitle(''); setSubject(''); setIntro(''); setOutro('')
-    setProps([]); setStatus(null); setContentMode('structured'); setHtmlBody(''); setWaBody('')
+    setProps([]); setStatus(null); setContentMode('structured'); setHtmlBody(''); setWaBody(''); setWaImages([])
   }
 
   // Gespeicherten Entwurf zurück in den Wizard laden
@@ -287,11 +421,12 @@ export default function Newsletter() {
     try {
       const { data, error } = await supabase.from('newsletter_campaigns').select('*').eq('id', id).single()
       if (error) throw error
-      const c = data as { id: string; title: string; subject: string; intro_text: string; outro_text: string; properties: unknown; content_mode?: string; html_body?: string | null; whatsapp_body?: string | null; list_mode?: string; list_ids?: string[] }
+      const c = data as { id: string; title: string; subject: string; intro_text: string; outro_text: string; properties: unknown; content_mode?: string; html_body?: string | null; whatsapp_body?: string | null; whatsapp_images?: unknown; list_mode?: string; list_ids?: string[] }
       setCampaignId(c.id)
       setTitle(c.title ?? ''); setSubject(c.subject ?? '')
       setIntro(c.intro_text ?? ''); setOutro(c.outro_text ?? '')
       setContentMode(c.content_mode === 'html' ? 'html' : 'structured'); setHtmlBody(c.html_body ?? ''); setWaBody(c.whatsapp_body ?? '')
+      setWaImages(Array.isArray(c.whatsapp_images) ? c.whatsapp_images.map(x => typeof x === 'string' ? x : '') : [])
       if (c.list_mode === 'include' || c.list_mode === 'exclude') { setListMode(c.list_mode); setListIds(Array.isArray(c.list_ids) ? c.list_ids : []) }
       else { setListMode('all'); setListIds([]) }
       const raw = Array.isArray(c.properties) ? c.properties as Array<Partial<WizProperty> & { units?: WizUnit[] }> : []
@@ -507,7 +642,15 @@ export default function Newsletter() {
     const q = planned
       ? (t('crm.newsletter.confirmLaunchAt', 'Kampagne vorbereiten und ab {{dt}} versenden? Jeder Empfänger bekommt eine persönliche Mail (gestaffelt, 08–20 Uhr).', { dt: planned.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) }) as string)
       : (t('crm.newsletter.confirmLaunch', 'Kampagne wirklich JETZT starten? Jeder Empfänger bekommt eine persönliche Mail (gestaffelt, 08–20 Uhr).') as string)
-    if (!confirm(q)) return
+    // Empfänger ohne zustellbare Mail bekommen WhatsApp: Svens Regel sind drei
+    // Nachrichten mit je höchstens 1.900 Zeichen.
+    const waWarn: string[] = []
+    if (contentMode === 'html' && (bounced?.wa ?? 0) > 0) {
+      const teile = splitWhatsappParts(waBody)
+      if (teile.length !== 3) waWarn.push(t('crm.newsletter.waLaunchWarn3', '⚠️ Der WhatsApp-Text hat {{n}} statt 3 Nachrichten (Trenner ---).', { n: teile.length }) as string)
+      if (waPartEstimates(teile).some(n => n > WA_PART_LIMIT)) waWarn.push(t('crm.newsletter.waLaunchWarnLong', '⚠️ Eine WhatsApp-Nachricht ist länger als 1.900 Zeichen.') as string)
+    }
+    if (!confirm(waWarn.length ? `${q}\n\n${waWarn.join('\n')}` : q)) return
     setBusyKey('launch')
     try {
       const id = await saveCampaign(); if (!id) return
@@ -709,10 +852,7 @@ export default function Newsletter() {
               <p className="mt-1 text-[11px] text-gray-400">
                 {t('crm.newsletter.htmlHint', 'Wird als HTML-Mail verschickt; für Empfänger ohne HTML entsteht automatisch eine Text-Version. Aus dem HTML wird zusätzlich eine WhatsApp-Version gebaut. Ein Abmelde-Link wird automatisch ergänzt, falls keiner enthalten ist. Schau dir alles vorher über „Vorschau" an.')}
               </p>
-              <label className="block text-xs font-semibold text-gray-500 mb-1 mt-4">{t('crm.newsletter.waLabel', 'Eigener WhatsApp-Text (optional)')} <span className="text-gray-400 font-normal">({'{{vorname}}'} {t('crm.newsletter.possible', 'möglich')})</span></label>
-              <textarea value={waBody} onChange={e => setWaBody(e.target.value)} rows={8} className={`${input} text-sm`}
-                placeholder={t('crm.newsletter.waPh', 'Leer lassen = WhatsApp-Version wird automatisch aus dem HTML gebaut.')} />
-              <p className="mt-1 text-[11px] text-gray-400">{t('crm.newsletter.waHint', 'Geht an Abonnenten mit Handynummer. Bei aufwendigen Mail-Layouts lieber einen eigenen, kurzen Chat-Text schreiben. *fett* und Links funktionieren.')}</p>
+              <WaPartsEditor value={waBody} onChange={setWaBody} images={waImages} onImages={setWaImages} inputClass={input} />
             </div>
             )}
           </div>
@@ -995,13 +1135,27 @@ export default function Newsletter() {
               {previewTab === 'text' && (
                 <pre className="w-full flex-1 min-h-[60vh] overflow-auto bg-gray-50 p-5 text-sm text-gray-800 whitespace-pre-wrap font-sans">{htmlToText(preview.html) || t('crm.newsletter.emptyText', '(kein Text)')}</pre>
               )}
-              {previewTab === 'whatsapp' && (
-                <div className="w-full flex-1 min-h-[60vh] overflow-auto bg-[#e5ddd5] p-5">
-                  <div className="max-w-md ml-auto bg-[#dcf8c6] rounded-2xl rounded-tr-sm px-4 py-3 text-sm text-gray-800 whitespace-pre-wrap shadow-sm">
-                    {(preview.whatsapp || htmlToWhatsapp(preview.html)).split('{{vorname}}').join('Vorname') || t('crm.newsletter.emptyWa', '(keine WhatsApp-Version)')}
+              {previewTab === 'whatsapp' && (() => {
+                // Je Teil eine Blase mit Bild, so wie die Nachrichten im Chat ankommen.
+                const teile: WaPart[] = preview.whatsapp_parts?.length
+                  ? preview.whatsapp_parts
+                  : [{ text: (preview.whatsapp || htmlToWhatsapp(preview.html)).split('{{vorname}}').join('Vorname'), image: null }]
+                const max = preview.whatsapp_limit ?? WA_PART_LIMIT
+                return (
+                  <div className="w-full flex-1 min-h-[60vh] overflow-auto bg-[#e5ddd5] p-5 space-y-3">
+                    {teile.map((p, i) => (
+                      <div key={i} className="max-w-md ml-auto bg-[#dcf8c6] rounded-2xl rounded-tr-sm p-1.5 shadow-sm">
+                        {p.image && <img src={p.image} alt="" className="w-full max-h-64 object-cover rounded-xl" />}
+                        <div className="px-2.5 py-1.5 text-sm text-gray-800 whitespace-pre-wrap break-words">{p.text || t('crm.newsletter.emptyWa', '(keine WhatsApp-Version)')}</div>
+                        <div className={`px-2.5 pb-1 text-right text-[10px] ${p.text.length > max ? 'text-red-600 font-semibold' : 'text-gray-500'}`}>
+                          {t('crm.newsletter.waChars', 'Nachricht {{n}} · {{chars}} Zeichen', { n: i + 1, chars: p.text.length.toLocaleString('de-DE') })}
+                          {p.image && p.text.length > 950 && <> · {t('crm.newsletter.waCaptionNote', 'ab Zeichen 950 kommt der Rest als eigene Nachricht unter dem Bild')}</>}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                </div>
-              )}
+                )
+              })()}
             </div>
           </div>
         )}

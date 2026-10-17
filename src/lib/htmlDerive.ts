@@ -84,3 +84,12 @@ export function htmlToWhatsapp(html: string): string {
   if (s.length > WA_MAX) s = s.slice(0, WA_MAX).replace(/\s+\S*$/, '') + ' …'
   return s
 }
+
+// Newsletter-WhatsApp in mehreren Nachrichten: Trenner ist eine Zeile, die nur
+// aus --- besteht. IDENTISCH zu splitWaParts in
+// supabase/functions/newsletter-campaign/waParts.ts (dort wird versendet).
+// = TEXT_LIMIT in send-whatsapp, Grenze je Nachricht.
+export const WA_PART_LIMIT = 1900
+export function splitWhatsappParts(body: string | null | undefined): string[] {
+  return String(body ?? '').replace(/\r\n?/g, '\n').split(/^[ \t]*-{3,}[ \t]*$/m).map(p => p.trim()).filter(Boolean)
+}

@@ -24,6 +24,7 @@ import { htmlToWhatsapp } from '../_shared/htmlToWhatsapp.ts'
 import { gateCaller } from '../_shared/callerGate.ts'
 import { isOptedOut, loadNewsletterOptoutKeys, mailVariants, optoutMailKey, optoutTelKey } from '../_shared/newsletterOptout.ts'
 import { SlotBook, abGroup, berlinWeekHour, detectSendPattern, nextOccurrence, weekHourLabel, type SendSample } from './sendTime.ts'
+import { WA_PART_LIMIT, WA_PART_STEP_MS, deckTokenIn, ownImage, partImage, planWaRebuild, splitWaParts, withAffiliateBlock, type WaRow } from './waParts.ts'
 
 // ── Eigenes-HTML-Modus (content_mode='html') ─────────────────────────────────
 // Sven fügt fertiges HTML ein → wird als HTML verschickt (Text-Fallback macht
@@ -123,24 +124,64 @@ function customEmailHtml(rawHtml: string, first: string, unsubUrl: string, affil
 // Kacheln) ergeben abgeleitet keinen sauberen Chat-Text.
 const waFrom = (camp: { whatsapp_body?: string | null }, raw: string, first: string): string =>
   camp.whatsapp_body?.trim() ? personalize(camp.whatsapp_body, first).trim() : htmlToWhatsapp(personalize(raw, first))
-// Fertige WhatsApp-Nachricht des Newsletters (Empfaenger ohne zustellbare Mail):
-// Platzhalter wie in der Mail fuellen, sonst stuenden {{termin_link}} und
-// {{abmelden}} woertlich im Chat. Tippgeber-Block nur, wenn der Text ihn nicht
-// schon hat; ein Abmelde-Link gehoert immer dazu.
-function waNewsletter(
-  camp: { whatsapp_body?: string | null }, raw: string, first: string,
-  o: { unsubUrl: string; terminUrl: string; affiliateUrl?: string },
-): string {
+// Fertige WhatsApp-Nachrichten des Newsletters (Empfaenger ohne zustellbare Mail),
+// eine je Teil des whatsapp_body (Trenner ---, siehe waParts.ts; Sven 17.10.26:
+// Inhalt, Immobilie der Woche, Empfehlung). Platzhalter wie in der Mail fuellen,
+// sonst stuenden {{termin_link}} und {{abmelden}} woertlich im Chat.
+// Tippgeber-Block nur, wenn der Text ihn nicht schon hat; ein Abmelde-Link
+// gehoert immer dazu, beides in die letzte Nachricht.
+type WaOpts = { unsubUrl: string; terminUrl: string; affiliateUrl?: string }
+function waNewsletterParts(camp: { whatsapp_body?: string | null }, raw: string, first: string, o: WaOpts): string[] {
   const tipp = o.affiliateUrl ?? AFFILIATE_FALLBACK
-  let text = waFrom(camp, raw, first)
+  const fill = (s: string) => s
     .split('{{termin_link}}').join(o.terminUrl.replace('utm_medium=email', 'utm_medium=whatsapp'))
     .split('{{abmelden}}').join(o.unsubUrl)
     .split('{{tippgeber_share}}').join(tipp)
     .split('{{tippgeber_link}}').join(tipp)
-  if (o.affiliateUrl && !/tippgeber|empfehl/i.test(text)) text += `\n\n${affiliateWhatsappBlock(o.affiliateUrl)}`
-  if (!text.includes(o.unsubUrl)) text += `\n\nKeine Nachrichten mehr? Hier abmelden: ${o.unsubUrl}`
-  return text
+  let parts = splitWaParts(waFrom(camp, raw, first)).map(fill)
+  if (!parts.length) parts = ['']
+  if (o.affiliateUrl && !parts.some(p => /tippgeber|empfehl/i.test(p))) parts = withAffiliateBlock(parts, affiliateWhatsappBlock(o.affiliateUrl), o.unsubUrl)
+  if (!parts.some(p => p.includes(o.unsubUrl))) parts[parts.length - 1] += `\n\nKeine Nachrichten mehr? Hier abmelden: ${o.unsubUrl}`
+  return parts.map(p => p.trim()).filter(Boolean)
 }
+// Alles in einer Nachricht (Vorschau-Text, alte 'both'-Zeilen).
+const waNewsletter = (camp: { whatsapp_body?: string | null }, raw: string, first: string, o: WaOpts): string =>
+  waNewsletterParts(camp, raw, first, o).join('\n\n')
+
+// Bild je WhatsApp-Teil (Regel in partImage): eigenes Bild aus whatsapp_images,
+// sonst Titelbild des verlinkten Exposés, sonst Svens Portraet. Das Titelbild
+// kommt wie in send-whatsapp aus dem cover-Block des Decks; covers merkt es sich
+// je Token, im HTML-Modus verlinken alle Empfaenger dasselbe Master-Deck.
+async function deckCover(sb: SupabaseClient, token: string): Promise<string | null> {
+  try {
+    const { data } = await sb.from('sales_decks').select('content').eq('token', token).maybeSingle()
+    const blocks = ((data as { content?: { blocks?: Array<Record<string, unknown>> } } | null)?.content?.blocks) ?? []
+    const cover = blocks.find(b => b.type === 'cover' && typeof b.image === 'string') ?? blocks.find(b => typeof b.image === 'string')
+    return (cover?.image as string | undefined) ?? null
+  } catch (e) { console.warn('[newsletter] Exposé-Titelbild:', e); return null }
+}
+async function waPartImages(sb: SupabaseClient, camp: { whatsapp_images?: unknown }, parts: string[], covers: Map<string, string | null>): Promise<string[]> {
+  const eigene = Array.isArray(camp.whatsapp_images) ? camp.whatsapp_images as unknown[] : []
+  const out: string[] = []
+  for (let i = 0; i < parts.length; i++) {
+    const tok = ownImage(eigene[i]) ? null : deckTokenIn(parts[i])
+    if (tok && !covers.has(tok)) covers.set(tok, await deckCover(sb, tok))
+    out.push(partImage(eigene[i], tok ? covers.get(tok) : null))
+  }
+  return out
+}
+// scheduled_messages-Zeile eines Teils; base = lead_id/subscriber_id/campaign_id/event_type.
+function waPartRow(base: Record<string, unknown>, part: number, text: string, image: string, at: Date): Record<string, unknown> {
+  if (text.length > WA_PART_LIMIT) console.warn(`[newsletter] WhatsApp-Teil ${part + 1} hat ${text.length} Zeichen (über ${WA_PART_LIMIT}), send-whatsapp teilt ihn`)
+  return {
+    ...base, type: 'whatsapp', status: 'pending', scheduled_at: at.toISOString(),
+    whatsapp_text: text, whatsapp_image_url: image, wa_part: part,
+    recipient: 'client', appointment_condition: 'none',
+  }
+}
+// Alle Teile eines Empfaengers, im Sekundenabstand ab slot.
+const waPartRows = (base: Record<string, unknown>, parts: string[], images: string[], slot: Date) =>
+  parts.map((text, i) => waPartRow(base, i, text, images[i], new Date(slot.getTime() + i * WA_PART_STEP_MS)))
 // Termin-Link je Empfaenger: Leads kennen wir (booking_token) -> Direkteinstieg
 // in den Kalender. Listen-Abonnenten sind keine Leads -> ohne Fragebogen (?f=none),
 // nur Kontaktformular.
@@ -917,7 +958,12 @@ Deno.serve(async (req: Request) => {
       if (camp.content_mode === 'html') {
         const raw = String(camp.html_body ?? '')
         const demoUrl = `${SITE}/termin?src=empfehlung&ref=beispiel`
-        return json({ ok: true, subject: personalize(camp.subject, 'Vorname'), html: customEmailHtml(raw, 'Vorname', `${SITE}/abmelden`, demoUrl), whatsapp: waNewsletter(camp, raw, 'Vorname', { unsubUrl: `${SITE}/abmelden`, terminUrl: `${SITE}/termin?src=newsletter`, affiliateUrl: demoUrl }) })
+        const teile = waNewsletterParts(camp, raw, 'Vorname', { unsubUrl: `${SITE}/abmelden`, terminUrl: `${SITE}/termin?src=newsletter`, affiliateUrl: demoUrl })
+        const bilder = await waPartImages(sb, camp, teile, new Map())
+        return json({
+          ok: true, subject: personalize(camp.subject, 'Vorname'), html: customEmailHtml(raw, 'Vorname', `${SITE}/abmelden`, demoUrl),
+          whatsapp: teile.join('\n\n'), whatsapp_parts: teile.map((text, i) => ({ text, image: bilder[i] })), whatsapp_limit: WA_PART_LIMIT,
+        })
       }
       const properties = (camp.properties ?? []) as CampaignProperty[]
       const deckTokens: Record<string, string> = {}
@@ -936,11 +982,27 @@ Deno.serve(async (req: Request) => {
       // aktuellen html_body/whatsapp_body neu bauen (Zeitplan bleibt).
       if (camp.content_mode === 'html') {
         const raw = String(camp.html_body ?? '')
-        const { data: pend } = await sb.from('scheduled_messages').select('id, lead_id, subscriber_id, email_body, whatsapp_text').eq('campaign_id', camp.id).eq('status', 'pending')
-        let rebuilt = 0, skipped = 0
+        const { data: pend } = await sb.from('scheduled_messages').select('id, lead_id, subscriber_id, type, email_body, whatsapp_text').eq('campaign_id', camp.id).eq('status', 'pending')
+        // WhatsApp-Zeilen aller Stati: Teile werden je Empfaenger zugeordnet
+        // (planWaRebuild), auch wenn ein Teil schon raus ist.
+        const { data: waAll } = await sb.from('scheduled_messages').select('id, lead_id, subscriber_id, status, scheduled_at, wa_part')
+          .eq('campaign_id', camp.id).eq('type', 'whatsapp').limit(5000)
+        type PendRow = { id: string; lead_id: string | null; subscriber_id: string | null; type: string; email_body: string | null; whatsapp_text: string | null }
+        const pendRows = (pend ?? []) as PendRow[]
+        const waRows = new Map<string, WaRow[]>()
+        for (const w of (waAll ?? []) as Array<WaRow & { lead_id: string | null; subscriber_id: string | null }>) {
+          const k = w.lead_id ? `l:${w.lead_id}` : w.subscriber_id ? `s:${w.subscriber_id}` : ''
+          if (k) waRows.set(k, [...(waRows.get(k) ?? []), w])
+        }
+        let rebuilt = 0, skipped = 0, teileNeu = 0, teileStorno = 0
+        const covers = new Map<string, string | null>()
+        const erledigt = new Set<string>()
         // Hunderte Empfaenger sprengen das 150-s-Limit der Anfrage -> im Hintergrund.
         const work = (async () => {
-        for (const m of (pend ?? []) as Array<{ id: string; lead_id: string | null; subscriber_id: string | null; email_body: string | null; whatsapp_text: string | null }>) {
+        for (const m of pendRows) {
+          const key = m.lead_id ? `l:${m.lead_id}` : (m.subscriber_id ? `s:${m.subscriber_id}` : '')
+          const alsTeil = m.type === 'whatsapp' && !!key
+          if (alsTeil && erledigt.has(key)) continue
           const src = m.lead_id
             ? (await sb.from('leads').select('first_name, last_name, email, phone').eq('id', m.lead_id).maybeSingle()).data
             : (await sb.from('newsletter_subscribers').select('first_name, last_name, email, phone').eq('id', m.subscriber_id).maybeSingle()).data
@@ -948,19 +1010,53 @@ Deno.serve(async (req: Request) => {
           const r = src as { first_name: string | null; last_name: string | null; email: string | null; phone: string | null }
           const first = firstNameOf(r)
           const affiliateUrl = await affiliateUrlFor(sb, { lead_id: m.lead_id, subscriber_id: m.subscriber_id, ...r })
+          const terminUrl = await terminUrlFor(sb, m, String(camp.id))
+          const waOpts = { unsubUrl: unsubUrlFor(m), terminUrl, affiliateUrl }
+
+          // Reine WhatsApp: alle Zeilen des Empfaengers auf einmal, je Teil eine.
+          if (alsTeil) {
+            erledigt.add(key)
+            const teile = waNewsletterParts(camp, raw, first, waOpts)
+            const bilder = await waPartImages(sb, camp, teile, covers)
+            const plan = planWaRebuild(waRows.get(key) ?? [], teile.length)
+            let alleDa = true
+            for (const u of plan.update) {
+              const { data: ok, error: ue } = await sb.from('scheduled_messages')
+                .update({ whatsapp_text: teile[u.part], whatsapp_image_url: bilder[u.part], wa_part: u.part, ...(u.at ? { scheduled_at: u.at } : {}) })
+                .eq('id', u.id).eq('status', 'pending').select('id')
+              if (ue || !ok?.length) { alleDa = false; skipped++ } else rebuilt++
+            }
+            for (const id of plan.cancel) {
+              const { data: ok } = await sb.from('scheduled_messages')
+                .update({ status: 'cancelled', error_message: 'Teil entfällt: WhatsApp-Text neu aufgeteilt' })
+                .eq('id', id).eq('status', 'pending').select('id')
+              if (ok?.length) teileStorno++
+            }
+            // Nachschieben nur, wenn der Cron in der Zwischenzeit nichts von diesem
+            // Empfaenger gegriffen hat, sonst kaeme der alte Text plus neue Teile.
+            if (alleDa && plan.insert.length) {
+              const base = { lead_id: m.lead_id, subscriber_id: m.subscriber_id, event_type: 'newsletter', campaign_id: camp.id }
+              const rows = plan.insert.map(x => waPartRow(base, x.part, teile[x.part], bilder[x.part], new Date(x.at)))
+              const { error: ie } = await sb.from('scheduled_messages').insert(rows)
+              if (ie) console.error(`[newsletter] rebuild_pending Teile ${key}:`, ie.message); else teileNeu += rows.length
+            }
+            continue
+          }
+
           const upd: Record<string, string> = {}
-          if (m.email_body) upd.email_body = customEmailHtml(raw, first, unsubUrlFor(m), affiliateUrl, await terminUrlFor(sb, m, String(camp.id)), String(camp.id), m.lead_id ? `l:${m.lead_id}` : (m.subscriber_id ? `s:${m.subscriber_id}` : ''))
-          if (m.whatsapp_text) upd.whatsapp_text = waNewsletter(camp, raw, first, { unsubUrl: unsubUrlFor(m), terminUrl: await terminUrlFor(sb, m, String(camp.id)), affiliateUrl })
+          if (m.email_body) upd.email_body = customEmailHtml(raw, first, unsubUrlFor(m), affiliateUrl, terminUrl, String(camp.id), key)
+          // Alte 'both'-Zeilen (Mail + WhatsApp in einer): Text bleibt eine Nachricht.
+          if (m.whatsapp_text) upd.whatsapp_text = waNewsletter(camp, raw, first, waOpts)
           const { error: ue } = await sb.from('scheduled_messages').update(upd).eq('id', m.id).eq('status', 'pending')
           if (ue) skipped++; else rebuilt++
         }
-        console.log(`[newsletter] rebuild_pending ${camp.id}: ${rebuilt} neu, ${skipped} uebersprungen`)
+        console.log(`[newsletter] rebuild_pending ${camp.id}: ${rebuilt} neu, ${skipped} uebersprungen, WhatsApp-Teile ${teileNeu} dazu, ${teileStorno} storniert`)
         })()
         // deno-lint-ignore no-explicit-any
         const rt = (globalThis as any).EdgeRuntime
-        if (rt?.waitUntil) { rt.waitUntil(work); return json({ ok: true, background: true, total: (pend ?? []).length }) }
+        if (rt?.waitUntil) { rt.waitUntil(work); return json({ ok: true, background: true, total: pendRows.length }) }
         await work
-        return json({ ok: true, rebuilt, skipped })
+        return json({ ok: true, rebuilt, skipped, wa_parts_added: teileNeu, wa_parts_cancelled: teileStorno })
       }
       const properties = (camp.properties ?? []) as CampaignProperty[]
       const projectImages = await loadProjectImages(sb, properties.map(p => p.project_id))
@@ -1027,7 +1123,8 @@ Deno.serve(async (req: Request) => {
       const optKeys = await loadNewsletterOptoutKeys(sb)
 
       const nextSlot = makePacer(Date.now() + 120e3)
-      const geplant: Array<{ name: string; grund: string; um?: string }> = []
+      const covers = new Map<string, string | null>()
+      const geplant: Array<{ name: string; grund: string; um?: string; teile?: number }> = []
       const ausgelassen: Array<{ name: string; grund: string }> = []
       for (const [k, st] of per) {
         const p = people.get(k)
@@ -1047,15 +1144,12 @@ Deno.serve(async (req: Request) => {
         const r = { lead_id: st.lead_id, subscriber_id: st.subscriber_id }
         const affiliateUrl = await affiliateUrlFor(sb, { ...r, ...p })
         const slot = nextSlot('whatsapp')
-        const { error: ie } = await sb.from('scheduled_messages').insert({
-          lead_id: st.lead_id, subscriber_id: st.subscriber_id,
-          type: 'whatsapp', event_type: 'newsletter', campaign_id: camp.id,
-          status: 'pending', scheduled_at: slot.toISOString(),
-          whatsapp_text: waNewsletter(camp, raw, firstNameOf(p), { unsubUrl: unsubUrlFor(r), terminUrl: await terminUrlFor(sb, r, String(camp.id)), affiliateUrl }),
-          recipient: 'client', appointment_condition: 'none',
-        })
+        const teile = waNewsletterParts(camp, raw, firstNameOf(p), { unsubUrl: unsubUrlFor(r), terminUrl: await terminUrlFor(sb, r, String(camp.id)), affiliateUrl })
+        const bilder = await waPartImages(sb, camp, teile, covers)
+        const { error: ie } = await sb.from('scheduled_messages').insert(
+          waPartRows({ lead_id: st.lead_id, subscriber_id: st.subscriber_id, event_type: 'newsletter', campaign_id: camp.id }, teile, bilder, slot))
         if (ie) { ausgelassen.push({ name, grund: `Fehler: ${ie.message}` }); continue }
-        geplant.push({ name, grund, um: slot.toISOString() })
+        geplant.push({ name, grund, um: slot.toISOString(), teile: teile.length })
       }
       return json({ ok: true, dry, geplant, ausgelassen })
     }
@@ -1066,15 +1160,52 @@ Deno.serve(async (req: Request) => {
       if (!body.lead_id) return json({ error: 'lead_id fehlt' }, 400)
       const { data: leadRow } = await sb.from('leads').select('id, first_name, last_name, email, alt_emails, phone, whatsapp, newsletter_optout_at').eq('id', body.lead_id).maybeSingle()
       const lead = leadRow as { id: string; first_name: string | null; last_name: string | null; email: string | null; alt_emails: string[] | null; phone: string | null; whatsapp: string | null; newsletter_optout_at: string | null } | null
-      if (!lead?.email) return json({ error: 'Lead hat keine E-Mail' }, 400)
+      if (!lead) return json({ error: 'Lead nicht gefunden' }, 404)
+      // Eigenes-HTML-Modus wie beim Launch: Mail, wenn zustellbar, sonst WhatsApp
+      // (je Teil eine Nachricht) an eine glaubwuerdige Nummer.
+      const istHtml = camp.content_mode === 'html'
+      if (!istHtml && !lead.email) return json({ error: 'Lead hat keine E-Mail' }, 400)
       if (lead.newsletter_optout_at) return json({ error: 'Lead hat den Newsletter abbestellt' }, 409)
       if (isOptedOut(await loadNewsletterOptoutKeys(sb), [lead.email, ...(lead.alt_emails ?? [])], [lead.phone, lead.whatsapp])) {
         return json({ error: 'Diese Adresse hat den Newsletter abbestellt (als Abonnent oder anderer Lead)' }, 409)
       }
-      if ((await loadBouncedKeys(sb)).has(bounceKey(lead.email))) return json({ error: 'Mailadresse ist unzustellbar' }, 409)
+      const mailOk = !!lead.email?.includes('@') && !(await loadBouncedKeys(sb)).has(bounceKey(lead.email))
+      const tel = lead.phone || lead.whatsapp
+      if (!mailOk && !istHtml) return json({ error: 'Mailadresse ist unzustellbar' }, 409)
+      if (!mailOk && !(tel && echteNummer(tel, lead.first_name, lead.last_name))) {
+        return json({ error: lead.email ? 'Mailadresse ist unzustellbar und keine glaubwürdige Nummer' : 'Lead hat weder E-Mail noch glaubwürdige Nummer' }, 409)
+      }
       if (((camp.exclude_lead_ids ?? []) as string[]).includes(lead.id)) return json({ error: 'Lead ist von dieser Kampagne ausgeschlossen' }, 409)
       const { data: dup } = await sb.from('scheduled_messages').select('id').eq('lead_id', lead.id).eq('campaign_id', camp.id).limit(1)
       if (dup && dup.length) return json({ error: 'Lead hat diese Kampagne bereits erhalten' }, 409)
+
+      if (istHtml) {
+        if (!camp.html_body?.trim()) return json({ error: 'Es ist kein HTML eingegeben.' }, 400)
+        const raw = String(camp.html_body)
+        const first = firstNameOf(lead)
+        const empf = { lead_id: lead.id, first_name: lead.first_name, last_name: lead.last_name, email: lead.email, phone: tel }
+        const affiliateUrl = await affiliateUrlFor(sb, empf)
+        const terminUrl = await terminUrlFor(sb, empf, String(camp.id))
+        const slot = clampToWindow(new Date())
+        const base = { lead_id: lead.id, event_type: 'newsletter', campaign_id: camp.id }
+        let rows: Array<Record<string, unknown>>
+        if (mailOk) {
+          rows = [{
+            ...base, type: 'email', status: 'pending', scheduled_at: slot.toISOString(),
+            email_subject: personalize(camp.subject, first),
+            email_body: customEmailHtml(raw, first, unsubUrlFor(empf), affiliateUrl, terminUrl, String(camp.id), `l:${lead.id}`),
+            recipient: 'client', appointment_condition: 'none',
+          }]
+        } else {
+          const teile = waNewsletterParts(camp, raw, first, { unsubUrl: unsubUrlFor(empf), terminUrl, affiliateUrl })
+          rows = waPartRows(base, teile, await waPartImages(sb, camp, teile, new Map()), slot)
+        }
+        const { error: se } = await sb.from('scheduled_messages').insert(rows)
+        if (se) return json({ error: `Planung fehlgeschlagen: ${se.message}` }, 500)
+        await sb.from('newsletter_campaigns').update({ recipients_total: (camp.recipients_total ?? 0) + 1, recipients_done: (camp.recipients_done ?? 0) + 1, updated_at: new Date().toISOString() }).eq('id', camp.id)
+        return json({ ok: true, kanal: mailOk ? 'email' : 'whatsapp', nachrichten: rows.length })
+      }
+
       const properties = (camp.properties ?? []) as CampaignProperty[]
       // Master-Decks laden
       const masters: Record<string, { project_id: string; angle: string | null; content: unknown }> = {}
@@ -1275,6 +1406,7 @@ Deno.serve(async (req: Request) => {
             const base = startAt && startAt.getTime() > Date.now() ? startAt.getTime() : Date.now() + 120e3
             const nextSlot = makePacer(base)
             const plan = await planSendTimesSafe(sb, String(camp.id), base, audience)
+            const covers = new Map<string, string | null>()
             let done = 0, skipped = 0
             for (const lead of audience) {
               try {
@@ -1282,22 +1414,24 @@ Deno.serve(async (req: Request) => {
                 // Newsletter gehen per Mail (Svens Regel seit 2.10.: nie zusaetzlich
                 // WhatsApp). WhatsApp nur, wo es keine zustellbare Mail gibt.
                 const hatMail = !!lead.email, hatTel = !hatMail && !!lead.phone
+                if (!hatMail && !hatTel) { skipped++; continue }
                 const typ = hatMail ? 'email' : 'whatsapp'
                 const affiliateUrl = await affiliateUrlFor(sb, lead)
+                const terminUrl = await terminUrlFor(sb, lead, String(camp.id))
                 const st = typ === 'email' ? plan?.slots.get(personKey(lead)) : undefined
                 const slot = st?.at ?? nextSlot(typ)
-                const { error: se } = await sb.from('scheduled_messages').insert({
-                  lead_id: lead.lead_id, subscriber_id: lead.subscriber_id,
-                  type: typ, event_type: 'newsletter', campaign_id: camp.id,
-                  status: 'pending', scheduled_at: slot.toISOString(),
-                  ...(st?.group ? { send_time_group: st.group } : {}),
-                  email_subject: hatMail ? personalize(camp.subject, first) : null,
-                  email_body: hatMail ? customEmailHtml(raw, first, unsubUrlFor(lead), affiliateUrl, await terminUrlFor(sb, lead, String(camp.id)), String(camp.id), lead.lead_id ? `l:${lead.lead_id}` : `s:${lead.subscriber_id}`) : null,
-                  whatsapp_text: hatTel
-                    ? waNewsletter(camp, raw, first, { unsubUrl: unsubUrlFor(lead), affiliateUrl, terminUrl: await terminUrlFor(sb, lead, String(camp.id)) })
-                    : null,
-                  recipient: 'client', appointment_condition: 'none',
-                })
+                const base = { lead_id: lead.lead_id, subscriber_id: lead.subscriber_id, event_type: 'newsletter', campaign_id: camp.id }
+                // WhatsApp: je Teil des whatsapp_body eine Nachricht mit eigenem Bild.
+                const teile = hatTel ? waNewsletterParts(camp, raw, first, { unsubUrl: unsubUrlFor(lead), affiliateUrl, terminUrl }) : []
+                const { error: se } = await sb.from('scheduled_messages').insert(hatTel
+                  ? waPartRows(base, teile, await waPartImages(sb, camp, teile, covers), slot)
+                  : {
+                    ...base, type: 'email', status: 'pending', scheduled_at: slot.toISOString(),
+                    ...(st?.group ? { send_time_group: st.group } : {}),
+                    email_subject: personalize(camp.subject, first),
+                    email_body: customEmailHtml(raw, first, unsubUrlFor(lead), affiliateUrl, terminUrl, String(camp.id), lead.lead_id ? `l:${lead.lead_id}` : `s:${lead.subscriber_id}`),
+                    recipient: 'client', appointment_condition: 'none',
+                  })
                 if (se) { skipped++; console.error(`[newsletter-html] ${lead.email}:`, se.message); continue }
                 done++
                 if (done % 10 === 0) await sb.from('newsletter_campaigns').update({ recipients_done: done }).eq('id', camp.id)
