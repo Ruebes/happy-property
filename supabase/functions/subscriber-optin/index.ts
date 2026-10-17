@@ -280,7 +280,12 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({})) as {
       email?: string; first_name?: string; last_name?: string; phone?: string; contact?: string
       list?: string; source?: string; lang?: string; confirm_redirect?: string; herkunft?: unknown
+      eigenkapital?: string
     }
+    // Eigenkapital-Spanne aus dem Rechnungs-Formular der Plan-B-Seite (für die persönliche Rechnung).
+    const EK_WERTE = ['unter-50k', '50-100k', '100-200k', '200-500k', 'ueber-500k']
+    const ek = EK_WERTE.includes(String(body.eigenkapital ?? '')) ? String(body.eigenkapital) : ''
+    const ekProps = ek ? { eigenkapital: ek, rechnung_angefordert_at: new Date().toISOString() } : {}
 
     // E-Mail und Telefon sind BEIDE optional, aber eins von beiden ist Pflicht.
     // Wer beides angibt, abonniert bewusst auf beiden Kanälen.
@@ -326,7 +331,7 @@ Deno.serve(async (req) => {
     // Schon bestätigt (DOI früher ODER aus Klaviyo importiert) → direkt zur Liste, keine neue DOI-Mail.
     if (ex && alreadyConfirmed && !ex.optout_at) {
       const h = await ermittleHerkunft(sb, body.herkunft)
-      await sb.from('newsletter_subscribers').update({ properties: mitHerkunft(ex.properties ?? {}, h, list, true) }).eq('id', ex.id)
+      await sb.from('newsletter_subscribers').update({ properties: { ...mitHerkunft(ex.properties ?? {}, h, list, true), ...ekProps } }).eq('id', ex.id)
       await sb.from('newsletter_list_members').upsert({ list_id: list.id, subscriber_id: ex.id }, { onConflict: 'list_id,subscriber_id' })
       await enrollInListSequences(sb, ex.id, list.id)
       return json({ ok: true, already_confirmed: true, added: true, channel })
@@ -387,7 +392,7 @@ Deno.serve(async (req) => {
     let subId: string | undefined = ex?.id
     const herkunft = await ermittleHerkunft(sb, body.herkunft)
     const baseProps = {
-      ...mitHerkunft(ex?.properties ?? {}, herkunft, list), lang, channel,
+      ...mitHerkunft(ex?.properties ?? {}, herkunft, list), ...ekProps, lang, channel,
       doi_token: token, doi_pending_list: list.id, doi_confirmed: false,
       doi_redirect: erlaubtesZiel(body.confirm_redirect),
       // Vorab als verschickt markiert; schlägt der Versand fehl, wird es unten zurückgesetzt.
