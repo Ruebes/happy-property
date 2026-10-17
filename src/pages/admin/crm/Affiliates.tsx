@@ -7,16 +7,19 @@ import { supabase } from '../../../lib/supabase'
 // Jeder Kunde/Newsletter-Empfaenger hat GENAU EINEN eindeutigen Empfehlungs-Link
 // (angelegt von ensure_affiliate, Code aendert sich nie). Diese Seite listet alle
 // Tippgeber untereinander: Name + eigener Link, aufklappbar die Leute, die er
-// empfohlen hat, und die 1.000-€-Auszahlungen. Abrechnungen verschickt der Cron;
-// die AUSZAHLUNG loest Sven bewusst per Klick aus - Geld verlaesst das Konto nie
-// vollautomatisch.
+// empfohlen hat, und die Auszahlungen (Standard 1.000 €, je Kunde in der Kundenakte
+// aenderbar). Seit 17.10.2026 verschickt der Cron Abrechnung UND Revolut-Payout-Link
+// automatisch (Svens Vorgabe); verlangt Revolut eine Freigabe, wartet der Link in der
+// App. Hier: Status sehen, Link neu senden, Muster-Abrechnung ansehen.
 
 interface ReferredLead { id: string; first_name: string | null; last_name: string | null; email: string | null; phase: string | null; created_at: string }
 interface Payout {
   id: string; referred_lead_id: string | null; amount: number; status: string
   doc_no: string | null; doc_url: string | null; payout_link: string | null
   emailed_at: string | null; paid_at: string | null; created_at: string
+  payout_link_state?: string | null; payout_link_error?: string | null; payout_link_sent_at?: string | null
 }
+const LINK_DEAD = ['expired', 'cancelled', 'failed']
 interface Affiliate {
   id: string; name: string; email: string | null; whatsapp: string | null
   code: string; source: string | null; active: boolean; created_at: string; url: string
@@ -56,9 +59,10 @@ export default function Affiliates() {
     setBusy(busyKey); setNotice('')
     try {
       const { data, error } = await supabase.functions.invoke('affiliate-api', { body })
-      const d = data as { ok?: boolean; error?: string } | null
+      let d = data as { ok?: boolean; error?: string; message?: string } | null
+      if (error) { try { d = await (error as { context?: Response }).context?.json() } catch { /* kein JSON */ } }
       if (error || !d?.ok) throw new Error(d?.error ?? String(error))
-      if (okMsg) setNotice(okMsg)
+      if (d.message || okMsg) setNotice(d.message ?? okMsg ?? '')
       void load()
     } catch (e) {
       setNotice(e instanceof Error ? e.message : 'Fehler')
@@ -74,6 +78,24 @@ export default function Affiliates() {
   const payoutLink = (a: Affiliate, p: Payout) => {
     if (!window.confirm(t('crm.affiliates.confirmPayout', { amount: eur(p.amount), name: a.name }))) return
     void call({ action: 'payout_link', payout_id: p.id }, `pl-${p.id}`, t('crm.affiliates.payoutLinkDone'))
+  }
+
+  // Muster-Abrechnung (echte Aussteller-Daten, Beispiel-Tippgeber) im neuen Tab
+  const preview = async (isBusiness: boolean) => {
+    const w = window.open('', '_blank')
+    setBusy(isBusiness ? 'pv-b' : 'pv'); setNotice('')
+    try {
+      const { data, error } = await supabase.functions.invoke('affiliate-api', { body: { action: 'preview_pdf', is_business: isBusiness } })
+      const b64 = (data as { pdf_base64?: string } | null)?.pdf_base64
+      if (error || !b64) throw new Error((data as { error?: string } | null)?.error ?? String(error))
+      const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
+      if (w) w.location.href = url
+      else window.location.href = url
+    } catch (e) {
+      w?.close()
+      setNotice(e instanceof Error ? e.message : 'Fehler')
+    } finally { setBusy(null) }
   }
 
   const shown = useMemo(() => {
@@ -108,6 +130,14 @@ export default function Affiliates() {
             onClick={() => setOnlyReferring(v => !v)}
             className={`text-xs px-3 py-2 rounded-xl border ${onlyReferring ? 'border-hp-highlight text-hp-highlight bg-orange-50' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
             {t('crm.affiliates.onlyReferring')}
+          </button>
+          <button onClick={() => void preview(false)} disabled={busy === 'pv'}
+            className="text-xs px-3 py-2 rounded-xl border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+            {busy === 'pv' ? '…' : t('crm.affiliates.preview')}
+          </button>
+          <button onClick={() => void preview(true)} disabled={busy === 'pv-b'}
+            className="text-xs px-3 py-2 rounded-xl border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+            {busy === 'pv-b' ? '…' : t('crm.affiliates.previewBusiness')}
           </button>
         </div>
 
@@ -198,6 +228,8 @@ export default function Affiliates() {
                                   {t(`crm.affiliates.status_${p.status}`)}
                                 </span>
                                 {p.doc_url && <a href={p.doc_url} target="_blank" rel="noreferrer" className="text-xs text-hp-highlight hover:underline">{t('crm.affiliates.doc')} {p.doc_no}</a>}
+                                {p.payout_link_state && <span className="text-xs text-gray-400">{t(`crm.affiliates.link_${p.payout_link_state}`, { defaultValue: p.payout_link_state })}</span>}
+                                {p.payout_link_error && p.status !== 'bezahlt' && <span className="text-xs text-amber-700 basis-full">{p.payout_link_error}</span>}
                                 <span className="flex-1" />
                                 {p.status !== 'bezahlt' && (
                                   <>
@@ -205,10 +237,16 @@ export default function Affiliates() {
                                       className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50">
                                       {t('crm.affiliates.resend')}
                                     </button>
-                                    {!p.payout_link && (
+                                    {(!p.payout_link_state || LINK_DEAD.includes(p.payout_link_state)) && (
                                       <button onClick={() => payoutLink(a, p)} disabled={busy === `pl-${p.id}`}
                                         className="text-xs px-3 py-1.5 rounded-lg bg-hp-highlight text-white font-medium hover:opacity-90 disabled:opacity-50">
                                         {busy === `pl-${p.id}` ? '…' : t('crm.affiliates.payoutLink')}
+                                      </button>
+                                    )}
+                                    {p.payout_link_state === 'active' && (
+                                      <button onClick={() => void call({ action: 'payout_link', payout_id: p.id }, `pl-${p.id}`, t('crm.affiliates.payoutLinkDone'))} disabled={busy === `pl-${p.id}`}
+                                        className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                                        {busy === `pl-${p.id}` ? '…' : t('crm.affiliates.payoutLinkResend')}
                                       </button>
                                     )}
                                     <button onClick={() => void call({ action: 'mark_paid', payout_id: p.id }, `mp-${p.id}`)} disabled={busy === `mp-${p.id}`}

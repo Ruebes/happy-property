@@ -20,6 +20,7 @@ import StrategySimulator from '../../../components/crm/StrategySimulator'
 import PartnerShareModal from '../../../components/crm/PartnerShareModal'
 import LeadAngebote from '../../../components/crm/LeadAngebote'
 import LeadRegistrations from '../../../components/crm/LeadRegistrations'
+import LeadReferrer from '../../../components/crm/LeadReferrer'
 import { sendWhatsApp } from '../../../lib/whatsapp'
 import LeadQuickSend from '../../../components/crm/LeadQuickSend'
 import FunnelNotes from '../../../components/crm/FunnelNotes'
@@ -2939,6 +2940,8 @@ export default function LeadDetail() {
               <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-6">
                 {/* Registrierungen bei Developern (Provisionsschutz) */}
                 <div className="sm:col-span-2"><LeadRegistrations leadId={lead.id} /></div>
+                {/* Empfehlungsgeber (Tippgeber-Programm) + Provision */}
+                <div className="sm:col-span-2"><LeadReferrer leadId={lead.id} /></div>
                 {/* Gesendete Angebote (Decks/Berechnungen/Mails) — dauerhafte Historie */}
                 <div className="sm:col-span-2"><LeadAngebote leadId={lead.id} /></div>
                 {/* Stammdaten */}

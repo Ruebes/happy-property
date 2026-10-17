@@ -431,8 +431,28 @@ Deno.serve(async (req: Request) => {
         const hint = r.status === 403 ? ' — Payout-Links sind für diesen API-Zugang nicht freigeschaltet (Revolut Business → Settings → API)' : ''
         return json({ error: `Payout-Link fehlgeschlagen: ${d.message ?? r.status}${hint}` }, 502)
       }
-      console.log(`[revolut-sync] Payout-Link erstellt: ${cpName} ${amount} EUR (${d.id})`)
-      return json({ success: true, id: d.id, url: d.url ?? null, state: d.state ?? null })
+      console.log(`[revolut-sync] Payout-Link erstellt: ${cpName} ${amount} EUR (${d.id}, ${d.state})`)
+      return json({ success: true, id: d.id, url: d.url ?? null, state: d.state ?? null, expiry_date: (d as { expiry_date?: string }).expiry_date ?? null })
+    }
+
+    // Status eines Payout-Links lesen (read-only). Die URL liefert Revolut erst,
+    // wenn der Link aktiv ist; Zustand 'awaiting' = wartet auf Freigabe in der App.
+    if (body.action === 'payout_link_get') {
+      const id = String((body as { id?: string }).id ?? '')
+      if (!/^[0-9a-f-]{36}$/i.test(id)) return json({ error: 'id fehlt' }, 400)
+      const r = await fetch(`${API}/payout-links/${id}`, { headers: { Authorization: `Bearer ${accessToken}` } })
+      const d = await r.json().catch(() => ({})) as { id?: string; url?: string; state?: string; expiry_date?: string; message?: string }
+      if (!r.ok) return json({ error: `Payout-Link lesen fehlgeschlagen: ${d.message ?? r.status}` }, 502)
+      return json({ success: true, id: d.id, url: d.url ?? null, state: d.state ?? null, expiry_date: d.expiry_date ?? null })
+    }
+
+    // Prüfen, ob der API-Zugang Payout-Links darf (read-only, legt nichts an)
+    if (body.action === 'payout_links_check') {
+      const r = await fetch(`${API}/payout-links?limit=5`, { headers: { Authorization: `Bearer ${accessToken}` } })
+      const txt = await r.text()
+      let states: string[] = []
+      try { states = (JSON.parse(txt) as Array<{ state?: string }>).map(x => x.state ?? '?') } catch { /* kein JSON */ }
+      return json({ success: r.ok, http: r.status, states, body: r.ok ? undefined : txt.slice(0, 300) })
     }
 
     // Vorprüfung OHNE Zahlung: alles Read-only (Konto, Deckung, Empfänger-Status)
