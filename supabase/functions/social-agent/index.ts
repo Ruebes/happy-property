@@ -2733,6 +2733,9 @@ Regeln:
             if (txtId) caption = (await (await driveDownload(dToken || await driveToken(), txtId)).text()).trim()
             if (!caption) caption = await reelCaption(anthropicKey, f.name.replace(/\.[^.]+$/, '').replace(/^reel\s*\d+\s*[-:]\s*/i, ''))
             caption = noDash(caption)
+            // Kommentar-Aktion (Sven 17.10.2026): Reels ohne eigenes Stichwort enden mit
+            // „Kommentiere GUIDE“; social-keywords schickt den Guide-Link dann per DM.
+            if (!/kommentier/i.test(caption)) caption = ensureKeywordCta(caption, 'GUIDE', 'Kommentiere GUIDE und du bekommst unseren Immobilienguide Paphos (72 Seiten, kostenlos) per Nachricht. 📩')
             await sb.from('social_posts').update({ video_url: url, content: caption, image_url: null, image_urls: [], status: 'geplant', post_results: { autopilot: { state: 'ready', attempts } }, updated_at: stamp() }).eq('id', postId)
           } else if (kind === 'lotte') {
             const { data: prev } = await sb.from('social_posts').select('content').eq('topic', 'weisheit').not('content', 'is', null).order('created_at', { ascending: false }).limit(12)
