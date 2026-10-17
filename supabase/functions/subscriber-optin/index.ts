@@ -118,7 +118,8 @@ const looksLikePhone = (s: string) => /^\+\d{8,15}$/.test(normPhone(s))
 
 // Liste per Name finden oder anlegen (Sven kann ein Formular auf jeden Listennamen zeigen).
 // Persönliche Rechnung zum Eigenkapital (Plan-B-Seite): einmal je Abonnent, nach Bestätigung.
-async function sendeRechnung(sb: SupabaseClient, sub: { id: string; first_name: string | null; email: string | null }, props: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function sendeRechnung(sb: SupabaseClient, sub: { id: string; first_name: string | null; email: string | null }, props0: Record<string, unknown>): Promise<Record<string, unknown>> {
+  let props = props0
   const ek = String(props.eigenkapital ?? '')
   if (!ek || props.rechnung_gesendet_at || !sub.email) return props
   const items = rechnungItems(ek)
@@ -134,7 +135,11 @@ async function sendeRechnung(sb: SupabaseClient, sub: { id: string; first_name: 
       if (error) throw new Error(error.message)
       return `https://portal.happy-property.com/rechnung/${(data as { token: string }).token}`
     }
-    const links = { vergleich: await neu('Plan B: Langzeit und Kurzzeit im Vergleich', [items.lang, items.kurz]), lang: await neu('Plan B: Langzeitvermietung', [items.lang]), kurz: await neu('Plan B: Kurzzeitvermietung', [items.kurz]) }
+    const alt = props.rechnung_links as { vergleich?: string; lang?: string; kurz?: string } | undefined
+    const links = alt?.vergleich && alt.lang && alt.kurz
+      ? { vergleich: alt.vergleich, lang: alt.lang, kurz: alt.kurz }
+      : { vergleich: await neu('Plan B: Langzeit und Kurzzeit im Vergleich', [items.lang, items.kurz]), lang: await neu('Plan B: Langzeitvermietung', [items.lang]), kurz: await neu('Plan B: Kurzzeitvermietung', [items.kurz]) }
+    props = { ...props, rechnung_links: links }
     const m = rechnungMail(sub.first_name, ek, links)
     if (!m) return props
     const { data, error } = await sb.functions.invoke('send-email', { body: { to: sub.email, subject: m.subject, html: m.html, from_name: 'Sven Rüprich · Happy Property', lang: 'de', auto: true } })
@@ -306,6 +311,27 @@ Deno.serve(async (req) => {
       // Newsletter) — enrollInListSequences oben plant sie ein. Der frühere
       // hartkodierte Versand wurde entfernt; welcome_sent_at bleibt als Marker.
       return zurueck(ziel, 'ja')
+    }
+
+    // ── POST: Rechnungsmails nachsenden (Cron, x-cron-secret) ─────────────────
+    // Scheitert der Versand (z. B. SMTP-Limit), bleibt rechnung_gesendet_at leer; dieser
+    // Lauf versucht es stündlich erneut, bis 7 Tage nach der Anforderung.
+    const raw0 = await req.clone().json().catch(() => ({})) as { action?: string }
+    if (raw0.action === 'rechnung_retry') {
+      const { data: cs } = await sb.from('connector_secrets').select('value').eq('key', 'CRON_SECRET').maybeSingle()
+      const soll = String((cs as { value?: string } | null)?.value ?? '')
+      if (!soll || req.headers.get('x-cron-secret') !== soll) return json({ error: 'Keine Berechtigung.' }, 401)
+      const seit = new Date(Date.now() - 7 * 86400000).toISOString()
+      const { data: offen } = await sb.from('newsletter_subscribers').select('id, first_name, email, properties')
+        .not('properties->>eigenkapital', 'is', null).is('properties->>rechnung_gesendet_at', null)
+        .eq('properties->>doi_confirmed', 'true').gte('properties->>rechnung_angefordert_at', seit).limit(20)
+      let gesendet = 0
+      for (const o of (offen ?? []) as Array<{ id: string; first_name: string | null; email: string | null; properties: Record<string, unknown> | null }>) {
+        const neu = await sendeRechnung(sb, o, o.properties ?? {})
+        await sb.from('newsletter_subscribers').update({ properties: neu }).eq('id', o.id)
+        if (neu.rechnung_gesendet_at) gesendet++
+      }
+      return json({ ok: true, offen: (offen ?? []).length, gesendet })
     }
 
     // ── POST: Anmeldung (schickt Double-Opt-In-Mail) ─────────────────────────
