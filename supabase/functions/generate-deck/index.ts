@@ -393,6 +393,31 @@ function injectOwnVideo(blocks: Array<Record<string, unknown>>, url: string | nu
   blocks.splice(at, 0, block)
 }
 
+// Lebensfilm (Sven 18.10.26): 30 s mit Menschen in den Bautraeger-Renderings, je
+// Projekt in deck_assets.lebensfilm {url, poster}. Steht als Highlight direkt hinter
+// Titel und Anschreiben, vor Wohnung, Lage und Fakten. Der Bautraegerfilm bleibt
+// an seinem Platz hinter der Lage.
+type LifeFilmAsset = { url?: string; poster?: string }
+const LEBENSFILM_TEXTE = {
+  de: { kicker: 'Dein Alltag', headline: 'So lebt es sich hier', text: 'Ein Tag in der Anlage, visualisiert auf Basis der Entwürfe des Bauträgers.' },
+  en: { kicker: 'Everyday life', headline: 'What living here feels like', text: 'A day in the complex, visualised from the developer\'s designs.' },
+} as const
+function injectLifeFilm(blocks: Array<Record<string, unknown>>, film: LifeFilmAsset | null | undefined, en?: boolean): void {
+  const u = (film?.url ?? '').trim()
+  if (!u) return
+  if (blocks.some(b => b.type === 'video' && String(b.videoUrl ?? b.embedUrl ?? '') === u)) return
+  const isDirect = /\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i.test(u)
+  let at = blocks.findIndex(b => b.type === 'letter')
+  if (at < 0) at = blocks.findIndex(b => b.type === 'cover')
+  at = at < 0 ? Math.min(1, blocks.length) : at + 1
+  blocks.splice(at, 0, {
+    type: 'video', ...(en ? LEBENSFILM_TEXTE.en : LEBENSFILM_TEXTE.de),
+    ...(isDirect ? { videoUrl: u } : { embedUrl: u }),
+    ...(film?.poster ? { poster: film.poster } : {}),
+    aspect: '16/9',
+  })
+}
+
 // ── Lageplan + Gemeinschaftsanlagen ─────────────────────────────────────────────
 // Beide kommen kuratiert aus crm_projects.deck_assets (masterplan / amenities,
 // optional *_en) und werden deterministisch eingesetzt — genau wie Marina und
@@ -903,13 +928,13 @@ Deno.serve(async (req) => {
     // Standort-Karte IMMER interaktiv (Deck-Standard): exakte Koordinaten bevorzugt,
     // sonst Such-Query aus Projektname + Ort → Deck.tsx baut ein scroll-/zoombares
     // Google-Embed statt eines statischen Bildes.
-    let projAssets: { masterplan?: MasterplanAsset; masterplan_en?: MasterplanAsset; amenities?: AmenityAsset; amenities_en?: AmenityAsset; views?: ViewsAsset; views_en?: ViewsAsset; videos?: VideoAsset[] } | null = null
+    let projAssets: { masterplan?: MasterplanAsset; masterplan_en?: MasterplanAsset; amenities?: AmenityAsset; amenities_en?: AmenityAsset; views?: ViewsAsset; views_en?: ViewsAsset; videos?: VideoAsset[]; lebensfilm?: LifeFilmAsset } | null = null
     let projRow: { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null; video_url?: string | null; own_video_url?: string | null; developer?: string | null; payment_schedule?: PaySchedule | null } | null = null
     if (body.project_id) {   // gilt für generische UND personalisierte Decks
       try {
         const { data: proj } = await sbRules.from('crm_projects')
           .select('name, location, latitude, longitude, video_url, own_video_url, developer, payment_schedule, deck_assets').eq('id', body.project_id).maybeSingle()
-        const pr = proj as { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null; video_url?: string | null; own_video_url?: string | null; developer?: string | null; payment_schedule?: PaySchedule | null; deck_assets?: { mapUrl?: string; hero_video?: { url?: string }; masterplan?: MasterplanAsset; masterplan_en?: MasterplanAsset; amenities?: AmenityAsset; amenities_en?: AmenityAsset; views?: ViewsAsset; views_en?: ViewsAsset; videos?: VideoAsset[] } | null } | null
+        const pr = proj as { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null; video_url?: string | null; own_video_url?: string | null; developer?: string | null; payment_schedule?: PaySchedule | null; deck_assets?: { mapUrl?: string; hero_video?: { url?: string }; masterplan?: MasterplanAsset; masterplan_en?: MasterplanAsset; amenities?: AmenityAsset; amenities_en?: AmenityAsset; views?: ViewsAsset; views_en?: ViewsAsset; videos?: VideoAsset[]; lebensfilm?: LifeFilmAsset } | null } | null
         projRow = pr
         projAssets = pr?.deck_assets ?? null
         if (pr) {
@@ -1016,6 +1041,7 @@ Deno.serve(async (req) => {
     // weiter unten, nachdem die Bildstrecken stehen.
     injectVideos(blocks, projAssets?.videos, projRow?.video_url, 'hero', enDeck)
     injectOwnVideo(blocks, projRow?.own_video_url, enDeck)
+    injectLifeFilm(blocks, projAssets?.lebensfilm, enDeck)
     // Lageplan der Anlage + Gemeinschaftsanlagen (Gym, Studio, Cafe, Pool ...) je mit
     // Render UND Grundriss - kuratiert in deck_assets, deshalb deterministisch.
     injectMasterplan(blocks, (enDeck && projAssets?.masterplan_en) || projAssets?.masterplan, enDeck)
