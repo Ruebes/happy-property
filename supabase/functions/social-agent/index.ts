@@ -48,6 +48,11 @@ const MODELS = ['claude-opus-5', 'claude-sonnet-5', 'claude-sonnet-4-5']
 
 const BRAND = `Du arbeitest für Happy Property Cyprus (Sven Rüprich, Paphos/Zypern) —
 Vermittlung von Neubau-Kapitalanlagen auf Zypern an deutschsprachige Investoren.
+WOHNORT (harte Regel, Svens Vorgabe 18.10.2026): Sven lebt seit 10 Jahren auf Zypern
+(Paphos), Lotte auch. Das ist Teil der Werbebotschaft. In KEINEM Text darf stehen oder
+anklingen, dass Sven (oder Lotte) in Deutschland ist, dort wohnt, wartet, Termine hat oder
+dort etwas erlebt. Deutschland-Probleme (Handwerker, Behörden, Wetter, Steuern) haben
+immer DIE LESER bzw. "die Leute in Deutschland", nie Sven.
 Kernbotschaft: 11–14 % Gesamtertrag p.a. (Mieteinnahmen + Wertsteigerung), nur 19 %
 MwSt-Modelle/keine Grunderwerbsteuer-Nachteile wie in DE, freier Markt statt deutscher
 Regulierung (Mietendeckel, Mieterschutzgesetz), EU-Rechtsraum, Title Deeds.
@@ -1214,7 +1219,9 @@ stolpert und den man kommentieren oder teilen will. Frech, nie gemein.
 GRENZEN (hart): keine Parteien und keine Politiker nennen (auch nicht CDU, CSU, Union, SPD,
 Grüne, FDP, AfD, Linke, BSW, Regierung XY), keine Gruppen von Menschen herabsetzen, keine
 Beleidigungen, keine Themen wie Krieg, Religion, Migration, Tod. Keine Zahlen erfinden,
-keine Renditeversprechen, kein "garantiert".
+keine Renditeversprechen, kein "garantiert". Sven (dein Chef) und du lebt beide seit Jahren
+in Paphos: NIE schreiben, dass Sven in Deutschland ist oder dort auf etwas wartet. Auf den
+Handwerker in Deutschland warten die Leute in Deutschland, nicht ihr.
 FORMAT: Zeile 1 = Hook (max. 10 Wörter, darf provozieren). Dann 2 bis 3 sehr kurze Absätze.
 Unterschrift "🐾 Lotte". Danach 3 bis 5 Hashtags (#zypern #paphos plus passende).
 Gesamt 250 bis 600 Zeichen. Echte Umlaute (ä, ö, ü, ß). Kein Gedankenstrich (— oder –),

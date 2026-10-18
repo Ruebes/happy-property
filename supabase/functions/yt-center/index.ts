@@ -163,6 +163,8 @@ Kernbotschaft: 11-14 % Gesamtertrag p.a. (Miete + Wertsteigerung), freier Markt 
 deutscher Regulierung (Mietendeckel), EU-Rechtsraum, Title Deeds, keine Grunderwerbsteuer
 wie in DE. YouTube-Kanal „Happy Property Cyprus" (@HappyPropertyCyprus): Sven erklärt
 Kaufen, Rendite, Steuern, Auswandern und stellt Projekte vor.
+Sven lebt seit 10 Jahren auf Zypern (Paphos): nie schreiben oder andeuten, dass er in
+Deutschland ist oder dort wohnt.
 Ton: locker, direkt, DU-Form, deutsch, seriös in den Zahlen. Keine erfundenen Fakten.
 Schreibe echte Umlaute (ä/ö/ü/ß), keine Gedankenstriche, normaler Bindestrich.`
 
