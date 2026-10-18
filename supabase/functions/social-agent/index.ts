@@ -578,17 +578,41 @@ const baseName = (n: string) => n.replace(/\.[^.]+$/, '').trim().toLowerCase()
 // Reel-Warteschlange: alle Videos im Reels-Ordner (eine Unterordner-Ebene mit),
 // ältestes zuerst, ohne die schon verplanten (news_source = drive:<id>).
 // Textdatei mit gleichem Namen = fertiger Posting-Text.
-async function reelQueue(sb: SupabaseClient, token: string, folderId: string): Promise<{ queue: DriveFile[]; texts: Map<string, string>; total: number }> {
+// Unterordner = Gruppe (z. B. alle Reels aus einem Langvideo): group.get(id) = Ordner-ID, Dateien direkt im
+// Reels-Ordner haben keine Gruppe. Reels einer Gruppe laufen nie an zwei aufeinanderfolgenden Tagen (pickReel).
+async function reelQueue(sb: SupabaseClient, token: string, folderId: string): Promise<{ queue: DriveFile[]; texts: Map<string, string>; total: number; group: Map<string, string> }> {
   const top = await driveChildren(token, folderId)
   const all = [...top]
-  for (const f of top.filter(x => x.mimeType === 'application/vnd.google-apps.folder')) all.push(...await driveChildren(token, f.id))
+  const group = new Map<string, string>()
+  for (const f of top.filter(x => x.mimeType === 'application/vnd.google-apps.folder')) {
+    const kids = await driveChildren(token, f.id)
+    for (const k of kids) group.set(k.id, f.id)
+    all.push(...kids)
+  }
   const texts = new Map<string, string>()
   for (const f of all) if (f.mimeType === 'text/plain' || /\.txt$/i.test(f.name)) texts.set(baseName(f.name), f.id)
   const videos = all.filter(f => f.mimeType.startsWith('video/'))
     .sort((a, b) => (a.createdTime ?? '').slice(0, 16).localeCompare((b.createdTime ?? '').slice(0, 16)) || a.name.localeCompare(b.name, 'de', { numeric: true }))
   const { data: used } = await sb.from('social_posts').select('news_source').like('news_source', 'drive:%')
   const usedIds = new Set(((used ?? []) as Array<{ news_source: string }>).map(u => u.news_source.slice(6)))
-  return { queue: videos.filter(v => !usedIds.has(v.id)), texts, total: videos.length }
+  return { queue: videos.filter(v => !usedIds.has(v.id)), texts, total: videos.length, group }
+}
+// Ältestes Reel, dessen Gruppe am Vortag und am Folgetag des Slots noch nicht läuft (Svens Regel 19.10.2026:
+// Reels aus einem Langvideo gut verteilen, nicht mehrere Tage in Folge). Ohne passendes Reel bleibt der Slot frei.
+async function pickReel(sb: SupabaseClient, reels: { queue: DriveFile[]; group: Map<string, string> }, ymd: string): Promise<DriveFile | null> {
+  const day = (s: string) => Date.parse(`${s}T12:00:00Z`) / 86400000
+  const d0 = day(ymd)
+  const from = new Date((d0 - 2) * 86400000).toISOString(), to = new Date((d0 + 2) * 86400000).toISOString()
+  const { data } = await sb.from('social_posts').select('news_source, autopilot_slot, scheduled_for')
+    .like('news_source', 'drive:%').neq('status', 'verworfen').gte('scheduled_for', from).lte('scheduled_for', to)
+  const near = new Set<string>()
+  for (const r of (data ?? []) as Array<{ news_source: string; autopilot_slot: string | null; scheduled_for: string }>) {
+    const g = reels.group.get(r.news_source.slice(6))
+    if (!g) continue
+    const rd = r.autopilot_slot?.match(/^\d{4}-\d{2}-\d{2}/)?.[0] ?? r.scheduled_for.slice(0, 10)
+    if (Math.abs(day(rd) - d0) <= 1) near.add(g)
+  }
+  return reels.queue.find(f => !reels.group.get(f.id) || !near.has(reels.group.get(f.id)!)) ?? null
 }
 // Video aus Drive direkt in den Storage streamen (kein Komplett-Puffer im Worker).
 async function driveVideoToStorage(token: string, file: DriveFile, path: string): Promise<string> {
@@ -2667,9 +2691,15 @@ Regeln:
       // 3) Nächsten Slot wählen: fehlt ganz, oder fehlgeschlagen mit < 3 Versuchen
       let pick: ApWant | null = null
       let existing: ApRow | null = null
+      let chosenReel: DriveFile | null = null
       for (const w of wanted) {
         const r = have.get(w.key)
-        if (w.kind === 'reel' && !r && !(reels?.queue.length)) continue
+        if (w.kind === 'reel' && !r) {
+          if (!reels?.queue.length) continue
+          chosenReel = await pickReel(sb, reels, w.ymd)
+          if (!chosenReel) continue          // nur Reels einer Gruppe, die am Nachbartag schon läuft -> Tag bleibt frei
+          pick = w; break
+        }
         if (!r) { pick = w; break }
         const st = apOf(r)
         if (r.status !== 'entwurf' || st.state !== 'failed') continue
@@ -2699,8 +2729,8 @@ Regeln:
           // Wiederholung: dasselbe Video wie beim ersten Versuch
           const r = await fetch(`https://www.googleapis.com/drive/v3/files/${src}?fields=id,name,mimeType,size,createdTime,trashed&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${dToken || (dToken = await driveToken())}` } })
           if (r.ok) reelFile = await r.json() as DriveFile
-          if (!reelFile || (reelFile as DriveFile & { trashed?: boolean }).trashed) reelFile = reels?.queue[0] ?? null
-        } else reelFile = reels?.queue[0] ?? null
+          if (!reelFile || (reelFile as DriveFile & { trashed?: boolean }).trashed) reelFile = reels ? await pickReel(sb, reels, pick.ymd) : null
+        } else reelFile = chosenReel ?? (reels ? await pickReel(sb, reels, pick.ymd) : null)
         if (!reelFile) return json({ ok: true, skipped: 'Kein Reel verfügbar.' })
       }
       const pending: ApState = { state: 'pending', attempts }
