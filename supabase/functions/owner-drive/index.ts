@@ -296,7 +296,9 @@ function buildText(r: Recipient, lead: LeadRow, files: NewFile[], isCustomer: bo
   const first = (r.name ?? '').split(' ')[0] || r.name
   const de = r.lang !== 'en'
   const shown = files.slice(0, MAX_FILES_IN_MESSAGE)
-  const lines = shown.map(f => `📄 *${f.name}*\n${de ? 'hochgeladen von' : 'uploaded by'} ${f.uploader_name}`).join('\n\n')
+  // Direktlink je Datei (Sven 19.10.: Partner fanden die Datei im Ordner nicht,
+  // weil sie nur in ihrem Unterordner suchten)
+  const lines = shown.map(f => `📄 *${f.name}*\n${de ? 'hochgeladen von' : 'uploaded by'} ${f.uploader_name}${f.web_view_link ? `\n👉 ${f.web_view_link}` : ''}`).join('\n\n')
   const more = files.length > shown.length
     ? (de ? `\n\n… und ${files.length - shown.length} weitere` : `\n\n… and ${files.length - shown.length} more`)
     : ''
@@ -307,7 +309,8 @@ function buildText(r: Recipient, lead: LeadRow, files: NewFile[], isCustomer: bo
   const intro = de
     ? `${where} ${one ? 'ist eine neue Datei angekommen' : `sind ${files.length} neue Dateien angekommen`}:`
     : `${where} ${one ? 'a new file has arrived' : `${files.length} new files have arrived`}:`
-  const link = lead.drive_folder_url ?? `https://drive.google.com/drive/folders/${lead.drive_folder_id}`
+  const folderUrl = lead.drive_folder_url ?? `https://drive.google.com/drive/folders/${lead.drive_folder_id}`
+  const link = shown.some(f => f.web_view_link) ? `${de ? 'Ganzer Ordner' : 'Whole folder'}:\n${folderUrl}` : folderUrl
   return de
     ? `Hallo ${first} 🐾\n\nhier ist Lotte von Happy Property. ${intro}\n\n${lines}${more}\n\n${link}\n\nLiebe Grüße, Lotte`
     : `Hi ${first} 🐾\n\nLotte from Happy Property here. ${intro}\n\n${lines}${more}\n\n${link}\n\nBest, Lotte`
@@ -442,7 +445,7 @@ Deno.serve(async (req) => {
       const { data: ld } = leadId ? await sb.from('leads').select(LEAD_COLS).eq('id', leadId).limit(1) : await q
       const lead = (ld ?? [])[0] as LeadRow | undefined
       if (!lead?.drive_folder_id) return json({ error: 'Kein Lead mit Drive-Ordner gefunden.' }, 404)
-      const res = await notify(sb, lead, [{ file_id: 'test', name: 'Kaufvertrag_Beispiel.pdf', web_view_link: null, uploader_name: 'Timotheos Papadopoulos', uploader_email: null }], { test: true })
+      const res = await notify(sb, lead, [{ file_id: 'test', name: 'Kaufvertrag_Beispiel.pdf', web_view_link: lead.drive_folder_url ?? `https://drive.google.com/drive/folders/${lead.drive_folder_id}`, uploader_name: 'Timotheos Papadopoulos', uploader_email: null }], { test: true })
       return json({ ok: true, ...res })
     }
 
