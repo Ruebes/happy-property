@@ -825,7 +825,8 @@ function MarinaBlock(b: Extract<DeckBlock, { type: 'marina' }>) {
 // bekannt → dann wird (falls es eine direkte Mediendatei ist) nativ abgespielt.
 function toEmbedSrc(url: string): string | null {
   const yt = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([\w-]{6,})/)
-  if (yt) return `https://www.youtube-nocookie.com/embed/${yt[1]}?rel=0&modestbranding=1`
+  // enablejsapi: damit der Autostart (VideoBlock) den Player per postMessage steuern kann
+  if (yt) return `https://www.youtube-nocookie.com/embed/${yt[1]}?rel=0&modestbranding=1&enablejsapi=1&playsinline=1`
   const vimeo = url.match(/vimeo\.com\/(?:video\/)?(\d+)/)
   if (vimeo) return `https://player.vimeo.com/video/${vimeo[1]}`
   const drive = url.match(/drive\.google\.com\/file\/d\/([\w-]+)/)
@@ -834,14 +835,74 @@ function toEmbedSrc(url: string): string | null {
 }
 const isDirectVideo = (url: string) => /\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i.test(url)
 
+// false = Videos dieser Ansicht nicht von selbst starten (Scroll-Seite hinter dem
+// Blättern-Modus, Druckansicht). Der Blättern-Modus selbst nutzt den Standard true.
+const VideoAutoCtx = createContext(true)
+
 // ── Video-Sektion (Drohnen-/Meerblick-Video o.Ä.) ────────────────────────────
 // Nimmt embedUrl (iframe) ODER videoUrl (direktes MP4) an und normalisiert selbst,
 // damit auch eine YouTube-URL im videoUrl-Feld korrekt eingebettet wird.
+// Autostart (Sven 19.10.26): Ein Video startet, sobald es zur Hälfte im Bild ist
+// oder man mit der Maus darüber fährt, und hält an, wenn man weiterscrollt. Wer
+// selbst auf Pause drückt, bekommt keinen Neustart aufgezwungen; ein zu Ende
+// gelaufener Film startet nicht neu. Der Autostart läuft stumm (Browser erlauben
+// Ton ohne Klick nicht, und Ton aus dem Nichts stört), den Ton schaltet man über
+// das Lautsprecher-Symbol ein. YouTube und Vimeo werden per postMessage gesteuert,
+// Google-Drive-Vorschauen bleiben Klick.
 function VideoBlock(b: Extract<DeckBlock, { type: 'video' }>) {
   const { t } = useTranslation()
   const raw = (b.embedUrl || b.videoUrl || '').trim()
   const embedSrc = b.embedUrl ? (toEmbedSrc(b.embedUrl) ?? (isDirectVideo(b.embedUrl) ? null : b.embedUrl)) : toEmbedSrc(raw)
   const nativeSrc = embedSrc ? null : (b.videoUrl && isDirectVideo(b.videoUrl) ? b.videoUrl : (isDirectVideo(raw) ? raw : null))
+  const autoAktiv = useContext(VideoAutoCtx)
+  const boxRef = useRef<HTMLDivElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const frameRef = useRef<HTMLIFrameElement>(null)
+  const sichtbar = useRef(false)
+  const nutzerPause = useRef(false)   // Nutzer hat selbst pausiert
+  const wirPausieren = useRef(false)  // die nächste pause-Meldung kommt vom Autostart
+  const schonGestartet = useRef(false) // stumm nur beim ersten Autostart, danach bleibt der Ton, wie der Nutzer ihn gestellt hat
+  const anFrame = (msg: object) => frameRef.current?.contentWindow?.postMessage(JSON.stringify(msg), '*')
+  const istYt = !!embedSrc && embedSrc.includes('youtube')
+  const istVimeo = !!embedSrc && embedSrc.includes('vimeo')
+  const starten = () => {
+    if (!autoAktiv) return
+    const ersterStart = !schonGestartet.current
+    const v = videoRef.current
+    if (v) {
+      if (nutzerPause.current || !v.paused || v.ended) return
+      if (ersterStart) v.muted = true
+      schonGestartet.current = true
+      v.play().catch(() => {})
+    } else if (istYt) {
+      schonGestartet.current = true
+      if (ersterStart) anFrame({ event: 'command', func: 'mute', args: '' })
+      anFrame({ event: 'command', func: 'playVideo', args: '' })
+    } else if (istVimeo) {
+      schonGestartet.current = true
+      if (ersterStart) anFrame({ method: 'setVolume', value: 0 })
+      anFrame({ method: 'play' })
+    }
+  }
+  const anhalten = () => {
+    const v = videoRef.current
+    if (v) {
+      if (!v.paused) { wirPausieren.current = true; v.pause() }
+    } else if (istYt) anFrame({ event: 'command', func: 'pauseVideo', args: '' })
+    else if (istVimeo) anFrame({ method: 'pause' })
+  }
+  useEffect(() => {
+    const box = boxRef.current
+    if (!box || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(([e]) => {
+      sichtbar.current = e.isIntersecting && e.intersectionRatio >= 0.5
+      if (sichtbar.current) starten(); else anhalten()
+    }, { threshold: [0, 0.5] })
+    io.observe(box)
+    return () => io.disconnect()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embedSrc, nativeSrc, autoAktiv])
+  useEffect(() => { if (!autoAktiv) anhalten() }, [autoAktiv]) // eslint-disable-line react-hooks/exhaustive-deps
   if (!embedSrc && !nativeSrc) return null
   // Das Seitenverhaeltnis aus den Projektdaten ist nur die erste Schaetzung: Google
   // Drive meldet fuer manche Dateien falsche Masse (Show-House-Clip: 816x960 laut
@@ -861,10 +922,13 @@ function VideoBlock(b: Extract<DeckBlock, { type: 'video' }>) {
       {/* Bautraeger liefern auch Hochformat (Reels vom Musterhaus, Sauna-Clip). In
           einem 16:9-Rahmen liefe das mit schwarzen Balken links und rechts, deshalb
           bekommt jedes Format seinen eigenen Rahmen: hoch = schmal und zentriert. */}
-      <div className={`mt-8 relative overflow-hidden rounded-xl border ${hoch ? 'w-full max-w-sm mx-auto' : 'w-full'}`}
+      <div ref={boxRef} onMouseEnter={starten}
+           className={`mt-8 relative overflow-hidden rounded-xl border ${hoch ? 'w-full max-w-sm mx-auto' : 'w-full'}`}
            style={{ aspectRatio: seiten, borderColor: 'rgba(194,161,94,0.3)' }}>
         {embedSrc ? (
           <iframe
+            ref={frameRef}
+            onLoad={() => { if (sichtbar.current) starten() }}
             title={b.headline || t('deck.videoIframeTitle', 'Video')}
             src={embedSrc}
             className="absolute inset-0 h-full w-full"
@@ -876,12 +940,18 @@ function VideoBlock(b: Extract<DeckBlock, { type: 'video' }>) {
           />
         ) : (
           <video
+            ref={videoRef}
             className={`absolute inset-0 h-full w-full ${hoch ? 'object-contain' : 'object-cover'}`}
             src={nativeSrc ?? undefined}
             aria-label={b.headline || undefined}
             onLoadedMetadata={e => {
               const v = e.currentTarget
               if (v.videoWidth && v.videoHeight) setEchtAspekt(v.videoWidth / v.videoHeight)
+            }}
+            onPlay={() => { nutzerPause.current = false }}
+            onPause={e => {
+              if (wirPausieren.current) wirPausieren.current = false
+              else if (!e.currentTarget.ended) nutzerPause.current = true
             }}
             poster={sizedImg(b.poster)}
             controls
@@ -1322,6 +1392,7 @@ export default function Deck() {
           </button>
         </div>
       )}
+      <VideoAutoCtx.Provider value={!book && !isPrint}>
       {content.blocks.map((b, i) => (
         <div key={i} className="relative">
           <Block block={b} />
@@ -1332,6 +1403,7 @@ export default function Deck() {
           {!isPrint && showInline && i === ctaAfter && <InlineCta onInfo={() => setInfo(true)} terminUrl={terminUrl} />}
         </div>
       ))}
+      </VideoAutoCtx.Provider>
       <div className={`text-center text-[11px] text-gray-400 pt-6 ${isPrint ? 'pb-6' : 'pb-28 sm:pb-24'}`} style={{ background: CREAM }}>
         © Happy Property · {t('deck.footerNote', 'Persönlich erstellt · Preise vorbehaltlich Final-Plans · Bilder zu Marketingzwecken')}
       </div>
