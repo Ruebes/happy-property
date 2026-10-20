@@ -33,6 +33,8 @@ export type ProjectPage = {
   home?: { kicker: string; title: string; paras: string[]; media?: PageMedia; photos?: Photo[]; note?: string | null }
   amen?: { badge?: string | null; kicker: string; title: string; paras: string[]; stats?: [string, string][] | null; media?: PageMedia; photos?: Photo[]; note?: string | null }
   options?: { kicker: string; title: string; intro?: string; items: [string, string, string][]; note?: string }
+  // Weitere Abschnitte im Stil von Anlage/Zuhause (Golfresort: Spa, Villen), in Seitenreihenfolge.
+  more?: { tone: 'dark' | 'cream' | 'white'; badge?: string | null; kicker: string; title: string; paras: string[]; stats?: [string, string][] | null; media?: PageMedia; photos?: Photo[]; note?: string | null }[]
   reasons_title?: string
   reasons?: [string, string][]
   gallery?: Photo[]
@@ -48,6 +50,7 @@ export type WebBlock =
   | { type: 'w_home'; page: ProjectPage }
   | { type: 'w_amen'; page: ProjectPage }
   | { type: 'w_options'; page: ProjectPage }
+  | { type: 'w_more'; page: ProjectPage; i: number }
   | { type: 'w_reasons'; page: ProjectPage }
   | { type: 'w_loc'; page: ProjectPage }
   | { type: 'w_gallery'; page: ProjectPage }
@@ -82,6 +85,7 @@ export function webBlocks(blocks: DeckBlock[], page: ProjectPage): AnyBlock[] {
   if (page.day?.cards?.length) out.push({ type: 'w_day', page })
   if (page.home) out.push({ type: 'w_home', page })
   if (page.amen) out.push({ type: 'w_amen', page })
+  ;(page.more ?? []).forEach((_, i) => out.push({ type: 'w_more', page, i }))
   if (page.options) out.push({ type: 'w_options', page })
   if (page.reasons?.length) out.push({ type: 'w_reasons', page })
   // Karte nur mit Koordinaten: Such-Links und Such-Karten tragen den Projektnamen
@@ -328,6 +332,26 @@ function Amen({ page }: { page: ProjectPage }) {
     </div></section>
   )
 }
+function More({ page, i }: { page: ProjectPage; i: number }) {
+  const m = page.more![i]
+  const dark = m.tone === 'dark'
+  const body = (
+    <div className="pj-wrap">
+      <div className="pj-gr-split">
+        <div>
+          {m.badge && <p className="pj-gr-badge">{m.badge}</p>}
+          <Head kicker={m.kicker} title={m.title} dark={dark} />
+          {m.paras.map((p, j) => <p key={j} className={dark ? 'pj-gr-pw' : 'pj-p'}>{p}</p>)}
+          {!!m.stats?.length && <div className="pj-gr-stats">{m.stats.map(([v, k], j) => <div key={j} className="pj-gr-stat"><p className={dark ? 'pj-gr-sv' : 'pj-gr-svd'}>{v}</p><p className={dark ? 'pj-gr-sk' : 'pj-gr-skd'}>{k}</p></div>)}</div>}
+        </div>
+        <Media m={m.media} />
+      </div>
+      {!!m.photos?.length && <><Photos items={m.photos} />{m.note && <p className={dark ? 'pj-gr-noted' : 'pj-note'}>{m.note}</p>}</>}
+    </div>
+  )
+  if (m.tone === 'white') return <section className="pj-sec">{body}</section>
+  return <section className={dark ? 'pj-gr-dark' : 'pj-gr-cream'}>{body}</section>
+}
 function Options({ page }: { page: ProjectPage }) {
   const o = page.options!
   return (
@@ -413,6 +437,7 @@ export function WebBlockView({ block }: { block: WebBlock }) {
     case 'w_day':     inner = <Day page={block.page} />; break
     case 'w_home':    inner = <Home page={block.page} />; break
     case 'w_amen':    inner = <Amen page={block.page} />; break
+    case 'w_more':    inner = <More page={block.page} i={block.i} />; break
     case 'w_options': inner = <Options page={block.page} />; break
     case 'w_reasons': inner = <Reasons page={block.page} />; break
     case 'w_loc':     inner = <Loc page={block.page} />; break
@@ -421,7 +446,7 @@ export function WebBlockView({ block }: { block: WebBlock }) {
     case 'w_why':     inner = <Why />; break
   }
   // Abstand nach unten nur für die hellen Abschnitte, Hero/Kennzahlen/Dunkles schließen bündig an.
-  const pad = !['w_hero', 'w_facts', 'w_amen', 'w_why'].includes(block.type)
+  const pad = !['w_hero', 'w_facts', 'w_amen', 'w_why'].includes(block.type) && !(block.type === 'w_more' && block.page.more?.[block.i]?.tone !== 'white')
   return <div className="hpweb" style={pad ? { paddingBottom: 64 } : undefined}>{inner}</div>
 }
 
