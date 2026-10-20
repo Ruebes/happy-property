@@ -84,12 +84,20 @@ export function webBlocks(blocks: DeckBlock[], page: ProjectPage): AnyBlock[] {
   if (page.amen) out.push({ type: 'w_amen', page })
   if (page.options) out.push({ type: 'w_options', page })
   if (page.reasons?.length) out.push({ type: 'w_reasons', page })
-  const facts = of('facts')[0]
+  // Karte nur mit Koordinaten: Such-Links und Such-Karten tragen den Projektnamen
+  // ("…/maps/search/?query=Venara Paphos"), der Link wird deshalb aus den Koordinaten gebaut.
+  const f0 = of('facts')[0]
+  const hasPin = f0?.mapLat != null && f0?.mapLng != null
+  const facts = f0 && {
+    ...f0, mapLabel: HOME_LABEL, mapQuery: undefined, mapEmbed: undefined,
+    mapUrl: hasPin ? `https://www.google.com/maps?q=${f0.mapLat},${f0.mapLng}` : undefined,
+    image: hasPin ? f0.image : undefined,
+  }
   if (page.loc) {
     out.push({ type: 'w_loc', page })
     // Nur die Karte aus dem Deck-Block, die Entfernungen stehen schon im Lagetext.
-    if (facts) out.push({ ...facts, kicker: undefined, headline: undefined, items: [], mapLabel: HOME_LABEL })
-  } else if (facts) out.push({ ...facts, mapLabel: HOME_LABEL })
+    if (facts && hasPin) out.push({ ...facts, kicker: undefined, headline: undefined, items: [] })
+  } else if (facts) out.push(facts)
   out.push(...of('marina').map(m => ({ ...m, fromLabel: HOME_LABEL })))
   out.push(...of('payment'))
   if (page.gallery?.length) out.push({ type: 'w_gallery', page })
