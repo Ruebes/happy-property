@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase'
 import type { DeckBlock, DeckContent, FloorplanRoom } from '../lib/deckTypes'
 import { DECK_CONTACT, DECK_LOGO, DECK_PHOTO } from '../lib/deckTypes'
 import { normalizeMonthPlan, monthPlanCounts } from '../lib/rechner'
+import { VideoAutoCtx, webBlocks, WebBlockView, WebStyle, isWebBlock, type AnyBlock, type ProjectPage } from './deckWeb'
 
 // ── Sales-Deck Render-Seite (öffentlich, per Token) ─────────────────────────────
 // Personalisierte Verkaufs-Microsite in Happy-Property-Optik. Datengetrieben aus
@@ -239,9 +240,11 @@ function FactsBlock(b: Extract<DeckBlock, { type: 'facts' }>) {
   const items = b.items ?? []
   const mid = Math.ceil(items.length / 2)
   const cols = [items.slice(0, mid), items.slice(mid)]
+  // Nur Karte (Website-Stil, deckWeb.tsx): Text und Entfernungen stehen im Abschnitt davor.
+  const mapOnly = !b.kicker && !b.headline && items.length === 0
   return (
-    <section className="px-5 md:px-20 py-16" style={{ background: CREAM }}>
-      <Accent />
+    <section className={mapOnly ? 'px-5 md:px-20 pb-16' : 'px-5 md:px-20 py-16'} style={{ background: mapOnly ? '#fff' : CREAM }}>
+      {!mapOnly && <Accent />}
       <Kicker>{b.kicker}</Kicker>
       {b.headline && <h2 className="font-heading font-bold text-4xl md:text-5xl mt-3 mb-8 leading-tight" style={{ color: INK }}>{b.headline}</h2>}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-x-16">
@@ -835,9 +838,8 @@ function toEmbedSrc(url: string): string | null {
 }
 const isDirectVideo = (url: string) => /\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i.test(url)
 
-// false = Videos dieser Ansicht nicht von selbst starten (Scroll-Seite hinter dem
-// Blättern-Modus, Druckansicht). Der Blättern-Modus selbst nutzt den Standard true.
-const VideoAutoCtx = createContext(true)
+// VideoAutoCtx (aus deckWeb): false = Videos dieser Ansicht nicht von selbst starten
+// (Scroll-Seite hinter dem Blättern-Modus, Druckansicht). Der Blättern-Modus selbst nutzt den Standard true.
 
 // ── Video-Sektion (Drohnen-/Meerblick-Video o.Ä.) ────────────────────────────
 // Nimmt embedUrl (iframe) ODER videoUrl (direktes MP4) an und normalisiert selbst,
@@ -965,7 +967,8 @@ function VideoBlock(b: Extract<DeckBlock, { type: 'video' }>) {
   )
 }
 
-function Block({ block }: { block: DeckBlock }) {
+function Block({ block }: { block: AnyBlock }) {
+  if (isWebBlock(block)) return <WebBlockView block={block} />
   switch (block.type) {
     case 'marina':    return <MarinaBlock {...block} />
     case 'video':     return <VideoBlock {...block} />
@@ -991,7 +994,7 @@ function Block({ block }: { block: DeckBlock }) {
 // Zeigt die Deck-Blöcke einzeln wie Buchseiten: eine Seite pro Bildschirm, blättern
 // per Pfeiltasten (←/→), Klick auf die Ränder, Swipe oder die Pfeil-Buttons. Optional
 // Vollbild fürs Präsentieren. Gleicher Inhalt wie der Scroll-Modus — nur visuell als Buch.
-function BookMode({ blocks, onClose }: { blocks: DeckBlock[]; onClose: () => void }) {
+function BookMode({ blocks, onClose }: { blocks: AnyBlock[]; onClose: () => void }) {
   const { t } = useTranslation()
   const [i, setI] = useState(0)
   const [dir, setDir] = useState(1)
@@ -1271,6 +1274,8 @@ export default function Deck() {
   const [internal, setInternal] = useState(false)
   const [person, setPerson] = useState<DeckPerson | null>(null)
   const [vatRefund, setVatRefund] = useState<Record<string, VatRefund>>({})
+  const [page, setPage] = useState<ProjectPage | null>(null)
+  const [deckLang, setDeckLang] = useState<string>('de')
   const [{ ref, campaign }] = useState(readRef)
   const isPrint = typeof window !== 'undefined' && window.location.pathname.endsWith('/print')
 
@@ -1309,6 +1314,7 @@ export default function Deck() {
     try {
       const { data } = await supabase.rpc('get_deck_lang', { p_token: token })
       const lang = typeof data === 'string' ? data : 'de'
+      setDeckLang(lang)
       if (lang === 'en' && i18n.language !== 'en') await i18n.changeLanguage('en')
     } catch { /* im Zweifel in der eingestellten Sprache anzeigen */ }
   })() }, [token, i18n])
@@ -1318,6 +1324,14 @@ export default function Deck() {
     if (!token) return
     supabase.rpc('get_deck_let_types', { p_token: token })
       .then(({ data }) => setVatRefund(vatRefundMap(data)), () => { /* ohne Hinweis geht alles weiter */ })
+  }, [token])
+
+  // Projektseite der Website als Deck-Grundlage (deckWeb.tsx). Fehlt sie oder die
+  // Funktion, bleibt das Deck in der bisherigen Darstellung.
+  useEffect(() => {
+    if (!token) return
+    supabase.rpc('get_deck_page', { p_token: token })
+      .then(({ data }) => { const p = data as ProjectPage | null; if (p && p.hero?.img && p.h1) setPage(p) }, () => { /* bisherige Darstellung */ })
   }, [token])
 
   useEffect(() => {
@@ -1370,6 +1384,11 @@ export default function Deck() {
     )
   }
 
+  // Website-Stil nur für deutsche Decks (die Seiteninhalte gibt es nur deutsch; maßgeblich ist
+  // die Sprache des Leads, nicht die des Browsers) und nicht mit ?klassisch=1.
+  const klassisch = new URLSearchParams(window.location.search).get('klassisch') === '1'
+  const web = !!page && !klassisch && deckLang !== 'en'
+  const view: AnyBlock[] = web && page ? webBlocks(content.blocks, page) : content.blocks
   const unitNr = (content.blocks.find(b => b.type === 'unit') as Extract<DeckBlock, { type: 'unit' }> | undefined)?.number?.trim() || null
   const deckUnits = content.blocks.flatMap(b => b.type === 'unit' && b.number?.trim() ? [b.number.trim()] : [])
   const terminUrl = person?.booking_url ?? '/termin?src=deck'
@@ -1378,13 +1397,13 @@ export default function Deck() {
     : t('deck.waText', 'Hallo Sven, ich habe mir die Wohnung angesehen und hätte eine Frage.'))}`
   // Zwischen-Aufruf nach dem Grundriss (sonst nach dem Wohnungs-Block), nicht
   // direkt vor dem Abschluss-Block, sonst stünde dasselbe zweimal untereinander.
-  const fpIdx = content.blocks.findIndex(b => b.type === 'floorplan')
-  const ctaAfter = fpIdx >= 0 ? fpIdx : content.blocks.findIndex(b => b.type === 'unit')
-  const showInline = ctaAfter >= 0 && content.blocks[ctaAfter + 1]?.type !== 'cta'
+  const fpIdx = view.findIndex(b => b.type === 'floorplan')
+  const ctaAfter = fpIdx >= 0 ? fpIdx : view.findIndex(b => b.type === 'unit')
+  const showInline = ctaAfter >= 0 && view[ctaAfter + 1]?.type !== 'cta'
 
   return (
     <VatRefundCtx.Provider value={{ byUnit: vatRefund, units: deckUnits }}>
-    <div className="font-body" style={{ background: CREAM, color: INK }}>
+    <div className={web ? 'font-body hpweb-deck' : 'font-body'} style={{ background: CREAM, color: INK }}>
       {isPrint && (
         <div className="print:hidden sticky top-0 z-50 flex justify-center p-3" style={{ background: DARK }}>
           <button onClick={() => { void printPage() }} className="px-5 py-2.5 rounded-full text-sm font-semibold shadow" style={{ background: GOLD, color: DARK }}>
@@ -1392,14 +1411,15 @@ export default function Deck() {
           </button>
         </div>
       )}
+      {web && <WebStyle />}
       <VideoAutoCtx.Provider value={!book && !isPrint}>
-      {content.blocks.map((b, i) => (
+      {view.map((b, i) => (
         <div key={i} className="relative">
           <Block block={b} />
-          {/* Logo-Wasserzeichen auf jeder Seite — Diebstahlschutz */}
-          <img src={DECK_LOGO} alt="" aria-hidden="true"
+          {/* Logo-Wasserzeichen auf jeder Seite — Diebstahlschutz (nicht auf dem schmalen Kennzahlen-Band) */}
+          {b.type !== 'w_facts' && <img src={DECK_LOGO} alt="" aria-hidden="true"
             className="absolute top-3 right-3 md:top-4 md:right-6 h-7 md:h-9 w-auto rounded-md opacity-80 pointer-events-none select-none ring-1 ring-white/10"
-            onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+            onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />}
           {!isPrint && showInline && i === ctaAfter && <InlineCta onInfo={() => setInfo(true)} terminUrl={terminUrl} />}
         </div>
       ))}
@@ -1414,7 +1434,7 @@ export default function Deck() {
         <InfoModal token={token} refId={ref} campaign={campaign} person={person} unitNr={unitNr}
           internal={internal} terminUrl={terminUrl} onClose={() => setInfo(false)} />
       )}
-      {book && <BookMode blocks={content.blocks} onClose={() => setBook(false)} />}
+      {book && <BookMode blocks={view} onClose={() => setBook(false)} />}
     </div>
     </VatRefundCtx.Provider>
   )
