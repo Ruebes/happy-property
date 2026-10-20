@@ -279,6 +279,7 @@ export interface CrmProject {
   images:          string[]
   video_url:       string | null
   own_video_url?:  string | null   // Svens eigenes YouTube-Video, kommt in jedes Deck
+  project_page_url?: string | null // oeffentliche Projektseite auf der Webseite (Grundlage fuer Sales Decks)
   equipment_list:  string | null
   furniture_cost:     number | null   // Preis Einrichtungspaket (netto, €) — Default für Möbel-AfA in Berechnungen
   furniture_included: boolean | null  // Möbel im Kaufpreis enthalten (kostenfrei) → keine separate AfA

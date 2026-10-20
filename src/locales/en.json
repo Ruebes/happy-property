@@ -2631,6 +2631,9 @@
       "furnitureCostPlaceholder": "e.g. 19000",
       "netEuro": "€ net",
       "furnitureHint": "Automatically applied as furniture depreciation in all calculations for this project.",
+      "projectPageUrl": "Project page (website)",
+      "openProjectPage": "Open",
+      "projectPageUrlHint": "Anonymous project page with day in the life, clips and life film. Basis for the sales decks.",
       "mapsUrlPlaceholder": "https://maps.app.goo.gl/…",
       "locationPlaceholder": "e.g. Paphos, Cyprus",
       "mapIframeTitle": "Map",
@@ -3517,7 +3520,8 @@
       "unitDelete": "Delete unit",
       "plot": "plot",
       "unitOwnedByOther": "This unit already belongs to another customer in the owner portal. Please detach it there first.",
-      "unitPropertyHasData": "The portal property of this unit still holds {{count}} entries (documents, contracts, income, bookings). Please use “Detach from customer” on the property first."
+      "unitPropertyHasData": "The portal property of this unit still holds {{count}} entries (documents, contracts, income, bookings). Please use “Detach from customer” on the property first.",
+      "projectPage": "Project page"
     },
     "prep": {
       "startingSoon": "Appointment starting soon",

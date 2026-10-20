@@ -2631,6 +2631,9 @@
       "furnitureCostPlaceholder": "z.B. 19000",
       "netEuro": "€ netto",
       "furnitureHint": "Wird automatisch als Möbel-AfA in alle Berechnungen dieses Projekts übernommen.",
+      "projectPageUrl": "Projektseite (Webseite)",
+      "openProjectPage": "Öffnen",
+      "projectPageUrlHint": "Anonyme Projektseite mit Tagesablauf, Clips und Lebensfilm. Grundlage für die Sales Decks.",
       "mapsUrlPlaceholder": "https://maps.app.goo.gl/…",
       "locationPlaceholder": "z.B. Paphos, Zypern",
       "mapIframeTitle": "Karte",
@@ -3517,7 +3520,8 @@
       "unitDelete": "Einheit löschen",
       "plot": "Grundstück",
       "unitOwnedByOther": "Diese Wohnung gehört im Eigentümer-Portal bereits einem anderen Kunden. Bitte dort zuerst trennen.",
-      "unitPropertyHasData": "Das Portal-Objekt dieser Wohnung enthält noch {{count}} Einträge (Dokumente, Verträge, Einnahmen, Buchungen). Bitte zuerst im Objekt „Vom Kunden trennen“ verwenden."
+      "unitPropertyHasData": "Das Portal-Objekt dieser Wohnung enthält noch {{count}} Einträge (Dokumente, Verträge, Einnahmen, Buchungen). Bitte zuerst im Objekt „Vom Kunden trennen“ verwenden.",
+      "projectPage": "Projektseite"
     },
     "prep": {
       "startingSoon": "Termin in Kürze",

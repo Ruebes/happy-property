@@ -1144,6 +1144,12 @@ export default function ProjectDetail() {
                 {[project.developer, project.location].filter(Boolean).join(' · ')}
               </p>
             )}
+            {project.project_page_url && (
+              <a href={project.project_page_url} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 mt-2 px-3 py-1 rounded-full text-xs font-medium border border-gray-200 text-gray-700 hover:border-[#ff795d] hover:text-[#ff795d]">
+                🌐 {t('crm.pd.projectPage', 'Projektseite')} ↗
+              </a>
+            )}
           </div>
           <button
             onClick={openNew}

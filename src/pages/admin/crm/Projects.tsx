@@ -61,6 +61,7 @@ interface ProjectForm {
   furniture_included: boolean  // im Kaufpreis enthalten
   video_url:      string
   own_video_url:  string
+  project_page_url: string
   drive_folder_id: string
 }
 
@@ -122,6 +123,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
     furniture_included: project?.furniture_included ?? false,
     video_url:       project?.video_url ?? '',
     own_video_url:   project?.own_video_url ?? '',
+    project_page_url: project?.project_page_url ?? '',
     drive_folder_id: project?.drive_folder_id ?? '',
   })
   const [resolvingPin, setResolvingPin] = useState(false)
@@ -374,6 +376,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
         furniture_included: form.furniture_included,
         video_url:       form.video_url.trim() || null,
         own_video_url:   form.own_video_url.trim() || null,
+        project_page_url: form.project_page_url.trim() || null,
         drive_folder_id: form.drive_folder_id.trim() || null,
         images,
       }
@@ -769,6 +772,27 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                   placeholder={t('crm.project.videoUrlPlaceholder', 'https://youtube.com/watch?v=…')} />
                 <p className="text-xs text-gray-400 mt-1">
                   {t('crm.project.ownVideoUrlHint', 'Kommt in jedes Sales-Deck dieses Projekts, direkt hinter den Projektfilm.')}
+                </p>
+              </div>
+
+              {/* Oeffentliche Projektseite auf der Webseite (Grundlage fuer die Sales Decks) */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {t('crm.project.projectPageUrl', 'Projektseite (Webseite)')}
+                </label>
+                <div className="flex gap-2">
+                  <input value={form.project_page_url} onChange={e => up('project_page_url', e.target.value)}
+                    className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
+                    placeholder="https://steuervorteil-zypern-immobilien.com/top-projekte/…" />
+                  {/^https?:\/\//.test(form.project_page_url.trim()) && (
+                    <a href={form.project_page_url.trim()} target="_blank" rel="noopener noreferrer"
+                      className="px-3 py-2 text-sm font-medium rounded-lg border border-gray-200 text-gray-700 hover:border-orange-400 whitespace-nowrap">
+                      {t('crm.project.openProjectPage', 'Öffnen')} ↗
+                    </a>
+                  )}
+                </div>
+                <p className="text-xs text-gray-400 mt-1">
+                  {t('crm.project.projectPageUrlHint', 'Anonyme Projektseite mit Tagesablauf, Clips und Lebensfilm. Grundlage für die Sales Decks.')}
                 </p>
               </div>
 
