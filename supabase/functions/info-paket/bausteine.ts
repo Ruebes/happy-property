@@ -343,7 +343,7 @@ export function ratenplanKarte(p: NonNullable<ReturnType<typeof ratenplan>>, pdf
     </td></tr>
     <tr><td class="px" style="padding:0 22px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${zeilen}</table></td></tr>
     <tr><td class="px" style="padding:6px 22px 20px;">
-      <p style="margin:0 0 ${pdfUrl ? '14px' : '0'};font-family:${SANS};font-size:12px;line-height:1.6;color:${CI.mute};">Die Raten nach der Übergabe sind quartalsweise gerechnet (monatlich geht auch)${p.zinsen > 0 ? `, die Zinsen machen zusammen ca. ${eur(p.zinsen)} aus` : ''}. Die genauen Termine und Beträge regelt der Kaufvertrag.</p>
+      <p style="margin:0 0 ${pdfUrl ? '14px' : '0'};font-family:${SANS};font-size:12px;line-height:1.6;color:${CI.mute};">${p.raten.some(x => x.zins) ? `Die Raten nach der Übergabe sind quartalsweise gerechnet (monatlich geht auch)${p.zinsen > 0 ? `, die Zinsen machen zusammen ca. ${eur(p.zinsen)} aus` : ''}. ` : ''}Die genauen Termine und Beträge regelt der Kaufvertrag.</p>
       ${pdfUrl ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>${knopf('Zahlungsplan als PDF', pdfUrl, CI.coral)}</tr></table>` : ''}
     </td></tr>
   </table>

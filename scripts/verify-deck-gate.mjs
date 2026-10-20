@@ -18,12 +18,15 @@ const dir = mkdtempSync(join(tmpdir(), 'hpgate-'))
 const outGate = join(dir, 'gate.mjs')
 const outNorm = join(dir, 'norm.mjs')
 const outSel = join(dir, 'sel.mjs')
+const outBau = join(dir, 'bau.mjs')
 execSync(`npx --yes esbuild supabase/functions/_shared/deckAssets.ts --bundle --format=esm --outfile=${outSel}`, { stdio: 'pipe' })
 execSync(`npx --yes esbuild supabase/functions/_shared/deckGate.ts --bundle --format=esm --outfile=${outGate}`, { stdio: 'pipe' })
 execSync(`npx --yes esbuild supabase/functions/_shared/deckNormalize.ts --bundle --format=esm --outfile=${outNorm}`, { stdio: 'pipe' })
+execSync(`npx --yes esbuild supabase/functions/info-paket/bausteine.ts --bundle --format=esm --outfile=${outBau}`, { stdio: 'pipe' })
 const { runDeckGate, checkImageTypes } = await import(outGate)
 const { buildPaymentBlock, applyDeterministic } = await import(outNorm)
 const { selectImages } = await import(outSel)
+const { ratenplan, ratenplanKarte } = await import(outBau)
 
 let fails = 0
 const ok = (name, cond, detail = '') => {
@@ -186,6 +189,41 @@ const baseBlocks = (specs) => {
   const lumaNow = buildPaymentBlock(schedule, { net: 339000, gross: 403410 }, 'de')
   ok('Luma-Block: Hinweis und Phasen exakt wie vorher', lumaNow.note === 'Reservierung und die erste Rate bei Vertragsunterzeichnung sind sofort fällig; weitere Raten folgen mit dem Baufortschritt. Die Reservierung wird auf die erste Rate angerechnet. Hauptbeträge brutto (inkl. MwSt); der jeweilige Nettobetrag ist zusätzlich ausgewiesen.'
     && lumaNow.intro === 'In klaren Stufen über die Bauphasen verteilt - transparent und nachvollziehbar.' && lumaNow.phase2.label === 'Bauphase & Übergabe' && lumaNow.phase1.title === 'Reservierung & Vertrag', lumaNow.note)
+}
+
+// ── Raten nach Übergabe nur, wenn der Plan sie hat (ATRIUM 20.10.26) ─────────
+// Kuutio-Plan: reservationCredit 'last', letzte Stufe „Bei Übergabe", danach nichts.
+// Deck-Intro und Mail-Ratenplan behaupteten trotzdem Zahlungen nach der Übergabe.
+{
+  const ATRIUM = { reservation: 10000, reservationVat: true, reservationCredit: 'last', stages: [
+    { pct: 50, sub: 'Baubeginn', label: 'Bei Vertragsunterzeichnung' },
+    { pct: 20, label: 'Rohbau fertig' },
+    { pct: 10, label: 'Mauerwerk und Poolschale fertig' },
+    { pct: 10, label: 'Aluminiumfenster eingebaut' },
+    { pct: 10, sub: 'abzüglich Reservierung', label: 'Bei Übergabe' } ] }
+  const MITO = { reservation: 20000, reservationVat: true, reservationCredit: 'last', stages: [
+    { pct: 30, label: 'Bei Vertragsunterzeichnung' },
+    { pct: 20, label: 'Bei Übergabe' },
+    { pct: 50, label: 'Nach Übergabe · flexible Raten', sub: '12 Monate nach Übergabe, monatlich oder quartalsweise, 2,7 % Zins · letzte Rate abzüglich Reservierung' } ] }
+  const basis = { net: 414625, gross: 493404 }
+  const a = buildPaymentBlock(ATRIUM, basis, 'de')
+  ok('ATRIUM: Intro ohne „nach der Übergabe"', a.intro === 'In klaren Stufen über die Bauphasen verteilt - transparent und nachvollziehbar.', a.intro)
+  const aEn = buildPaymentBlock(ATRIUM, basis, 'en')
+  ok('ATRIUM EN: Intro ohne „after handover"', aEn.intro === 'Spread in clear stages across the construction phases - transparent and easy to follow.', aEn.intro)
+  ok('ATRIUM: Hinweis letzte Rate bleibt', /in der letzten Rate schon abgezogen/.test(a.note), a.note)
+  const m = buildPaymentBlock(MITO, basis, 'de')
+  ok('MITO: Intro „ein großer Teil erst nach der Übergabe" bleibt', m.intro === 'In klaren Stufen, ein großer Teil erst nach der Übergabe - transparent und nachvollziehbar.', m.intro)
+  const mEn = buildPaymentBlock(MITO, basis, 'en')
+  ok('MITO EN: Intro „after handover" bleibt', /paid only after handover/.test(mEn.intro), mEn.intro)
+
+  const rp = (schedule) => ratenplan({ schedule, brutto: basis.gross, netto: basis.net, uebergabe: null, uebergabeLabel: null })
+  const pa = rp(ATRIUM)
+  const ka = ratenplanKarte(pa, null)
+  ok('ATRIUM Mail-Ratenplan: keine Raten nach Übergabe', !pa.raten.some(x => x.zins) && !/nach Übergabe/.test(JSON.stringify(pa.raten)), JSON.stringify(pa.raten.map(x => x.wann)))
+  ok('ATRIUM Mail-Ratenplan: kein Quartals-Hinweis, nur Kaufvertrag-Satz', !/quartalsweise|nach der Übergabe/.test(ka) && /Die genauen Termine und Beträge regelt der Kaufvertrag\./.test(ka), '')
+  const pm = rp(MITO)
+  const km = ratenplanKarte(pm, null)
+  ok('MITO Mail-Ratenplan: Quartals-Hinweis mit Zinsen bleibt', pm.raten.some(x => x.zins) && /Die Raten nach der Übergabe sind quartalsweise gerechnet \(monatlich geht auch\), die Zinsen machen zusammen ca\. .+ aus\. Die genauen Termine und Beträge regelt der Kaufvertrag\./.test(km), '')
 }
 
 // ── Test E: Villa-Bild im Apartment-Deck ─────────────────────────────────────

@@ -237,6 +237,10 @@ const BAU_RATE = /baufortschritt|construction|rohbau|mauerwerk|fliesen|alumin|mi
 // Bruttopreis PLUS Reservierung (Mail: „11.900 € Reservierung und 145.775 € bei Vertrag").
 const ABZUG_RES = /(abzüglich|less|minus)\b[^·]*reserv/i
 const VERTRAG_RATE = /vertrag|contract/i
+// ATRIUM 20.10.26: reservationCredit 'last' heißt nicht, dass Raten nach der
+// Übergabe kommen (Kuutio: letzte Stufe bei Übergabe). „Ein großer Teil erst nach
+// der Übergabe" nur, wenn eine Stufe wirklich danach liegt (MITO).
+const NACH_UEBERGABE = /nach (der )?(ü|ue)bergabe|after (the )?handover/i
 const MONATE_DE = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember']
 const MONATE_EN = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 /** completion im Kontext-Format "MM/YYYY"; true, wenn die Übergabe höchstens drei Monate entfernt ist. */
@@ -258,6 +262,7 @@ export function buildPaymentBlock(sched: PaySchedule, basis?: { net: number; gro
     if (fertig) return fertig
   }
   const stages = sched.stages ?? []
+  const nachUeb = stages.some(s => NACH_UEBERGABE.test(`${s.label} ${s.sub ?? ''}`))
   const half = Math.ceil(stages.length / 2)
   const fmt = (n: number) => Math.round(n).toLocaleString('de-DE') + ' €'
   const hasBasis = !!basis && basis.gross > 0
@@ -302,7 +307,7 @@ export function buildPaymentBlock(sched: PaySchedule, basis?: { net: number; gro
     type: 'payment',
     kicker: EN ? 'Payment plan' : 'Zahlungsplan',
     headline: EN ? 'The payment plan at a glance' : 'Der Zahlungsplan im Überblick',
-    intro: resLast
+    intro: nachUeb
       ? (EN ? 'In clear stages, with a large part paid only after handover - transparent and easy to follow.'
         : 'In klaren Stufen, ein großer Teil erst nach der Übergabe - transparent und nachvollziehbar.')
       : EN
