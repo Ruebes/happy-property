@@ -78,6 +78,9 @@ verify_jwt = false
 [functions.yt-center]
 verify_jwt = false
 
+[functions.yt-keywords]
+verify_jwt = false
+
 # ── Sicherheits-Audit 30.9.2026 ──
 # verify_jwt hier so festgeschrieben, wie die Functions heute live laufen, damit
 # ein Deploy ohne Flag nichts umstellt. verify_jwt=true ist KEIN Schutz (der
