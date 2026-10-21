@@ -120,7 +120,7 @@ export const DEFAULT_FUNNEL_CONFIG: FunnelConfig = {
   sources: [],
   links: [],
   welcome: {
-    title: 'Dein kostenloses Beratungsgespräch mit Sven',
+    title: 'Dein kostenloses Strategiegespräch mit Sven',
     subtitle: 'Beantworte 6 kurze Fragen und such dir direkt deinen Wunschtermin aus — per Zoom oder WhatsApp-Call. Dauer: 1 Minute.',
     cta: 'Los geht’s →',
     footnote: 'Kostenlos & unverbindlich · ca. 15–30 Minuten Gespräch',
@@ -130,7 +130,7 @@ export const DEFAULT_FUNNEL_CONFIG: FunnelConfig = {
     {
       key: 'erfahrung',
       title: 'Hast du bereits Erfahrung mit Immobilieninvestitionen?',
-      sub: 'Fülle den kurzen Fragebogen aus & buche dir anschließend dein kostenloses Beratungsgespräch mit Sven. Dauer: 1 Minute.',
+      sub: 'Fülle den kurzen Fragebogen aus & buche dir anschließend dein kostenloses Strategiegespräch mit Sven. Dauer: 1 Minute.',
       options: [
         { key: 'keine', label: 'Keine Erfahrung' },
         { key: 'wenig', label: 'Wenig Erfahrung (1–2 Investitionen)' },

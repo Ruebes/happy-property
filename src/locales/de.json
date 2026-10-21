@@ -177,7 +177,7 @@
     "err_phone": "Bitte prüfe deine Telefonnummer.",
     "err_generic": "Das hat leider nicht geklappt. Bitte versuche es noch einmal.",
     "err_slot_taken": "Dieser Termin wurde gerade vergeben — bitte wähle einen anderen.",
-    "cal_summary": "Beratungsgespräch mit Sven – Happy Property",
+    "cal_summary": "Strategiegespräch mit Sven · Happy Property",
     "cal_desc_zoom": "Zoom-Link kommt per E-Mail & WhatsApp.",
     "cal_desc_whatsapp": "Sven ruft dich per WhatsApp an.",
     "question_counter": "Frage {{n}} von {{total}}",
@@ -3110,7 +3110,7 @@
     },
     "appt": {
       "joinZoom": "Zoom beitreten",
-      "defaultZoomTitle": "Beratungsgespräch",
+      "defaultZoomTitle": "Strategiegespräch",
       "saveError": "Fehler beim Speichern.",
       "modalTitle": "Termin anlegen",
       "title": "Titel",

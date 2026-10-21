@@ -409,14 +409,14 @@ export default function Funnel() {
     if (!slot) return '#'
     const s = new Date(slot), e = new Date(s.getTime() + 30 * 60000)
     const f = (d: Date) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
-    return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(t('funnel.cal_summary', 'Beratungsgespräch mit Sven – Happy Property'))}&dates=${f(s)}/${f(e)}&details=${encodeURIComponent(meetingType === 'zoom' ? t('funnel.cal_desc_zoom', 'Zoom-Link kommt per E-Mail & WhatsApp.') : t('funnel.cal_desc_whatsapp', 'Sven ruft dich per WhatsApp an.'))}`
+    return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(t('funnel.cal_summary', 'Strategiegespräch mit Sven · Happy Property'))}&dates=${f(s)}/${f(e)}&details=${encodeURIComponent(meetingType === 'zoom' ? t('funnel.cal_desc_zoom', 'Zoom-Link kommt per E-Mail & WhatsApp.') : t('funnel.cal_desc_whatsapp', 'Sven ruft dich per WhatsApp an.'))}`
   }, [slot, meetingType])
   const downloadIcs = () => {
     const s = new Date(slot), e = new Date(s.getTime() + 30 * 60000)
     const f = (d: Date) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
     const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Happy Property//Termin//DE', 'BEGIN:VEVENT',
       `UID:${slot}@happy-property.com`, `DTSTAMP:${f(new Date())}`, `DTSTART:${f(s)}`, `DTEND:${f(e)}`,
-      `SUMMARY:${t('funnel.cal_summary', 'Beratungsgespräch mit Sven – Happy Property')}`,
+      `SUMMARY:${t('funnel.cal_summary', 'Strategiegespräch mit Sven · Happy Property')}`,
       `DESCRIPTION:${meetingType === 'zoom' ? t('funnel.cal_desc_zoom', 'Zoom-Link kommt per E-Mail & WhatsApp.') : t('funnel.cal_desc_whatsapp', 'Sven ruft dich per WhatsApp an.')}`,
       'END:VEVENT', 'END:VCALENDAR'].join('\r\n')
     const a = document.createElement('a')

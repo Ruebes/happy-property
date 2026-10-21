@@ -533,7 +533,7 @@ export default function AppointmentModal({
       const duration_minutes = Math.max(30, (bisH * 60 + bisM) - (vonH * 60 + vonM))
 
       const { data, error } = await supabase.functions.invoke('create-zoom-meeting', {
-        body: { title: title || t('crm.appt.defaultZoomTitle', 'Beratungsgespräch'), start_time, duration_minutes },
+        body: { title: title || t('crm.appt.defaultZoomTitle', 'Strategiegespräch'), start_time, duration_minutes },
       })
       if (error) throw new Error(error.message)
       if (data?.error) throw new Error(data.error)
@@ -574,7 +574,7 @@ export default function AppointmentModal({
           const [vH, vM] = von.split(':').map(Number)
           const [bH, bM] = bis.split(':').map(Number)
           const { data: zm, error: zErr } = await supabase.functions.invoke('create-zoom-meeting', {
-            body: { title: title || t('crm.appt.defaultZoomTitle', 'Beratungsgespräch'),
+            body: { title: title || t('crm.appt.defaultZoomTitle', 'Strategiegespräch'),
               start_time: startD.toISOString(), duration_minutes: Math.max(30, (bH * 60 + bM) - (vH * 60 + vM)) },
           })
           if (zErr || (zm as { error?: string } | null)?.error) throw new Error((zm as { error?: string } | null)?.error || zErr?.message)

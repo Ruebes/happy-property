@@ -177,7 +177,7 @@
     "err_phone": "Please check your phone number.",
     "err_generic": "Sorry, that didn't work. Please try again.",
     "err_slot_taken": "This slot was just taken — please pick another one.",
-    "cal_summary": "Consultation with Sven – Happy Property",
+    "cal_summary": "Strategy call with Sven · Happy Property",
     "cal_desc_zoom": "Zoom link will arrive via email & WhatsApp.",
     "cal_desc_whatsapp": "Sven will call you on WhatsApp.",
     "question_counter": "Question {{n}} of {{total}}",
