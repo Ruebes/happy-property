@@ -12,7 +12,8 @@ import { WEB_CSS } from './deckWebCss'
 // Gilt sofort auch für alle schon verschickten Decks des Projekts, weil nur die
 // Darstellung wechselt (Blöcke in sales_decks bleiben unverändert).
 
-export type PageMedia = { img?: string; alt?: string; clip?: string; poster?: string; cap?: string } | null
+// yt = YouTube-Video-ID (fremdes Video, nur eingebettet über youtube-nocookie, kein Autostart).
+export type PageMedia = { img?: string; alt?: string; clip?: string; poster?: string; cap?: string; yt?: string; start?: number } | null
 type Photo = { url: string; label: string }
 export type ProjectPage = {
   v: number
@@ -34,7 +35,7 @@ export type ProjectPage = {
   amen?: { badge?: string | null; kicker: string; title: string; paras: string[]; stats?: [string, string][] | null; media?: PageMedia; photos?: Photo[]; note?: string | null }
   options?: { kicker: string; title: string; intro?: string; items: [string, string, string][]; note?: string }
   // Weitere Abschnitte im Stil von Anlage/Zuhause (Golfresort: Spa, Villen), in Seitenreihenfolge.
-  more?: { tone: 'dark' | 'cream' | 'white'; badge?: string | null; kicker: string; title: string; paras: string[]; stats?: [string, string][] | null; media?: PageMedia; photos?: Photo[]; note?: string | null }[]
+  more?: { tone: 'dark' | 'cream' | 'white'; badge?: string | null; kicker: string; title: string; paras: string[]; stats?: [string, string][] | null; media?: PageMedia; photos?: Photo[]; videos?: { yt: string; cap?: string; start?: number }[]; note?: string | null }[]
   reasons_title?: string
   reasons?: [string, string][]
   gallery?: Photo[]
@@ -253,8 +254,23 @@ function Photos({ items, cls = 'pj-gr-ph', bigFirst }: { items: Photo[]; cls?: s
     </>
   )
 }
+// YouTube-Einbettung für Umgebungsvideos (Strand, Beach Bar), die wir nicht selbst hosten dürfen.
+function YouTube({ id, start, cap }: { id: string; start?: number; cap?: string }) {
+  const src = `https://www.youtube-nocookie.com/embed/${id}?rel=0&modestbranding=1&playsinline=1${start ? `&start=${start}` : ''}`
+  return (
+    <figure style={{ margin: 0 }}>
+      <div className="pj-gr-big">
+        <iframe src={src} title={cap ?? 'Video'} loading="lazy" allow="encrypted-media; picture-in-picture; fullscreen" allowFullScreen
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }} />
+      </div>
+      {cap && <figcaption className="pj-note" style={{ marginTop: 8 }}>{cap}</figcaption>}
+    </figure>
+  )
+}
+
 function Media({ m, big }: { m?: PageMedia; big?: boolean }) {
   if (!m) return null
+  if (m.yt) return <YouTube id={m.yt} start={m.start} cap={m.cap} />
   if (m.clip) return <div className={big === false ? 'pj-gr-clip' : 'pj-gr-big'}><Clip src={m.clip} poster={m.poster} cap={m.cap} /></div>
   if (m.img) return <img className="pj-split-img" src={rimg(m.img, 1100)} alt={m.alt ?? ''} loading="lazy" />
   return null
@@ -351,6 +367,11 @@ function More({ page, i }: { page: ProjectPage; i: number }) {
         </div>
         <Media m={m.media} />
       </div>
+      {!!m.videos?.length && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20, marginTop: 28 }}>
+          {m.videos.map((v, j) => <YouTube key={j} id={v.yt} start={v.start} cap={v.cap} />)}
+        </div>
+      )}
       {!!m.photos?.length && <><Photos items={m.photos} />{m.note && <p className={dark ? 'pj-gr-noted' : 'pj-note'}>{m.note}</p>}</>}
     </div>
   )
