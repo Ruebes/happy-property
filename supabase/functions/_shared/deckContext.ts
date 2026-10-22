@@ -64,6 +64,9 @@ export interface DeckUnitCtx {
   /** true = der Grundriss wurde ueber Zimmerzahl statt ueber die Wohnungsnummer
    *  gefunden. Muss im Bericht sichtbar bleiben (Regel: Fallback markieren). */
   floorplanFallback: boolean
+  /** Bautraegerplan, der vorhanden ist, aber nicht ins Deck darf (kein HP-Stil).
+   *  Gate meldet dann "erst im CI-Stil zeichnen". */
+  floorplanRejected?: string | null
 }
 
 export interface DeckContext {
@@ -292,6 +295,20 @@ export function istDarstellbaresBild(url: string | null | undefined): boolean {
   return /\.(jpe?g|png|webp|gif|svg|avif)$/.test(pfad) || !/\.[a-z0-9]{2,5}$/.test(pfad)
 }
 
+/** Feste Regel (Sven 20.10. + 22.10.2026): Im Deck steht NUR ein Grundriss im
+ *  Happy-Property-Stil. Das sind die von Hand gezeichneten CI-SVGs unter
+ *  deck-assets/floorplans/… und verifizierte hp-floorplan-Plaene (hp_floorplan_url
+ *  wird nur bei verified gesetzt, freigegebene Katalogeintraege unter floorplans/hp/).
+ *  Bautraegerplaene, auch zugeschnittene oder freigegebene Katalog-Zuschnitte,
+ *  sind KEIN HP-Grundriss: dann lieber keiner und das Deck wird rot. */
+export function istHpGrundriss(url: string, quelle: 'unit_map' | 'hp' | 'catalog' | 'drive' | 'suffix', freigegeben = false): boolean {
+  const pfad = url.split('?')[0].split('#')[0].toLowerCase()
+  if (quelle === 'drive') return false
+  if (quelle === 'hp') return true
+  if (/\/deck-assets\/floorplans\/.+\.svg$/.test(pfad)) return true
+  return quelle === 'catalog' && freigegeben && pfad.includes('/deck-assets/floorplans/hp/')
+}
+
 export function furnitureNetFromProject(
   bedrooms: number | null | undefined,
   byBedrooms: Record<string, number> | null | undefined,
@@ -454,19 +471,23 @@ export async function buildDeckContext(sb: Sb, input: BuildContextInput): Promis
     //      dadurch fanden 13 von 30 Wohnungen ihren vorhandenen Plan nicht.
     //   (5. Zimmerzahl-Typplan und baugleiche Wohnung: abgeschaltet, s.u.)
     // Kein Treffer heisst KEIN Grundriss — niemals ein Ersatzbild.
+    // Jede Stufe nimmt nur einen HP-Grundriss (istHpGrundriss); ein Bautraegerplan
+    // wird als floorplanRejected gemerkt, damit Bericht und Gate sagen, was fehlt.
     let fpUrl: string | null = null
     let fpSource: DeckUnitCtx['floorplanSource'] = null
-    const nimm = (u: unknown, q: DeckUnitCtx['floorplanSource']) => {
+    let rejected: string | null = null
+    const nimm = (u: unknown, q: 'unit_map' | 'hp' | 'catalog' | 'drive' | 'suffix', freigegeben = false) => {
       if (fpUrl || typeof u !== 'string' || !u.trim()) return
       if (!istDarstellbaresBild(u)) return
+      if (!istHpGrundriss(u, q, freigegeben)) { rejected ??= u; return }
       fpUrl = u; fpSource = q
     }
-    let unapproved = false
+    const unapproved = false
     let dims: boolean | null = null
     nimm(fpMap[k], 'unit_map')
-    if (!fpUrl) { const c = catFor(k, 'approved'); if (c) { nimm(c.url, 'catalog'); dims = c.dims } }
+    if (!fpUrl) { const c = catFor(k, 'approved'); if (c) { nimm(c.url, 'catalog', true); if (fpUrl) dims = c.dims } }
     nimm(row?.hp_floorplan_url, 'hp')
-    if (!fpUrl) { const c = catFor(k, 'classified'); if (c) { nimm(c.url, 'catalog'); dims = c.dims; unapproved = !!fpUrl } }
+    if (!fpUrl) { const c = catFor(k, 'classified'); if (c) nimm(c.url, 'catalog') }
     nimm(row?.floorplan_url, 'drive')
     if (!fpUrl) {
       // Zusatz am Ende der Wohnungsnummer abstreifen: "b301p" -> "b301".
@@ -506,6 +527,7 @@ export async function buildDeckContext(sb: Sb, input: BuildContextInput): Promis
       floorplanFallback: fallback,
       floorplanUnapproved: unapproved,
       floorplanDimensions: dims,
+      floorplanRejected: fpUrl ? null : rejected,
     })
   }
   ctx.missingFloorplans = ctx.units.filter(u => !u.floorplanUrl).map(u => u.unitNumber)

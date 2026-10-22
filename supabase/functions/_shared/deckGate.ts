@@ -287,9 +287,14 @@ export function runDeckGate(blocks: Block[], ctx: DeckContext): GateResult {
   }
   for (const u of ctx.units) {
     if (!u.floorplanUrl) {
-      add({ key: 'grundriss_fehlt', severity: 'hoch',
-        what: `Für Wohnung ${u.unitNumber} ist kein Grundriss hinterlegt — das Deck zeigt keinen.`,
-        fix: 'Originalplan im Drive-Ordner ablegen und die Assets neu laden, oder über den HP-Grundriss-Generator erzeugen.' })
+      add(u.floorplanRejected
+        ? { key: 'grundriss_kein_hp', severity: 'hoch',
+            what: `Für Wohnung ${u.unitNumber} liegt nur ein Bauträgerplan vor, kein Grundriss im Happy-Property-Stil. Das Deck zeigt deshalb keinen (feste Regel).`,
+            evidence: u.floorplanRejected.slice(0, 160),
+            fix: 'Grundriss nach dem Bauträgerplan im CI-Stil zeichnen (SVG unter deck-assets/floorplans/…), der Wohnung zuordnen, dann Deck neu normalisieren.' }
+        : { key: 'grundriss_fehlt', severity: 'hoch',
+            what: `Für Wohnung ${u.unitNumber} ist kein Grundriss hinterlegt — das Deck zeigt keinen.`,
+            fix: 'Bauträgerplan besorgen und im CI-Stil zeichnen (SVG unter deck-assets/floorplans/…), dann der Wohnung zuordnen.' })
       continue
     }
     // Plan vorhanden, aber im Deck nicht angekommen.
