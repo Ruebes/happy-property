@@ -4307,6 +4307,7 @@
       "basket": "Package",
       "briefing": "Free text (for deck cover letter + email)",
       "briefingPh": "e.g. Wants 2-bed with sea view, budget up to 450k, plans to rent out…",
+      "briefingFromCall": "📞 Taken from the call on {{d}}, feel free to edit.",
       "angle": "Angle",
       "eigennutz": "Own use (5 % VAT)",
       "investment": "Investment (19 % VAT)",

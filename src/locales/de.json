@@ -4307,6 +4307,7 @@
       "basket": "Paket",
       "briefing": "Freitext (für Deck-Anschreiben + Mail)",
       "briefingPh": "z.B. Sucht 2 SZ mit Meerblick, Budget bis 450k, will vermieten…",
+      "briefingFromCall": "📞 Aus dem Gespräch vom {{d}} übernommen, gern anpassen.",
       "angle": "Winkel",
       "eigennutz": "Eigennutz (5 % MwSt)",
       "investment": "Investment (19 % MwSt)",

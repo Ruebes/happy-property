@@ -63,6 +63,18 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const [sel, setSel]           = useState<Set<string>>(new Set())
   const [basket, setBasket]     = useState<BasketItem[]>([])
   const [briefing, setBriefing] = useState('')
+  // Kundenprofil aus dem letzten Zoom-Gespräch (zoom-calls) als Freitext vorbelegen,
+  // solange Sven noch nichts eingetippt hat (Sven 22.10.26).
+  const [briefingFrom, setBriefingFrom] = useState('')
+  useEffect(() => { void (async () => {
+    const { data } = await supabase.from('call_summaries').select('briefing, started_at')
+      .eq('lead_id', lead.id).eq('status', 'fertig').not('briefing', 'is', null)
+      .order('started_at', { ascending: false }).limit(1).maybeSingle()
+    const row = data as { briefing: string; started_at: string | null } | null
+    if (!row?.briefing) return
+    setBriefing(b => b.trim() ? b : row.briefing)
+    setBriefingFrom(row.started_at ? new Date(row.started_at).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }) : '?')
+  })() }, [lead.id])
   // Standard: Investment mit 19 % MwSt (Sven 15.8.) - der Regelfall im Vertrieb;
   // Eigennutz (5 %) bleibt als Auswahl fuer die Ausnahmen.
   const [angle, setAngle]       = useState<'eigennutz' | 'investment'>('investment')
@@ -762,6 +774,9 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
               <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.wizard.briefing', 'Freitext (für Deck-Anschreiben + Mail)')}</label>
               <textarea rows={3} className={inputCls} value={briefing} onChange={e => setBriefing(e.target.value)}
                 placeholder={t('crm.wizard.briefingPh', 'z.B. Sucht 2 SZ mit Meerblick, Budget bis 450k, will vermieten…')} />
+              {briefingFrom && (
+                <p className="text-xs text-gray-400 mt-1">{t('crm.wizard.briefingFromCall', '📞 Aus dem Gespräch vom {{d}} übernommen, gern anpassen.', { d: briefingFrom })}</p>
+              )}
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.wizard.angle', 'Winkel')}</label>

@@ -20,7 +20,7 @@ const CORS = {
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
 
 // Im CRM änderbare Tokens (Ablage in connector_secrets, Env als Fallback).
-const EDITABLE = new Set(['LINKEDIN_ACCESS_TOKEN', 'META_ACCESS_TOKEN', 'YOUTUBE_CLIENT_ID', 'YOUTUBE_CLIENT_SECRET', 'YOUTUBE_REFRESH_TOKEN', 'DROPBOX_APP_KEY', 'GOOGLE_ADS_CUSTOMER_ID', 'GOOGLE_ADS_LOGIN_CUSTOMER_ID'])
+const EDITABLE = new Set(['LINKEDIN_ACCESS_TOKEN', 'META_ACCESS_TOKEN', 'YOUTUBE_CLIENT_ID', 'YOUTUBE_CLIENT_SECRET', 'YOUTUBE_REFRESH_TOKEN', 'DROPBOX_APP_KEY', 'GOOGLE_ADS_CUSTOMER_ID', 'GOOGLE_ADS_LOGIN_CUSTOMER_ID', 'ZOOM_WEBHOOK_SECRET'])
 // Google-Ads-Kontonummern: nur 10 Ziffern speichern (Bindestriche aus der Oberfläche entfernen)
 const GADS_ID_KEYS = new Set(['GOOGLE_ADS_CUSTOMER_ID', 'GOOGLE_ADS_LOGIN_CUSTOMER_ID'])
 const fmtGadsId = (id: string) => id.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3')
@@ -180,6 +180,11 @@ const CHECKS: Check[] = [
   { key: 'KLAVIYO', label: 'Klaviyo (Alt-Import)', run: async () => {
     const tok = Deno.env.get('KLAVIYO_API_KEY') ?? Deno.env.get('Klaviyo') ?? ''
     return tok ? { ok: true, detail: 'Schlüssel hinterlegt.' } : { ok: false, detail: 'Kein Schlüssel — eigener Klaviyo-Ersatz läuft unabhängig.' }
+  } },
+  // Zoom-Gesprächsnotizen (zoom-calls): Secret Token aus der Zoom-App (Event Subscriptions).
+  { key: 'ZOOM_WEBHOOK_SECRET', label: 'Zoom, Gesprächsnotizen (Secret Token)', editable: true, run: async (sb) => {
+    const v = await secretOf(sb, 'ZOOM_WEBHOOK_SECRET')
+    return v ? { ok: true, detail: 'Hinterlegt. Nach Zoom-Calls entsteht automatisch eine Notiz beim Kunden.' } : { ok: false, detail: 'Fehlt. Secret Token aus der Zoom-App (Feature > Event Subscriptions) über „Ändern" eintragen.' }
   } },
   { key: 'REVOLUT', label: 'Revolut Business', run: async () => {
     const c = Deno.env.get('REVOLUT_CLIENT_ID') ?? ''
