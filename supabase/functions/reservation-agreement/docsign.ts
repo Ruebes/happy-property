@@ -8,7 +8,7 @@
 // an den Anwalt (crm_settings.sign_docs_lawyer), Sven bekommt eine WhatsApp.
 // Test (test=true): alle Nachrichten nur an Sven, beim Unterschreiben wird nichts abgelegt.
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
-import { PDFDocument } from 'npm:pdf-lib@1.17.1'
+import { PDFDocument, StandardFonts, rgb } from 'npm:pdf-lib@1.17.1'
 import { stampDocument } from './stamp.ts'
 import { uploadToken, uploadFile } from './drive.ts'
 import { loadSeal, saveSeal, sealDataUrl, pngFromInput, clientIp, LOCK_MINUTES, MAX_SEAL_BYTES } from './seal.ts'
@@ -43,17 +43,24 @@ interface DocCtx {
 const newToken = () => Array.from(crypto.getRandomValues(new Uint8Array(18)), x => x.toString(16).padStart(2, '0')).join('')
 const leadLabel = (l: DocCtx['lead']) => [l.first_name, l.last_name].map(x => (x ?? '').trim()).filter(Boolean).join(' ') || l.email || 'Kunde'
 
-async function docCtx(sb: SupabaseClient, dealId: string): Promise<DocCtx | { error: string }> {
+/**
+ * Ohne zugewiesene Wohnung (z. B. Bankbestätigung vor der Reservierung, Sven 22.10.2026) kommen
+ * Projekt und Bauträger aus dem Auftrag selbst (project_id); abgelegt wird dann nur im Drive-Ordner.
+ */
+async function docCtx(sb: SupabaseClient, dealId: string, projectId?: string | null): Promise<DocCtx | { error: string }> {
   const { data: deal } = await sb.from('deals').select('id, lead_id, unit_id').eq('id', dealId).maybeSingle()
   const d = deal as { id: string; lead_id: string; unit_id: string | null } | null
   if (!d) return { error: 'Deal nicht gefunden' }
-  if (!d.unit_id) return { error: 'Am Deal ist keine Wohnung zugewiesen' }
+  if (!d.unit_id && !projectId) return { error: 'Am Deal ist keine Wohnung zugewiesen' }
   const { data: lead } = await sb.from('leads').select('id, first_name, last_name, email, drive_folder_id, drive_folder_url').eq('id', d.lead_id).maybeSingle()
   if (!lead) return { error: 'Kunde nicht gefunden' }
-  const { data: unit } = await sb.from('crm_project_units').select('id, unit_number, project_id').eq('id', d.unit_id).maybeSingle()
-  const u = unit as DocCtx['unit']
-  if (!u) return { error: 'Wohnung nicht gefunden' }
-  const { data: proj } = await sb.from('crm_projects').select('id, name, developer').eq('id', u.project_id).maybeSingle()
+  let u: DocCtx['unit'] = null
+  if (d.unit_id) {
+    const { data: unit } = await sb.from('crm_project_units').select('id, unit_number, project_id').eq('id', d.unit_id).maybeSingle()
+    u = unit as DocCtx['unit']
+    if (!u) return { error: 'Wohnung nicht gefunden' }
+  }
+  const { data: proj } = await sb.from('crm_projects').select('id, name, developer').eq('id', u?.project_id ?? projectId!).maybeSingle()
   const p = proj as { id: string; name: string; developer: string | null } | null
   if (!p?.developer) return { error: 'Projekt ohne Bauträger' }
   const { data: dev } = await sb.from('crm_developers').select('id, name').ilike('name', p.developer).limit(1).maybeSingle()
@@ -88,67 +95,84 @@ function pdfFromInput(raw: unknown): Uint8Array | null {
   return bin.startsWith('%PDF') ? bytes : null
 }
 
-function requestTexts(lang: 'de' | 'en', c: DocCtx, title: string, link: string, firstName: string) {
-  const unit = c.project && c.unit ? `${c.project.name} ${c.unit.unit_number}` : ''
+/** Zusatzoptionen eines Auftrags (sign_meta), alle optional; ohne sie läuft alles wie bisher. */
+interface DocOpts {
+  note?: string                                    // eigener Absatz vor dem Link (Mail + WhatsApp)
+  inputs?: DocInput[]                              // Felder, die der Unterzeichner am Handy ausfüllt
+  notify_lawyer?: boolean                          // false = nicht an sign_docs_lawyer schicken
+  cc_whatsapp?: Array<{ name: string; phone: string; lang?: 'de' | 'en' }>   // bekommen das signierte PDF
+}
+/** Eingabefeld: Beschriftung für die Seite, Position für den Eintrag im PDF (pdf-lib, Ursprung unten links). */
+interface DocInput { key: string; label: string; hint?: string; required?: boolean; page: number; x: number; y: number; size?: number; max_width?: number }
+
+const MAX_INPUTS = 8
+const MAX_INPUT_LEN = 120
+
+function cleanOpts(raw: unknown): DocOpts {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  const out: DocOpts = {}
+  if (typeof o.note === 'string' && o.note.trim()) out.note = o.note.trim().slice(0, 1500)
+  if (o.notify_lawyer === false) out.notify_lawyer = false
+  if (Array.isArray(o.inputs)) {
+    out.inputs = (o.inputs as Array<Record<string, unknown>>).slice(0, MAX_INPUTS).map(i => ({
+      key: String(i.key ?? '').replace(/[^a-z0-9_]/gi, '').slice(0, 40),
+      label: String(i.label ?? '').trim().slice(0, 120),
+      hint: typeof i.hint === 'string' ? i.hint.trim().slice(0, 200) : undefined,
+      required: i.required === true,
+      page: Math.max(0, Math.floor(Number(i.page) || 0)),
+      x: Number(i.x), y: Number(i.y),
+      size: Number(i.size) > 0 ? Math.min(Number(i.size), 16) : undefined,
+      max_width: Number(i.max_width) > 0 ? Number(i.max_width) : undefined,
+    })).filter(i => i.key && i.label && Number.isFinite(i.x) && Number.isFinite(i.y))
+    if (!out.inputs.length) delete out.inputs
+  }
+  if (Array.isArray(o.cc_whatsapp)) {
+    out.cc_whatsapp = (o.cc_whatsapp as Array<Record<string, unknown>>).slice(0, 3)
+      .map(c => ({ name: String(c.name ?? '').trim().slice(0, 80), phone: String(c.phone ?? '').replace(/[^\d+]/g, ''), lang: c.lang === 'en' ? 'en' as const : 'de' as const }))
+      .filter(c => c.name && /^\+\d{8,15}$/.test(c.phone))
+    if (!out.cc_whatsapp.length) delete out.cc_whatsapp
+  }
+  return out
+}
+
+function requestTexts(lang: 'de' | 'en', c: DocCtx, title: string, link: string, firstName: string, opts: DocOpts = {}) {
+  const unit = [c.project?.name, c.unit?.unit_number].filter(Boolean).join(' ')
   const buyer = leadLabel(c.lead)
+  const ref = [unit, buyer].filter(Boolean).join(', ')
+  const lawyer = opts.notify_lawyer !== false
+  const fill = !!opts.inputs?.length
+  const note = opts.note ?? ''
   if (lang === 'de') return {
-    subject: `Bitte unterschreiben: ${title} (${unit}, ${buyer})`,
+    subject: `Bitte unterschreiben: ${title} (${ref})`,
     html: `<p>Hallo ${esc(c.developer.name)}-Team,</p>
-<p>anbei <b>${esc(title)}</b> (${esc(unit)}, ${esc(buyer)}) zur Unterschrift.</p>
-<p><b>Kein Ausdrucken nötig:</b> bitte direkt am Handy prüfen und unterschreiben (Unterschrift mit dem Finger, Name in Druckbuchstaben). Datum und Unterschrift kommen automatisch auf jede Seite.</p>
+<p>anbei <b>${esc(title)}</b> (${esc(ref)}) zur Unterschrift.</p>
+${note ? `<p>${esc(note).replace(/\n/g, '<br>')}</p>` : ''}
+<p><b>Kein Ausdrucken nötig:</b> bitte direkt am Handy ${fill ? 'die offenen Felder ausfüllen, ' : ''}prüfen und unterschreiben (Unterschrift mit dem Finger, Name in Druckbuchstaben). Datum und Unterschrift kommen automatisch auf jede Seite.</p>
 <p><a href="${link}" style="display:inline-block;background:#1a2332;color:#ffffff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:600">Jetzt unterschreiben</a></p>
 <p style="font-size:13px;color:#6b7280">${link}</p>
-<p>Danach liegt das Dokument automatisch im gemeinsamen Google-Drive-Ordner für Kunde und Anwalt und geht an den Anwalt.</p>
+<p>Danach liegt das Dokument automatisch im gemeinsamen Google-Drive-Ordner ${lawyer ? 'für Kunde und Anwalt und geht an den Anwalt' : 'des Kunden'}.</p>
 <p>Vielen Dank!<br>Sven &middot; Happy Property</p>`,
-    wa: `Hallo ${firstName}, hier ist Lotte von Happy Property 🐾\n\n${title} (${unit}, ${buyer}) ist bereit zur Unterschrift. Kein Ausdrucken nötig, einfach hier am Handy unterschreiben:\n${link}\n\nDanach geht es automatisch in den Drive-Ordner für Kunde und Anwalt. Danke!`,
+    wa: `Hallo ${firstName}, hier ist Lotte von Happy Property 🐾\n\n${title} (${ref}) ist bereit zur Unterschrift.${note ? `\n\n${note}` : ''}\n\nKein Ausdrucken nötig, einfach hier am Handy ${fill ? 'ausfüllen und ' : ''}unterschreiben:\n${link}\n\nDanach geht es automatisch in den Drive-Ordner ${lawyer ? 'für Kunde und Anwalt' : 'des Kunden'}. Danke!`,
   }
   return {
-    subject: `Please sign: ${title} (${unit}, ${buyer})`,
+    subject: `Please sign: ${title} (${ref})`,
     html: `<p>Dear ${esc(c.developer.name)} team,</p>
-<p>please find <b>${esc(title)}</b> (${esc(unit)}, ${esc(buyer)}) for your signature.</p>
-<p><b>No printing needed:</b> please check and sign it directly on your phone (finger signature, name in block letters). Date and signature are added to every page automatically.</p>
+<p>please find <b>${esc(title)}</b> (${esc(ref)}) for your signature.</p>
+${note ? `<p>${esc(note).replace(/\n/g, '<br>')}</p>` : ''}
+<p><b>No printing needed:</b> please ${fill ? 'fill in the open fields, ' : ''}check and sign it directly on your phone (finger signature, name in block letters). Date and signature are added to every page automatically.</p>
 <p><a href="${link}" style="display:inline-block;background:#1a2332;color:#ffffff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:600">Sign now</a></p>
 <p style="font-size:13px;color:#6b7280">${link}</p>
-<p>The signed document is then stored automatically in the shared Google Drive folder for the client and the lawyer and sent to the lawyer.</p>
+<p>The signed document is then stored automatically in the shared Google Drive folder ${lawyer ? 'for the client and the lawyer and sent to the lawyer' : 'of the client'}.</p>
 <p>Thank you very much!<br>Sven &middot; Happy Property</p>`,
-    wa: `Hi ${firstName}, Lotte from Happy Property here 🐾\n\n${title} (${unit}, ${buyer}) is ready for your signature. No printing needed, just sign it here on your phone:\n${link}\n\nIt then goes straight to the shared Drive folder for the client and the lawyer. Thank you!`,
+    wa: `Hi ${firstName}, Lotte from Happy Property here 🐾\n\n${title} (${ref}) is ready for your signature.${note ? `\n\n${note}` : ''}\n\nNo printing needed, just ${fill ? 'fill it in and ' : ''}sign it here on your phone:\n${link}\n\nIt then goes straight to the shared Drive folder ${lawyer ? 'for the client and the lawyer' : 'of the client'}. Thank you!`,
   }
 }
 
-/** Admin: PDF hochladen und dem Bauträger zur Unterschrift schicken. */
-export async function docCreate(sb: SupabaseClient, body: Record<string, unknown>): Promise<Res> {
-  const dealId = String(body.deal_id ?? '')
-  const c = await docCtx(sb, dealId)
-  if ('error' in c) return { status: 400, body: { error: c.error } }
-  const pdf = pdfFromInput(body.file_base64)
-  if (!pdf) return { status: 400, body: { error: 'Bitte ein PDF bis 15 MB hochladen.' } }
-  try {
-    const probe = await PDFDocument.load(pdf, { ignoreEncryption: true })
-    if (probe.isEncrypted) return { status: 400, body: { error: 'Das PDF ist geschützt (Passwort/Rechte). Bitte eine ungeschützte Fassung hochladen.' } }
-  } catch { return { status: 400, body: { error: 'Das PDF lässt sich nicht öffnen.' } } }
-  const test = body.test === true
-  if (!test && !c.emails.length) return { status: 400, body: { error: `Beim Bauträger ${c.developer.name} ist keine E-Mail hinterlegt` } }
-  const kind = body.kind === 'other' ? 'other' : 'specification'
-  const title = String(body.title ?? '').trim().slice(0, 140)
-    || `${c.lang === 'de' ? 'Spezifikation' : 'Specification'} ${c.project?.name ?? ''} ${c.unit?.unit_number ?? ''}`.trim()
-  const path = `unit-documents/${c.unit!.id}/${Date.now()}-sign-source.pdf`
-  const { error: upErr } = await sb.storage.from('unit-documents').upload(path, pdf, { contentType: 'application/pdf', upsert: false })
-  if (upErr) return { status: 500, body: { error: `Speichern: ${upErr.message}` } }
-  // Neue Fassung ersetzt eine noch offene alte (gleicher Deal, gleiche Art): alter Link wird ungültig
-  if (!test) {
-    await sb.from('sign_documents').update({ status: 'abgebrochen', updated_at: new Date().toISOString() })
-      .eq('deal_id', dealId).eq('kind', kind).eq('test', false).eq('status', 'offen')
-  }
-  const token = newToken()
-  const { data: ins, error } = await sb.from('sign_documents').insert({
-    kind, title, deal_id: dealId, lead_id: c.lead.id, unit_id: c.unit!.id, developer_id: c.developer.id,
-    source_path: path, source_name: String(body.file_name ?? '').slice(0, 200) || null, token, test,
-    signer_lang: c.lang, sign_meta: { role: c.role, company: c.company },
-  }).select('id').single()
-  if (error) return { status: 500, body: { error: error.message } }
-
-  const link = SIGN_BASE + token
-  const tx = requestTexts(c.lang, c, title, link, (c.wa?.name ?? '').split(' ')[0])
+/** Mail + WhatsApp mit dem Link an den Bauträger, Ergebnis am Auftrag und als Notiz am Kunden. */
+async function dispatch(sb: SupabaseClient, c: DocCtx, row: { id: string; deal_id: string; title: string; token: string; test: boolean }, pdf: Uint8Array, opts: DocOpts): Promise<string[]> {
+  const { title, test } = row
+  const link = SIGN_BASE + row.token
+  const tx = requestTexts(c.lang, c, title, link, (c.wa?.name ?? '').split(' ')[0], opts)
   const errors: string[] = []
   const attachment = { filename: `${title}.pdf`.replace(/[^A-Za-z0-9ÄÖÜäöüß._-]+/g, '_'), content_base64: b64(pdf), content_type: 'application/pdf' }
   for (const to of test ? [SVEN_MAIL] : c.emails) {
@@ -166,16 +190,98 @@ export async function docCreate(sb: SupabaseClient, body: Record<string, unknown
   await sb.from('sign_documents').update({
     sent_at: new Date().toISOString(), sent_to: test ? [SVEN_MAIL] : c.emails,
     error: errors.length ? errors.join('; ') : null, updated_at: new Date().toISOString(),
-  }).eq('id', (ins as { id: string }).id)
+  }).eq('id', row.id)
   if (!test) {
     await sb.from('activities').insert({
-      lead_id: c.lead.id, deal_id: dealId, type: 'note', direction: 'outbound', auto: true,
+      lead_id: c.lead.id, deal_id: row.deal_id, type: 'note', direction: 'outbound', auto: true,
       subject: `${title} zur Unterschrift`,
       content: `${title} an ${c.emails.join(', ')} zur digitalen Unterschrift geschickt.${errors.length ? ` Probleme: ${errors.join('; ')}` : ''}`,
       completed_at: new Date().toISOString(),
     })
   }
-  return { status: 200, body: { ok: !errors.some(e => e.startsWith('Mail ')), id: (ins as { id: string }).id, sign_link: link, errors, test } }
+  return errors
+}
+
+/** Admin: PDF hochladen und dem Bauträger zur Unterschrift schicken. */
+export async function docCreate(sb: SupabaseClient, body: Record<string, unknown>): Promise<Res> {
+  const dealId = String(body.deal_id ?? '')
+  const c = await docCtx(sb, dealId, typeof body.project_id === 'string' ? body.project_id : null)
+  if ('error' in c) return { status: 400, body: { error: c.error } }
+  const opts = cleanOpts(body)
+  const pdf = pdfFromInput(body.file_base64)
+  if (!pdf) return { status: 400, body: { error: 'Bitte ein PDF bis 15 MB hochladen.' } }
+  try {
+    const probe = await PDFDocument.load(pdf, { ignoreEncryption: true })
+    if (probe.isEncrypted) return { status: 400, body: { error: 'Das PDF ist geschützt (Passwort/Rechte). Bitte eine ungeschützte Fassung hochladen.' } }
+  } catch { return { status: 400, body: { error: 'Das PDF lässt sich nicht öffnen.' } } }
+  const test = body.test === true
+  if (!test && !c.emails.length) return { status: 400, body: { error: `Beim Bauträger ${c.developer.name} ist keine E-Mail hinterlegt` } }
+  const kind = body.kind === 'other' ? 'other' : 'specification'
+  const title = String(body.title ?? '').trim().slice(0, 140)
+    || `${c.lang === 'de' ? 'Spezifikation' : 'Specification'} ${c.project?.name ?? ''} ${c.unit?.unit_number ?? ''}`.trim()
+  const path = `unit-documents/${c.unit?.id ?? `ohne-einheit/${c.lead.id}`}/${Date.now()}-sign-source.pdf`
+  const { error: upErr } = await sb.storage.from('unit-documents').upload(path, pdf, { contentType: 'application/pdf', upsert: false })
+  if (upErr) return { status: 500, body: { error: `Speichern: ${upErr.message}` } }
+  // Neue Fassung ersetzt eine noch offene alte (gleicher Deal, gleiche Art): alter Link wird ungültig
+  if (!test) {
+    await sb.from('sign_documents').update({ status: 'abgebrochen', updated_at: new Date().toISOString() })
+      .eq('deal_id', dealId).eq('kind', kind).eq('test', false).eq('status', 'offen')
+  }
+  const token = newToken()
+  const { data: ins, error } = await sb.from('sign_documents').insert({
+    kind, title, deal_id: dealId, lead_id: c.lead.id, unit_id: c.unit?.id ?? null, developer_id: c.developer.id,
+    source_path: path, source_name: String(body.file_name ?? '').slice(0, 200) || null, token, test,
+    signer_lang: c.lang, sign_meta: { role: c.role, company: c.company, ...opts },
+  }).select('id').single()
+  if (error) return { status: 500, body: { error: error.message } }
+  const id = (ins as { id: string }).id
+  const errors = await dispatch(sb, c, { id, deal_id: dealId, title, token, test }, pdf, opts)
+  return { status: 200, body: { ok: !errors.some(e => e.startsWith('Mail ')), id, sign_link: SIGN_BASE + token, errors, test } }
+}
+
+/**
+ * Warteschlange ohne Admin-Login (Sven 22.10.2026): eine Zeile in sign_documents mit status 'offen',
+ * sent_at NULL und sign_meta.queued = true plus sign_meta.source_b64 (das PDF) und optional
+ * sign_meta.project_id. Der Sweep (Cron alle 5 Minuten) legt das PDF ab und verschickt den Link wie doc_create.
+ */
+export async function docQueueSweep(sb: SupabaseClient): Promise<Array<Record<string, unknown>>> {
+  const { data } = await sb.from('sign_documents').select('*').eq('status', 'offen').is('sent_at', null)
+    .eq('sign_meta->>queued', 'true').order('created_at').limit(5)
+  const out: Array<Record<string, unknown>> = []
+  for (const row of (data ?? []) as DocRow[]) {
+    const meta = { ...(row.sign_meta ?? {}) } as Record<string, unknown>
+    const fail = async (msg: string) => {
+      await sb.from('sign_documents').update({ status: 'fehler', error: msg.slice(0, 500), updated_at: new Date().toISOString() }).eq('id', row.id)
+      out.push({ doc: row.id, error: msg })
+    }
+    // Genau einmal: wer queued von true auf false setzt, verschickt
+    const { data: lock } = await sb.from('sign_documents').update({ sign_meta: { ...meta, queued: false }, updated_at: new Date().toISOString() })
+      .eq('id', row.id).eq('sign_meta->>queued', 'true').is('sent_at', null).select('id')
+    if (!lock?.length) continue
+    if (!row.deal_id) { await fail('Warteschlange: deal_id fehlt'); continue }
+    const c = await docCtx(sb, row.deal_id, typeof meta.project_id === 'string' ? meta.project_id : null)
+    if ('error' in c) { await fail(`Warteschlange: ${c.error}`); continue }
+    if (c.developer.id !== row.developer_id) { await fail('Warteschlange: Bauträger passt nicht zum Projekt'); continue }
+    if (!row.test && !c.emails.length) { await fail(`Beim Bauträger ${c.developer.name} ist keine E-Mail hinterlegt`); continue }
+    const pdf = pdfFromInput(meta.source_b64)
+    if (!pdf) { await fail('Warteschlange: source_b64 ist kein PDF'); continue }
+    try {
+      const probe = await PDFDocument.load(pdf, { ignoreEncryption: true })
+      if (probe.isEncrypted) { await fail('Warteschlange: PDF ist geschützt'); continue }
+    } catch { await fail('Warteschlange: PDF lässt sich nicht öffnen'); continue }
+    const path = `unit-documents/${c.unit?.id ?? `ohne-einheit/${c.lead.id}`}/${Date.now()}-sign-source.pdf`
+    const { error: upErr } = await sb.storage.from('unit-documents').upload(path, pdf, { contentType: 'application/pdf', upsert: false })
+    if (upErr) { await fail(`Speichern: ${upErr.message}`); continue }
+    const opts = cleanOpts(meta)
+    delete meta.source_b64
+    await sb.from('sign_documents').update({
+      source_path: path, unit_id: c.unit?.id ?? null, signer_lang: c.lang,
+      sign_meta: { ...meta, queued: false, role: c.role, company: c.company, ...opts }, updated_at: new Date().toISOString(),
+    }).eq('id', row.id)
+    const errors = await dispatch(sb, c, { id: row.id, deal_id: row.deal_id, title: row.title, token: row.token, test: row.test }, pdf, opts)
+    out.push({ doc: row.id, sent: true, errors })
+  }
+  return out
 }
 
 async function findDoc(sb: SupabaseClient, token: unknown): Promise<DocRow | null> {
@@ -215,9 +321,41 @@ export async function docView(sb: SupabaseClient, body: Record<string, unknown>)
       signer_name: signed ? row.signer_name : null, signed_at: signed ? row.signed_at : null,
       place: placeOf({ sign_place: (tpl as { sign_place?: string | null } | null)?.sign_place }),
       date: todayCy(), lang: langOf(row.signer_lang), seal: sealDataUrl(seal),
+      inputs: signed ? [] : (cleanOpts(row.sign_meta).inputs ?? []).map(i => ({ key: i.key, label: i.label, hint: i.hint ?? null, required: !!i.required })),
       pdf_base64: b64(pdf),
     },
   }
+}
+
+/** Werte der Eingabefelder prüfen: nur bekannte Schlüssel, Länge begrenzt, Pflichtfelder gefüllt. */
+function cleanInputValues(defs: DocInput[], raw: unknown): Record<string, string> | null {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  const out: Record<string, string> = {}
+  for (const d of defs) {
+    const v = String(o[d.key] ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_INPUT_LEN)
+    if (d.required && !v) return null
+    if (v) out[d.key] = v
+  }
+  return out
+}
+
+/** Eingaben an ihre Positionen ins PDF schreiben (vor dem Unterschreiben). */
+async function fillInputs(src: Uint8Array, defs: DocInput[], values: Record<string, string>): Promise<Uint8Array> {
+  if (!defs.some(d => values[d.key])) return src
+  const doc = await PDFDocument.load(src, { ignoreEncryption: true })
+  const font = await doc.embedFont(StandardFonts.Helvetica)
+  const pages = doc.getPages()
+  for (const d of defs) {
+    const v = values[d.key]
+    const page = pages[d.page]
+    if (!v || !page) continue
+    let size = d.size ?? 10
+    let text = ''
+    for (const ch of v) { try { font.encodeText(ch); text += ch } catch { text += ch.normalize('NFKD').replace(/[\u0300-\u036f]/g, '') || '?' } }
+    if (d.max_width) while (size > 6 && font.widthOfTextAtSize(text, size) > d.max_width) size -= 0.5
+    page.drawText(text, { x: d.x, y: d.y, size, font, color: rgb(0.1, 0.14, 0.2) })
+  }
+  return new Uint8Array(await doc.save())
 }
 
 export async function docSubmit(sb: SupabaseClient, body: Record<string, unknown>, req: Request): Promise<Res> {
@@ -231,6 +369,9 @@ export async function docSubmit(sb: SupabaseClient, body: Record<string, unknown
   const newSeal = body.seal ? pngFromInput(body.seal, MAX_SEAL_BYTES) : null
   if (body.seal && !newSeal) return { status: 400, body: { error: 'invalid_seal' } }
   const useSeal = body.use_seal === true
+  const opts = cleanOpts(row.sign_meta)
+  const values = cleanInputValues(opts.inputs ?? [], body.inputs)
+  if (!values) return { status: 400, body: { error: 'invalid_inputs' } }
   const now = new Date()
 
   if (!row.test) {
@@ -241,8 +382,9 @@ export async function docSubmit(sb: SupabaseClient, body: Record<string, unknown
     if (!lock?.length) return { status: 409, body: { error: 'already_signed' } }
   }
   try {
-    const src = await storageBytes(sb, row.source_path)
-    if (!src) throw new Error('Quell-PDF fehlt')
+    const raw = await storageBytes(sb, row.source_path)
+    if (!raw) throw new Error('Quell-PDF fehlt')
+    const src = await fillInputs(raw, opts.inputs ?? [], values)
     if (newSeal && !row.test) await saveSeal(sb, row.developer_id, newSeal, `${name} (Unterschriftsseite)`)
     const seal = useSeal ? (newSeal ?? await loadSeal(sb, row.developer_id)) : null
     const { data: tpl } = await sb.from('reservation_templates').select('sign_place').eq('developer_id', row.developer_id).eq('is_active', true).maybeSingle()
@@ -255,7 +397,7 @@ export async function docSubmit(sb: SupabaseClient, body: Record<string, unknown
     const attachment = { filename: fname.replace(/[^A-Za-z0-9ÄÖÜäöüß._-]+/g, '_'), content_base64: b64(pdf), content_type: 'application/pdf' }
     const meta = {
       ...(row.sign_meta ?? {}), name, place, signed_at: now.toISOString(), pdf_sha256: await sha256Hex(pdf),
-      placement: stamped.placement, with_seal: !!seal, new_seal: !!newSeal,
+      placement: stamped.placement, with_seal: !!seal, new_seal: !!newSeal, input_values: values,
       ip: clientIp(req),
       user_agent: (req.headers.get('user-agent') ?? '').slice(0, 300) || null,
     }
@@ -280,7 +422,7 @@ export async function docSubmit(sb: SupabaseClient, body: Record<string, unknown
     const problems: string[] = []
 
     // 1. Objekt im Eigentümerportal (crm_unit_documents → Reiter „Verträge")
-    const path = `unit-documents/${row.unit_id}/${Date.now()}-signed-document.pdf`
+    const path = `unit-documents/${row.unit_id ?? `ohne-einheit/${row.lead_id}`}/${Date.now()}-signed-document.pdf`
     const { error: upErr } = await sb.storage.from('unit-documents').upload(path, pdf, { contentType: 'application/pdf', upsert: false })
     if (upErr) throw new Error(`Speichern: ${upErr.message}`)
     // Sofort als unterschrieben markieren: bricht die Function danach ab, wird nicht doppelt unterschrieben
@@ -311,8 +453,9 @@ export async function docSubmit(sb: SupabaseClient, body: Record<string, unknown
 
     // 3. Anwalt (Partner-Kommunikation ohne lead_id)
     const { data: setting } = await sb.from('crm_settings').select('value').eq('key', 'sign_docs_lawyer').maybeSingle()
+    const withLawyer = opts.notify_lawyer !== false
     const lawyerTok = String((setting as { value?: unknown } | null)?.value ?? '').replace(/"/g, '').trim()
-    if (lawyerTok.startsWith('bc:')) {
+    if (withLawyer && lawyerTok.startsWith('bc:')) {
       const { data: bc } = await sb.from('crm_business_contacts').select('first_name, email, language').eq('id', lawyerTok.slice(3)).maybeSingle()
       const law = bc as { first_name: string | null; email: string | null; language: string | null } | null
       if (law?.email) {
@@ -337,8 +480,8 @@ export async function docSubmit(sb: SupabaseClient, body: Record<string, unknown
       const de = row.signer_lang === 'de'
       const err = await invoke(sb, 'send-email', {
         to, subject: de ? `Unterschrieben: ${row.title}` : `Signed: ${row.title}`,
-        html: de ? `<p>Danke, ${esc(name)}! Anbei Ihre Kopie von <b>${esc(row.title)}</b>.${driveId ? ' Das Dokument liegt im gemeinsamen Drive-Ordner für Kunde und Anwalt.' : ''}</p><p>Viele Grüße<br>Sven &middot; Happy Property</p>`
-          : `<p>Thank you, ${esc(name)}! Attached is your copy of <b>${esc(row.title)}</b>.${driveId ? ' It has been stored in the shared Drive folder for the client and the lawyer.' : ''}</p><p>Best regards<br>Sven &middot; Happy Property</p>`,
+        html: de ? `<p>Danke, ${esc(name)}! Anbei Ihre Kopie von <b>${esc(row.title)}</b>.${driveId ? ` Das Dokument liegt im gemeinsamen Drive-Ordner ${withLawyer ? 'für Kunde und Anwalt' : 'des Kunden'}.` : ''}</p><p>Viele Grüße<br>Sven &middot; Happy Property</p>`
+          : `<p>Thank you, ${esc(name)}! Attached is your copy of <b>${esc(row.title)}</b>.${driveId ? ` It has been stored in the shared Drive folder ${withLawyer ? 'for the client and the lawyer' : 'of the client'}.` : ''}</p><p>Best regards<br>Sven &middot; Happy Property</p>`,
         attachment, auto: true, lang: de ? 'de' : 'en', already_translated: true,
       })
       if (err) problems.push(`Kopie ${to}: ${err}`)
@@ -348,10 +491,19 @@ export async function docSubmit(sb: SupabaseClient, body: Record<string, unknown
     if (waC) {
       const de = row.signer_lang === 'de'
       const waText = de
-        ? `Danke, ${name}! Hier ist Ihre unterschriebene Fassung: ${row.title}.${driveId ? ' Sie liegt auch im gemeinsamen Drive-Ordner für Kunde und Anwalt.' : ''}`
-        : `Thank you, ${name}! Here is your signed copy of ${row.title}.${driveId ? ' It is also stored in the shared Drive folder for the client and the lawyer.' : ''}`
+        ? `Danke, ${name}! Hier ist Ihre unterschriebene Fassung: ${row.title}.${driveId ? ` Sie liegt auch im gemeinsamen Drive-Ordner ${withLawyer ? 'für Kunde und Anwalt' : 'des Kunden'}.` : ''}`
+        : `Thank you, ${name}! Here is your signed copy of ${row.title}.${driveId ? ` It is also stored in the shared Drive folder ${withLawyer ? 'for the client and the lawyer' : 'of the client'}.` : ''}`
       const err = await whatsappPdf(sb, { name: waC.name ?? 'Developer', phone: (waC.whatsapp || waC.phone)!.trim() }, waText, path, fname, de ? 'de' : 'en')
       if (err) problems.push(`WhatsApp-PDF: ${err}`)
+    }
+    // Weitere Empfänger des signierten PDFs aus dem Auftrag (z. B. der Finanzierungspartner)
+    for (const cc of opts.cc_whatsapp ?? []) {
+      const first = cc.name.split(' ')[0]
+      const text = cc.lang === 'en'
+        ? `Hi ${first}, Lotte from Happy Property here 🐾\n\nAttached is ${row.title}${kunde ? ` for ${kunde}` : ''}, signed by ${name} (${company}).\n\nBest, Lotte`
+        : `Hallo ${first}, hier ist Lotte von Happy Property 🐾\n\nanbei ${row.title}${kunde ? ` für ${kunde}` : ''}, unterschrieben von ${name} (${company}).\n\nViele Grüße\nLotte`
+      const err = await whatsappPdf(sb, { name: cc.name, phone: cc.phone }, text, path, fname, cc.lang ?? 'de')
+      if (err) problems.push(`WhatsApp ${cc.name}: ${err}`)
     }
     await sb.from('sign_documents').update({
       status: 'unterschrieben', signer_name: name, sign_meta: meta, signed_pdf_path: path, unit_document_id: docId,

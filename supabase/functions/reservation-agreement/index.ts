@@ -47,7 +47,7 @@ import { saToken, listTree, download, thumbnail, uploadToken, uploadFile, type D
 import { checkFile, type FileCheck, type IdPerson } from './ausweis.ts'
 import { renderAgreement, type AgreementFields, type PropertyKind, type TemplateRow } from './pdf.ts'
 import { signView, signSubmit } from './sign.ts'
-import { docCreate, docView, docSubmit } from './docsign.ts'
+import { docCreate, docView, docSubmit, docQueueSweep } from './docsign.ts'
 import { loadSeal, saveSeal, removeSeal, sealDataUrl, pngFromInput, MAX_SEAL_BYTES } from './seal.ts'
 
 const CORS = {
@@ -744,8 +744,11 @@ async function storePdfDraft(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8
 
 // ── Sweep ─────────────────────────────────────────────────────────────────────
 async function sweep(sb: Client): Promise<Record<string, unknown>> {
+  // Dokumente aus der Warteschlange (sign_documents, sign_meta.queued) gelten unabhängig vom Schalter
+  let docs: Array<Record<string, unknown>> = []
+  try { docs = await docQueueSweep(sb) } catch (e) { docs = [{ error: (e as Error).message }] }
   const m = await mode(sb)
-  if (m === 'off') return { ok: true, mode: m }
+  if (m === 'off') return { ok: true, mode: m, docs }
   // 1. Neue Reservierungen aufnehmen
   const { data: deals } = await sb.from('deals').select('id, lead_id, unit_id, phase_changed_at')
     .eq('phase', 'reservierung').not('unit_id', 'is', null).gte('phase_changed_at', FLOW_START)
@@ -781,7 +784,7 @@ async function sweep(sb: Client): Promise<Record<string, unknown>> {
   for (const r of (pendingDrive ?? []) as AgreementRow[]) {
     try { results.push(await retryDrive(sb, r)) } catch (e) { results.push({ deal: r.deal_id, drive_error: (e as Error).message }) }
   }
-  return { ok: true, mode: m, created, results }
+  return { ok: true, mode: m, docs, created, results }
 }
 
 // ── Manuelle Aktionen (Sven im CRM) ──────────────────────────────────────────

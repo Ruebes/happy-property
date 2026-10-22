@@ -22,7 +22,9 @@ interface View {
   company_name: string; title: string; place: string; date: string; lang: 'de' | 'en'
   seal: string | null; pdf_base64: string
   fields?: Fields          // nur Reservierung
+  inputs?: InputDef[]      // Felder, die der Unterzeichner selbst ausfüllt (z. B. Genehmigungsnummern)
 }
+interface InputDef { key: string; label: string; hint: string | null; required: boolean }
 type Phase = 'loading' | 'ready' | 'sending' | 'done' | 'not_found' | 'error'
 // Druckbuchstaben wie auf dem Server: nur lateinische Schrift (die PDF-Schrift kann nichts anderes)
 const NAME_RE = /^[A-ZÀ-ÖØ-ÞĀ-ſ][A-ZÀ-ÖØ-ÞĀ-ſ .'-]*[A-ZÀ-ÖØ-ÞĀ-ſ.]$/
@@ -53,6 +55,7 @@ export default function ReservationSign({ mode = 'reservation' }: { mode?: Mode 
   const [sealBusy, setSealBusy] = useState(false)
   const [err, setErr] = useState('')
   const [signedPdf, setSignedPdf] = useState<string | null>(null)
+  const [values, setValues] = useState<Record<string, string>>({})
   const pad = useRef<SignaturePadHandle | null>(null)
   const fileRef = useRef<HTMLInputElement | null>(null)
 
@@ -93,7 +96,7 @@ export default function ReservationSign({ mode = 'reservation' }: { mode?: Mode 
     setErr(''); setPhase('sending')
     try {
       const r = await call<{ pdf_base64: string }>({
-        action: submitAction, token, name, signature: pad.current.toPng(),
+        action: submitAction, token, name, signature: pad.current.toPng(), inputs: values,
         use_seal: useSeal && !!(newSeal || view.seal), seal: newSeal ?? undefined,
       })
       setSignedPdf(r.pdf_base64)
@@ -105,6 +108,7 @@ export default function ReservationSign({ mode = 'reservation' }: { mode?: Mode 
         : m === 'invalid_signature' ? t('reservationSign.errSignature', 'Please sign in the box with your finger.')
         : m === 'invalid_seal' ? t('reservationSign.errSealImage', 'The photo could not be read. Please try another one.')
         : m === 'already_signed' ? t('reservationSign.errAlready', 'This document has already been signed.')
+        : m === 'invalid_inputs' ? t('reservationSign.errInputs', 'Please fill in all required fields.')
         : t('reservationSign.errGeneric', 'Something went wrong. Please try again in a minute.'))
       setPhase('ready')
     }
@@ -112,7 +116,9 @@ export default function ReservationSign({ mode = 'reservation' }: { mode?: Mode 
 
   // gleiche Regel wie der Server (cleanName): lateinische Großbuchstaben, mind. 2 am Stück
   const nameOk = NAME_RE.test(name.trim()) && /[A-ZÀ-ÖØ-ÞĀ-ſ]{2,}/.test(name) && name.trim().length >= 3
-  const canSubmit = phase === 'ready' && hasInk && nameOk && agree && !sealBusy
+  const inputs = view?.inputs ?? []
+  const inputsOk = inputs.every(i => !i.required || (values[i.key] ?? '').trim())
+  const canSubmit = phase === 'ready' && hasInk && nameOk && agree && inputsOk && !sealBusy
   const sealShown = newSeal ?? view?.seal ?? null
 
   if (phase === 'loading') return (
@@ -180,6 +186,21 @@ export default function ReservationSign({ mode = 'reservation' }: { mode?: Mode 
           </div>
         ) : (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 space-y-4">
+            {inputs.length > 0 && (
+              <div className="space-y-3">
+                <p className="text-sm font-medium text-gray-800">{t('reservationSign.inputsTitle', 'Please fill in')}</p>
+                {inputs.map(i => (
+                  <div key={i.key}>
+                    <label className="block text-sm text-gray-700 mb-1">{i.label}{i.required && <span className="text-red-500"> *</span>}</label>
+                    <input value={values[i.key] ?? ''} maxLength={120} spellCheck={false}
+                      onChange={e => setValues(v => ({ ...v, [i.key]: e.target.value }))}
+                      className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-base focus:outline-none focus:border-orange-400" />
+                    {i.hint && <p className="text-[11px] text-gray-400 mt-1">{i.hint}</p>}
+                  </div>
+                ))}
+                <p className="text-[11px] text-gray-400">{t('reservationSign.inputsHint', 'Your entries are written into the document when you sign.')}</p>
+              </div>
+            )}
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <p className="text-sm font-medium text-gray-800">{t('reservationSign.signHere', 'Your signature')}</p>
