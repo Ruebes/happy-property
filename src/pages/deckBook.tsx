@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { VideoAutoCtx } from './deckWeb'
+import { VideoAutoCtx, InBookCtx } from './deckWeb'
 
 // ── Buchmodus (Sven 22.10.26) ───────────────────────────────────────────────────
 // "Das alles als ein richtiges Buch öffnen, die Seiten sollen sich beim Umblättern
@@ -11,6 +11,9 @@ import { VideoAutoCtx } from './deckWeb'
 // (Web Audio, keine Tondatei) und ist genau so lang wie die Bewegung: das Klatschen
 // kommt, wenn die Seite aufliegt. Lange Seiten scrollen in sich.
 // Umgeschaltet wird oben über "Seite | Buch" (ViewToggle), Escape schließt.
+// Nachgebessert nach Leser-Feedback (22.10.): jede Seite hat oben denselben Kopf
+// (Kapitelnummer, genaue Überschrift, Logo), Videos stehen im Buch in einem
+// einheitlichen Rahmen, und auch auf einem Video lässt sich weiterblättern.
 
 const CREAM = '#FAF6EC'
 const DARK = '#1b1b22'
@@ -311,7 +314,7 @@ function Rings({ ys, h }: { ys: number[]; h: number }) {
 }
 
 // Inhaltsseite: scrollt in sich, Hinweis, wenn unten noch etwas kommt.
-function PageScroller({ active, children }: { active: boolean; children: ReactNode }) {
+function PageScroller({ active, n, title, logo, children }: { active: boolean; n: number; title: string; logo: string; children: ReactNode }) {
   const { t } = useTranslation()
   const ref = useRef<HTMLDivElement>(null)
   const [more, setMore] = useState(false)
@@ -330,8 +333,17 @@ function PageScroller({ active, children }: { active: boolean; children: ReactNo
   }, [active])
   return (
     <>
-      <div ref={ref} className="absolute inset-0 overflow-y-auto overscroll-contain"
+      <div ref={ref} className="absolute inset-0 overflow-y-auto overscroll-contain hpbook-page"
         style={{ left: BIND, touchAction: 'pan-y pinch-zoom' }}>
+        {/* Kopfzeile wie im Buch: auf jeder Seite gleich */}
+        <div className="sticky top-0 z-[3] flex items-center gap-2.5 sm:gap-3 min-h-12 sm:min-h-14 py-1.5 pl-3.5 pr-3 sm:px-8"
+          style={{ background: CREAM, borderBottom: '1px solid rgba(194,161,94,.45)' }}>
+          <span className="font-heading italic text-lg sm:text-xl tabular-nums leading-none" style={{ color: GOLD }}>{String(n).padStart(2, '0')}</span>
+          <span aria-hidden className="w-px h-5 shrink-0" style={{ background: 'rgba(194,161,94,.5)' }} />
+          <span className="font-heading font-bold text-[14px] sm:text-lg leading-tight line-clamp-2 min-w-0" style={{ color: DARK }}>{title}</span>
+          <img src={logo} alt="" aria-hidden className="ml-auto h-5 sm:h-7 w-auto rounded shrink-0 pointer-events-none"
+            onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+        </div>
         {children}
       </div>
       {more && (
@@ -402,14 +414,16 @@ function Corner({ onClick }: { onClick: () => void }) {
 
 const IconBtn = ({ label, onClick, disabled, children, className = 'flex' }: { label: string; onClick: () => void; disabled?: boolean; children: ReactNode; className?: string }) => (
   <button type="button" aria-label={label} title={label} onClick={onClick} disabled={disabled}
-    className={`${className} w-9 h-9 shrink-0 rounded-full items-center justify-center text-white/85 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent transition`}>
+    className={`${className} w-8 h-8 sm:w-9 sm:h-9 shrink-0 rounded-full items-center justify-center text-white/85 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-transparent transition`}>
     {children}
   </button>
 )
 
-export function DeckBook({ count, renderPage, cover, onClose }: {
+export function DeckBook({ count, renderPage, titles, cover, onClose }: {
   count: number
   renderPage: (i: number) => ReactNode
+  /** Überschrift je Inhaltsseite für den Seitenkopf */
+  titles: string[]
   cover: BookCover
   /** page = zuletzt offene Inhaltsseite (0-basiert), -1 = Umschlag */
   onClose: (page: number) => void
@@ -587,7 +601,9 @@ export function DeckBook({ count, renderPage, cover, onClose }: {
     if (anim.current.busy || e.defaultPrevented) return
     if (e.pointerType === 'mouse' && e.button !== 0) return
     const tg = e.target as HTMLElement
-    if (tg.closest('input,textarea,select,video,iframe,[aria-modal="true"]')) return
+    if (tg.closest('input,textarea,select,iframe,[aria-modal="true"]')) return
+    // Auf einem Video wird geblättert, nur nicht auf der Steuerleiste (Zeitleiste ziehen)
+    if (tg instanceof HTMLVideoElement && tg.controls && e.clientY > tg.getBoundingClientRect().bottom - 56) return
     if (inHScroller(tg, bookRef.current)) return
     const now = performance.now()
     drag.current = { id: e.pointerId, x: e.clientX, y: e.clientY, on: false, dir: 1, a: 0, lastX: e.clientX, lastT: now, v: 0 }
@@ -655,21 +671,21 @@ export function DeckBook({ count, renderPage, cover, onClose }: {
     <div className="fixed inset-0 z-[45] flex flex-col print:hidden"
       style={{ background: 'radial-gradient(ellipse at 50% 38%, #2b2b35 0%, #15151b 62%, #0d0d11 100%)', animation: 'hpBookFade .3s ease-out' }}>
       {/* Leiste oben */}
-      <div className="relative z-10 shrink-0 flex items-center gap-2 px-2 sm:px-4"
+      <div className="relative z-10 shrink-0 flex items-center justify-between gap-1.5 sm:gap-2 px-1.5 sm:px-4"
         style={{ height: 56, marginTop: 'env(safe-area-inset-top)', background: 'rgba(12,12,16,.75)' }}>
-        <div className="flex-1 basis-0 flex items-center min-w-0">
-          <IconBtn label={t('deck.prev', 'Zurück')} onClick={() => turn(-1)} disabled={cur === 0} className="hidden sm:flex">
+        <div className="sm:flex-1 sm:basis-0 flex items-center min-w-0">
+          <IconBtn label={t('deck.prev', 'Zurück')} onClick={() => turn(-1)} disabled={cur === 0}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M15 6l-6 6 6 6" /></svg>
           </IconBtn>
-          <span className="text-xs sm:text-sm tabular-nums text-white/70 min-w-[44px] pl-2 sm:pl-0 sm:text-center whitespace-nowrap">
+          <span className="text-xs sm:text-sm tabular-nums text-white/70 min-w-[38px] sm:min-w-[44px] text-center whitespace-nowrap">
             {cur === 0 ? t('deck.bookCoverShort', 'Titel') : `${cur} / ${count}`}
           </span>
-          <IconBtn label={t('deck.next', 'Weiter')} onClick={() => turn(1)} disabled={cur >= total - 1} className="hidden sm:flex">
+          <IconBtn label={t('deck.next', 'Weiter')} onClick={() => turn(1)} disabled={cur >= total - 1}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M9 6l6 6-6 6" /></svg>
           </IconBtn>
         </div>
         <ViewToggle book onChange={b => { if (!b) onClose(cur - 1) }} />
-        <div className="flex-1 basis-0 flex items-center justify-end gap-1">
+        <div className="sm:flex-1 sm:basis-0 flex items-center justify-end gap-1">
           <IconBtn label={sound ? t('deck.bookSoundOff', 'Ton aus') : t('deck.bookSoundOn', 'Ton an')} onClick={toggleSound}>
             {sound ? (
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M4 9v6h4l5 4V5L8 9H4z" /><path d="M16.5 8.5a5 5 0 010 7M19 6a8.5 8.5 0 010 12" /></svg>
@@ -692,7 +708,8 @@ export function DeckBook({ count, renderPage, cover, onClose }: {
 
       {/* Tisch mit dem Buch */}
       <div className="relative flex-1 min-h-0 pt-4 sm:pt-6 pl-[30px] pr-[18px] sm:px-20 pb-[calc(84px+env(safe-area-inset-bottom))] sm:pb-[100px]">
-        <div ref={bookRef} className="relative h-full mx-auto select-none" style={{ maxWidth: 1180, touchAction: 'pan-y pinch-zoom', animation: 'hpBookArrive .6s cubic-bezier(.2,.8,.2,1)' }}
+        <div ref={bookRef} className="relative h-full mx-auto select-none"
+          style={{ maxWidth: 1180, touchAction: 'pan-y pinch-zoom', animation: 'hpBookArrive .6s cubic-bezier(.2,.8,.2,1)', ['--hp-book-h' as string]: `${size.h || 600}px` }}
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerEnd} onPointerCancel={onPointerEnd}
           onClickCapture={e => { if (noClick.current) { e.preventDefault(); e.stopPropagation() } }}
           onDragStart={e => e.preventDefault()}>
@@ -711,13 +728,17 @@ export function DeckBook({ count, renderPage, cover, onClose }: {
               className="absolute inset-0" style={{ transformOrigin: 'left center' }}>
               <div data-f className="absolute inset-0 overflow-hidden" style={{ borderRadius: SHEET_RADIUS, background: s === 0 ? DARK : CREAM, boxShadow: '0 1px 2px rgba(0,0,0,.25)' }}>
                 {s === 0 ? <CoverFace cover={cover} onOpen={() => turn(1)} /> : (
-                  <PageScroller active={s === cur}>
-                    <VideoAutoCtx.Provider value={s === cur}>{renderPage(s - 1)}</VideoAutoCtx.Provider>
+                  <PageScroller active={s === cur} n={s} title={titles[s - 1] ?? ''} logo={cover.logo}>
+                    <InBookCtx.Provider value>
+                      <VideoAutoCtx.Provider value={s === cur}>{renderPage(s - 1)}</VideoAutoCtx.Provider>
+                    </InBookCtx.Provider>
                   </PageScroller>
                 )}
                 <Holes ys={ys} h={size.h} dark={s === 0} />
                 <div aria-hidden className="absolute inset-y-0 left-0 w-10 pointer-events-none" style={{ background: 'linear-gradient(to right, rgba(0,0,0,.16), rgba(0,0,0,0))' }} />
                 {s > 0 && s === cur && s < total - 1 && <Corner onClick={() => turn(1)} />}
+                {/* Wischstreifen am rechten Rand (Touch): blättert auch, wenn die Seite voll mit einem eingebetteten Video ist */}
+                {s > 0 && s === cur && <div aria-hidden className="hpbook-edge absolute right-0 top-12 bottom-16 w-5" style={{ zIndex: 4 }} />}
                 <div data-fs aria-hidden className="absolute inset-0 pointer-events-none" style={{ opacity: 0, background: 'linear-gradient(to right, rgba(0,0,0,.28), rgba(0,0,0,.08) 55%, rgba(255,255,255,.14))' }} />
                 <div data-cast aria-hidden className="absolute inset-0 pointer-events-none" style={{ opacity: 0 }} />
               </div>
@@ -748,6 +769,9 @@ export function DeckBook({ count, renderPage, cover, onClose }: {
 @keyframes hpBookArrive{from{opacity:0;transform:translateY(26px) scale(.94)}to{opacity:1;transform:none}}
 @keyframes hpBookNudge{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
 @media (prefers-reduced-motion: reduce){[style*="hpBook"]{animation:none!important}}
+@media (pointer: fine){.hpbook-edge{display:none}}
+.hpbook-page .hpweb{background-color:transparent}
+.hpbook-page .hpweb > section:first-child{margin-top:0}
 `}</style>
     </div>
   )

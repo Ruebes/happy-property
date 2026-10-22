@@ -62,6 +62,8 @@ export const isWebBlock = (b: AnyBlock): b is WebBlock => b.type.startsWith('w_'
 // false = Videos dieser Ansicht nicht von selbst starten (Scroll-Seite hinter dem
 // Buchmodus, nicht aufgeschlagene Buchseiten, Druckansicht). Gilt für Deck-Videos und die Clips der Projektseite.
 export const VideoAutoCtx = createContext(true)
+// true = gerendert als Buchseite (deckBook.tsx): Videos im einheitlichen Rahmen.
+export const InBookCtx = createContext(false)
 
 /** Seitenstruktur des Decks im Website-Stil. Reihenfolge wie besprochen: erst das
  *  Gefühl (Hero, Kennzahlen), dann das Persönliche (Anschreiben, Wohnung, Grundriss),

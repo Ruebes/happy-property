@@ -5,7 +5,7 @@ import { supabase } from '../lib/supabase'
 import type { DeckBlock, DeckContent, FloorplanRoom } from '../lib/deckTypes'
 import { DECK_CONTACT, DECK_LOGO, DECK_PHOTO } from '../lib/deckTypes'
 import { normalizeMonthPlan, monthPlanCounts } from '../lib/rechner'
-import { VideoAutoCtx, webBlocks, WebBlockView, WebStyle, isWebBlock, type AnyBlock, type ProjectPage } from './deckWeb'
+import { VideoAutoCtx, InBookCtx, webBlocks, WebBlockView, WebStyle, isWebBlock, type AnyBlock, type ProjectPage } from './deckWeb'
 import { DeckBook, TopViewToggle } from './deckBook'
 
 // ── Sales-Deck Render-Seite (öffentlich, per Token) ─────────────────────────────
@@ -1065,6 +1065,7 @@ function VideoBlock(b: Extract<DeckBlock, { type: 'video' }>) {
   const embedSrc = b.embedUrl ? (toEmbedSrc(b.embedUrl) ?? (isDirectVideo(b.embedUrl) ? null : b.embedUrl)) : toEmbedSrc(raw)
   const nativeSrc = embedSrc ? null : (b.videoUrl && isDirectVideo(b.videoUrl) ? b.videoUrl : (isDirectVideo(raw) ? raw : null))
   const autoAktiv = useContext(VideoAutoCtx)
+  const imBuch = useContext(InBookCtx)
   const boxRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const frameRef = useRef<HTMLIFrameElement>(null)
@@ -1132,9 +1133,17 @@ function VideoBlock(b: Extract<DeckBlock, { type: 'video' }>) {
       {/* Bautraeger liefern auch Hochformat (Reels vom Musterhaus, Sauna-Clip). In
           einem 16:9-Rahmen liefe das mit schwarzen Balken links und rechts, deshalb
           bekommt jedes Format seinen eigenen Rahmen: hoch = schmal und zentriert. */}
+      {/* Im Buchmodus haben alle Videos denselben Rahmen (halbe Seitenhöhe, volle
+          Breite), das Video steht darin ganz, dahinter das Standbild unscharf. */}
       <div ref={boxRef} onMouseEnter={starten}
-           className={`mt-8 relative overflow-hidden rounded-xl border ${hoch ? 'w-full max-w-sm mx-auto' : 'w-full'}`}
-           style={{ aspectRatio: seiten, borderColor: 'rgba(194,161,94,0.3)' }}>
+           className={`mt-8 relative overflow-hidden rounded-xl border ${hoch && !imBuch ? 'w-full max-w-sm mx-auto' : 'w-full'}`}
+           style={imBuch
+             ? { height: 'calc(var(--hp-book-h, 600px) * 0.5)', borderColor: 'rgba(194,161,94,0.3)', background: '#0e0e13' }
+             : { aspectRatio: seiten, borderColor: 'rgba(194,161,94,0.3)' }}>
+        {imBuch && !embedSrc && b.poster && (
+          <img src={sizedImg(b.poster, 640)} alt="" aria-hidden
+            className="absolute inset-0 h-full w-full object-cover scale-110 blur-xl opacity-50 pointer-events-none" />
+        )}
         {embedSrc ? (
           <iframe
             ref={frameRef}
@@ -1151,7 +1160,7 @@ function VideoBlock(b: Extract<DeckBlock, { type: 'video' }>) {
         ) : (
           <video
             ref={videoRef}
-            className={`absolute inset-0 h-full w-full ${hoch ? 'object-contain' : 'object-cover'}`}
+            className={`absolute inset-0 h-full w-full ${hoch || imBuch ? 'object-contain' : 'object-cover'}`}
             src={nativeSrc ?? undefined}
             aria-label={b.headline || undefined}
             onLoadedMetadata={e => {
@@ -1550,18 +1559,42 @@ export default function Deck() {
       if (at > 0 && el) el.scrollIntoView({ block: 'start' }); else window.scrollTo({ top: 0 })
     })
   }
+  // Logo steht im Buch im Seitenkopf (deckBook.tsx), nicht mehr je Abschnitt.
   const renderBookPage = (p: number) => (
     <div className={web ? 'hpweb-deck' : undefined}>
-      {(bookPages[p] ?? []).map(i => (
-        <div key={i} className="relative">
-          <Block block={view[i]} />
-          {view[i].type !== 'w_facts' && <img src={DECK_LOGO} alt="" aria-hidden="true"
-            className="absolute top-3 right-3 md:top-4 md:right-6 h-7 md:h-9 w-auto rounded-md opacity-80 pointer-events-none select-none ring-1 ring-white/10"
-            onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />}
-        </div>
-      ))}
+      {(bookPages[p] ?? []).map(i => <div key={i} className="relative"><Block block={view[i]} /></div>)}
     </div>
   )
+  // Seitenkopf im Buch: kurze, genaue Überschrift je Seite (Leser-Feedback 22.10.)
+  const bookTitle = (b: AnyBlock): string => {
+    const k = 'kicker' in b && typeof b.kicker === 'string' ? b.kicker.trim() : ''
+    switch (b.type) {
+      case 'w_hero':    return t('deck.bookCh.overview', 'Überblick')
+      case 'letter':    return t('deck.bookCh.letter', 'Persönliches Anschreiben')
+      case 'unit':      return b.number?.trim() ? t('deck.bookCh.unitNr', 'Wohnung {{nr}}', { nr: b.number.trim() }) : t('deck.bookCh.unit', 'Die Wohnung')
+      case 'floorplan': return k || t('deck.bookCh.floorplan', 'Grundriss')
+      case 'masterplan':return t('deck.bookCh.masterplan', 'Lageplan der Anlage')
+      case 'video':     return k ? `${t('deck.bookCh.video', 'Video')} · ${k}` : t('deck.bookCh.video', 'Video')
+      case 'w_day':     return t('deck.bookCh.day', 'Ein Tag hier')
+      case 'w_home':    return b.page.home?.kicker || t('deck.bookCh.home', 'Dein Zuhause')
+      case 'w_amen':    return b.page.amen?.kicker || t('deck.bookCh.amen', 'Die Anlage')
+      case 'w_more':    return b.page.more?.[b.i]?.kicker || t('deck.bookCh.amen', 'Die Anlage')
+      case 'w_options': return b.page.options?.kicker || t('deck.bookCh.options', 'Optionen')
+      case 'w_reasons': return t('deck.bookCh.reasons', 'Für Anleger')
+      case 'w_loc':     return t('deck.bookCh.loc', 'Lage')
+      case 'facts':     return web ? t('deck.bookCh.map', 'Lage auf der Karte') : (k || t('deck.bookCh.loc', 'Lage'))
+      case 'marina':    return t('deck.bookCh.marina', 'Marina')
+      case 'payment':   return k || t('deck.bookCh.payment', 'Zahlungsplan')
+      case 'w_gallery': return t('deck.bookCh.gallery', 'Bilder')
+      case 'w_spec':    return t('deck.bookCh.spec', 'Ausstattung')
+      case 'inventory': return t('deck.bookCh.inventory', 'Inventar')
+      case 'w_why':     return t('deck.bookCh.why', 'Warum Happy Property')
+      case 'cta':       return t('deck.bookCh.cta', 'Nächster Schritt')
+      case 'cover':     return t('deck.bookCh.overview', 'Überblick')
+      default:          return k || ('headline' in b && typeof b.headline === 'string' ? b.headline : '')
+    }
+  }
+  const bookTitles = bookPages.map(g => bookTitle(view[g[0]]))
 
   return (
     <VatRefundCtx.Provider value={{ byUnit: vatRefund, units: deckUnits }}>
@@ -1598,7 +1631,7 @@ export default function Deck() {
         <InfoModal token={token} refId={ref} campaign={campaign} person={person} unitNr={unitNr}
           internal={internal} terminUrl={terminUrl} onClose={() => setInfo(false)} />
       )}
-      {book && !isPrint && <DeckBook count={bookPages.length} renderPage={renderBookPage} cover={bookCover} onClose={closeBook} />}
+      {book && !isPrint && <DeckBook count={bookPages.length} renderPage={renderBookPage} titles={bookTitles} cover={bookCover} onClose={closeBook} />}
     </div>
     </VatRefundCtx.Provider>
   )
