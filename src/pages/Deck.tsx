@@ -182,25 +182,129 @@ function UnitBlock(b: Extract<DeckBlock, { type: 'unit' }>) {
 // Pin exakt auf den Koordinaten, kein iframe, kein Schluessel, kein Redirect.
 // Laden die Kacheln nicht, faellt die Karte auf das statische Bild oder den
 // Link zurueck - nie auf eine leere Flaeche.
+// Zoomen (Sven 22.10.26): +/- Knöpfe (Zoom 10 bis 18), Maus/Stift ziehen zum
+// Verschieben, Doppelklick zoomt hinein. Touch bleibt unberührt (ein Finger
+// scrollt immer die Seite), kein Mausrad (würde das Seiten-Scrollen kapern).
+// Startansicht und Kachelsatz bei Zoom 15 sind exakt wie vorher (5x3 um den Pin).
 const OSM_ZOOM = 15
+const OSM_MIN_ZOOM = 10
+const OSM_MAX_ZOOM = 18
 const TILE = 256
+// Ansicht: Zoom + Versatz der Kartenmitte zum Pin in Bildschirmpixeln (0/0 = Pin mittig)
+type OsmView = { z: number; px: number; py: number }
+// Web-Mercator: Weltpixel eines Punkts bei Zoom z (gleiche Formel wie bisher, nur in Pixeln)
+function osmWorld(lat: number, lng: number, z: number) {
+  const n = 2 ** z * TILE
+  const latRad = lat * Math.PI / 180
+  return { x: (lng + 180) / 360 * n, y: (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n }
+}
+// Kachelsatz einer Ansicht: deckt mindestens das bisherige 5x3-Raster (1024x512 um
+// die Kartenmitte) ab, bei größeren Containern die gemessene Fläche, gedeckelt auf
+// 11x7 Kacheln. Kachel-x läuft modulo 2^z um, Kachel-y außerhalb der Welt entfällt.
+function osmTiles(lat: number, lng: number, v: OsmView, w: number, h: number) {
+  const n = 2 ** v.z
+  const p = osmWorld(lat, lng, v.z)
+  const mx = p.x + v.px, my = p.y + v.py
+  const W = Math.min(Math.max(w, 4 * TILE), 10 * TILE), H = Math.min(Math.max(h, 2 * TILE), 6 * TILE)
+  const x0 = Math.floor((mx - W / 2) / TILE), x1 = Math.floor((mx + W / 2) / TILE)
+  const y0 = Math.floor((my - H / 2) / TILE), y1 = Math.floor((my + H / 2) / TILE)
+  const list: { key: string; rk: string; left: number; top: number }[] = []
+  for (let ty = Math.max(0, y0); ty <= Math.min(n - 1, y1); ty++) {
+    for (let tx = x0; tx <= x1; tx++) {
+      const x = ((tx % n) + n) % n
+      list.push({ key: `${v.z}/${x}/${ty}`, rk: `${v.z}:${tx}:${ty}`, left: (tx - x0) * TILE, top: (ty - y0) * TILE })
+    }
+  }
+  // ox/oy: Lage der linken oberen Kachel relativ zur Kartenmitte
+  return { list, ox: x0 * TILE - mx, oy: y0 * TILE - my }
+}
 function OsmMap({ lat, lng, label, fallbackImage, openHref }: { lat: number; lng: number; label?: string; fallbackImage?: string; openHref: string }) {
   const { t } = useTranslation()
-  const [failed, setFailed] = useState(0)
-  const n = 2 ** OSM_ZOOM
-  const xf = (lng + 180) / 360 * n
-  const latRad = lat * Math.PI / 180
-  const yf = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n
-  const cx = Math.floor(xf), cy = Math.floor(yf)
-  // Pixelversatz des Pins innerhalb der Mittelkachel
-  const offX = (xf - cx) * TILE, offY = (yf - cy) * TILE
-  // 5x3 Kacheln decken ein 16:9-Fenster bis ~1100 px Breite ab.
-  const cols = [-2, -1, 0, 1, 2], rows = [-1, 0, 1]
-  const tiles = rows.flatMap(dy => cols.map(dx => ({ dx, dy, x: (cx + dx + n) % n, y: cy + dy })))
-  const broken = failed >= tiles.length / 2
+  const box = useRef<HTMLDivElement>(null)
+  const [size, setSize] = useState({ w: 0, h: 0 })
+  const [view, setView] = useState<OsmView>({ z: OSM_ZOOM, px: 0, py: 0 })
+  // Vorige Zoomstufe als unscharfer Hintergrund, bis die neuen Kacheln da sind
+  const [prev, setPrev] = useState<OsmView | null>(null)
+  // Fehler je Kachel (z/x/y), gezählt wird nur im aktuell sichtbaren Kachelsatz.
+  // Zoomen/Verschieben löst den Fallback also nicht durch alte Fehler aus.
+  const [failed, setFailed] = useState<ReadonlySet<string>>(() => new Set())
+  const loaded = useRef(new Set<string>())
+  const drag = useRef<{ id: number; x: number; y: number; px: number; py: number; moved: boolean } | null>(null)
+  const lastPointer = useRef('')
+
+  // Containergröße messen, damit die Kacheln jede Breite abdecken
+  useEffect(() => {
+    const el = box.current
+    if (!el) return
+    const measure = () => setSize(s => (s.w === el.clientWidth && s.h === el.clientHeight) ? s : { w: el.clientWidth, h: el.clientHeight })
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const cur = osmTiles(lat, lng, view, size.w, size.h)
+  const bad = cur.list.filter(tl => failed.has(tl.key)).length
+  const broken = cur.list.length === 0 || bad >= cur.list.length / 2
+  const atHome = view.z === OSM_ZOOM && view.px === 0 && view.py === 0
+  const back = prev && prev.z !== view.z ? { v: prev, ...osmTiles(lat, lng, prev, size.w, size.h) } : null
+  const backTiles = back ? back.list.filter(tl => loaded.current.has(tl.key)) : []
+
+  const go = (z: number, px: number, py: number) => {
+    // Neue Zoomstufe wird frisch geladen: alte Fehler (kurzer Netzaussetzer) sperren sie nicht
+    if (z !== view.z) { setPrev(view); setFailed(new Set()) }
+    setView({ z, px, py })
+  }
+  const zoomBy = (d: 1 | -1) => {
+    const z = Math.min(OSM_MAX_ZOOM, Math.max(OSM_MIN_ZOOM, view.z + d))
+    if (z === view.z) return
+    // Pin im Bild: Pin bleibt Bezugspunkt und steht still. Pin außerhalb: um die
+    // Kartenmitte zoomen, damit er beim Herauszoomen wieder ins Bild kommt.
+    const el = box.current
+    const pinVisible = Math.abs(view.px) <= (el?.clientWidth ?? 0) / 2 && Math.abs(view.py) <= (el?.clientHeight ?? 0) / 2
+    const f = pinVisible ? 1 : 2 ** (z - view.z)
+    go(z, view.px * f, view.py * f)
+  }
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    lastPointer.current = e.pointerType
+    // Nur Maus/Stift ziehen die Karte, Touch scrollt weiter die Seite
+    if (broken || (e.pointerType !== 'mouse' && e.pointerType !== 'pen') || e.button !== 0) return
+    if ((e.target as HTMLElement).closest('a,button')) return
+    e.preventDefault()
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* egal */ }
+    drag.current = { id: e.pointerId, x: e.clientX, y: e.clientY, px: view.px, py: view.py, moved: false }
+    e.currentTarget.style.cursor = 'grabbing'
+  }
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = drag.current
+    if (!d || e.pointerId !== d.id) return
+    const dx = e.clientX - d.x, dy = e.clientY - d.y
+    // Kleines Zittern beim Klicken ist kein Verschieben
+    if (!d.moved && Math.abs(dx) + Math.abs(dy) < 4) return
+    d.moved = true
+    setView(v => ({ z: v.z, px: d.px - dx, py: d.py - dy }))
+  }
+  const onPointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (drag.current?.id !== e.pointerId) return
+    drag.current = null
+    e.currentTarget.style.cursor = ''
+  }
+  const onDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (broken || view.z >= OSM_MAX_ZOOM || (lastPointer.current !== 'mouse' && lastPointer.current !== 'pen')) return
+    if ((e.target as HTMLElement).closest('a,button')) return
+    // Um die Klickstelle zoomen: der Punkt unter dem Mauszeiger bleibt stehen
+    const r = e.currentTarget.getBoundingClientRect()
+    const qx = e.clientX - (r.left + r.width / 2), qy = e.clientY - (r.top + r.height / 2)
+    go(view.z + 1, 2 * view.px + qx, 2 * view.py + qy)
+  }
+  const tileSrc = (key: string) => `https://tile.openstreetmap.org/${key}.png`
+  const btn = 'flex h-9 w-9 items-center justify-center rounded-lg bg-white/95 text-gray-800 shadow-md ring-1 ring-black/10 hover:bg-white disabled:opacity-40 disabled:cursor-default touch-manipulation'
+
   return (
     <div className="mt-8">
-      <div className="relative w-full overflow-clip rounded-xl border border-gray-200 bg-[#e8e4dc]" style={{ aspectRatio: '16 / 9' }}>
+      <div ref={box} className={`relative w-full overflow-clip rounded-xl border border-gray-200 bg-[#e8e4dc] select-none${broken ? '' : ' cursor-grab'}`} style={{ aspectRatio: '16 / 9' }}
+        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerEnd} onPointerCancel={onPointerEnd} onDoubleClick={onDoubleClick}>
         {broken && fallbackImage ? (
           <Img src={fallbackImage} className="absolute inset-0 h-full w-full object-cover" />
         ) : broken ? (
@@ -208,24 +312,59 @@ function OsmMap({ lat, lng, label, fallbackImage, openHref }: { lat: number; lng
             {t('deck.openInGoogleMaps', 'In Google Maps öffnen')}
           </a>
         ) : (
-          <div className="absolute left-1/2 top-1/2" style={{ transform: `translate(${-offX}px, ${-offY}px)` }}>
-            {tiles.map(tl => (
-              <img key={`${tl.dx}:${tl.dy}`} alt="" loading="eager" decoding="async"
-                src={`https://tile.openstreetmap.org/${OSM_ZOOM}/${tl.x}/${tl.y}.png`}
-                onError={() => setFailed(f => f + 1)}
-                className="absolute select-none pointer-events-none"
-                style={{ width: TILE, height: TILE, left: tl.dx * TILE, top: tl.dy * TILE, maxWidth: 'none' }} />
-            ))}
-          </div>
+          <>
+            {back && backTiles.length > 0 && (
+              <div className="absolute pointer-events-none" style={{ left: `calc(50% - ${view.px}px)`, top: `calc(50% - ${view.py}px)`, transform: `scale(${2 ** (view.z - back.v.z)})`, transformOrigin: '0 0' }}>
+                <div className="absolute left-0 top-0" style={{ transform: `translate(${back.ox + back.v.px}px, ${back.oy + back.v.py}px)` }}>
+                  {backTiles.map(tl => (
+                    <img key={tl.rk} alt="" src={tileSrc(tl.key)} className="absolute select-none pointer-events-none"
+                      style={{ width: TILE, height: TILE, left: tl.left, top: tl.top, maxWidth: 'none' }} />
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="absolute left-1/2 top-1/2" style={{ transform: `translate(${cur.ox}px, ${cur.oy}px)` }}>
+              {cur.list.map(tl => (
+                <img key={tl.rk} alt="" loading="eager" decoding="async"
+                  src={tileSrc(tl.key)}
+                  onLoad={() => {
+                    loaded.current.add(tl.key)
+                    if (failed.has(tl.key)) setFailed(s => { const c = new Set(s); c.delete(tl.key); return c })
+                  }}
+                  onError={() => setFailed(s => s.has(tl.key) ? s : new Set(s).add(tl.key))}
+                  className="absolute select-none pointer-events-none"
+                  style={{ width: TILE, height: TILE, left: tl.left, top: tl.top, maxWidth: 'none' }} />
+              ))}
+            </div>
+          </>
         )}
         {!broken && (
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-full pointer-events-none flex flex-col items-center">
+          <div className="absolute -translate-x-1/2 -translate-y-full pointer-events-none flex flex-col items-center"
+            style={{ left: `calc(50% - ${view.px}px)`, top: `calc(50% - ${view.py}px)` }}>
             <span className="text-sm font-semibold px-3 py-1 rounded-full text-white shadow-lg whitespace-nowrap mb-1" style={{ background: '#ff795d' }}>📍 {label || t('deck.mapIframeTitle', 'Standort')}</span>
             <svg width="22" height="30" viewBox="0 0 22 30" aria-hidden="true"><path d="M11 0C4.9 0 0 4.9 0 11c0 8 11 19 11 19s11-11 11-19C22 4.9 17.1 0 11 0z" fill="#ff795d"/><circle cx="11" cy="11" r="4.5" fill="#fff"/></svg>
           </div>
         )}
         {!broken && (
           <span className="absolute bottom-1 right-2 text-[10px] text-gray-600 bg-white/70 px-1 rounded">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a></span>
+        )}
+        {!broken && (
+          <div className="absolute left-2 top-2 flex flex-col gap-1.5 print:hidden">
+            <button type="button" className={btn} onClick={() => zoomBy(1)} disabled={view.z >= OSM_MAX_ZOOM}
+              aria-label={t('deck.mapZoomIn', 'Hineinzoomen')} title={t('deck.mapZoomIn', 'Hineinzoomen')}>
+              <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1v12M1 7h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+            </button>
+            <button type="button" className={btn} onClick={() => zoomBy(-1)} disabled={view.z <= OSM_MIN_ZOOM}
+              aria-label={t('deck.mapZoomOut', 'Herauszoomen')} title={t('deck.mapZoomOut', 'Herauszoomen')}>
+              <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M1 7h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+            </button>
+          </div>
+        )}
+        {!atHome && (
+          <button type="button" onClick={() => go(OSM_ZOOM, 0, 0)}
+            className="absolute bottom-2 left-2 text-xs font-medium px-3 py-1.5 rounded-full text-white shadow touch-manipulation print:hidden" style={{ background: 'rgba(27,27,34,0.88)' }}>
+            ↺ {t('deck.mapReset', 'Zurück zum Standort')}
+          </button>
         )}
       </div>
       <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
