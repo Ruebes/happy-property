@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, createContext, useContext, type CSSProperties } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, createContext, useContext, type CSSProperties } from 'react'
 import { useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
@@ -187,12 +187,22 @@ function UnitBlock(b: Extract<DeckBlock, { type: 'unit' }>) {
 // Verschieben, Doppelklick zoomt hinein. Touch bleibt unberührt (ein Finger
 // scrollt immer die Seite), kein Mausrad (würde das Seiten-Scrollen kapern).
 // Startansicht und Kachelsatz bei Zoom 15 sind exakt wie vorher (5x3 um den Pin).
+// Satellit (Sven 22.10.26, wie früher bei Google): Umschalter "Karte | Satellit",
+// Satellitenbild = Esri World Imagery, ohne Schlüssel. Gleiches Web-Mercator-Raster,
+// also gleicher Pin und gleiches Zoomen/Verschieben. Startansicht bleibt die Karte.
 const OSM_ZOOM = 15
 const OSM_MIN_ZOOM = 10
 const OSM_MAX_ZOOM = 18
 const TILE = 256
-// Ansicht: Zoom + Versatz der Kartenmitte zum Pin in Bildschirmpixeln (0/0 = Pin mittig)
-type OsmView = { z: number; px: number; py: number }
+type OsmLayer = 'map' | 'sat'
+// Ansicht: Ebene + Zoom + Versatz der Kartenmitte zum Pin in Bildschirmpixeln (0/0 = Pin mittig)
+type OsmView = { l: OsmLayer; z: number; px: number; py: number }
+// Kachel-URL je Ebene. Achtung: Esri erwartet z/y/x, OSM z/x/y.
+function osmTileSrc(l: OsmLayer, z: number, x: number, y: number) {
+  return l === 'sat'
+    ? `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`
+    : `https://tile.openstreetmap.org/${z}/${x}/${y}.png`
+}
 // Web-Mercator: Weltpixel eines Punkts bei Zoom z (gleiche Formel wie bisher, nur in Pixeln)
 function osmWorld(lat: number, lng: number, z: number) {
   const n = 2 ** z * TILE
@@ -202,6 +212,8 @@ function osmWorld(lat: number, lng: number, z: number) {
 // Kachelsatz einer Ansicht: deckt mindestens das bisherige 5x3-Raster (1024x512 um
 // die Kartenmitte) ab, bei größeren Containern die gemessene Fläche, gedeckelt auf
 // 11x7 Kacheln. Kachel-x läuft modulo 2^z um, Kachel-y außerhalb der Welt entfällt.
+// Schlüssel enthalten die Ebene, damit Fehler, geladene Kacheln und Hintergrund
+// von Karte und Satellit nie vermischt werden.
 function osmTiles(lat: number, lng: number, v: OsmView, w: number, h: number) {
   const n = 2 ** v.z
   const p = osmWorld(lat, lng, v.z)
@@ -209,11 +221,11 @@ function osmTiles(lat: number, lng: number, v: OsmView, w: number, h: number) {
   const W = Math.min(Math.max(w, 4 * TILE), 10 * TILE), H = Math.min(Math.max(h, 2 * TILE), 6 * TILE)
   const x0 = Math.floor((mx - W / 2) / TILE), x1 = Math.floor((mx + W / 2) / TILE)
   const y0 = Math.floor((my - H / 2) / TILE), y1 = Math.floor((my + H / 2) / TILE)
-  const list: { key: string; rk: string; left: number; top: number }[] = []
+  const list: { key: string; rk: string; src: string; left: number; top: number }[] = []
   for (let ty = Math.max(0, y0); ty <= Math.min(n - 1, y1); ty++) {
     for (let tx = x0; tx <= x1; tx++) {
       const x = ((tx % n) + n) % n
-      list.push({ key: `${v.z}/${x}/${ty}`, rk: `${v.z}:${tx}:${ty}`, left: (tx - x0) * TILE, top: (ty - y0) * TILE })
+      list.push({ key: `${v.l}/${v.z}/${x}/${ty}`, rk: `${v.l}:${v.z}:${tx}:${ty}`, src: osmTileSrc(v.l, v.z, x, ty), left: (tx - x0) * TILE, top: (ty - y0) * TILE })
     }
   }
   // ox/oy: Lage der linken oberen Kachel relativ zur Kartenmitte
@@ -223,13 +235,15 @@ function OsmMap({ lat, lng, label, fallbackImage, openHref }: { lat: number; lng
   const { t } = useTranslation()
   const box = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
-  const [view, setView] = useState<OsmView>({ z: OSM_ZOOM, px: 0, py: 0 })
+  const [view, setView] = useState<OsmView>({ l: 'map', z: OSM_ZOOM, px: 0, py: 0 })
   // Vorige Zoomstufe als unscharfer Hintergrund, bis die neuen Kacheln da sind
   const [prev, setPrev] = useState<OsmView | null>(null)
   // Fehler je Kachel (z/x/y), gezählt wird nur im aktuell sichtbaren Kachelsatz.
   // Zoomen/Verschieben löst den Fallback also nicht durch alte Fehler aus.
   const [failed, setFailed] = useState<ReadonlySet<string>>(() => new Set())
   const loaded = useRef(new Set<string>())
+  // Seit dem letzten Wechsel auf Satellit schon eine Satellitenkachel geladen?
+  const satSeen = useRef(false)
   const drag = useRef<{ id: number; x: number; y: number; px: number; py: number; moved: boolean } | null>(null)
   const lastPointer = useRef('')
 
@@ -247,15 +261,41 @@ function OsmMap({ lat, lng, label, fallbackImage, openHref }: { lat: number; lng
 
   const cur = osmTiles(lat, lng, view, size.w, size.h)
   const bad = cur.list.filter(tl => failed.has(tl.key)).length
-  const broken = cur.list.length === 0 || bad >= cur.list.length / 2
+  const tilesDown = cur.list.length === 0 || bad >= cur.list.length / 2
+  // Satellit fällt aus: zurück auf die Karte, nie auf Bild/Link. Erst wenn auch die
+  // Karte bricht, greift der bisherige Fallback (statisches Bild, dann Link).
+  const satDown = view.l === 'sat' && tilesDown
+  const broken = view.l === 'map' && tilesDown
   const atHome = view.z === OSM_ZOOM && view.px === 0 && view.py === 0
-  const back = prev && prev.z !== view.z ? { v: prev, ...osmTiles(lat, lng, prev, size.w, size.h) } : null
+  const back = prev && prev.l === view.l && prev.z !== view.z ? { v: prev, ...osmTiles(lat, lng, prev, size.w, size.h) } : null
   const backTiles = back ? back.list.filter(tl => loaded.current.has(tl.key)) : []
 
-  const go = (z: number, px: number, py: number) => {
-    // Neue Zoomstufe wird frisch geladen: alte Fehler (kurzer Netzaussetzer) sperren sie nicht
-    if (z !== view.z) { setPrev(view); setFailed(new Set()) }
-    setView({ z, px, py })
+  // Vor dem Zeichnen umschalten, damit nie kurz das Fallback-Bild aufblitzt
+  useLayoutEffect(() => {
+    if (!satDown) return
+    setPrev(null)
+    setFailed(new Set())
+    setView(v => ({ ...v, l: 'map' }))
+  }, [satDown])
+  // Satellit hängt (Esri antwortet nicht, kein Fehler kommt): lädt binnen 8 s keine
+  // einzige Satellitenkachel, ebenfalls zurück auf die Karte statt beiger Fläche
+  useEffect(() => {
+    if (view.l !== 'sat') return
+    const id = setTimeout(() => {
+      if (satSeen.current) return
+      setPrev(null)
+      setFailed(new Set())
+      setView(v => v.l === 'sat' ? { ...v, l: 'map' } : v)
+    }, 8000)
+    return () => clearTimeout(id)
+  }, [view.l])
+
+  const go = (z: number, px: number, py: number, l: OsmLayer = view.l) => {
+    // Neue Zoomstufe oder Ebene wird frisch geladen: alte Fehler (kurzer Netzaussetzer)
+    // sperren sie nicht. Beim Ebenenwechsel kein Hintergrund der anderen Ebene.
+    if (l !== view.l) { setPrev(null); setFailed(new Set()); satSeen.current = false }
+    else if (z !== view.z) { setPrev(view); setFailed(new Set()) }
+    setView({ l, z, px, py })
   }
   const zoomBy = (d: 1 | -1) => {
     const z = Math.min(OSM_MAX_ZOOM, Math.max(OSM_MIN_ZOOM, view.z + d))
@@ -284,7 +324,7 @@ function OsmMap({ lat, lng, label, fallbackImage, openHref }: { lat: number; lng
     // Kleines Zittern beim Klicken ist kein Verschieben
     if (!d.moved && Math.abs(dx) + Math.abs(dy) < 4) return
     d.moved = true
-    setView(v => ({ z: v.z, px: d.px - dx, py: d.py - dy }))
+    setView(v => ({ ...v, px: d.px - dx, py: d.py - dy }))
   }
   const onPointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
     if (drag.current?.id !== e.pointerId) return
@@ -299,7 +339,6 @@ function OsmMap({ lat, lng, label, fallbackImage, openHref }: { lat: number; lng
     const qx = e.clientX - (r.left + r.width / 2), qy = e.clientY - (r.top + r.height / 2)
     go(view.z + 1, 2 * view.px + qx, 2 * view.py + qy)
   }
-  const tileSrc = (key: string) => `https://tile.openstreetmap.org/${key}.png`
   const btn = 'flex h-9 w-9 items-center justify-center rounded-lg bg-white/95 text-gray-800 shadow-md ring-1 ring-black/10 hover:bg-white disabled:opacity-40 disabled:cursor-default touch-manipulation'
 
   return (
@@ -318,7 +357,7 @@ function OsmMap({ lat, lng, label, fallbackImage, openHref }: { lat: number; lng
               <div className="absolute pointer-events-none" style={{ left: `calc(50% - ${view.px}px)`, top: `calc(50% - ${view.py}px)`, transform: `scale(${2 ** (view.z - back.v.z)})`, transformOrigin: '0 0' }}>
                 <div className="absolute left-0 top-0" style={{ transform: `translate(${back.ox + back.v.px}px, ${back.oy + back.v.py}px)` }}>
                   {backTiles.map(tl => (
-                    <img key={tl.rk} alt="" src={tileSrc(tl.key)} className="absolute select-none pointer-events-none"
+                    <img key={tl.rk} alt="" src={tl.src} className="absolute select-none pointer-events-none"
                       style={{ width: TILE, height: TILE, left: tl.left, top: tl.top, maxWidth: 'none' }} />
                   ))}
                 </div>
@@ -327,9 +366,10 @@ function OsmMap({ lat, lng, label, fallbackImage, openHref }: { lat: number; lng
             <div className="absolute left-1/2 top-1/2" style={{ transform: `translate(${cur.ox}px, ${cur.oy}px)` }}>
               {cur.list.map(tl => (
                 <img key={tl.rk} alt="" loading="eager" decoding="async"
-                  src={tileSrc(tl.key)}
+                  src={tl.src}
                   onLoad={() => {
                     loaded.current.add(tl.key)
+                    if (tl.key.startsWith('sat/')) satSeen.current = true
                     if (failed.has(tl.key)) setFailed(s => { const c = new Set(s); c.delete(tl.key); return c })
                   }}
                   onError={() => setFailed(s => s.has(tl.key) ? s : new Set(s).add(tl.key))}
@@ -347,10 +387,7 @@ function OsmMap({ lat, lng, label, fallbackImage, openHref }: { lat: number; lng
           </div>
         )}
         {!broken && (
-          <span className="absolute bottom-1 right-2 text-[10px] text-gray-600 bg-white/70 px-1 rounded">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a></span>
-        )}
-        {!broken && (
-          <div className="absolute left-2 top-2 flex flex-col gap-1.5 print:hidden">
+          <div className="absolute left-2 top-2 z-10 flex flex-col gap-1.5 print:hidden">
             <button type="button" className={btn} onClick={() => zoomBy(1)} disabled={view.z >= OSM_MAX_ZOOM}
               aria-label={t('deck.mapZoomIn', 'Hineinzoomen')} title={t('deck.mapZoomIn', 'Hineinzoomen')}>
               <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1v12M1 7h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
@@ -361,12 +398,43 @@ function OsmMap({ lat, lng, label, fallbackImage, openHref }: { lat: number; lng
             </button>
           </div>
         )}
-        {!atHome && (
-          <button type="button" onClick={() => go(OSM_ZOOM, 0, 0)}
-            className="absolute bottom-2 left-2 text-xs font-medium px-3 py-1.5 rounded-full text-white shadow touch-manipulation print:hidden" style={{ background: 'rgba(27,27,34,0.88)' }}>
-            ↺ {t('deck.mapReset', 'Zurück zum Standort')}
-          </button>
-        )}
+        {/* Unterkante: links "Zurück zum Standort", rechts der Umschalter Karte/Satellit
+            über der Quellenangabe. Oben ist kein Platz: links +/-, in der Mitte die
+            Pin-Beschriftung, rechts im Website-Deck das Logo-Wasserzeichen. Reicht die
+            Breite nicht (schmales Handy), rutscht die rechte Spalte eine Zeile über den
+            Knopf (wrap-reverse: erste Zeile unten, daher items-start = unten bündig).
+            So überdeckt sich nichts, der Knopf bleibt wo er war. Die Spalte hat eine
+            feste Breite (passt für die längste Esri-Zeile, längere wird mit … gekürzt),
+            damit der Umschalter beim Wechsel Karte/Satellit nicht springt.
+            z-10: liegt im Blättermodus über den unsichtbaren Blätter-Knöpfen. */}
+        <div className="absolute inset-x-2 bottom-1 z-10 flex flex-wrap-reverse items-start gap-x-2 gap-y-1 pointer-events-none">
+          {!atHome && (
+            <button type="button" onClick={() => go(OSM_ZOOM, 0, 0)}
+              className="mb-1 shrink-0 pointer-events-auto text-xs font-medium px-3 py-1.5 rounded-full text-white shadow touch-manipulation print:hidden" style={{ background: 'rgba(27,27,34,0.88)' }}>
+              ↺ {t('deck.mapReset', 'Zurück zum Standort')}
+            </button>
+          )}
+          {!broken && (
+            <div className="ml-auto flex w-[min(21rem,100%)] flex-col items-end gap-1.5">
+              <div role="group" aria-label={t('deck.mapLayer', 'Kartenansicht')}
+                className="pointer-events-auto flex h-9 rounded-full bg-white/95 shadow-md ring-1 ring-black/10 print:hidden">
+                {(['map', 'sat'] as const).map(l => (
+                  <button key={l} type="button" aria-pressed={view.l === l}
+                    onClick={() => { if (l !== view.l) go(view.z, view.px, view.py, l) }}
+                    className={`h-full rounded-full px-3 text-xs font-semibold whitespace-nowrap touch-manipulation ${view.l === l ? 'text-white' : 'text-gray-700 hover:bg-black/5'}`}
+                    style={view.l === l ? { background: 'rgba(27,27,34,0.88)' } : undefined}>
+                    {l === 'sat' ? t('deck.mapLayerSatellite', 'Satellit') : t('deck.mapLayerMap', 'Karte')}
+                  </button>
+                ))}
+              </div>
+              <span className="pointer-events-auto max-w-full truncate text-right text-[10px] text-gray-600 bg-white/70 px-1 rounded">
+                {view.l === 'sat'
+                  ? <>Powered by <a href="https://www.esri.com/" target="_blank" rel="noopener noreferrer">Esri</a> · {t('deck.mapImagery', 'Bilder')} © <a href="https://www.esri.com/" target="_blank" rel="noopener noreferrer">Esri</a>, Vantor, Earthstar Geographics</>
+                  : <>© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a></>}
+              </span>
+            </div>
+          )}
+        </div>
       </div>
       <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
         <a href={openHref} target="_blank" rel="noopener noreferrer" className="text-xs font-medium px-3 py-1.5 rounded-full text-white shadow" style={{ background: 'rgba(27,27,34,0.88)' }}>🗺 {t('deck.openInGoogleMaps', 'In Google Maps öffnen')} →</a>
