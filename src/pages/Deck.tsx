@@ -6,6 +6,7 @@ import type { DeckBlock, DeckContent, FloorplanRoom } from '../lib/deckTypes'
 import { DECK_CONTACT, DECK_LOGO, DECK_PHOTO } from '../lib/deckTypes'
 import { normalizeMonthPlan, monthPlanCounts } from '../lib/rechner'
 import { VideoAutoCtx, webBlocks, WebBlockView, WebStyle, isWebBlock, type AnyBlock, type ProjectPage } from './deckWeb'
+import { DeckBook, TopViewToggle } from './deckBook'
 
 // ── Sales-Deck Render-Seite (öffentlich, per Token) ─────────────────────────────
 // Personalisierte Verkaufs-Microsite in Happy-Property-Optik. Datengetrieben aus
@@ -978,7 +979,7 @@ function toEmbedSrc(url: string): string | null {
 const isDirectVideo = (url: string) => /\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i.test(url)
 
 // VideoAutoCtx (aus deckWeb): false = Videos dieser Ansicht nicht von selbst starten
-// (Scroll-Seite hinter dem Blättern-Modus, Druckansicht). Der Blättern-Modus selbst nutzt den Standard true.
+// (Scroll-Seite hinter dem Buchmodus, Druckansicht). Im Buchmodus gilt true nur für die aufgeschlagene Seite.
 
 // ── Video-Sektion (Drohnen-/Meerblick-Video o.Ä.) ────────────────────────────
 // Nimmt embedUrl (iframe) ODER videoUrl (direktes MP4) an und normalisiert selbst,
@@ -1129,86 +1130,10 @@ function Block({ block }: { block: AnyBlock }) {
   }
 }
 
-// ── Blätter-/Präsentations-Modus ────────────────────────────────────────────
-// Zeigt die Deck-Blöcke einzeln wie Buchseiten: eine Seite pro Bildschirm, blättern
-// per Pfeiltasten (←/→), Klick auf die Ränder, Swipe oder die Pfeil-Buttons. Optional
-// Vollbild fürs Präsentieren. Gleicher Inhalt wie der Scroll-Modus — nur visuell als Buch.
-function BookMode({ blocks, onClose }: { blocks: AnyBlock[]; onClose: () => void }) {
-  const { t } = useTranslation()
-  const [i, setI] = useState(0)
-  const [dir, setDir] = useState(1)
-  const total = blocks.length
-  const pageRef = useRef<HTMLDivElement>(null)
-  const go = (d: number) => setI(prev => {
-    const n = Math.min(total - 1, Math.max(0, prev + d))
-    if (n !== prev) setDir(d)
-    return n
-  })
-  // Bei Seitenwechsel nach oben scrollen (falls die Vorseite gescrollt war).
-  useEffect(() => { pageRef.current?.scrollTo({ top: 0 }) }, [i])
-  // Tastatur-Navigation.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); go(1) }
-      else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(-1) }
-      else if (e.key === 'Escape' && !document.fullscreenElement) onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [total])
-  // Swipe (Touch).
-  const touchX = useRef<number | null>(null)
-  const onTouchStart = (e: React.TouchEvent) => { touchX.current = e.touches[0].clientX }
-  const onTouchEnd = (e: React.TouchEvent) => {
-    if (touchX.current == null) return
-    const dx = e.changedTouches[0].clientX - touchX.current
-    if (Math.abs(dx) > 55) go(dx < 0 ? 1 : -1)
-    touchX.current = null
-  }
-  const toggleFs = () => {
-    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
-    else void document.documentElement.requestFullscreen?.().catch(() => {})
-  }
-  return (
-    <div className="fixed inset-0 z-[70] flex flex-col select-none" style={{ background: '#0c0c11' }}
-      onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-      <div className="flex items-center justify-between gap-3 px-4 py-2.5 text-white/90" style={{ background: '#15151c' }}>
-        <span className="text-sm font-medium tabular-nums text-white/70">{i + 1} / {total}</span>
-        <div className="flex items-center gap-2">
-          <button onClick={toggleFs} className="px-3 py-1.5 rounded-md bg-white/10 hover:bg-white/20 transition text-xs font-semibold">⛶ {t('deck.fullscreen', 'Vollbild')}</button>
-          <button onClick={onClose} className="px-3 py-1.5 rounded-md bg-white/10 hover:bg-white/20 transition text-xs font-semibold">✕ {t('deck.exitBook', 'Schließen')}</button>
-        </div>
-      </div>
-      <div className="relative flex-1 overflow-hidden flex items-stretch justify-center p-3 md:p-6" style={{ perspective: '2200px' }}>
-        <div ref={pageRef} key={i} className="w-full max-w-5xl h-full overflow-y-auto rounded-lg shadow-2xl relative"
-          style={{ background: CREAM, animation: `${dir >= 0 ? 'deckFlipNext' : 'deckFlipPrev'} .5s cubic-bezier(.2,.7,.2,1)`, transformOrigin: dir >= 0 ? 'left center' : 'right center' }}>
-          <Block block={blocks[i]} />
-          <img src={DECK_LOGO} alt="" aria-hidden="true"
-            className="absolute top-3 right-3 md:top-4 md:right-6 h-7 md:h-9 w-auto rounded-md opacity-80 pointer-events-none select-none ring-1 ring-white/10"
-            onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
-        </div>
-        {i > 0 && (
-          <button aria-label={t('deck.prev', 'Zurück')} onClick={() => go(-1)}
-            className="absolute left-0 top-0 h-full w-[12%] flex items-center justify-start pl-2 md:pl-5 text-white/40 hover:text-white hover:bg-white/5 transition text-5xl font-light">‹</button>
-        )}
-        {i < total - 1 && (
-          <button aria-label={t('deck.next', 'Weiter')} onClick={() => go(1)}
-            className="absolute right-0 top-0 h-full w-[12%] flex items-center justify-end pr-2 md:pr-5 text-white/40 hover:text-white hover:bg-white/5 transition text-5xl font-light">›</button>
-        )}
-      </div>
-      <div className="h-1.5 bg-white/10">
-        <div className="h-full transition-all duration-300" style={{ width: `${((i + 1) / total) * 100}%`, background: GOLD }} />
-      </div>
-      <style>{`@keyframes deckFlipNext{from{opacity:.25;transform:translateX(5%) rotateY(9deg)}to{opacity:1;transform:none}}@keyframes deckFlipPrev{from{opacity:.25;transform:translateX(-5%) rotateY(-9deg)}to{opacity:1;transform:none}}`}</style>
-    </div>
-  )
-}
-
 // ── Kontakt-Leiste + „Mehr Infos" (Sven 11.10.26) ──────────────────────────
 // Auswertung Newsletter 10.10.: drei Viertel der Besucher kamen nie bis zum
 // Abschluss-Block am Seitenende, einen Kontakt-Knopf gab es sonst nirgends.
-// Jetzt: feste Leiste unten (Blättern, WhatsApp, Termin, Mehr Infos) und ein
+// Jetzt: feste Leiste unten (WhatsApp, Termin, Mehr Infos) und ein
 // kurzer Zwischen-Aufruf nach dem Grundriss. „Mehr Infos" ist die kleinere Hürde
 // als ein Termin: Unterlagen anfordern, Sven bekommt eine Aufgabe und antwortet
 // persönlich. Automatisch geht an den Kunden nichts raus.
@@ -1230,14 +1155,12 @@ function readRef(): { ref: string | null; campaign: string | null } {
 
 interface DeckPerson { known: boolean; first_name: string | null; booking_url: string }
 
-function ActionBar({ onBook, onInfo, terminUrl, waUrl }: { onBook: () => void; onInfo: () => void; terminUrl: string; waUrl: string }) {
+function ActionBar({ onInfo, terminUrl, waUrl }: { onInfo: () => void; terminUrl: string; waUrl: string }) {
   const { t } = useTranslation()
   return (
-    <div className="fixed inset-x-0 bottom-0 z-40 sm:bottom-5 sm:flex sm:justify-center pointer-events-none print:hidden">
+    <div className="fixed inset-x-0 bottom-0 z-50 sm:bottom-5 sm:flex sm:justify-center pointer-events-none print:hidden">
       <div className="pointer-events-auto flex items-center gap-2 px-3 pt-2.5 sm:px-2.5 sm:rounded-full shadow-2xl"
         style={{ background: 'rgba(27,27,34,0.97)', paddingBottom: 'max(10px, env(safe-area-inset-bottom))' }}>
-        <button onClick={onBook} aria-label={t('deck.present', 'Blättern')} title={t('deck.present', 'Blättern')}
-          className="w-11 h-11 shrink-0 rounded-full flex items-center justify-center text-lg bg-white/10 hover:bg-white/20 transition">📖</button>
         <a href={waUrl} target="_blank" rel="noopener noreferrer" aria-label={t('deck.waLabel', 'WhatsApp an Sven')} title={t('deck.waLabel', 'WhatsApp an Sven')}
           className="w-11 h-11 shrink-0 rounded-full flex items-center justify-center text-lg bg-white/10 hover:bg-white/20 transition">💬</a>
         <a href={terminUrl}
@@ -1405,7 +1328,9 @@ function InfoModal({ token, refId, campaign, person, unitNr, internal, terminUrl
 export default function Deck() {
   const { t, i18n } = useTranslation()
   const { token } = useParams<{ token: string }>()
-  const [book, setBook] = useState(false)
+  // Buchmodus (deckBook.tsx), ?buch=1 öffnet das Deck direkt als Buch
+  const [book, setBook] = useState(() => typeof window !== 'undefined' && !window.location.pathname.endsWith('/print')
+    && new URLSearchParams(window.location.search).get('buch') === '1')
   const [content, setContent] = useState<DeckContent | null>(null)
   const [loading, setLoading] = useState(true)
   const [err,     setErr]     = useState(false)
@@ -1539,6 +1464,36 @@ export default function Deck() {
   const fpIdx = view.findIndex(b => b.type === 'floorplan')
   const ctaAfter = fpIdx >= 0 ? fpIdx : view.findIndex(b => b.type === 'unit')
   const showInline = ctaAfter >= 0 && view[ctaAfter + 1]?.type !== 'cta'
+  // Buchseiten: ein Abschnitt je Seite, das schmale Kennzahlen-Band steht mit auf der Titelseite.
+  const bookPages: number[][] = []
+  view.forEach((b, i) => { if (b.type === 'w_facts' && bookPages.length) bookPages[bookPages.length - 1].push(i); else bookPages.push([i]) })
+  const coverBlock = content.blocks.find(b => b.type === 'cover') as Extract<DeckBlock, { type: 'cover' }> | undefined
+  const bookCover = {
+    image: sizedImg(web && page ? page.hero.img : coverBlock?.image, 1200),
+    forLine: coverBlock?.forLine?.replace(/\s+[-–—]\s+|\s*[–—]\s*/g, ', '),
+    logo: DECK_LOGO,
+  }
+  const closeBook = (p: number) => {
+    setBook(false)
+    // Zurück auf der Scroll-Seite an der Stelle, die im Buch offen war
+    const at = p >= 0 ? bookPages[p]?.[0] ?? 0 : 0
+    requestAnimationFrame(() => {
+      const el = document.querySelectorAll('[data-deck-block]')[at]
+      if (at > 0 && el) el.scrollIntoView({ block: 'start' }); else window.scrollTo({ top: 0 })
+    })
+  }
+  const renderBookPage = (p: number) => (
+    <div className={web ? 'hpweb-deck' : undefined}>
+      {(bookPages[p] ?? []).map(i => (
+        <div key={i} className="relative">
+          <Block block={view[i]} />
+          {view[i].type !== 'w_facts' && <img src={DECK_LOGO} alt="" aria-hidden="true"
+            className="absolute top-3 right-3 md:top-4 md:right-6 h-7 md:h-9 w-auto rounded-md opacity-80 pointer-events-none select-none ring-1 ring-white/10"
+            onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />}
+        </div>
+      ))}
+    </div>
+  )
 
   return (
     <VatRefundCtx.Provider value={{ byUnit: vatRefund, units: deckUnits }}>
@@ -1551,9 +1506,11 @@ export default function Deck() {
         </div>
       )}
       {web && <WebStyle />}
+      {/* Oben umschalten: Seite (scrollen) oder Buch */}
+      {!isPrint && !book && <TopViewToggle onBook={() => setBook(true)} />}
       <VideoAutoCtx.Provider value={!book && !isPrint}>
       {view.map((b, i) => (
-        <div key={i} className="relative">
+        <div key={i} className="relative" data-deck-block>
           <Block block={b} />
           {/* Logo-Wasserzeichen auf jeder Seite — Diebstahlschutz (nicht auf dem schmalen Kennzahlen-Band) */}
           {b.type !== 'w_facts' && <img src={DECK_LOGO} alt="" aria-hidden="true"
@@ -1567,13 +1524,13 @@ export default function Deck() {
         © Happy Property · {t('deck.footerNote', 'Persönlich erstellt · Preise vorbehaltlich Final-Plans · Bilder zu Marketingzwecken')}
       </div>
 
-      {/* Feste Leiste unten: Blättern, WhatsApp, Termin, Mehr Infos */}
-      {!isPrint && <ActionBar onBook={() => setBook(true)} onInfo={() => setInfo(true)} terminUrl={terminUrl} waUrl={waUrl} />}
+      {/* Feste Leiste unten: WhatsApp, Termin, Mehr Infos (auch über dem Buch) */}
+      {!isPrint && <ActionBar onInfo={() => setInfo(true)} terminUrl={terminUrl} waUrl={waUrl} />}
       {info && token && (
         <InfoModal token={token} refId={ref} campaign={campaign} person={person} unitNr={unitNr}
           internal={internal} terminUrl={terminUrl} onClose={() => setInfo(false)} />
       )}
-      {book && <BookMode blocks={view} onClose={() => setBook(false)} />}
+      {book && !isPrint && <DeckBook count={bookPages.length} renderPage={renderBookPage} cover={bookCover} onClose={closeBook} />}
     </div>
     </VatRefundCtx.Provider>
   )

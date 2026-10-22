@@ -60,7 +60,7 @@ export type AnyBlock = DeckBlock | WebBlock
 export const isWebBlock = (b: AnyBlock): b is WebBlock => b.type.startsWith('w_')
 
 // false = Videos dieser Ansicht nicht von selbst starten (Scroll-Seite hinter dem
-// Blättern-Modus, Druckansicht). Gilt für Deck-Videos und die Clips der Projektseite.
+// Buchmodus, nicht aufgeschlagene Buchseiten, Druckansicht). Gilt für Deck-Videos und die Clips der Projektseite.
 export const VideoAutoCtx = createContext(true)
 
 /** Seitenstruktur des Decks im Website-Stil. Reihenfolge wie besprochen: erst das
@@ -220,7 +220,7 @@ function useLightbox(items: Photo[]): [(i: number) => void, ReactNode] {
   }, [i])
   const sx = useRef(0)
   const box = i == null ? null : (
-    <div onClick={e => { if (e.target === e.currentTarget) setI(null) }}
+    <div role="dialog" aria-modal="true" onClick={e => { if (e.target === e.currentTarget) setI(null) }}
       onTouchStart={e => { sx.current = e.touches[0].clientX }}
       onTouchEnd={e => { const d = e.changedTouches[0].clientX - sx.current; if (Math.abs(d) > 40) go(d < 0 ? 1 : -1) }}
       style={{ position: 'fixed', inset: 0, background: 'rgba(10,14,22,.95)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999 }}>
