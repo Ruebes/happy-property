@@ -27,7 +27,9 @@ export type DeckBlock =
   // Bewegtbild-Sektion (z.B. Drohnen-/Meerblick-Video). embedUrl = YouTube/Vimeo/Drive
   // (iframe), videoUrl = direktes MP4 (nativer Player). poster = Standbild fürs MP4.
   // aspect = Seitenverhaeltnis der Quelle ('16/9' quer, '9/16' hoch, '1/1' quadratisch).
-  | { type: 'video';   kicker?: string; headline?: string; text?: string; embedUrl?: string; videoUrl?: string; poster?: string; caption?: string; aspect?: '16/9' | '9/16' | '4/5' | '1/1' | '4/3' }
+  // web = auch in der Website-Ansicht zeigen (dort entfallen Deck-Videos sonst,
+  // z. B. ein Baustellen-Video nur fuer dieses eine Deck).
+  | { type: 'video';   kicker?: string; headline?: string; text?: string; embedUrl?: string; videoUrl?: string; poster?: string; caption?: string; aspect?: '16/9' | '9/16' | '4/5' | '1/1' | '4/3'; web?: boolean }
   // Lageplan der Gesamtanlage (Bautraeger-Masterplan) mit Legende und Ausstattungs-
   // merkmalen. Deterministisch aus deck_assets.masterplan.
   | { type: 'masterplan'; kicker?: string; headline?: string; intro?: string; image?: string; caption?: string; legend?: { n?: string; title: string; items?: string[] }[]; features?: string[]; note?: string }

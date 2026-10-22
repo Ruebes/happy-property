@@ -13,6 +13,9 @@ export interface CalcItem {
   bedrooms?: number | null; size_sqm?: number | null; terrace_sqm?: number | null; floor?: number | null
   price_net?: number | null; price_gross?: number | null
   location?: string; developer?: string; handover?: string
+  // Echte Schluesseluebergabe, wenn die Rechnung erst spaeter (Mietbeginn) startet,
+  // z. B. Uebergabe 12/2026, Kurzzeitvermietung ab 04/2027. Nur Anzeige.
+  handover_label?: string
   tagline?: string; strategy_title?: string; strategy_text?: string
   params?: CalcParams      // nur wenn with_calc
 }

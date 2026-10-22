@@ -302,7 +302,11 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
           </div>
           <div>
             <KV k={t('rechnung.letType', 'Vermietungsart')} v={r.letT === 'short' ? t('rechnung.shortTermVatRefund', 'Kurzzeit (USt.-Erstattung ~24 Mon.)') : t('rechnung.longTerm', 'Langzeit')} />
-            <KV k={t('rechnung.handover', 'Schlüsselübergabe')} v={`${String(r.km).padStart(2, '0')}/${r.ky} – ${t('rechnung.y1MonthsShort', 'J1: {{n}} Mon.', { n: r.mF })}`} />
+            {/* handover_label gesetzt: Übergabe und Mietbeginn fallen auseinander (z. B. Übergabe 12/2026,
+                Kurzzeitvermietung erst ab April). Die Rechnung startet dann mit dem Mietbeginn. */}
+            {row.item.handover_label
+              ? <KV k={t('rechnung.handoverRentStart', 'Übergabe / Mietbeginn')} v={`${row.item.handover_label} · ${t('rechnung.rentFrom', 'Miete ab {{d}}', { d: `${String(r.km).padStart(2, '0')}/${r.ky}` })} – ${t('rechnung.y1MonthsShort', 'J1: {{n}} Mon.', { n: r.mF })}`} />
+              : <KV k={t('rechnung.handover', 'Schlüsselübergabe')} v={`${String(r.km).padStart(2, '0')}/${r.ky} – ${t('rechnung.y1MonthsShort', 'J1: {{n}} Mon.', { n: r.mF })}`} />}
             {r.vatMode !== 'standard19' && <KV k={t('rechnung.vatModeLabel', 'MwSt-Regelung')} v={(r.vatMode === 'reduced130'
               ? t('rechnung.vatMode130', 'Reduziert – 5% bis 130 m²')
               : t('rechnung.vatMode200', 'Reduziert – 5% bis 200 m²')) + (r.livingSqm > 0 ? ` (${r.livingSqm} m²)` : '')} />}

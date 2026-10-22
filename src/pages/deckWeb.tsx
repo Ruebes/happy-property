@@ -82,6 +82,9 @@ export function webBlocks(blocks: DeckBlock[], page: ProjectPage): AnyBlock[] {
   // Ältere Decks nennen in den Wohnungsdaten den Bauträger, im Kundenmaterial verboten.
   const units = of('unit').map(u => ({ ...u, specs: u.specs?.filter(x => !/^\s*Bauträger\b/i.test(x)) }))
   out.push(...of('letter'), ...units, ...of('floorplan'), ...of('masterplan'))
+  // Deck-eigene Videos (Baustelle heute) direkt nach dem Grundriss, Projektvideos
+  // und Lebensfilm zeigt die Seite selbst.
+  out.push(...of('video').filter(v => v.web))
   if (page.day?.cards?.length) out.push({ type: 'w_day', page })
   if (page.home) out.push({ type: 'w_home', page })
   if (page.amen) out.push({ type: 'w_amen', page })
