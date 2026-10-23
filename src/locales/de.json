@@ -213,6 +213,10 @@
     "download_ics": "📥 Kalender-Datei (Apple/Outlook)",
     "footer": "© Happy Property · Paphos, Zypern"
   },
+  "update": {
+    "title": "Neue Version verfügbar",
+    "reload": "Jetzt laden"
+  },
   "common": {
     "loading": "Wird geladen …",
     "saving": "Speichert …",

@@ -18,7 +18,7 @@ const RELOAD_FLAG = 'hp_chunk_reloaded'
 // samt toter Chunks bekommt → Endlos-Hänger, den selbst „harter Reload" (v.a. in
 // Safari) nicht bricht. Session (localStorage) bleibt bewusst erhalten — nur der
 // Code-Cache wird geleert, der Nutzer bleibt eingeloggt.
-async function purgeAndReload(): Promise<void> {
+export async function purgeAndReload(): Promise<void> {
   try {
     if ('serviceWorker' in navigator) {
       const regs = await navigator.serviceWorker.getRegistrations()

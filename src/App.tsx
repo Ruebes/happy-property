@@ -18,6 +18,7 @@ function UnknownRoute() {
 }
 import { AuthProvider } from './lib/auth'
 import PreviewBanner from './components/PreviewBanner'
+import UpdateBanner from './components/UpdateBanner'
 import ProtectedRoute from './components/ProtectedRoute'
 import ShellGate from './components/ShellGate'
 
@@ -180,12 +181,17 @@ export default function App() {
     <BrowserRouter>
       <AuthRoot>
         <PreviewBanner />
+        <UpdateBanner />
         <Suspense fallback={<PageLoader />}>
           <Routes>
 
             {/* ── Öffentlich ── */}
             <Route path="/"            element={<Navigate to="/login" replace />} />
             <Route path="/login"       element={<Login />} />
+            {/* Notfall-Link gegen veraltete App im Browser (Safari-Service-Worker):
+                Eine alte Version kennt die Route nicht, der Catch-all leert dann den
+                Cache und lädt neu; die neue Version leitet einfach ins CRM. */}
+            <Route path="/neu-laden"   element={<Navigate to="/admin/crm" replace />} />
             <Route path="/sign/:token" element={<Sign />} />
             {/* Reservierungsvertrag digital unterschreiben (Bauträger, per Token, kein Login) */}
             <Route path="/sign/r/:token" element={<ReservationSign />} />
