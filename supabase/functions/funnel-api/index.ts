@@ -537,12 +537,13 @@ Deno.serve(async (req) => {
       // Fallback-Automation: greift nur, wenn KEIN Termin gebucht wird (book storniert)
       try { await admin.functions.invoke('schedule-message', { body: { lead_id: leadId, deal_id: dealId, event_type: 'erstkontakt' } }) }
       catch (e) { console.warn('[funnel-api] erstkontakt-Trigger fehlgeschlagen:', e) }
-      // Weg B: die +20-Min-Mail („keine Terminbuchung angekommen“) passt nicht zu einer
-      // Unterlagen-Anfrage. Alles, was in der nächsten Stunde fällig wäre, entfällt;
+      // Weg B: die +20-Min-Mail („keine Terminbuchung angekommen“) und die +20-Min-Frage
+      // des Termin-Bots passen nicht zu einer Unterlagen-Anfrage. Alles, was in der
+      // nächsten Stunde fällig wäre, entfällt;
       // die späteren Nachfass-Nachrichten (+1/+3/+5/+14 Tage) bleiben.
       if (unterlagen) {
         const { error: ske } = await admin.from('scheduled_messages').update({ status: 'skipped' })
-          .eq('lead_id', leadId).eq('event_type', 'erstkontakt').eq('status', 'pending')
+          .eq('lead_id', leadId).in('event_type', ['erstkontakt', 'bot_nudge']).eq('status', 'pending')
           .lt('scheduled_at', new Date(Date.now() + 60 * 60 * 1000).toISOString())
         if (ske) console.warn('[funnel-api] Erstkontakt +20 Min nicht übersprungen:', ske.message)
       }
