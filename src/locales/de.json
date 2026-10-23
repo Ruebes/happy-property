@@ -10742,7 +10742,7 @@
     "selfUseHint": "Monate anklicken, in denen der Käufer selbst dort wohnt - gilt für jede Wohnung im Korb. MwSt-Erstattung und Miete anteilig, Auslastung nur auf die vermieteten Monate."
   },
   "depositInvoiceModal": {
-    "leadGenDescription": "Leadgenerierung {{details}}",
+    "leadGenDescription": "Lead-Generierung und Marketing",
     "errNetAmountRequired": "Bitte einen Netto-Betrag größer 0 eingeben.",
     "errInvoiceCreationFailed": "Rechnung konnte nicht erstellt werden.",
     "activitySubjectCreated": "Rechnung {{number}} erstellt",

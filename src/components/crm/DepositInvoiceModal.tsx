@@ -2,8 +2,8 @@
  * DepositInvoiceModal — öffnet sich, wenn ein Deal auf „Provisionsrechnung" geschoben wird.
  * Sven gibt nur den Netto-Betrag ein, sieht direkt die fertige Rechnung als Vorschau
  * (Posten, MwSt, Brutto) und erstellt sie mit einem Klick — optional sofort an den
- * Kunden (Burkhard / Reeaals) versendet. Posten = „Leadgenerierung Vorname Name,
- * Developer, Objekt, Wohnungsnummer".
+ * Kunden (Burkhard / Reeaals) versendet. Posten = „Lead-Generierung und Marketing"
+ * (seit 23.10.2026 bewusst ohne Name, Bauträger, Projekt und Wohnung).
  */
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -27,9 +27,8 @@ export default function DepositInvoiceModal({ deal, onClose, onDone }: Props) {
   const fullName = [lead?.first_name, lead?.last_name].filter(Boolean).join(' ').trim()
   const project = deal.property?.project_name ?? ''
   const unit = deal.property?.unit_number ?? ''
-  const developer = deal.developer ?? ''
 
-  const defaultDesc = t('depositInvoiceModal.leadGenDescription', 'Leadgenerierung {{details}}', { details: [fullName, developer, project, unit].filter(Boolean).join(', ') }).trim()
+  const defaultDesc = t('depositInvoiceModal.leadGenDescription', 'Lead-Generierung und Marketing')
 
   const [customer, setCustomer] = useState<InvoiceCustomer | null>(null)
   const [settings, setSettings] = useState<InvoiceSettings | null>(null)

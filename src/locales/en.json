@@ -10929,7 +10929,7 @@
     "selfUseHint": "Click the months in which the buyer lives there - applies to every unit in the basket. VAT refund and rent pro rata, occupancy only on the rented months."
   },
   "depositInvoiceModal": {
-    "leadGenDescription": "Lead generation {{details}}",
+    "leadGenDescription": "Lead generation and marketing",
     "errNetAmountRequired": "Please enter a net amount greater than 0.",
     "errInvoiceCreationFailed": "The invoice could not be created.",
     "activitySubjectCreated": "Invoice {{number}} created",
