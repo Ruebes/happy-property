@@ -3,17 +3,13 @@ import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { DECK_LOGO } from '../lib/deckTypes'
 
-// Erlaubte Ziele: Zusage-Seite (AppointmentModal rsvpHref), Google-Kalender (buildGcalHref)
-// und die Kurzlinks aus send-whatsapp (shortenable: Maps, eigene Seiten, Storage-Dateien).
-// Beide Listen gleich halten, sonst zeigt /s/<code> „ungültig“.
-const SHORT_LINK_HOSTS = new Set(['portal.happy-property.com', 'calendar.google.com', 'steuervorteil-zypern-immobilien.com'])
-const SUPABASE_HOST = (() => { try { return new URL(import.meta.env.VITE_SUPABASE_URL as string).host } catch { return '' } })()
-
+// Seit 23.10.26 kürzt send-whatsapp JEDEN langen Link (feste Regel, Sven:
+// „Alle Links im WhatsApp sollen kurz sein"), also auch Zoom, Drive oder fremde
+// Seiten. Deshalb ist jedes https-Ziel erlaubt. Schutz gegen eine offene
+// Weiterleitung ist die Tabelle selbst: Codes anlegen dürfen nur das Team
+// (RLS short_links_insert: admin, verwalter, mitarbeiter) und die Edge Functions.
 function allowedTarget(url: URL): boolean {
-  if (url.protocol !== 'https:') return false
-  if (SHORT_LINK_HOSTS.has(url.hostname)) return true
-  if ((url.hostname === 'www.google.com' || url.hostname === 'maps.google.com') && url.pathname.startsWith('/maps')) return true
-  return !!SUPABASE_HOST && url.host === SUPABASE_HOST && url.pathname.startsWith('/storage/v1/object/')
+  return url.protocol === 'https:'
 }
 
 // ── Kurzlink-Weiterleitung (/s/:code) — für lange Kalender-/Zusage-URLs ──────

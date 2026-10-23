@@ -122,41 +122,49 @@ function docName(u: string, label: string): string {
   return base
 }
 
-// ── Lange Links kürzen ────────────────────────────────────────────────────────
-// WhatsApp zeigt Links ungekürzt: ein Google-Kalender-, Maps- oder Signed-Storage-
-// Link füllt zehn Zeilen (Sven 15.10.26: „sieht nicht schön aus“). Links ab 90
-// Zeichen auf bekannten Zielen laufen deshalb über portal.happy-property.com/s/<code>
-// (Tabelle short_links, Weiterleitung in src/pages/ShortLink.tsx mit derselben
-// Ziel-Liste). Gleiches Ziel = gleicher Code, damit der Doppel-Schutz (Text-Hash)
-// bei einem zweiten Versand derselben Nachricht weiter greift.
-const SHORTEN_MIN = 90
+// ── Links in WhatsApp sind immer kurz (feste Regel, Sven 23.10.26) ─────────
+// „Alle Links im WhatsApp sollen kurz sein und sich nicht über mehrere Zeilen
+// erstrecken." Vorher nur Links ab 90 Zeichen auf bekannten Zielen (15.10.26),
+// ein Zoom- oder Drive-Link lief damit weiter über zwei, drei Zeilen.
+// Jetzt: jeder Link, der länger ist als ein Kurzlink, läuft über
+// portal.happy-property.com/s/<code> (Tabelle short_links, Weiterleitung in
+// src/pages/ShortLink.tsx). Der Kurzlink steht OHNE https:// in der Nachricht,
+// damit er auch auf schmalen Handys in eine Zeile passt (34 Zeichen); WhatsApp
+// macht ihn trotzdem klickbar. YouTube wird zu https://youtu.be/<id> (kurz, und
+// Vorschaubild und Vorschau bleiben erhalten).
+// Gleiches Ziel = gleicher Code, damit der Doppel-Schutz (Text-Hash) bei einem
+// zweiten Versand derselben Nachricht weiter greift.
+const SHORT_HOST = 'portal.happy-property.com/s/'
+const SHORT_LEN = SHORT_HOST.length + 6
 const SHORT_CHARS = 'abcdefghijkmnpqrstuvwxyz23456789'
 
-function shortenable(u: string): boolean {
-  try {
-    const x = new URL(u)
-    if (x.protocol !== 'https:') return false
-    const supa = new URL(Deno.env.get('SUPABASE_URL') ?? 'https://invalid').host
-    if (['portal.happy-property.com', 'calendar.google.com', 'steuervorteil-zypern-immobilien.com'].includes(x.host)) return true
-    if (['www.google.com', 'maps.google.com'].includes(x.host) && x.pathname.startsWith('/maps')) return true
-    return x.host === supa && x.pathname.startsWith('/storage/v1/object/')
-  } catch { return false }
+function youtubeShort(u: string): string | null {
+  const m = u.match(/^https?:\/\/(?:www\.|m\.)?youtube\.com\/(?:watch\?(?:[^#\s]*&)?v=|shorts\/|embed\/)([\w-]{6,})/)
+  return m ? `https://youtu.be/${m[1]}` : null
 }
 
 // deno-lint-ignore no-explicit-any
 async function shortenLongLinks(sb: any, text: string): Promise<string> {
   const urls = [...new Set((text.match(/https?:\/\/[^\s<>"]+/g) ?? []).map(u => u.replace(/[).,;:!?]+$/, '')))]
-    .filter(u => u.length >= SHORTEN_MIN && shortenable(u))
+    .filter(u => u.length > SHORT_LEN)
+    .sort((a, b) => b.length - a.length)   // längere zuerst, falls einer im anderen steckt
   for (const u of urls) {
+    const yt = youtubeShort(u)
+    if (yt && yt.length < u.length) { text = text.split(u).join(yt); continue }
+    if (/^https?:\/\/youtu\.be\//.test(u)) continue
+    // Schon ein Kurzlink von uns: nur das https:// weglassen
+    if (/^https?:\/\/portal\.happy-property\.com\/s\/[a-z0-9]+$/.test(u)) { text = text.split(u).join(u.replace(/^https?:\/\//, '')); continue }
+    // Die Weiterleitung (ShortLink.tsx) nimmt nur https-Ziele
+    if (!u.startsWith('https://')) continue
     try {
       const { data: found } = await sb.from('short_links').select('code').eq('target', u).limit(1)
       let code: string | null = (found as { code: string }[] | null)?.[0]?.code ?? null
-      for (let i = 0; !code && i < 3; i++) {
-        const c = Array.from(crypto.getRandomValues(new Uint8Array(7)), b => SHORT_CHARS[b % SHORT_CHARS.length]).join('')
+      for (let i = 0; !code && i < 4; i++) {
+        const c = Array.from(crypto.getRandomValues(new Uint8Array(6)), b => SHORT_CHARS[b % SHORT_CHARS.length]).join('')
         const { error } = await sb.from('short_links').insert({ code: c, target: u })
         if (!error) code = c
       }
-      if (code) text = text.split(u).join(`https://portal.happy-property.com/s/${code}`)
+      if (code) text = text.split(u).join(`${SHORT_HOST}${code}`)
     } catch (e) {
       console.warn('[send-whatsapp] Kurzlink fehlgeschlagen, Link bleibt lang:', e instanceof Error ? e.message : e)
     }
@@ -356,7 +364,7 @@ Deno.serve(async (req) => {
       const ex = extractDocs(message)
       if (ex.docs.length) { docs = ex.docs; message = ex.text; console.log(`[send-whatsapp] ${docs.length} PDF(s) als Datei: ${docs.map(d => d.name).join(', ')}`) }
     }
-    // Übrige lange Links (Kalender, Maps, Storage) auf Kurzlinks umstellen.
+    // Alle übrigen Links auf Kurzlinks umstellen (feste Regel, siehe shortenLongLinks).
     if (typeof message === 'string' && message.includes('http')) message = await shortenLongLinks(supabase, message)
     // Bestand der Text nur aus dem Link, wird das erste PDF selbst zur Nachricht.
     if ((typeof message !== 'string' || !message.trim()) && !attachUrl && docs.length) {

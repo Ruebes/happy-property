@@ -35,6 +35,7 @@ const Profile = lazy(() => import('./pages/Profile'))
 const Deck    = lazy(() => import('./pages/Deck'))
 const Rechnung = lazy(() => import('./pages/Rechnung'))
 const Strategie = lazy(() => import('./pages/Strategie'))
+const KundenSimulator = lazy(() => import('./pages/KundenSimulator'))
 const AnalyticsReport = lazy(() => import('./pages/Report'))
 const SharedPage = lazy(() => import('./pages/SharedPage'))
 const SeoReportPage   = lazy(() => import('./pages/SeoReport'))
@@ -220,6 +221,8 @@ export default function App() {
             {/* Öffentliche Rendite-Rechnung / Immobilienvergleich (per Token, kein Login) */}
             <Route path="/rechnung/:token" element={<Rechnung />} />
             <Route path="/strategie/:token" element={<Strategie />} />
+            {/* Strategie-Simulator für den Kunden (per Token, im CRM freigeschaltet) */}
+            <Route path="/simulator/:token" element={<KundenSimulator />} />
             {/* Öffentliche Rechnung (per Token, kein Login) */}
             <Route path="/re/:token" element={<Invoice />} />
             {/* Öffentliche Aufgaben-Aktion (per Token, kein Login) */}

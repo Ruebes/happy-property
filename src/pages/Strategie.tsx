@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase'
 import { DECK_LOGO } from '../lib/deckTypes'
 import { migrateConfig, DEFAULT_SIM_PARAMS, type SimUnit, type SimParams, type StrategyConfig, purchaseGrowthOf } from '../lib/strategy'
 import { buildCustomerAnalytics, type CustomerAnalytics, type ScenarioSummary } from '../lib/analytics'
+import { readCustomerSim, activeUnits } from '../lib/customerSim'
 import {
   ChartCard, Legend, LineChart, BarChart, StepChart,
   C_VALUE, C_DEBT, C_EQUITY,
@@ -96,9 +97,27 @@ export default function Strategie() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [draft, setDraft] = useState(false)
+  // ?kunde=1 (nur Team): die Variante, die sich der Kunde im eigenen Simulator
+  // gebaut hat (Sven 23.10.26), mit Druckknopf für ein PDF
+  const kunde = new URLSearchParams(window.location.search).get('kunde') === '1'
+  const [kundeStand, setKundeStand] = useState<string | null>(null)
 
   useEffect(() => { void (async () => {
     if (!token) return
+    if (kunde) {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) { setErr(t('strategie.kundeLogin', 'Bitte zuerst im CRM anmelden.')); setLoading(false); return }
+      const { data } = await supabase.rpc('get_strategy_customer_version', { p_token: token })
+      const row = (Array.isArray(data) ? data[0] : data) as { customer_config?: unknown; customer_updated_at?: string | null; recipient_name?: string | null } | null
+      if (!row?.customer_config) { setErr(t('strategie.kundeNone', 'Der Kunde hat im Simulator noch nichts verändert.')); setLoading(false); return }
+      const c = readCustomerSim(row.customer_config)
+      setUnits(activeUnits(c.units, c.off))
+      setParams(c.params)
+      setMeta({ recipient_name: row.recipient_name ?? undefined })
+      setKundeStand(row.customer_updated_at ?? null)
+      setLoading(false)
+      return
+    }
     // Zwei Wege auf dieselbe Seite:
     //   Kunde  -> get_strategy_by_token, liefert nur freigegebene Plaene
     //   Team   -> get_strategy_preview mit ?preview=1, liefert auch den Entwurf
@@ -149,6 +168,7 @@ export default function Strategie() {
   useEffect(() => {
     if (!token) return
     if (new URLSearchParams(window.location.search).get('preview') === '1') return
+    if (new URLSearchParams(window.location.search).get('kunde') === '1') return
     void (async () => {
       const { data: { session } } = await supabase.auth.getSession()
       if (session) return
@@ -158,6 +178,23 @@ export default function Strategie() {
 
   if (loading) return <Centered>{t('strategie.loading', 'Lädt…')}</Centered>
   if (err || !units.length) return <Centered>{err || t('strategie.empty', 'Dieser Fahrplan enthält noch keine Wohnungen.')}</Centered>
+  if (kunde) return (
+    <StrategieView units={units} params={params} recipientName={meta?.recipient_name}
+      banner={{
+        title: t('strategie.kundeTag', 'Variante des Kunden.'),
+        text: t('strategie.kundeNote', 'So hat sich {{name}} die Strategie im eigenen Simulator gebaut. Stand {{d}}. Interne Ansicht.', {
+          name: meta?.recipient_name ?? '', d: kundeStand ? new Date(kundeStand).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '–',
+        }),
+      }}
+      top={
+        <div className="print:hidden" style={{ marginBottom: 18 }}>
+          <button onClick={() => window.print()}
+            style={{ background: CORAL, color: '#fff', border: 0, borderRadius: 10, padding: '9px 18px', fontSize: 13.5, fontWeight: 600, cursor: 'pointer', fontFamily: SANS }}>
+            {t('strategie.kundePrint', 'Drucken oder als PDF speichern')}
+          </button>
+        </div>
+      } />
+  )
   return (
     <StrategieView units={units} params={params} recipientName={meta?.recipient_name}
       banner={draft ? {
@@ -171,9 +208,11 @@ export default function Strategie() {
 // Getrennt vom Laden, damit der Simulator dieselbe Seite live als Vorschau aus
 // Kundensicht zeigen kann (Sven 7.10.26) - ohne Speichern, ohne Versand, und
 // garantiert identisch mit dem, was der Kunde später sieht.
-export function StrategieView({ units, params, recipientName, banner, forceMobile }: {
+export function StrategieView({ units, params, recipientName, banner, forceMobile, top }: {
   units: SimUnit[]; params: SimParams; recipientName?: string | null
   banner?: { title: string; text: string } | null
+  // Zusätzlicher Block unter dem Kopf (Kunden-Simulator: die Regler; Team: Druckknopf)
+  top?: React.ReactNode
   // Vorschau im Simulator: Handy-Ansicht unabhängig von der Fensterbreite
   forceMobile?: boolean
 }) {
@@ -227,6 +266,7 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
           </div>
         </div>
         <div style={{ height: 3, background: `linear-gradient(90deg,${CORAL},#ffb89d)`, borderRadius: 2, marginBottom: 26 }} />
+        {top}
 
         {/* 1 — Ergebnis */}
         <Section title={t('strategie.s1', 'Dein Ergebnis auf einen Blick')}>
@@ -236,7 +276,8 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
               { l: t('strategie.kValue', 'Wert der Immobilien'), v: eur(a.summary.portfolioValue) },
               { l: t('strategie.kUnits', 'Wohnungen'), v: String(a.summary.unitsEnd) },
               { l: t('strategie.kIrr', 'Rendite pro Jahr'), v: isFinite(a.summary.irr) ? pct(a.summary.irr * 100) : '–' },
-              { l: t('strategie.kEquity', 'Eingesetztes Kapital'), v: eur(a.summary.originalEquity) },
+              // Startkapital plus weitere Einlagen im Zeitraum (Sven 23.10.26)
+              { l: t('strategie.kEquity', 'Eingesetztes Kapital'), v: eur(a.summary.originalEquity + a.summary.einlagen.total) },
               { l: t('strategie.kDebt', 'Kredit am Ende'), v: eur(a.summary.debt) },
               ...(a.summary.recyclingMultiple != null
                 ? [{ l: t('strategie.kRecycle', 'Kapital-Recycling'), v: `${a.summary.recyclingMultiple.toFixed(1).replace('.', ',')}×` }]
@@ -783,7 +824,21 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                     {withInterest && <th style={th}>{t('strategie.credInterest', 'zzgl. Zinsen')}</th>}
                   </tr></thead>
                   <tbody>
-                    {cp.steps.map((r, i) => (
+                    {cp.steps.map((r, i) => r.einlage ? (
+                      // Weitere Einlage (Sven 23.10.26): löst überbrückten Kredit ab
+                      <tr key={`${r.ym}-ein-${i}`} style={{ borderBottom: '1px solid #f5f3f0', background: '#f1f8f3' }}>
+                        <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{mm(r.ym)}</td>
+                        <td style={{ ...td, textAlign: 'left', whiteSpace: 'normal', color: '#1d7a4f', fontWeight: 600 }}>
+                          {t('strategie.credEin', 'Weitere Einlage {{v}}', { v: eur(r.einlage) })}
+                        </td>
+                        <td style={td} />
+                        <td style={td}>{r.fromEquity > 0.5 ? eur(r.fromEquity) : ''}</td>
+                        {withSurplus && <td style={td} />}
+                        <td style={{ ...td, color: '#1d7a4f', fontWeight: 700 }}>{r.credit < -0.5 ? `−${eur(-r.credit)}` : ''}</td>
+                        <td style={td}>{r.creditTotal > 0.5 ? eur(r.creditTotal) : ''}</td>
+                        {withInterest && <td style={td} />}
+                      </tr>
+                    ) : (
                       <tr key={`${r.ym}-${r.unit}-${i}`} style={{ borderBottom: '1px solid #f5f3f0', background: r.ym === cp.firstCreditYm && r.credit > 0.5 ? '#fff4ec' : undefined }}>
                         <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{mm(r.ym)}</td>
                         <td style={{ ...td, textAlign: 'left', whiteSpace: 'normal' }}>
@@ -1037,6 +1092,10 @@ export function StrategieView({ units, params, recipientName, banner, forceMobil
                 r: String(params.rentGrowth).replace('.', ','),
                 i: String(params.interest).replace('.', ','), y: params.termYears,
               })}{' '}
+              {/* Weitere Einlagen (Sven 23.10.26) */}
+              {a.summary.einlagen.total > 0 && (a.reinvest
+                ? t('strategie.assumptionsEinRe', 'Weitere Einlagen von zusammen {{v}} fließen im Jahr ihres Eingangs in die Kasse.', { v: eur(a.summary.einlagen.total) })
+                : t('strategie.assumptionsEin', 'Weitere Einlagen von zusammen {{v}} zahlen ab ihrem Eingang zuerst offene Kaufraten, danach tilgen sie Darlehen vorzeitig (zum Jahresende, die Monatsrate bleibt gleich).', { v: eur(a.summary.einlagen.total) }))}{' '}
               {a.reinvest && t('strategie.assumptionsRe', 'Für Refinanzierungen ist eine maximale Beleihung von {{l}} % des Immobilienwertes angenommen, mit einer Mindestliquidität von {{c}}.', {
                 l: String(params.refinanceLtv).replace('.', ','), c: eur(params.minimumCashReserve),
               })}{' '}

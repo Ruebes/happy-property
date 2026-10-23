@@ -6,7 +6,7 @@
 import {
   allocate, aggregate, totalsOf, computeExit, runScenarios, roeMeaningful, assessRisk,
   breakEvenGrowth, SCENARIO_KEYS, describeSchedule, devAfterMonths, loanReadyYm, ymOf, devBalanceAt, bridgeShareOf,
-  financingPath, type FinancingPath,
+  financingPath, einlagenOf, einlagenUse, type FinancingPath, type EinlagenUse,
   type SimUnit, type SimParams, type ScenarioKey, type RiskItem, type ExitResult,
   type ScenarioResult,
 } from './strategy'
@@ -138,6 +138,8 @@ export interface TimelineEntry { year: number; kind: 'buy' | 'handover' | 'refin
 export interface CustomerSummary {
   firstYear: number; lastYear: number
   originalEquity: number
+  // Weitere Einlagen im Zeitraum (Sven 23.10.26): Summe und wohin sie geflossen sind
+  einlagen: EinlagenUse
   unitsEnd: number
   portfolioValue: number
   debt: number
@@ -243,6 +245,9 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
   // sonst stuenden in Kennzahl und Szenariovergleich zwei verschiedene Renditen.
   const totals = ri ? ri.totals : totalsOf(outcomes, agg.rows, params, exit, 'liquidity' in agg ? agg.liquidity : undefined)
   const liqRes = 'liquidity' in agg ? agg.liquidity : undefined
+  // Weitere Einlagen im Zeitraum: zaehlen wie das Startkapital als eingesetztes Geld
+  const einl = einlagenUse(outcomes, params, agg.lastYear)
+  const budget = params.ek + einl.total
   // Letzter Monat einer Wohnung im Plan: Ende des Zeitraums oder Verkauf
   const unitEndYm = (o: (typeof outcomes)[number]) =>
     ymOf(Math.min(agg.lastYear, ri?.saleYears.get(o.unit.key) ?? o.unit.saleYear ?? (exit ? exit.year : agg.lastYear)), 12)
@@ -348,6 +353,9 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
   const recyclingRows: RecyclingRow[] = []
   if (ri) {
     capitalSteps.push({ label: 'Startkapital', amount: params.ek, kind: 'start' })
+    for (const e of einlagenOf(params, ymOf(agg.lastYear, 12))) {
+      capitalSteps.push({ label: `Weitere Einlage ${String(e.ym % 12 + 1).padStart(2, '0')}/${Math.floor(e.ym / 12)}`, amount: e.amount, kind: 'in', year: Math.max(agg.firstYear, Math.floor(e.ym / 12)) })
+    }
     const firstEquity = outcomes.filter(o => !o.unit.model).reduce((a, o) => a + o.ekUsed, 0)
     capitalSteps.push({ label: 'Erste Käufe', amount: -r0(firstEquity), kind: 'out', year: ri.firstYear })
     for (const e of ri.events) {
@@ -568,6 +576,7 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
   const summary: CustomerSummary = {
     firstYear: agg.firstYear, lastYear: agg.lastYear,
     originalEquity: params.ek,
+    einlagen: einl,
     unitsEnd,
     portfolioValue: lastWealth?.propertyValue ?? 0,
     debt: lastWealth?.debt ?? 0,
@@ -577,7 +586,7 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
     recyclingMultiple: ri ? ri.kpis.capitalRecyclingMultiple : null,
     exitNet: exit ? r0(exit.net) : null,
     additionalEquityNeeded: r0(Math.abs(ri ? Math.min(0, ...ri.flows.map(fl => fl.endingCash)) : Math.min(0, ...cashflow.map(c => c.cumulative)))),
-    text: buildSummaryText(params, agg, unitsEnd, lastRow?.value ?? 0, ri),
+    text: buildSummaryText(params, agg, unitsEnd, lastRow?.value ?? 0, ri, einl),
   }
 
   // ── Endbilanz ─────────────────────────────────────────────────────────────
@@ -605,9 +614,9 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
   const runningCosts = agg.rows.reduce((a, r) => a + r.mgmt + r.opex, 0)
   const vatSum = agg.rows.reduce((a, r) => a + r.vat, 0)
   const cost: CostOverview = {
-    ownEquity: r0(Math.min(ownEquity, params.ek)),
+    ownEquity: r0(Math.min(ownEquity, budget)),
     additionalEquity: r0(Math.abs(lowestCash)),
-    peakFunding: r0(Math.max(ownEquity, params.ek) + Math.abs(lowestCash)),
+    peakFunding: r0(Math.max(ownEquity, budget) + Math.abs(lowestCash)),
     interest: r0(totals.interest),
     runningCosts: r0(runningCosts),
     taxes: r0(totals.taxes),
@@ -619,13 +628,18 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
     // abziehen, sonst waere der Zuwachs zu klein (Review 8.10.26). In der
     // Liquiditaetsrechnung zaehlt ekUsed nur gezahltes Eigenkapital, das fuer
     // spaetere Raten zurueckgehaltene steht als Liquiditaet im Vermoegen.
-    wealthGain: r0(netWorthEnd - (ri ? params.ek : Math.min(params.ek, ownEquity + (liqRes ? (lastWealth?.cash ?? 0) : 0)))),
+    // Weitere Einlagen sind eingesetztes Geld wie das Startkapital.
+    wealthGain: r0(netWorthEnd - (ri ? budget : Math.min(budget, ownEquity + (liqRes ? (lastWealth?.cash ?? 0) : 0)))),
   }
 
   // ── Wohin das Geld geht ───────────────────────────────────────────────────
   const principalSum = agg.rows.reduce((a, r) => a + r.principal, 0)
   const moneyFlow: MoneyFlowRow[] = [
     { label: 'Startkapital', amount: params.ek, meaning: 'Dein Ausgangspunkt.' },
+    ...(einl.total ? [{ label: 'Weitere Einlagen', amount: r0(einl.total),
+      meaning: ri ? 'Geld, das du später zuschießt. Es fließt in die Kasse und steht für weitere Käufe bereit.'
+        : einl.unused ? `Geld, das du später zuschießt. ${eur(einl.unused)} davon werden nicht gebraucht und bleiben bei dir.`
+          : 'Geld, das du später zuschießt. Es zahlt Kaufraten und tilgt Darlehen.' }] : []),
     { label: 'In Immobilien gebunden', amount: -r0(ownEquity),
       meaning: 'Eigenkapital und Kaufnebenkosten der ersten Käufe. Das Geld ist nicht weg, es steckt in den Wohnungen.' },
     { label: 'Mieteinnahmen', amount: r0(totals.rents), meaning: 'Alles, was die Wohnungen über den Zeitraum einbringen.' },
@@ -649,6 +663,7 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
   const equityBuilt = lastWealth ? lastWealth.propertyEquity - r0(ownEquity) : 0
   const journey: JourneyStep[] = [
     { label: 'Dein Startkapital', value: eur(params.ek), note: `Ausgangspunkt im Jahr ${firstBuyYear}.` },
+    ...(einl.total ? [{ label: 'Weitere Einlagen', value: eur(einl.total), note: einlagenNote(params, agg.lastYear, einl, !!ri) }] : []),
     { label: startUnits === 1 ? 'Erste Wohnung' : `${startUnits} Wohnungen`, value: eur(r0(ownEquity)),
       note: 'liquidity' in agg && agg.liquidity
         ? 'So viel Eigenkapital fließt in die Kaufpreise. Den Rest zahlen Miete, MwSt-Erstattung und, wo nötig, die Bank.'
@@ -765,7 +780,9 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
   // ── Die fünf wichtigsten Punkte ───────────────────────────────────────────
   const unitsEndForKeys = portfolio.length ? portfolio[portfolio.length - 1].units : 0
   const keyInsights: Insight[] = [
-    { title: 'Dein Startkapital', text: `${eur(params.ek)} bilden den Ausgangspunkt der Strategie.` },
+    { title: 'Dein Startkapital', text: einl.total
+      ? `${eur(params.ek)} bilden den Ausgangspunkt der Strategie, später kommen ${eur(einl.total)} als weitere Einlagen dazu.`
+      : `${eur(params.ek)} bilden den Ausgangspunkt der Strategie.` },
     { title: 'Dein Portfolio',
       text: startUnits === unitsEndForKeys
         ? `Es bleibt bei ${unitsEndForKeys} ${unitsEndForKeys === 1 ? 'Wohnung' : 'Wohnungen'} mit einem Wert von ${eur(lastWealth?.propertyValue ?? 0)}.`
@@ -775,7 +792,9 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
         ? `${eur(ri.kpis.totalRecycledCapital)} stammen aus eigenen Mitteln, also aus Mietüberschüssen und der Mehrwertsteuer-Erstattung. ${eur(ri.kpis.totalBorrowedForPurchases)} kommen aus zusätzlichen Darlehen auf bereits übergebene Wohnungen und erhöhen die Schuld.`
         : 'Unter diesen Annahmen reicht das freiwerdende Kapital im Betrachtungszeitraum nicht für einen weiteren Kauf.' },
     { title: 'Dein Vermögen',
-      text: `Das Netto-Vermögen erreicht ${eur(netWorthEnd)}, ein Zuwachs von ${eur(netWorthEnd - params.ek)} gegenüber deinem Startkapital.` },
+      text: einl.total
+        ? `Das Netto-Vermögen erreicht ${eur(netWorthEnd)}, ein Zuwachs von ${eur(netWorthEnd - budget)} gegenüber Startkapital und weiteren Einlagen.`
+        : `Das Netto-Vermögen erreicht ${eur(netWorthEnd)}, ein Zuwachs von ${eur(netWorthEnd - params.ek)} gegenüber deinem Startkapital.` },
     // Die Aussage zur Liquiditaet kommt AUSSCHLIESSLICH aus der Engine
     // (kpis.selfSupporting). Frueher prueste dieser Text nur, ob die Kasse
     // negativ wird, und meldete "Reserve bleibt durchgehend erhalten", waehrend
@@ -808,6 +827,18 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
   }
 }
 
+// Kurzer Satz zu den weiteren Einlagen: wann, und wohin das Geld geht.
+function einlagenNote(p: SimParams, lastYear: number, e: EinlagenUse, reinvest: boolean): string {
+  const when = einlagenOf(p, ymOf(lastYear, 12))
+    .map(x => `${String(x.ym % 12 + 1).padStart(2, '0')}/${Math.floor(x.ym / 12)}`).join(', ')
+  if (reinvest) return `Eingang ${when}. Das Geld fließt in die Kasse und steht für weitere Käufe bereit.`
+  const parts: string[] = []
+  if (e.placed > 0.5) parts.push(`${eur(e.placed)} zahlen Kaufraten`)
+  if (e.prepaid > 0.5) parts.push(`${eur(e.prepaid)} tilgen Darlehen vorzeitig`)
+  if (e.unused > 0.5) parts.push(`${eur(e.unused)} werden nicht gebraucht und bleiben bei dir`)
+  return `Eingang ${when}. ${parts.length ? parts.join(', ') + '.' : ''}`.trim()
+}
+
 // ── Erzeugte Texte ───────────────────────────────────────────────────────────
 // Alle Saetze entstehen aus den gerechneten Zahlen. Keine Textbausteine, die
 // unabhaengig vom Ergebnis immer dasselbe behaupten.
@@ -817,8 +848,12 @@ function buildSummaryText(
   unitsEnd: number,
   value: number,
   ri: ReinvestResult | null,
+  einl?: EinlagenUse,
 ): string {
-  const kern = `Mit einem Startkapital von ${eur(p.ek)} entsteht in dieser Modellrechnung bis ${agg.lastYear} ein Portfolio von ${unitsEnd} ${unitsEnd === 1 ? 'Wohnung' : 'Wohnungen'} mit einem Wert von ${eur(value)}.`
+  const start = einl?.total
+    ? `Mit einem Startkapital von ${eur(p.ek)} und weiteren Einlagen von ${eur(einl.total)}`
+    : `Mit einem Startkapital von ${eur(p.ek)}`
+  const kern = `${start} entsteht in dieser Modellrechnung bis ${agg.lastYear} ein Portfolio von ${unitsEnd} ${unitsEnd === 1 ? 'Wohnung' : 'Wohnungen'} mit einem Wert von ${eur(value)}.`
   // Ohne Reinvestment rechnet das Modell keine weiteren Kaeufe - der Satz
   // „ein weiterer Kauf ergibt sich nicht" klang nach geprueft und verworfen
   // (Review 8.10.26). Ein eingerechneter Verkauf wird genannt.

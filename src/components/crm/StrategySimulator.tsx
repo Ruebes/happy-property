@@ -1,9 +1,11 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import { CustomSelect } from '../CustomSelect'
 import { NumberStepper } from '../NumberStepper'
 import { MonthPlanPicker } from './MonthPlanPicker'
+import { EinlagenEditor } from '../EinlagenEditor'
+import StrategySimAccess, { type SimInfo } from './StrategySimAccess'
 import { StrategieView } from '../../pages/Strategie'
 import { createStrategyOutboxDraft } from '../../lib/calcOutbox'
 import { leadProfileIds } from '../../lib/detachProperty'
@@ -14,6 +16,7 @@ import {
   roeMeaningful, migrateConfig, ymOf, rentFromSeason, runScenarios, assessRisk,
   breakEvenGrowth, defaultDivTaxPct, DEFAULT_SIM_PARAMS, SCENARIO_KEYS,
   scheduleFromProject, normalizeSchedule, afterInstalments, isLumaStandard, pctSum, LUMA_SCHEDULE, loanReadyYm, devAfterMonths, financingPath, DEV_AFTER_MONTHS, DEV_AFTER_PER_YEAR, DEV_AFTER_RATE_PCT,
+  einlagenOf, einlagenUse,
   type SimUnit, type SimParams, type ScenarioKey, type ScenarioResult, type DevSchedule, purchaseGrowthOf } from '../../lib/strategy'
 import { defaultMgmtPct, seasonBreakdown, vatSplit, normalizeMonthPlan, monthPlanCounts, MONTH_PLAN_ALL_LET,
   type CalcParams, type CalcItem, type MonthPlan, type VatMode } from '../../lib/rechner'
@@ -50,6 +53,8 @@ interface UnitMeta {
   furnPackage: number; furnIncluded: boolean
   schedule: DevSchedule | null; developer: string | null
 }
+// Projekte ohne Bauträger im Filter
+const NO_DEV = '__none'
 const PROJECT_COLS = 'id, name, furniture_cost, furniture_included, completion_date, calc_defaults, developer, payment_schedule'
 // Moebelpaket des Projekts fuer diese Wohnung, dieselbe Kette wie die
 // Immobilienauswahl (furnDefaultFor) und das Deck: Staffel je Zimmerzahl ->
@@ -114,6 +119,8 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   // statt ewig auf „Lade…" zu stehen. Erneutes Öffnen versucht es noch einmal.
   const [projectsFailed, setProjectsFailed] = useState(false)
   const [pickProject, setPickProject] = useState('')
+  // Bauträger zuerst, dann nur dessen Projekte (Sven 23.10.26: sonst zu viele Projekte)
+  const [pickDev, setPickDev] = useState('')
   const [pickUnits, setPickUnits] = useState<PickUnit[]>([])
   // Wohnungen, die der Kunde schon gekauft/reserviert hat (Sven 6.10.26): der
   // Kunde besitzt eine und interessiert sich spontan für eine zweite - beide
@@ -143,6 +150,17 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   // Vorschau aus Kundensicht während der Erstellung (Sven 7.10.26): dieselbe
   // Seite wie /strategie/:token, live mit dem aktuellen Stand hier.
   const [preview, setPreview] = useState<null | 'desktop' | 'mobile'>(null)
+  // Simulator für den Kunden (Sven 23.10.26): Freischaltung und seine eigene Variante
+  const [simInfo, setSimInfo] = useState<SimInfo | null>(null)
+  const [accessOpen, setAccessOpen] = useState(false)
+  const loadSimInfo = useCallback(async () => {
+    if (!lead) return
+    const { data, error } = await supabase.from('crm_strategy_scenarios')
+      .select('token, sim_enabled_at, customer_updated_at').eq('lead_id', lead.id).maybeSingle()
+    if (error) { console.warn('[StrategySimulator] Kunden-Simulator:', error.message); return }
+    setSimInfo((data as SimInfo | null) ?? null)
+  }, [lead])
+  useEffect(() => { void loadSimInfo() }, [loadSimInfo])
 
   // Gespeichertes Szenario laden, wenn der Wizard nichts mitgibt
   useEffect(() => { void (async () => {
@@ -546,6 +564,9 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   const [beOpen, setBeOpen] = useState(false)
   const breakEven = useMemo(() => beOpen && units.length ? breakEvenGrowth(units, params) : NaN, [beOpen, units, params])
   const risks = useMemo(() => scenarios ? assessRisk(scenarios, breakEven) : [], [scenarios, breakEven])
+  // Weitere Einlagen: wohin sie im gewählten Szenario fließen, und welche nach dem Zeitraum liegen
+  const einUse = useMemo(() => active ? einlagenUse(active.outcomes, active.params, active.lastYear) : null, [active])
+  const einLate = einlagenOf(params).filter(e => e.ym > ymOf(agg.lastYear, 12))
 
   // ── Fahrplan fertigstellen und in den Postausgang legen ────────────────────
   // Speichert den aktuellen Stand SOFORT (nicht entprellt) und legt einen
@@ -628,7 +649,23 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
               {t('crm.sim.subtitle2', 'Zeitachse über mehrere Käufe - gerechnet mit derselben Engine wie die Einzelrechnungen (Annuität, Kurz-/Langzeit, Steuern, MwSt).')}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            {/* Was der Kunde sich im eigenen Simulator gebaut hat (Sven 23.10.26) */}
+            {simInfo?.customer_updated_at && (
+              <a href={`/strategie/${simInfo.token}?kunde=1`} target="_blank" rel="noreferrer"
+                title={t('crm.sim.custVersionHint', 'Öffnet die Strategie, die sich der Kunde selbst gebaut hat. Dort auch als PDF speichern.')}
+                className="px-3 py-1.5 rounded-lg text-sm font-medium border border-green-300 bg-green-50 text-green-800 hover:bg-green-100">
+                🧭 {t('crm.sim.custVersion', 'Strategie des Kunden ({{d}})', {
+                  d: new Date(simInfo.customer_updated_at).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }),
+                })}
+              </a>
+            )}
+            {lead && units.length > 0 && (
+              <button onClick={() => setAccessOpen(true)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium border ${simInfo?.sim_enabled_at ? 'border-green-300 text-green-800 hover:bg-green-50' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}>
+                🔓 {simInfo?.sim_enabled_at ? t('crm.sim.simUnlocked', 'Kunden-Simulator ✓') : t('crm.sim.simUnlock', 'Simulator freischalten')}
+              </button>
+            )}
             {units.length > 0 && (
               <button onClick={() => setPreview('desktop')}
                 className="px-3 py-1.5 rounded-lg text-sm font-medium border border-orange-300 text-orange-700 hover:bg-orange-50">
@@ -644,7 +681,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
           <div className="bg-gray-50 rounded-xl p-3">
             <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
               {([
-                ['ek', t('crm.sim.equity', 'Eigenkapital (€)'), 10000],
+                ['ek', t('crm.sim.equity', 'Eigenkapital zum Start (€)'), 10000],
                 ['growth', t('crm.sim.growth', 'Wertsteigerung % p.a.'), 0.5],
                 ['interest', t('crm.sim.interest2', 'Darlehenszins % p.a.'), 0.1],
                 ['termYears', t('crm.sim.term', 'Laufzeit Annuität (J.)'), 1],
@@ -656,6 +693,41 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                     onChange={e => setParams(p => ({ ...p, [k]: +e.target.value }))} />
                 </div>
               ))}
+            </div>
+
+            {/* ── Weitere Einlagen (Sven 23.10.26) ────────────────────────────
+                „Man hat jetzt 500k und will in 5 Jahren nochmal 200k einlegen."
+                Zahlt zuerst offene Kaufraten, dann Sondertilgung, Rest bleibt
+                beim Kunden; mit Reinvestment fließt sie in die Kasse. */}
+            <div className="mt-3 pt-3 border-t border-gray-200">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                {t('crm.sim.einTitle', 'Weitere Einlagen')}
+              </p>
+              <div className="max-w-md">
+                <EinlagenEditor value={params.einlagen ?? []} inputClass={inputCls} labelClass={lbl}
+                  onChange={next => setParams(p => ({ ...p, einlagen: next }))} />
+              </div>
+              <p className="text-[11px] text-gray-500 mt-1.5">
+                {params.reinvestEnabled
+                  ? t('crm.sim.einHintRe', 'Eigenkapital, das der Kunde später zuschießt. Mit Reinvestment fließt es im Jahr des Eingangs in die Kasse und steht für weitere Käufe bereit.')
+                  : t('crm.sim.einHint', 'Eigenkapital, das der Kunde später zuschießt. Es zahlt zuerst Kaufraten, die danach noch offen sind (bis dahin überbrückt der Kredit), dann tilgt es laufende Darlehen vorzeitig. Was übrig bleibt, wird nicht gebraucht.')}
+              </p>
+              {einUse && einUse.total > 0 && !params.reinvestEnabled && (
+                <p className="text-[11px] text-gray-700 mt-1">
+                  {[
+                    einUse.placed > 0.5 ? t('crm.sim.einPlaced', '{{v}} in Kaufraten', { v: eur(einUse.placed) }) : '',
+                    einUse.prepaid > 0.5 ? t('crm.sim.einPrepaid', '{{v}} als Sondertilgung', { v: eur(einUse.prepaid) }) : '',
+                    einUse.unused > 0.5 ? t('crm.sim.einUnused', '{{v}} nicht gebraucht, bleiben beim Kunden', { v: eur(einUse.unused) }) : '',
+                  ].filter(Boolean).join(' · ')}
+                </p>
+              )}
+              {einLate.length > 0 && (
+                <p className="text-[11px] text-amber-700 mt-1">
+                  {t('crm.sim.einLate', 'Liegt nach dem Zeitraum (bis {{y}}) und zählt nicht: {{list}}', {
+                    y: agg.lastYear, list: einLate.map(e => `${mmYYYY(e.ym)} ${eur(e.amount)}`).join(', '),
+                  })}
+                </p>
+              )}
             </div>
 
             {/* ── Laufende Kosten der Wohnungen ───────────────────────────────
@@ -1267,10 +1339,16 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
           {/* Hinzufügen */}
           {pickerOpen ? (
             <div className="border border-dashed border-gray-300 rounded-xl p-3 space-y-2">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <CustomSelect value={pickDev} onChange={v => { setPickDev(v); setPickProject('') }}
+                  options={[{ value: '', label: t('crm.sim.pickDev', 'Alle Bauträger') },
+                    ...[...new Set(projects.map(p => p.developer?.trim() || NO_DEV))]
+                      .sort((a, b) => a === NO_DEV ? 1 : b === NO_DEV ? -1 : a.localeCompare(b, 'de'))
+                      .map(d => ({ value: d, label: d === NO_DEV ? t('crm.sim.pickDevNone', 'Ohne Bauträger') : d }))]} />
                 <CustomSelect value={pickProject} onChange={setPickProject}
                   options={[{ value: '', label: t('crm.sim.pickProject', 'Projekt wählen…') },
-                    ...projects.map(p => ({ value: p.id, label: p.name }))]} />
+                    ...projects.filter(p => !pickDev || (p.developer?.trim() || NO_DEV) === pickDev)
+                      .map(p => ({ value: p.id, label: p.name }))]} />
                 <div className="flex gap-2">
                   <button onClick={addFree} className="px-3 py-1.5 rounded-lg text-sm border border-gray-300 text-gray-600 hover:bg-gray-50">
                     {t('crm.sim.addFree', 'frei eingeben')}
@@ -1369,6 +1447,14 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                           {(o.funding?.surplus ?? 0) > 0.5 && <span className="block text-xs font-normal text-gray-500">{active?.liquidity?.vatIntoPot
                             ? t('crm.sim.fromSurplusShort', '+ {{v}} aus Miete/MwSt', { v: eur(o.funding!.surplus) })
                             : t('crm.sim.fromSurplusRent', '+ {{v}} aus Miete', { v: eur(o.funding!.surplus) })}</span>}
+                          {(o.fromEinlagen ?? []).map(e => (
+                            <span key={e.ym} className="block text-xs font-normal text-gray-500">
+                              {t('crm.sim.ekFromEin', 'davon {{v}} aus Einlage {{d}}', { v: eur(e.amount), d: mmYYYY(e.ym) })}
+                            </span>
+                          ))}
+                          {(o.prepaid ?? 0) > 0.5 && <span className="block text-xs font-normal text-gray-500">
+                            {t('crm.sim.ekPrepaid', 'davon {{v}} Sondertilgung', { v: eur(o.prepaid ?? 0) })}
+                          </span>}
                         </td>
                         <td className="px-3 py-2 text-amber-700 font-semibold">{o.loan > 0 ? eur(o.loan) : '–'}</td>
                         <td className="px-3 py-2">{roeMeaningful(o) ? pct(o.roe10) : '–'}</td>
@@ -1426,7 +1512,17 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                         <th className="px-2 py-1 text-right">{t('crm.sim.credCumul', 'Kredit gesamt')}</th>
                       </tr></thead>
                       <tbody>
-                        {credit.steps.map((r, i) => (
+                        {credit.steps.map((r, i) => r.einlage ? (
+                          <tr key={`${r.ym}-ein-${i}`} className="border-b border-orange-100/60 last:border-0 bg-green-50/60">
+                            <td className="px-2 py-1 font-semibold">{mmYYYY(r.ym)}</td>
+                            <td className="px-2 py-1 text-green-800">{t('crm.sim.credEin', 'Weitere Einlage +{{v}}', { v: eur(r.einlage) })}</td>
+                            <td className="px-2 py-1" />
+                            <td className="px-2 py-1 text-right">{r.fromEquity > 0.5 ? eur(r.fromEquity) : ''}</td>
+                            {credit.steps.some(s => s.fromSurplus > 0.5) && <td className="px-2 py-1" />}
+                            <td className="px-2 py-1 text-right font-semibold text-green-700">{r.credit < -0.5 ? `−${eur(-r.credit)}` : ''}</td>
+                            <td className="px-2 py-1 text-right">{eur(Math.max(0, r.creditTotal))}</td>
+                          </tr>
+                        ) : (
                           <tr key={`${r.ym}-${r.unit}-${i}`} className="border-b border-orange-100/60 last:border-0">
                             <td className="px-2 py-1 font-semibold">{mmYYYY(r.ym)}</td>
                             <td className="px-2 py-1">{r.unit} <span className="text-gray-500">· {r.label}</span></td>
@@ -1881,6 +1977,10 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
           )}
         </div>
       </div>
+      {accessOpen && lead && (
+        <StrategySimAccess lead={lead} units={units} params={params} info={simInfo}
+          onChanged={() => void loadSimInfo()} onClose={() => setAccessOpen(false)} />
+      )}
       {preview && (
         <div className="fixed inset-0 z-[70] bg-black/60 flex flex-col">
           <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-white border-b border-gray-200 shadow-sm">

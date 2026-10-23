@@ -15,7 +15,7 @@
 // finanziert, haengt an Einkommen, Bonitaet, Bewertung und Bankrichtlinien.
 import {
   allocate, aggregate, runUnit, computeSale, totalsOf, horizonOf, purchaseGrowthOf, trancheSchedule,
-  pledgeableFromYear, type SimUnit, type SimParams, type UnitOutcome, type YearRow,
+  pledgeableFromYear, einlagenOf, ymOf, type SimUnit, type SimParams, type UnitOutcome, type YearRow,
   type LoanTranche, type SaleResult, type StrategyTotals,
 } from './strategy'
 import { CY_CGT_ALLOWANCE, irrCalc, personsOf } from './rechner'
@@ -343,6 +343,18 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
   // Vorgegebene Einzelverkaeufe uebernehmen.
   for (const u of units) if (u.saleYear) saleYears.set(u.key, u.saleYear)
 
+  // Weitere Einlagen (Sven 23.10.26): fliessen im Jahr ihres Eingangs in die
+  // Kasse und stehen dort fuer weitere Kaeufe bereit. Vor dem ersten Jahr
+  // eingehende zaehlen im ersten Jahr, nach dem Zeitraum eingehende gar nicht.
+  const einByYear = new Map<number, number>()
+  for (const e of einlagenOf(p, ymOf(lastYear, 12))) {
+    const ey = Math.max(firstYear, Math.floor(e.ym / 12))
+    einByYear.set(ey, (einByYear.get(ey) ?? 0) + e.amount)
+  }
+  // Noch nicht in Kaeufe geflossene Einlagen: zaehlen beim Kauf nicht als
+  // wiederverwendetes Kapital (das sind nur Ueberschuesse und Erloese).
+  let investorUnspent = 0
+
   // Jahr fuer Jahr. Nach jedem Ereignis wird der Zustand neu aggregiert, damit
   // die Folgejahre wirklich mit dem neuen Portfolio rechnen.
   let rows: YearRow[] = aggregate(outcomes, p, { tranches, saleYears, untilYear: lastYear }).rows
@@ -359,8 +371,9 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
     let operating = row ? row.operating : 0
     let vatIn = row ? row.vat : 0
     // Zusaetzliches Eigenkapital des Investors, nur im Wachstumsmodus.
-    const investorIn = p.selfFundingOnly ? 0 : Math.max(0, p.additionalEquityMonthly) * 12
+    const investorIn = (p.selfFundingOnly ? 0 : Math.max(0, p.additionalEquityMonthly) * 12) + (einByYear.get(y) ?? 0)
     investorTotal += investorIn
+    investorUnspent += einByYear.get(y) ?? 0
     // Faellige Raten frueherer Kaeufe: Sie belasten die Kasse in dem Jahr, in
     // dem sie wirklich anfallen, nicht im Jahr der Unterschrift.
     const dueThisYear = pendingEquity.get(y) ?? 0
@@ -540,7 +553,7 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
           if (pr.year <= y) continue
           // Kuenftige Einzahlungen des Investors zaehlen mit - im
           // selbsttragenden Modus ist dieser Betrag null.
-          probeCash += pr.cashflow + yearlyInvestor
+          probeCash += pr.cashflow + yearlyInvestor + (einByYear.get(pr.year) ?? 0)
           // Kuenftige Verkaufserloese entlasten die Kasse wieder.
           for (const o of probeOutcomes) {
             if (saleYears.get(o.unit.key) === pr.year) {
@@ -587,7 +600,9 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
         // Der Teil, der aus einer Refinanzierung stammt, ist neue Schuld und
         // zaehlt hier nicht mit (Sven 9.9.26). Frueher stand hier das gesamte
         // Eigenkapital jedes Zukaufs, also auch die Kreditbetraege.
-        recycled += Math.max(0, thisYear - fromRefi)
+        const fromInvestor = Math.min(investorUnspent, Math.max(0, thisYear - fromRefi))
+        investorUnspent -= fromInvestor
+        recycled += Math.max(0, thisYear - fromRefi - fromInvestor)
         borrowedForPurchase += fromRefi
         allUnits = probeUnits
         outcomes = probeOutcomes

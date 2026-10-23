@@ -124,7 +124,19 @@ export interface SimParams {
   // Eigentumsverteilung, die Finanzierung oder zwei Darlehensnehmer aus - die
   // Finanzierungslogik bleibt unveraendert.
   buyerStructure: BuyerStructure
+  // ── Weitere Einlagen (Sven 23.10.26) ──────────────────────────────────────
+  // „Man hat jetzt 500k und will in 5 Jahren nochmal 200k einlegen." Eigenkapital,
+  // das der Kunde spaeter zuschiesst, mit Monat und Betrag, beliebig oft. Fehlt
+  // das Feld (alte Fahrplaene), gibt es keine.
+  einlagen?: Einlage[]
 }
+
+// Eine weitere Einlage: ab diesem Monat steht das Geld zur Verfuegung. Es zahlt
+// zuerst Kaufraten, die danach noch offen sind (statt Kredit), tilgt dann
+// laufende Bankdarlehen (Sondertilgung); was dann noch uebrig ist, wird nicht
+// gebraucht und bleibt beim Kunden. Im Reinvestment-Modus fliesst es in die
+// Kasse und steht dort fuer weitere Kaeufe bereit.
+export interface Einlage { m: number; y: number; amount: number }
 
 // ── Zahlungsplan des Bautraegers (Sven 6.10.26) ─────────────────────────────
 // „Bei Mito 30 % jetzt, 20 % mit Uebergabe und die letzten 50 % in Raten bis
@@ -360,6 +372,11 @@ export interface UnitOutcome {
   ekAlloc: number
   // Nur in der Liquiditaetsrechnung: woraus der Kaufpreis wirklich bezahlt wurde
   funding?: { equity: number; surplus: number; credit: number }
+  // Weitere Einlagen (Sven 23.10.26): Teil von ekAlloc, der erst mit einer
+  // spaeteren Einlage kommt (Monat, Betrag), und Sondertilgungen je Engine-Jahr.
+  fromEinlagen?: Array<{ ym: number; amount: number }>
+  ppVals?: number[]
+  prepaid?: number   // Summe der Sondertilgungen, in ekUsed enthalten
 }
 
 // ── Finanzierungsbedarf (Sven 7.10.26) ──────────────────────────────────────
@@ -376,6 +393,10 @@ export interface FinancingStep {
   fromSurplus: number     // aus Miete und MwSt-Erstattung (nur bei Raten nach Uebergabe)
   credit: number
   creditTotal: number     // Kredit insgesamt bis hierher
+  // Zeile fuer eine weitere Einlage (Sven 23.10.26): Betrag der Einlage. Sie
+  // loest bis dahin ueberbrueckten Kredit ab (credit negativ), der Rest zahlt
+  // die naechsten Raten.
+  einlage?: number
 }
 export interface BankLoanInfo {
   key: string; name: string; amount: number; startYm: number; monthly: number
@@ -419,13 +440,33 @@ export function financingPath(outcomes: UnitOutcome[], endYmOf?: (o: UnitOutcome
       merged.set(k, m)
     }
   }
-  let left = equity, total = 0
+  // Weitere Einlagen (ohne Liquiditaetsrechnung): erst ab Eingang verfuegbar.
+  // Mit Liquiditaetsrechnung stecken sie schon in den Datensaetzen.
+  const einAt = new Map<number, number>()
+  if (!liq) for (const o of own) for (const e of o.fromEinlagen ?? []) einAt.set(e.ym, (einAt.get(e.ym) ?? 0) + e.amount)
+  let left = equity - [...einAt.values()].reduce((a, v) => a + v, 0), total = 0
   let equityLastYm: number | null = null, firstCreditYm: number | null = null
   // Mit Liquiditaetsrechnung dieselbe Reihenfolge wie dort (Monat, dann Wohnung),
   // sonst haengen Tabelle und Kennzahlen von der Reihenfolge der Liste ab.
   const sorted = [...merged.values()].sort((a, b) => a.ym - b.ym
     || (liq ? (a.key < b.key ? -1 : a.key > b.key ? 1 : 0) : 0))
-  const steps: FinancingStep[] = sorted.map(m => {
+  const einRows: FinancingStep[] = []
+  const einYms = [...einAt.keys()].sort((a, b) => a - b)
+  const arrive = (upTo: number) => {
+    while (einYms.length && einYms[0] <= upTo) {
+      const ym = einYms.shift()!
+      const amt = einAt.get(ym) ?? 0
+      // Bis hierher ueberbrueckter Kredit: abgerufen, aber noch kein Bankdarlehen
+      const loansStarted = own.filter(o => o.loan > 0 && loanReadyYm(o.unit) <= ym).reduce((a, o) => a + o.loan, 0)
+      const repay = Math.min(amt, Math.max(0, total - loansStarted))
+      total -= repay
+      left += amt - repay
+      einRows.push({ ym, unit: '', label: 'Weitere Einlage', amount: 0, interest: 0, fromEquity: repay, fromSurplus: 0,
+        credit: -repay, creditTotal: total, einlage: amt })
+    }
+  }
+  const stepsRaw: FinancingStep[] = sorted.map(m => {
+    arrive(m.ym)
     const rec = liq ? recs.get(m.k) : undefined
     const fromEquity = rec ? rec.fromEquity : Math.min(Math.max(0, left), m.amount)
     left -= fromEquity
@@ -441,6 +482,11 @@ export function financingPath(outcomes: UnitOutcome[], endYmOf?: (o: UnitOutcome
     if (counts && firstCreditYm == null && fromEquity > 0.5) equityLastYm = m.ym
     return { ym: m.ym, unit: m.unit, label: m.labels.join(' + '), amount: m.amount, interest: m.interest, fromEquity, fromSurplus, credit, creditTotal: total }
   })
+  arrive(Infinity)
+  // Einlage-Zeilen vor die Raten desselben Monats (so wurde gerechnet)
+  const steps = einRows.length
+    ? [...einRows, ...stepsRaw].sort((a, b) => a.ym - b.ym || (b.einlage ? 1 : 0) - (a.einlage ? 1 : 0))
+    : stepsRaw
   const loans: BankLoanInfo[] = own.filter(o => o.loan > 0)
     .map(o => {
       const startYm = loanReadyYm(o.unit)
@@ -573,6 +619,39 @@ export const DEFAULT_SIM_PARAMS: SimParams = {
   refinanceLtv: 70, bankValuationFactor: 100, refinanceUtilizationPct: 100,
   minimumCashReserve: 25000, maxAdditionalPurchases: 5, autoReinvest: true,
   selfFundingOnly: true, additionalEquityMonthly: 0, buyerStructure: 'single',
+  einlagen: [],
+}
+
+// Letztes Jahr des Zeitraums, wie in aggregate(): zehn Jahre ab dem ersten
+// Kauf (mit Reinvestment der laengere Horizont), bei Verkauf das Verkaufsjahr.
+export function planLastYear(firstYear: number, p?: SimParams): number {
+  const horizonEnd = firstYear + horizonOf(p) - 1
+  return p?.exitAfterYears && !p.reinvestEnabled
+    ? Math.min(horizonEnd, firstYear + p.exitAfterYears - 1)
+    : horizonEnd
+}
+
+// Weitere Einlagen mit Betrag, nach Monat sortiert. Mit untilYm nur die, die
+// bis dahin eingehen - spaetere liegen nach dem Zeitraum und zaehlen nicht.
+export function einlagenOf(p: SimParams | undefined, untilYm = Infinity): Array<{ ym: number; amount: number }> {
+  return (p?.einlagen ?? [])
+    .filter(e => Number.isFinite(e.amount) && e.amount > 0 && e.m >= 1 && e.m <= 12 && Number.isFinite(e.y))
+    .map(e => ({ ym: ymOf(e.y, e.m), amount: e.amount }))
+    .filter(e => e.ym <= untilYm)
+    .sort((a, b) => a.ym - b.ym)
+}
+
+// Was von den Einlagen im Zeitraum wohin geflossen ist (fuer Anzeige und Texte):
+// in Kaufraten, als Sondertilgung, und was nicht gebraucht wurde.
+export interface EinlagenUse { total: number; placed: number; prepaid: number; unused: number }
+export function einlagenUse(outcomes: UnitOutcome[], p: SimParams | undefined, lastYear: number): EinlagenUse {
+  const total = einlagenOf(p, ymOf(lastYear, 12)).reduce((a, e) => a + e.amount, 0)
+  const own = outcomes.filter(o => !o.unit.model)
+  const placed = own.reduce((a, o) => a + (o.fromEinlagen ?? []).reduce((b, e) => b + e.amount, 0), 0)
+  const prepaid = own.reduce((a, o) => a + (o.prepaid ?? 0), 0)
+  // Im Reinvestment-Modus fliesst alles in die Kasse - dort gibt es kein „uebrig".
+  const unused = p?.reinvestEnabled ? 0 : Math.max(0, total - placed - prepaid)
+  return { total, placed, prepaid, unused: unused > 0.5 ? unused : 0 }
 }
 
 // Sinnvoller Vorschlag fuer die Steuer auf die Ausschuettung: der deutsche
@@ -709,7 +788,7 @@ export function describeSchedule(raw: DevSchedule): string {
   return parts.join(', ')
 }
 
-export function runUnit(u: SimUnit, ekForUnit: number, p: SimParams): UnitOutcome {
+export function runUnit(u: SimUnit, ekForUnit: number, p: SimParams, ppVals?: number[]): UnitOutcome {
   const fromCalc = u.calc ?? {}
   // Hotelkonzept + Saisonmodell nur bei Kurzzeit; Verwaltung: Wert aus der
   // Einzelberechnung, sonst der fachliche Standard der Vermietungsart.
@@ -767,6 +846,8 @@ export function runUnit(u: SimUnit, ekForUnit: number, p: SimParams): UnitOutcom
     // (Sven 9.9.26). Der Einzelrechner bleibt bei seinen 24, damit er
     // bit-genau zum Original passt.
     vatRefundMonths: VAT_REFUND_MONTHS_STRATEGY,
+    // Sondertilgungen aus weiteren Einlagen (nur dann gesetzt)
+    ...(ppVals ? { ppVals } : {}),
   }
   const res = compute(params)
   const gross = res.pGross + res.furnGross
@@ -778,15 +859,23 @@ export function runUnit(u: SimUnit, ekForUnit: number, p: SimParams): UnitOutcom
   // Ratenzeit keine Finanzierungskosten (Bautraeger- und Zwischenkredit-Zinsen
   // laufen nur in der Strategie). Die Kennzahl je Wohnung rechnet deshalb wie
   // mit Bankdarlehen ab Uebergabe - sonst stiege sie mit dem teureren Plan.
-  const roe10 = params.loanDelayMonths ? compute({ ...params, loanDelayMonths: 0 }).roe10 : res.roe10
-  return { unit: u, res, ekUsed: res.ekStart, loan: res.loan, gross, payments: paymentPlan(u, gross), annuityMonthly, roe10, ekAlloc: res.ekAbs }
+  const roe10Raw = params.loanDelayMonths ? compute({ ...params, loanDelayMonths: 0 }).roe10 : res.roe10
+  // Eine Sondertilgung ist Geld des Kunden: Die Engine zieht sie nicht vom
+  // Cashflow ab, die Restschuld sinkt aber. Deshalb zaehlt sie hier als
+  // eingesetztes Eigenkapital - sonst stiege die Rendite mit jeder Tilgung.
+  const prepaid = ppVals ? res.prepayC.reduce((a, b) => a + b, 0) : 0
+  const roe10 = prepaid > 0 && res.ekStart + prepaid > 0
+    ? (roe10Raw / 100 * res.ekStart - prepaid) / (res.ekStart + prepaid) * 100
+    : roe10Raw
+  return { unit: u, res, ekUsed: res.ekStart + prepaid, loan: res.loan, gross, payments: paymentPlan(u, gross), annuityMonthly, roe10, ekAlloc: res.ekAbs,
+    ...(ppVals ? { ppVals, prepaid } : {}) }
 }
 
 // Bundlekauf: EK in ÜBERGABE-Reihenfolge verteilen (die zuerst fertige Wohnung
 // wird zuerst bedient); ohne Bundle bekommt jede Wohnung denselben EK-Anteil.
 export function allocate(units: SimUnit[], p: SimParams): UnitOutcome[] {
-  const base = allocateBase(units, p)
-  if (!liquidityMode(base, p)) return base
+  const { outs: base, leftovers } = allocateBase(units, p)
+  if (!liquidityMode(base, p)) return leftovers.length ? applySondertilgung(base, leftovers, p, o => o.ekAlloc) : base
   // Bautraeger-Raten nach der Uebergabe (Sven 7.10.26): Jedes Bankdarlehen ist
   // der Kredit, den die Liquiditaetsrechnung fuer diese Wohnung wirklich
   // abgerufen hat - nicht Kaufpreis minus Eigenkapital-Anteil. Der Bedarf einer
@@ -804,10 +893,17 @@ export function allocate(units: SimUnit[], p: SimParams): UnitOutcome[] {
       if (L == null || Math.abs(L - o.loan) < 1) return o
       changed = true
       // Eigenkapital-Anteil (Topf der Liquiditaetsrechnung) bleibt der aus der Verteilung.
-      return { ...runUnit(o.unit, o.res.pGross + o.res.furnGross - L, p), ekAlloc: o.ekAlloc }
+      return { ...runUnit(o.unit, o.res.pGross + o.res.furnGross - L, p, o.ppVals), ekAlloc: o.ekAlloc,
+        ...(o.fromEinlagen ? { fromEinlagen: o.fromEinlagen } : {}) }
     })
     if (!changed) break
     liq = undefined
+  }
+  // Einlagen, die keine Kaufrate mehr brauchen: Sondertilgung der laufenden
+  // Darlehen. Danach die Liquiditaet noch einmal mit den neuen Zinsen.
+  if (leftovers.length) {
+    outs = applySondertilgung(outs, leftovers, p, o => o.res.pGross + o.res.furnGross - o.loan)
+    liq = aggregate(outs, p).liquidity
   }
   if (!liq) liq = aggregate(outs, p).liquidity
   // Was jede Wohnung wirklich bekommen hat: Eigenkapital, Ueberschuss, Kredit.
@@ -819,11 +915,70 @@ export function allocate(units: SimUnit[], p: SimParams): UnitOutcome[] {
       surplus: recs.reduce((a, r) => a + r.fromSurplus, 0),
       credit: recs.reduce((a, r) => a + r.credit, 0),
     }
-    return { ...o, funding, ekUsed: Math.round(funding.equity) + o.res.costs }
+    return { ...o, funding, ekUsed: Math.round(funding.equity) + o.res.costs + (o.prepaid ?? 0) }
   })
 }
 
-function allocateBase(units: SimUnit[], p: SimParams): UnitOutcome[] {
+// Darlehensmonate je Engine-Jahr, wie in der Engine (lA): im Uebergabejahr nur
+// die Restmonate, bei Bautraeger-Raten nach der Uebergabe erst ab der Auszahlung.
+function loanMonthsByYear(u: SimUnit, years: number): number[] {
+  const mF = Math.max(1, 13 - u.readyM)
+  const delay = u.fin && devAfterMonths(u) ? loanReadyYm(u) - ymOf(u.readyY, u.readyM) : 0
+  let before = 0
+  return Array.from({ length: years }, (_, i) => {
+    const m = i === 0 ? mF : 12
+    const act = Math.max(0, Math.min(m, before + m - delay))
+    before += m
+    return act
+  })
+}
+
+// ── Sondertilgung aus weiteren Einlagen (Sven 23.10.26) ─────────────────────
+// Was eine Einlage nicht mehr fuer Kaufraten braucht, tilgt die Bankdarlehen,
+// die zu dem Zeitpunkt schon laufen - das hoechste zuerst. Gebucht zum
+// Jahresende des ersten vollen Darlehensjahres ab der Einlage (die Engine
+// kuerzt Sondertilgungen in angebrochenen Jahren anteilig). Die Monatsrate
+// bleibt, das Darlehen ist dadurch frueher getilgt und kostet weniger Zins.
+// Nie mehr als die Restschuld; was danach uebrig ist, bleibt beim Kunden.
+function applySondertilgung(outs: UnitOutcome[], leftovers: Array<{ ym: number; amount: number }>, p: SimParams,
+  ekOf: (o: UnitOutcome) => number): UnitOutcome[] {
+  const lastYear = planLastYear(Math.min(...outs.map(o => o.unit.buyY)), p)
+  const cur = outs.slice()
+  for (const lo of leftovers) {
+    let left = lo.amount
+    const y = Math.floor(lo.ym / 12)
+    const debtAt = (o: UnitOutcome) => {
+      const i = y - o.unit.readyY, n = o.res.restL.length
+      return i < 0 ? 0 : o.res.restL[Math.min(i, n - 1)]
+    }
+    const cands = cur.map((o, idx) => ({ o, idx }))
+      .filter(({ o }) => !o.unit.model && o.unit.fin && o.loan > 0 && loanReadyYm(o.unit) < lo.ym)
+      .sort((a, b) => debtAt(b.o) - debtAt(a.o) || (a.o.unit.key < b.o.unit.key ? -1 : a.o.unit.key > b.o.unit.key ? 1 : 0))
+    for (const { idx } of cands) {
+      if (left <= 0.5) break
+      const o = cur[idx]
+      const n = o.res.restL.length
+      const lA = loanMonthsByYear(o.unit, n)
+      let ti = Math.max(0, y - o.unit.readyY)
+      while (ti < n && lA[ti] < 12) ti++
+      if (ti >= n || o.unit.readyY + ti > lastYear) continue
+      const before = ti > 0 ? o.res.restL[ti - 1] : o.loan
+      const room = Math.max(0, before - o.res.princC[ti] - o.res.prepayC[ti])
+      const give = Math.round(Math.min(left, room))
+      if (give < 1) continue
+      const pp = (o.ppVals ?? []).slice()
+      while (pp.length < n) pp.push(0)
+      pp[ti] += give
+      const next: UnitOutcome = { ...runUnit(o.unit, ekOf(o), p, pp), ekAlloc: o.ekAlloc,
+        ...(o.fromEinlagen ? { fromEinlagen: o.fromEinlagen } : {}) }
+      left -= (next.prepaid ?? 0) - (o.prepaid ?? 0)
+      cur[idx] = next
+    }
+  }
+  return cur
+}
+
+function allocateBase(units: SimUnit[], p: SimParams): { outs: UnitOutcome[]; leftovers: Array<{ ym: number; amount: number }> } {
   const order = [...units].sort((a, b) => ymOf(a.readyY, a.readyM) - ymOf(b.readyY, b.readyM))
   const out = new Map<string, UnitOutcome>()
   const probes = new Map<string, UnitOutcome>()
@@ -891,13 +1046,61 @@ function allocateBase(units: SimUnit[], p: SimParams): UnitOutcome[] {
     for (const u of financed) share.set(u.key, Math.min(each, probes.get(u.key)!.gross))
   }
 
+  // ── Weitere Einlagen (Sven 23.10.26) ──────────────────────────────────────
+  // Eine Einlage deckt Kaufpreise, die bei ihrem Eingang noch offen sind, in
+  // Uebergabe-Reihenfolge: finanzierte Wohnungen, deren Bankdarlehen erst danach
+  // startet (das Darlehen wird kleiner), und Barkaeufe, die das Startkapital
+  // nicht deckt. Bis die Einlage da ist, ueberbrueckt der Kredit wie bisher.
+  // Bei Bautraeger-Raten nach der Uebergabe (Liquiditaetsrechnung) zahlt sie nur
+  // Raten, die nach ihrem Eingang faellig sind. Der Rest wird Sondertilgung
+  // (applySondertilgung). Im Reinvestment-Modus fliesst sie in die Kasse (reinvest.ts).
+  const fromEin = new Map<string, Array<{ ym: number; amount: number }>>()
+  const leftovers: Array<{ ym: number; amount: number }> = []
+  const ein = p.reinvestEnabled || !units.length ? []
+    : einlagenOf(p, ymOf(planLastYear(Math.min(...units.map(u => u.buyY)), p), 12))
+  if (ein.length) {
+    const liq = units.some(u => !u.model && u.fin && devAfterMonths(u) > 0)
+    const payFrom = (u: SimUnit, ym: number) => probes.get(u.key)!.payments.filter(x => x.ym >= ym).reduce((a, x) => a + x.amount, 0)
+    // Barkaeufe: was das Startkapital nicht deckt, die spaeteren zuletzt
+    const cashGap = new Map<string, number>()
+    let cover = investable
+    for (const u of cashOnly) {
+      const g = probes.get(u.key)!.gross
+      const c = Math.min(Math.max(0, cover), g)
+      cover -= c
+      cashGap.set(u.key, g - c)
+    }
+    const used = new Map<string, number>()
+    for (const e of ein) {
+      let left = e.amount
+      for (const u of order) {
+        if (left <= 0.5) break
+        const gross = probes.get(u.key)!.gross
+        const open = u.fin ? gross - (share.get(u.key) ?? 0) : cashGap.get(u.key) ?? 0
+        const room = liq
+          ? Math.min(open, payFrom(u, e.ym) - (used.get(u.key) ?? 0))
+          : (u.fin && loanReadyYm(u) < e.ym ? 0 : open)
+        const add = Math.min(left, Math.max(0, room))
+        if (add < 1) continue
+        if (u.fin) share.set(u.key, (share.get(u.key) ?? 0) + add)
+        else cashGap.set(u.key, open - add)
+        used.set(u.key, (used.get(u.key) ?? 0) + add)
+        fromEin.set(u.key, [...(fromEin.get(u.key) ?? []), { ym: e.ym, amount: add }])
+        left -= add
+      }
+      if (left >= 1) leftovers.push({ ym: e.ym, amount: left })
+    }
+  }
+
   for (const u of order) {
     const probe = probes.get(u.key)!
-    out.set(u.key, u.fin
+    const o = u.fin
       ? runUnit(u, Math.round(share.get(u.key) ?? 0), p)
-      : runUnit(u, probe.gross, p))
+      : runUnit(u, probe.gross, p)
+    const fe = fromEin.get(u.key)
+    out.set(u.key, fe ? { ...o, fromEinlagen: fe } : o)
   }
-  return units.map(u => out.get(u.key)!)
+  return { outs: units.map(u => out.get(u.key)!), leftovers }
 }
 
 // ── Zusaetzliche Darlehenstranchen ───────────────────────────────────────────
@@ -1218,6 +1421,12 @@ function fixedBridge(outcomes: UnitOutcome[], p: SimParams | undefined, lastYear
   const pays = bridgeUnits.flatMap(o => o.payments)
   const startYm = Math.min(...pays.map(x => x.ym))
   const endYm = ymOf(lastYear, 12)
+  // Weitere Einlagen (Sven 23.10.26): ihr Anteil am Eigenkapital ist erst ab dem
+  // Eingang da - bis dahin ueberbrueckt der Kredit. Ohne Einlagen bleibt ek fest.
+  const ein = bridgeUnits.flatMap(o => o.fromEinlagen ?? [])
+  const ekAt = (ym: number) => !ein.length ? ek
+    : hasDevAfter ? ek - ein.filter(e => e.ym > ym).reduce((a, e) => a + e.amount, 0)
+      : ek + ein.filter(e => e.ym <= ym).reduce((a, e) => a + e.amount, 0)
   let paid = 0
   for (let ym = startYm; ym <= endYm; ym++) {
     paid += pays.filter(x => x.ym === ym).reduce((a, x) => a + x.amount, 0)
@@ -1226,7 +1435,7 @@ function fixedBridge(outcomes: UnitOutcome[], p: SimParams | undefined, lastYear
     const loansReady = bridgeUnits
       .filter(o => loanReadyYm(o.unit) <= ym)
       .reduce((a, o) => a + o.loan, 0)
-    const bridge = Math.max(0, paid - ek - loansReady)
+    const bridge = Math.max(0, paid - ekAt(ym) - loansReady)
     if (bridge > peak) peak = bridge
     const y = Math.floor(ym / 12)
     const cur = byYear.get(y) ?? { interest: 0, debt: 0 }
@@ -1356,7 +1565,17 @@ function liquiditySim(outcomes: UnitOutcome[], rows: YearRow[], p: SimParams, la
   // Eigenkapital: hoechstens das Startkapital. Bar gekaufte Wohnungen bekommen
   // ihren Anteil fest reserviert (sonst traegt ein Barkauf ploetzlich Kredit),
   // der Rest steht den finanzierten Wohnungen der Reihe nach zur Verfuegung.
-  const ekTotal = Math.min(own.reduce((a, o) => a + o.ekAlloc, 0), Math.max(0, p.ek))
+  // Weitere Einlagen (Sven 23.10.26) kommen erst mit ihrem Eingang in einen
+  // eigenen Topf und zahlen danach faellige Raten. Ihr Anteil steckt bei
+  // finanzierten Wohnungen schon in ekAlloc und zaehlt nicht zum Startkapital.
+  const einAt = new Map<number, number>()
+  let placedFin = 0
+  for (const o of own) for (const e of o.fromEinlagen ?? []) {
+    einAt.set(e.ym, (einAt.get(e.ym) ?? 0) + e.amount)
+    if (o.unit.fin) placedFin += e.amount
+  }
+  let einPool = 0
+  const ekTotal = Math.min(own.reduce((a, o) => a + o.ekAlloc, 0) - placedFin, Math.max(0, p.ek))
   const cashUnits = own.filter(o => !o.unit.fin)
   const cashWant = cashUnits.reduce((a, o) => a + o.ekAlloc, 0)
   const cashFactor = cashWant > 0 ? Math.min(1, ekTotal / cashWant) : 0
@@ -1373,9 +1592,11 @@ function liquiditySim(outcomes: UnitOutcome[], rows: YearRow[], p: SimParams, la
   const sumOpen = () => [...open.values()].reduce((a, b) => a + b, 0)
   const addFree = (y: number, v: number) => { if (rowYears.has(y)) freeCash.set(y, (freeCash.get(y) ?? 0) + v) }
   const startYm = Math.min(ymOf(rows[0]?.year ?? lastYear, 1), ...pays.map(x => x.ym))
+  for (const [eym, amt] of einAt) if (eym < startYm) einPool += amt
   for (let ym = startYm; ym <= endYm; ym++) {
     const y = Math.floor(ym / 12)
     if (rowYears.has(y) && !freeCash.has(y)) freeCash.set(y, 0)
+    einPool += einAt.get(ym) ?? 0
     // 1) Zinsen auf den abgerufenen Kredit, Ueberschuss des Monats
     const interest = sumOpen() * iMon
     const cur = bridge.get(y) ?? { interest: 0, debt: 0 }
@@ -1400,6 +1621,10 @@ function liquiditySim(outcomes: UnitOutcome[], rows: YearRow[], p: SimParams, la
       if (pay.fin) { fromEquity = Math.min(finPool, need); finPool -= fromEquity }
       else { const c = cashLeft.get(pay.key) ?? 0; fromEquity = Math.min(c, need); cashLeft.set(pay.key, c - fromEquity) }
       need -= fromEquity
+      if (einPool > 0 && need > 0) {
+        const fromEin = Math.min(einPool, need)
+        einPool -= fromEin; need -= fromEin; fromEquity += fromEin
+      }
       const fromSurplus = Math.min(Math.max(0, surplus), need); surplus -= fromSurplus; need -= fromSurplus
       const credit = need > 0.005 ? need : 0
       if (credit) open.set(pay.key, (open.get(pay.key) ?? 0) + credit)
@@ -1419,7 +1644,7 @@ function liquiditySim(outcomes: UnitOutcome[], rows: YearRow[], p: SimParams, la
     if (surplus > 0) {
       let runEnd = ym
       while (runEnd < endYm && runEnd < lastWindowEnd && inWindow(runEnd + 1)) runEnd++
-      const futureNeed = pays.filter(x => x.fin && x.ym > ym && x.ym <= runEnd).reduce((a, x) => a + x.amount, 0) - finPool
+      const futureNeed = pays.filter(x => x.fin && x.ym > ym && x.ym <= runEnd).reduce((a, x) => a + x.amount, 0) - finPool - einPool
       const keep = Math.max(0, Math.min(surplus, futureNeed))
       if (surplus - keep > 0.005) { addFree(y, surplus - keep); surplus = keep }
     }
@@ -1432,7 +1657,7 @@ function liquiditySim(outcomes: UnitOutcome[], rows: YearRow[], p: SimParams, la
   for (const k of convYm.keys()) if (!loans.has(k)) loans.set(k, Math.round(open.get(k) ?? 0))
   // Barkauf mit weniger Eigenkapital als Kaufpreis: offener Kredit (nur Zinsen)
   const cashCredit = new Map(cashUnits.map(o => [o.unit.key, open.get(o.unit.key) ?? 0] as const).filter(([, v]) => v > 0.5))
-  const unspentEnd = finPool + [...cashLeft.values()].reduce((a, v) => a + Math.max(0, v), 0)
+  const unspentEnd = finPool + [...cashLeft.values()].reduce((a, v) => a + Math.max(0, v), 0) + einPool
   return { records, loans, bridge, freeCash, held, peak, vatReturned, vatIntoPot, cashCredit, openByYear, unspentEnd: unspentEnd > 1 ? unspentEnd : 0 }
 }
 
@@ -1774,13 +1999,33 @@ export function computeExit(outcomes: UnitOutcome[], p: SimParams, firstYear: nu
 export function equityOutflowByYear(outcomes: UnitOutcome[], p: SimParams): Map<number, number> {
   const out = new Map<number, number>()
   const pays = outcomes.flatMap(o => o.payments).sort((a, b) => a.ym - b.ym)
-  let ekLeft = p.ek
-  for (const pay of pays) {
-    const use = Math.min(ekLeft, pay.amount)
-    ekLeft -= use
-    if (use > 0) {
-      const y = Math.floor(pay.ym / 12)
-      out.set(y, (out.get(y) ?? 0) + use)
+  const ein = outcomes.flatMap(o => o.fromEinlagen ?? []).sort((a, b) => a.ym - b.ym)
+  if (!ein.length) {
+    let ekLeft = p.ek
+    for (const pay of pays) {
+      const use = Math.min(ekLeft, pay.amount)
+      ekLeft -= use
+      if (use > 0) {
+        const y = Math.floor(pay.ym / 12)
+        out.set(y, (out.get(y) ?? 0) + use)
+      }
+    }
+  } else {
+    // Weitere Einlagen (Sven 23.10.26): Eigenkapital fliesst ab, sobald es
+    // da ist und eine Rate es braucht - eine Einlage, die eine schon vom Kredit
+    // ueberbrueckte Rate abloest, also bei ihrem Eingang.
+    const yms = [...new Set([...pays.map(x => x.ym), ...ein.map(e => e.ym)])].sort((a, b) => a - b)
+    let paid = 0, arrived = 0, usedSoFar = 0
+    for (const ym of yms) {
+      paid += pays.filter(x => x.ym === ym).reduce((a, x) => a + x.amount, 0)
+      arrived += ein.filter(e => e.ym === ym).reduce((a, e) => a + e.amount, 0)
+      const cum = Math.min(p.ek + arrived, paid)
+      const use = cum - usedSoFar
+      if (use > 0) {
+        const y = Math.floor(ym / 12)
+        out.set(y, (out.get(y) ?? 0) + use)
+        usedSoFar = cum
+      }
     }
   }
   // Kaufnebenkosten zahlt der Kunde aus eigener Tasche, faellig zur Uebergabe.
@@ -1788,7 +2033,16 @@ export function equityOutflowByYear(outcomes: UnitOutcome[], p: SimParams): Map<
     const extra = o.res.ekStart - o.res.ekAbs
     if (extra > 0) out.set(o.unit.readyY, (out.get(o.unit.readyY) ?? 0) + extra)
   }
+  addPrepayOutflows(outcomes, out)
   return out
+}
+
+// Sondertilgungen aus weiteren Einlagen: Geld des Kunden im Jahr der Tilgung.
+function addPrepayOutflows(outcomes: UnitOutcome[], out: Map<number, number>): void {
+  for (const o of outcomes) {
+    if (!o.prepaid) continue
+    o.res.prepayC.forEach((v, i) => { if (v > 0) out.set(o.unit.readyY + i, (out.get(o.unit.readyY + i) ?? 0) + v) })
+  }
 }
 
 function equityOutflowFromLiquidity(outcomes: UnitOutcome[], liq: LiquidityResult): Map<number, number> {
@@ -1803,6 +2057,7 @@ function equityOutflowFromLiquidity(outcomes: UnitOutcome[], liq: LiquidityResul
     const extra = o.res.ekStart - o.res.ekAbs
     if (extra > 0) out.set(o.unit.readyY, (out.get(o.unit.readyY) ?? 0) + extra)
   }
+  addPrepayOutflows(outcomes, out)
   return out
 }
 
