@@ -23,6 +23,9 @@
 //   Reservierung, Ausweis ...), nur wenn sein Name dort mit Adresse steht. Fehlt sie, fragt
 //   Lotte per WhatsApp, sobald ein geworbener Kunde auf Reservierung (oder weiter) steht;
 //   die Antwort trägt address_reply ein. Läuft im commission_scan mit (Hintergrund).
+//   Regel (Sven 23.10.): Abrechnung NUR mit kompletten Stammdaten (missingData). Ist die
+//   Provision fällig und die Adresse fehlt noch, fragt Lotte ein zweites, letztes Mal
+//   („<Kunde> hat gekauft“, Lotte-Bild); kommt die Adresse, geht die Abrechnung sofort raus.
 //
 //   POST { action:'commission_scan' }         → Cron (alle 30 Min): Deals geworbener Kunden in
 //        Phase provision_erhalten (auch danach archiviert) → Auszahlung anlegen + Abrechnungs-PDF
@@ -51,7 +54,7 @@ import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { PDFDocument, PDFFont, PDFImage, StandardFonts, rgb } from 'npm:pdf-lib@1.17.1'
 import fontkit from 'npm:@pdf-lib/fontkit@1.1.1'
 import { authorizeCaller, safeEqual } from '../_shared/callerAuth.ts'
-import { findAddress, hasAddress, parseReply } from './address.ts'
+import { addressComplete, findAddress, hasAddress, missingData, parseReply } from './address.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -100,7 +103,7 @@ interface Affiliate {
   street?: string | null; postal_code?: string | null; city?: string | null; country?: string | null
   is_business?: boolean; vat_id?: string | null
   address_source?: string | null; address_note?: string | null; address_checked_at?: string | null
-  address_requested_at?: string | null; address_reply_text?: string | null
+  address_requested_at?: string | null; address_reply_text?: string | null; address_due_requested_at?: string | null
 }
 interface Payout {
   id: string; affiliate_id: string; referred_lead_id: string | null; amount: number; status: string
@@ -616,7 +619,7 @@ async function lookupAddress(sb: SupabaseClient, affId: string, onlyNew: boolean
   const { data: a } = await sb.from('affiliates').select('*').eq('id', affId).maybeSingle()
   const aff = a as Affiliate | null
   if (!aff) return { found: false, note: 'Tippgeber nicht gefunden' }
-  if (hasAddress(aff)) return { found: true, note: 'schon eingetragen' }
+  if (addressComplete(aff)) return { found: true, note: 'schon eingetragen' }
   const running = aff.address_note === SEARCHING && !!aff.address_checked_at && Date.now() - Date.parse(aff.address_checked_at) < 10 * 60_000
   if (running) return { found: false, busy: true, note: 'Suche läuft schon' }
   const prevChecked = aff.address_note === SEARCHING ? null : aff.address_checked_at ?? null
@@ -628,18 +631,19 @@ async function lookupAddress(sb: SupabaseClient, affId: string, onlyNew: boolean
   try {
     const r = await findAddress(sb, aff, onlyNew ? prevChecked : null)
     // In der Zwischenzeit von Hand oder per WhatsApp eingetragen? Dann nichts überschreiben.
-    const { data: cur } = await sb.from('affiliates').select('street, postal_code, city').eq('id', affId).maybeSingle()
-    if (cur && hasAddress(cur as Affiliate)) return { found: true, note: 'schon eingetragen' }
+    const { data: cur } = await sb.from('affiliates').select('street, postal_code, city, country').eq('id', affId).maybeSingle()
+    if (cur && addressComplete(cur as Affiliate)) return { found: true, note: 'schon eingetragen' }
     if (!r.found) {
       await sb.from('affiliates').update({ address_note: r.note }).eq('id', affId)
       return { found: false, note: r.note }
     }
     const f = r.found
+    const country = f.country || await fallbackCountry(sb, aff)
     await sb.from('affiliates').update({
-      street: f.street, postal_code: f.postal_code, city: f.city, country: f.country || aff.country || null,
+      street: f.street, postal_code: f.postal_code, city: f.city, country,
       address_source: f.source, address_note: f.note, address_reply_text: null,
     }).eq('id', affId)
-    await noteReferred(sb, affId, '🏠 Adresse des Empfehlungsgebers eingetragen', `${aff.name}: ${fmtAddr({ ...f, country: f.country || aff.country })} (${f.note}).`)
+    await noteReferred(sb, affId, '🏠 Adresse des Empfehlungsgebers eingetragen', `${aff.name}: ${fmtAddr({ ...f, country })} (${f.note}).`)
     return { found: true, note: f.note }
   } catch (e) {
     // Abgebrochen (z.B. Drive nicht erreichbar): Merker zurück, der nächste Lauf versucht es
@@ -663,14 +667,42 @@ function sendWindow(): boolean {
   return Number.isFinite(h) && h >= 8 && h < 20
 }
 
-async function sendLotte(sb: SupabaseClient, aff: Affiliate, eventType: string, text: string): Promise<boolean> {
+// Lotte-Bilder (Assets/wa): Anfrage = Lotte mit 1.000-€-Scheck, fällige Provision = Lotte mit Geld
+const IMG_REQUEST = 'Happy_Lotte.jpg'
+const IMG_DUE = 'lotte-money.jpg'
+
+async function sendLotte(sb: SupabaseClient, aff: Affiliate, eventType: string, text: string, image?: string): Promise<boolean> {
+  let file: { file_url: string; file_name: string } | Record<string, never> = {}
+  if (image) {
+    let url = `${SUPABASE_URL}/storage/v1/object/public/Assets/wa/${image}`
+    const head = await fetch(url, { method: 'HEAD' }).catch(() => null)
+    if (!head?.ok) url = `${SUPABASE_URL}/storage/v1/object/public/Assets/wa/lotte1.jpg`
+    file = { file_url: url, file_name: image }
+  }
   // Ohne lang/already_translated: send-whatsapp wählt die Sprache des Empfängers selbst und übersetzt.
   const { data, error } = await sb.functions.invoke('send-whatsapp', {
     body: { event_type: eventType, override_text: text, auto: true, lead_id: aff.lead_id ?? undefined,
-      lead_data: { lead_name: aff.name, lead_phone: aff.whatsapp } },
+      lead_data: { lead_name: aff.name, lead_phone: aff.whatsapp }, ...file },
     headers: { Authorization: `Bearer ${SERVICE_ROLE}` },
   })
   return !error && (data as { success?: boolean } | null)?.success !== false
+}
+
+async function optedOut(sb: SupabaseClient, aff: Affiliate): Promise<boolean> {
+  if (!aff.lead_id) return false
+  const { data } = await sb.from('communication_optouts').select('id').eq('lead_id', aff.lead_id).limit(1)
+  return !!data?.length
+}
+
+// Land fehlt in Antwort/Unterlage? Dann das Land aus dem Eigentümer-Profil (leads.country ist unbrauchbar)
+async function fallbackCountry(sb: SupabaseClient, aff: Affiliate): Promise<string | null> {
+  if (aff.country?.trim()) return aff.country.trim()
+  if (!aff.lead_id) return null
+  const { data: l } = await sb.from('leads').select('profile_id').eq('id', aff.lead_id).maybeSingle()
+  const pid = (l as { profile_id: string | null } | null)?.profile_id
+  if (!pid) return null
+  const { data: p } = await sb.from('profiles').select('address_country').eq('id', pid).maybeSingle()
+  return (p as { address_country: string | null } | null)?.address_country?.trim() || null
 }
 
 /** Lotte fragt den Tippgeber per WhatsApp nach der Adresse (genau einmal). */
@@ -684,17 +716,14 @@ async function requestAddress(sb: SupabaseClient, aff: Affiliate): Promise<strin
       `Ein von ${aff.name} geworbener Kunde steht auf Reservierung. Für die Provisionsabrechnung fehlt die Postanschrift, und es ist keine WhatsApp-Nummer hinterlegt. Bitte erfragen und in der Kundenakte unter „Empfehlungsgeber → Bearbeiten“ eintragen.`)
     return 'keine WhatsApp, Aufgabe'
   }
-  if (aff.lead_id) {
-    const { data: opt } = await sb.from('communication_optouts').select('id').eq('lead_id', aff.lead_id).limit(1)
-    if (opt?.length) {
-      await sb.from('affiliates').update({ address_note: 'Hat Nachrichten abbestellt: Aufgabe für Sven angelegt' }).eq('id', aff.id)
-      await addTask(sb, `🏠 Adresse von Tippgeber ${aff.name} fehlt`,
-        `Für die Provisionsabrechnung fehlt die Postanschrift von ${aff.name}. Lotte schreibt nicht automatisch, weil ${aff.name} Nachrichten abbestellt hat. Bitte selbst klären und unter „Empfehlungsgeber → Bearbeiten“ eintragen.`)
-      return 'abbestellt, Aufgabe'
-    }
+  if (await optedOut(sb, aff)) {
+    await sb.from('affiliates').update({ address_note: 'Hat Nachrichten abbestellt: Aufgabe für Sven angelegt' }).eq('id', aff.id)
+    await addTask(sb, `🏠 Adresse von Tippgeber ${aff.name} fehlt`,
+      `Für die Provisionsabrechnung fehlt die Postanschrift von ${aff.name}. Lotte schreibt nicht automatisch, weil ${aff.name} Nachrichten abbestellt hat. Bitte selbst klären und unter „Empfehlungsgeber → Bearbeiten“ eintragen.`)
+    return 'abbestellt, Aufgabe'
   }
   const text = `Hallo ${firstName(aff.name)} 🐾 hier ist Lotte von Happy Property. Danke dir nochmal für deine Empfehlung, darüber freuen wir uns sehr!\n\nDamit wir deine Tippgeber-Provision später richtig abrechnen können, brauche ich für die Abrechnung noch deine Postanschrift: Straße und Hausnummer, PLZ, Ort und Land. Schreib sie mir einfach hier als Antwort.\n\nLiebe Grüße, Lotte 🐾`
-  const sent = await sendLotte(sb, aff, 'tippgeber_adresse', text)
+  const sent = await sendLotte(sb, aff, 'tippgeber_adresse', text, IMG_REQUEST)
   if (!sent) {
     // Nicht raus: Merker zurück, der nächste Lauf versucht es erneut
     await sb.from('affiliates').update({ address_requested_at: null }).eq('id', aff.id)
@@ -711,7 +740,7 @@ async function requestAddress(sb: SupabaseClient, aff: Affiliate): Promise<strin
 async function addressStep(sb: SupabaseClient, affId: string): Promise<{ looked: boolean; result: string }> {
   const load = async () => (await sb.from('affiliates').select('*').eq('id', affId).maybeSingle()).data as Affiliate | null
   let aff = await load()
-  if (!aff || hasAddress(aff)) return { looked: false, result: 'Adresse da' }
+  if (!aff || addressComplete(aff)) return { looked: false, result: 'Adresse da' }
   const open = await openReferred(sb, affId)
   if (!open.length) return { looked: false, result: 'nichts offen' }
   let looked = false
@@ -720,7 +749,7 @@ async function addressStep(sb: SupabaseClient, affId: string): Promise<{ looked:
     looked = true
     if (r.found || r.busy) return { looked, result: r.note }
     aff = await load()
-    if (!aff || hasAddress(aff)) return { looked, result: 'Adresse da' }
+    if (!aff || addressComplete(aff)) return { looked, result: 'Adresse da' }
   }
   if (aff.address_requested_at) return { looked, result: 'schon angefragt' }
   const { data: due } = await sb.from('deals').select('lead_id').in('lead_id', open).in('phase', REQUEST_PHASES).limit(1)
@@ -732,7 +761,7 @@ async function addressStep(sb: SupabaseClient, affId: string): Promise<{ looked:
     looked = true
     if (r.found || r.busy) return { looked, result: r.note }
     aff = await load()
-    if (!aff || hasAddress(aff) || aff.address_requested_at) return { looked, result: 'erledigt' }
+    if (!aff || addressComplete(aff) || aff.address_requested_at) return { looked, result: 'erledigt' }
   }
   return { looked, result: await requestAddress(sb, aff) }
 }
@@ -755,7 +784,7 @@ async function addressSweep(sb: SupabaseClient): Promise<unknown[]> {
 async function handleAddressReply(sb: SupabaseClient, affId: string, text: string): Promise<Record<string, unknown>> {
   const { data: a } = await sb.from('affiliates').select('*').eq('id', affId).maybeSingle()
   const aff = a as Affiliate | null
-  if (!aff || !aff.address_requested_at || hasAddress(aff)) return { ignored: true }
+  if (!aff || !aff.address_requested_at || addressComplete(aff)) return { ignored: true }
   // Erst merken (mehrteilige Antworten), dann lesen
   const buffer = `${aff.address_reply_text ?? ''}\n${text}`.trim().slice(-2000)
   await sb.from('affiliates').update({ address_reply_text: buffer }).eq('id', affId)
@@ -771,9 +800,9 @@ async function handleAddressReply(sb: SupabaseClient, affId: string, text: strin
       `${aff.name} hat auf Lottes Adress-Frage geantwortet, die Abrechnung soll aber ${why} gehen:\n\n${buffer}\n\nBei einer Firma: in der Kundenakte unter „Empfehlungsgeber → Bearbeiten“ auf Unternehmer stellen und die USt-IdNr. eintragen (dann wird es eine Gutschrift). Adresse dort eintragen.`)
     return { ok: true, kind: 'check' }
   }
-  const { data: cur } = await sb.from('affiliates').select('street, postal_code, city').eq('id', affId).maybeSingle()
-  if (cur && hasAddress(cur as Affiliate)) return { ignored: true }
-  const country = addr.country || aff.country || null
+  const { data: cur } = await sb.from('affiliates').select('street, postal_code, city, country').eq('id', affId).maybeSingle()
+  if (cur && addressComplete(cur as Affiliate)) return { ignored: true }
+  const country = addr.country || await fallbackCountry(sb, aff)
   const { error: ue } = await sb.from('affiliates').update({
     street: addr.street, postal_code: addr.postal_code, city: addr.city, country,
     address_source: 'whatsapp', address_note: `per WhatsApp am ${dDate(new Date())}`, address_reply_text: null,
@@ -781,16 +810,21 @@ async function handleAddressReply(sb: SupabaseClient, affId: string, text: strin
   if (ue) return { ok: false, error: ue.message }
   const line = fmtAddr({ ...addr, country })
   await noteReferred(sb, affId, '🏠 Adresse des Empfehlungsgebers per WhatsApp erhalten', `${aff.name}: ${line}.`)
-  const thanks = `Danke dir, ${firstName(aff.name)}! Ich habe deine Adresse für die Abrechnung gespeichert:\n\n${addr.street}\n${addr.postal_code} ${addr.city}${country ? `\n${country}` : ''}\n\nLiebe Grüße, Lotte 🐾`
+  // Provision schon fällig? Dann geht es direkt weiter: Abrechnung + Auszahlungs-Link
+  let due = false
+  for (const id of await openReferred(sb, affId)) if (await dealDone(sb, id)) { due = true; break }
+  const thanks = `Danke dir, ${firstName(aff.name)}! Ich habe deine Adresse für die Abrechnung gespeichert:\n\n${addr.street}\n${addr.postal_code} ${addr.city}${country ? `\n${country}` : ''}\n\n${due ? 'Deine Abrechnung und deinen Auszahlungs-Link schicke ich dir gleich. ' : ''}Liebe Grüße, Lotte 🐾`
   await sendLotte(sb, aff, 'tippgeber_adresse_danke', thanks)
-  return { ok: true, kind: 'address', saved: line }
+  if (due) background(payoutScan(sb))
+  return { ok: true, kind: 'address', saved: line, due }
 }
 
 // Zustand für die Kundenakte
 function addressState(aff: Affiliate, due: boolean) {
   const base = { source: aff.address_source ?? null, note: aff.address_note ?? null, checked_at: aff.address_checked_at ?? null,
-    requested_at: aff.address_requested_at ?? null, reply_text: aff.address_reply_text ?? null, due }
-  if (hasAddress(aff)) return { status: 'ok', ...base }
+    requested_at: aff.address_requested_at ?? null, reply_text: aff.address_reply_text ?? null, due,
+    due_requested_at: aff.address_due_requested_at ?? null }
+  if (addressComplete(aff)) return { status: 'ok', ...base }
   if (aff.address_requested_at) return { status: 'requested', ...base }
   if (!aff.address_checked_at || aff.address_note === SEARCHING) return { status: 'searching', ...base }
   return { status: 'not_found', ...base }
@@ -827,6 +861,7 @@ async function referrerState(sb: SupabaseClient, leadId: string) {
   return {
     referrer,
     address,
+    missing: referrer ? missingData(referrer) : [],
     commission: lead.referral_commission != null ? Number(lead.referral_commission) : null,
     default_commission: AMOUNT,
     link_max: LINK_MAX,
@@ -836,6 +871,98 @@ async function referrerState(sb: SupabaseClient, leadId: string) {
 }
 
 const cleanQ = (q: unknown) => str(q, 60).replace(/[,()%*"\\]/g, ' ').replace(/\s+/g, ' ').trim()
+
+/** Stammdaten vor der Abrechnung sicherstellen. Fehlt die Adresse, fragt Lotte jetzt ein
+ *  zweites (letztes) Mal mit „<Kunde> hat gekauft“; anderes Fehlendes → Aufgabe für Sven.
+ *  Gibt zurück, was noch fehlt (leer = abrechnen). */
+async function ensureData(sb: SupabaseClient, affId: string, lead: { id: string; first_name: string | null }, amount: number): Promise<string[]> {
+  const load = async () => (await sb.from('affiliates').select('*').eq('id', affId).maybeSingle()).data as Affiliate | null
+  let aff = await load()
+  if (!aff) return ['Tippgeber']
+  let missing = missingData(aff)
+  if (!missing.length) return []
+  // Vielleicht liegt inzwischen ein Kaufvertrag o.ä. im Drive
+  if (!addressComplete(aff) && (!aff.address_checked_at || Date.now() - Date.parse(aff.address_checked_at) > RECHECK_MS)) {
+    const r = await lookupAddress(sb, affId, !!aff.address_checked_at)
+    if (r.found) {
+      aff = await load()
+      if (!aff) return ['Tippgeber']
+      missing = missingData(aff)
+      if (!missing.length) return []
+    }
+  }
+  if (aff.address_due_requested_at) return missing          // schon gefragt bzw. Aufgabe angelegt
+  const askAddress = !addressComplete(aff) && !!aff.whatsapp && !(await optedOut(sb, aff))
+  if (askAddress && !sendWindow()) return missing           // Lotte schreibt nur 8-20 Uhr
+  const { data: claimed } = await sb.from('affiliates').update({ address_due_requested_at: new Date().toISOString() })
+    .eq('id', affId).is('address_due_requested_at', null).select('id')
+  if (!claimed?.length) return missing
+  const rest = askAddress ? missing.filter(m => !['Straße', 'PLZ', 'Ort', 'Land'].includes(m)) : missing
+  if (askAddress) {
+    const kunde = (lead.first_name ?? '').trim().split(/\s+/)[0]
+    const text = `Hallo ${firstName(aff.name)} 🐾 tolle Nachrichten: ${kunde ? `${kunde} hat` : 'deine Empfehlung hat'} gekauft! Wir würden dir sehr gern deine Tippgeber-Provision von ${eur(amount)} auszahlen.\n\nFür die Abrechnung brauche ich nur noch deine Postanschrift: Straße und Hausnummer, PLZ, Ort und Land. Schreib sie mir einfach hier als Antwort, dann bekommst du sofort deine Abrechnung und deinen Auszahlungs-Link.\n\nLiebe Grüße, Lotte 🐾`
+    const sent = await sendLotte(sb, aff, 'tippgeber_adresse_faellig', text, IMG_DUE)
+    if (!sent) {
+      await sb.from('affiliates').update({ address_due_requested_at: null }).eq('id', affId)
+      return missing
+    }
+    await sb.from('affiliates').update({ address_requested_at: aff.address_requested_at ?? new Date().toISOString(), address_note: null }).eq('id', affId)
+    await addNote(sb, lead.id, '📨 Provision fällig: Adresse beim Empfehlungsgeber angefragt',
+      `Die Abrechnung an ${aff.name} wartet auf die Postanschrift. Lotte hat per WhatsApp gefragt; sobald die Antwort da ist, gehen Abrechnung und Auszahlungs-Link automatisch raus.`)
+  }
+  if (rest.length || !askAddress) {
+    await addTask(sb, `💶 Tippgeber-Provision fällig, Daten fehlen: ${aff.name}`,
+      `Die Provision über ${eur(amount)} ist fällig, die Abrechnung wird aber nur mit kompletten Stammdaten erstellt. Es fehlt: ${(askAddress ? rest : missing).join(', ')}.${!askAddress && !addressComplete(aff) ? ' Lotte kann nicht per WhatsApp fragen (keine Nummer oder Nachrichten abbestellt).' : ''}\n\nBitte in der Kundenakte unter „Empfehlungsgeber → Bearbeiten“ ergänzen, dann geht die Abrechnung automatisch raus.`)
+  }
+  return missing
+}
+
+// Fällige Provisionen abrechnen (Cron + sofort nach neuer Adresse). Doppelte Auszahlungen
+// verhindert der Unique-Index (affiliate_id, referred_lead_id).
+async function payoutScan(sb: SupabaseClient): Promise<unknown[]> {
+  const results: unknown[] = []
+  // Geworbene Leads, deren Deal Provision erhalten hat und fuer die es noch
+  // keine Auszahlung gibt (pro geworbenem Kunden genau eine).
+  const { data: leads } = await sb.from('leads')
+    .select('id, first_name, last_name, referred_by_affiliate, referral_commission')
+    .not('referred_by_affiliate', 'is', null)
+  for (const l of (leads ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; referred_by_affiliate: string; referral_commission: number | null }>) {
+    if (!(await dealDone(sb, l.id))) continue
+    const { data: existing } = await sb.from('affiliate_payouts').select('id').eq('referred_lead_id', l.id).limit(1)
+    if (existing?.length) continue
+    const amount = l.referral_commission != null && Number(l.referral_commission) > 0 ? Number(l.referral_commission) : AMOUNT
+    // Svens Regel: Abrechnung nur mit kompletten Stammdaten. Fehlt etwas, fragt Lotte
+    // (einmal) bzw. Sven bekommt eine Aufgabe; der nächste Lauf rechnet dann ab.
+    const missing = await ensureData(sb, l.referred_by_affiliate, l, amount)
+    if (missing.length) { results.push({ lead: l.id, wartet_auf: missing }); continue }
+    const { data: created, error: ce } = await sb.from('affiliate_payouts')
+      .insert({ affiliate_id: l.referred_by_affiliate, referred_lead_id: l.id, amount, status: 'offen' })
+      .select('*').single()
+    if (ce) { results.push({ lead: l.id, error: ce.message }); continue }
+    const payout = created as Payout
+    const r = await settle(sb, payout, true)
+    results.push({ lead: l.id, settled: r.ok, error: r.error, link: r.link?.state ?? r.link?.error ?? null })
+
+    const { data: affRow } = await sb.from('affiliates').select('name').eq('id', l.referred_by_affiliate).maybeSingle()
+    const affName = (affRow as { name: string } | null)?.name ?? 'Tippgeber'
+    const kunde = `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim()
+    const liveLink = r.link?.state === 'active' && !!r.link.url
+    await addNote(sb, l.id, '💶 Tippgeber-Provision abgerechnet',
+      `${affName}: ${eur(amount)}. ${r.ok ? 'Abrechnung verschickt' : `Abrechnung NICHT zugestellt (${r.error})`}${liveLink ? ', Revolut-Auszahlungslink mitgeschickt' : ''}.`)
+    // Aufgabe fuer Sven nur, wenn er etwas tun muss
+    if (!r.ok) {
+      await addTask(sb, `💶 Tippgeber-Abrechnung ${eur(amount)} prüfen: ${affName}`,
+        `Geworbener Kunde ${kunde} hat gekauft (Provision erhalten), aber die Abrechnung ging nicht raus: ${r.error}.\n\n${PORTAL}/admin/crm/affiliates`)
+    } else if (r.link?.state === 'awaiting') {
+      await addTask(sb, `💶 Tippgeber-Auszahlung ${eur(amount)} in Revolut freigeben: ${affName}`,
+        `Abrechnung ist raus. Der Revolut-Auszahlungslink wartet auf deine Freigabe in der Revolut-Business-App (Transfers → zur Freigabe). Nach der Freigabe schickt Lotte den Link automatisch an ${affName}.`)
+    } else if (!liveLink && r.link?.state !== 'created' && r.link?.state !== 'processing') {
+      await addTask(sb, `💶 Tippgeber-Auszahlung ${eur(amount)} manuell: ${affName}`,
+        `Abrechnung ist raus, aber kein Revolut-Link: ${r.link?.error ?? 'unbekannt'}.\n\nNeu versuchen oder manuell überweisen: ${PORTAL}/admin/crm/affiliates`)
+    }
+  }
+  return results
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
@@ -851,43 +978,7 @@ Deno.serve(async (req) => {
         const caller = await authorizeCaller(req, { cron: true, roles: ['admin', 'verwalter'] }, CORS)
         if (caller instanceof Response) return caller
       }
-      // Geworbene Leads, deren Deal Provision erhalten hat und fuer die es noch
-      // keine Auszahlung gibt (pro geworbenem Kunden genau eine).
-      const { data: leads } = await sb.from('leads')
-        .select('id, first_name, last_name, referred_by_affiliate, referral_commission')
-        .not('referred_by_affiliate', 'is', null)
-      const results: unknown[] = []
-      for (const l of (leads ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; referred_by_affiliate: string; referral_commission: number | null }>) {
-        if (!(await dealDone(sb, l.id))) continue
-        const { data: existing } = await sb.from('affiliate_payouts').select('id').eq('referred_lead_id', l.id).limit(1)
-        if (existing?.length) continue
-        const amount = l.referral_commission != null && Number(l.referral_commission) > 0 ? Number(l.referral_commission) : AMOUNT
-        const { data: created, error: ce } = await sb.from('affiliate_payouts')
-          .insert({ affiliate_id: l.referred_by_affiliate, referred_lead_id: l.id, amount, status: 'offen' })
-          .select('*').single()
-        if (ce) { results.push({ lead: l.id, error: ce.message }); continue }
-        const payout = created as Payout
-        const r = await settle(sb, payout, true)
-        results.push({ lead: l.id, settled: r.ok, error: r.error, link: r.link?.state ?? r.link?.error ?? null })
-
-        const { data: affRow } = await sb.from('affiliates').select('name').eq('id', l.referred_by_affiliate).maybeSingle()
-        const affName = (affRow as { name: string } | null)?.name ?? 'Tippgeber'
-        const kunde = `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim()
-        const liveLink = r.link?.state === 'active' && !!r.link.url
-        await addNote(sb, l.id, '💶 Tippgeber-Provision abgerechnet',
-          `${affName}: ${eur(amount)}. ${r.ok ? 'Abrechnung verschickt' : `Abrechnung NICHT zugestellt (${r.error})`}${liveLink ? ', Revolut-Auszahlungslink mitgeschickt' : ''}.`)
-        // Aufgabe fuer Sven nur, wenn er etwas tun muss
-        if (!r.ok) {
-          await addTask(sb, `💶 Tippgeber-Abrechnung ${eur(amount)} prüfen: ${affName}`,
-            `Geworbener Kunde ${kunde} hat gekauft (Provision erhalten), aber die Abrechnung ging nicht raus: ${r.error}.\n\n${PORTAL}/admin/crm/affiliates`)
-        } else if (r.link?.state === 'awaiting') {
-          await addTask(sb, `💶 Tippgeber-Auszahlung ${eur(amount)} in Revolut freigeben: ${affName}`,
-            `Abrechnung ist raus. Der Revolut-Auszahlungslink wartet auf deine Freigabe in der Revolut-Business-App (Transfers → zur Freigabe). Nach der Freigabe schickt Lotte den Link automatisch an ${affName}.`)
-        } else if (!liveLink && r.link?.state !== 'created' && r.link?.state !== 'processing') {
-          await addTask(sb, `💶 Tippgeber-Auszahlung ${eur(amount)} manuell: ${affName}`,
-            `Abrechnung ist raus, aber kein Revolut-Link: ${r.link?.error ?? 'unbekannt'}.\n\nNeu versuchen oder manuell überweisen: ${PORTAL}/admin/crm/affiliates`)
-        }
-      }
+      const results = await payoutScan(sb)
       const links = await pollLinks(sb)
       // Tippgeber-Adressen (Unterlagen lesen, WhatsApp-Frage) dauern: im Hintergrund,
       // mit wait:true zum Testen direkt im Ergebnis.
@@ -1096,7 +1187,7 @@ Deno.serve(async (req) => {
       await addNote(sb, leadId, '🤝 Empfehlungsgeber zugewiesen',
         `Empfohlen von ${aff.name} (manuell zugewiesen). Bei Provisionseingang: ${eur(amt)} Tippgeber-Provision.`, userId)
       // Adresse fehlt? In den Unterlagen suchen (und ggf. gleich fragen), im Hintergrund.
-      if (!hasAddress(aff)) background(addressStep(sb, aff.id))
+      if (!addressComplete(aff)) background(addressStep(sb, aff.id))
       return json({ ok: true, ...(await referrerState(sb, leadId)) })
     }
 
@@ -1123,6 +1214,9 @@ Deno.serve(async (req) => {
       }
       const { error: ue } = await sb.from('affiliates').update(patch).eq('id', affId)
       if (ue) return json({ error: ue.message }, 500)
+      // Daten jetzt komplett und eine Provision wartet? Dann gleich abrechnen.
+      const { data: after } = await sb.from('affiliates').select('*').eq('id', affId).maybeSingle()
+      if (after && !missingData(after as Affiliate).length) background(payoutScan(sb))
       const leadId = String(body.lead_id ?? '')
       return json({ ok: true, ...(leadId ? await referrerState(sb, leadId) : {}) })
     }
@@ -1149,13 +1243,22 @@ Deno.serve(async (req) => {
       return json({ ok: true, found: r.found ? { source: r.found.source, note: r.found.note, city: r.found.city } : null, note: r.note, seen: r.seen ?? [] })
     }
 
+    // Test der Fälligkeits-Frage ohne echten Kauf (nur Service-Key): wie im Scan, aber für
+    // einen beliebigen Kunden. Nur mit Test-Tippgebern auf Svens Nummer benutzen.
+    if (action === 'due_test') {
+      if (caller.kind !== 'service') return json({ error: 'Nur intern.' }, 403)
+      const { data: l } = await sb.from('leads').select('id, first_name').eq('id', String(body.lead_id ?? '')).maybeSingle()
+      if (!l) return json({ error: 'Kunde nicht gefunden.' }, 404)
+      return json({ ok: true, missing: await ensureData(sb, String(body.affiliate_id ?? ''), l as { id: string; first_name: string | null }, AMOUNT) })
+    }
+
     // Lotte sofort nach der Adresse fragen lassen (ohne auf Reservierung zu warten)
     if (action === 'address_request') {
       const affId = String(body.affiliate_id ?? '')
       const { data: a } = await sb.from('affiliates').select('*').eq('id', affId).maybeSingle()
       const aff = a as Affiliate | null
       if (!aff) return json({ error: 'Tippgeber nicht gefunden.' }, 404)
-      if (hasAddress(aff)) return json({ error: 'Adresse ist schon eingetragen.' }, 409)
+      if (addressComplete(aff)) return json({ error: 'Adresse ist schon eingetragen.' }, 409)
       return json({ ok: true, result: await requestAddress(sb, aff) })
     }
 

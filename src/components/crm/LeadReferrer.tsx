@@ -24,10 +24,12 @@ interface Payout {
 interface AddressState {
   status: 'ok' | 'searching' | 'not_found' | 'requested'
   source: string | null; note: string | null; requested_at: string | null; reply_text: string | null; due: boolean
+  due_requested_at: string | null
 }
 interface State {
   referrer: Referrer | null; commission: number | null; default_commission: number; link_max: number
   payout: Payout | null; deal_done: boolean; address: AddressState | null
+  missing: string[]   // fehlende Stammdaten: ohne sie keine Abrechnung
 }
 interface Hit { kind: 'affiliate' | 'lead'; id: string; name: string; email: string | null; hint: string }
 
@@ -397,6 +399,13 @@ export default function LeadReferrer({ leadId }: { leadId: string }) {
                 {p.payout_link_error && p.status !== 'bezahlt' && <p className="text-amber-700">{t('crm.referrer.linkError', { error: p.payout_link_error })}</p>}
                 <p className="text-gray-400">{t('crm.referrer.locked', 'Abgerechnet: Zuweisung und Betrag sind gesperrt. Auszahlung steuerst du unter Tippgeber.')}</p>
               </>
+            ) : st.deal_done && st.missing?.length ? (
+              <p className="text-amber-700">
+                {t('crm.referrer.statusDueMissing', { missing: st.missing.join(', ') })}{' '}
+                {st.address?.due_requested_at
+                  ? t('crm.referrer.statusDueAsked', { date: new Date(st.address.due_requested_at).toLocaleDateString('de-DE') })
+                  : t('crm.referrer.statusDueAskSoon', 'Lotte fragt beim nächsten Lauf per WhatsApp (zwischen 8 und 20 Uhr).')}
+              </p>
             ) : st.deal_done ? (
               <p>{t('crm.referrer.statusDue', 'Kauf abgeschlossen: Abrechnung und Revolut-Link gehen beim nächsten Lauf raus (spätestens in 30 Minuten).')}</p>
             ) : (

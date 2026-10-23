@@ -1721,7 +1721,10 @@
       "source_profil": "from the owner profile",
       "source_rechnungskunde": "from the invoice customers",
       "source_dokument": "from the Drive documents",
-      "source_whatsapp": "via WhatsApp"
+      "source_whatsapp": "via WhatsApp",
+      "statusDueMissing": "Purchase completed, the statement is waiting for complete details. Missing: {{missing}}.",
+      "statusDueAsked": "Lotte asked by WhatsApp on {{date}}; as soon as the reply arrives, statement and payout link go out.",
+      "statusDueAskSoon": "Lotte asks by WhatsApp on the next run (between 8 am and 8 pm)."
     },
     "reviews": {
       "title": "Reviews",

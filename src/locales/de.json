@@ -1721,7 +1721,10 @@
       "source_profil": "aus dem Eigentümer-Profil",
       "source_rechnungskunde": "aus den Rechnungskunden",
       "source_dokument": "aus den Drive-Unterlagen",
-      "source_whatsapp": "per WhatsApp"
+      "source_whatsapp": "per WhatsApp",
+      "statusDueMissing": "Kauf abgeschlossen, die Abrechnung wartet auf vollständige Daten. Es fehlt: {{missing}}.",
+      "statusDueAsked": "Lotte hat am {{date}} per WhatsApp gefragt; kommt die Antwort, gehen Abrechnung und Auszahlungs-Link sofort raus.",
+      "statusDueAskSoon": "Lotte fragt beim nächsten Lauf per WhatsApp (zwischen 8 und 20 Uhr)."
     },
     "reviews": {
       "title": "Bewertungen",

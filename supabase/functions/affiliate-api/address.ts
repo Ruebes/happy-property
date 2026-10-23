@@ -29,6 +29,27 @@ const SKIP = /spec|grundriss|floor|plan|render|brochure|expos|preis|price|foto|p
 
 export const hasAddress = (a: { street?: string | null; postal_code?: string | null; city?: string | null }) =>
   !!(a.street?.trim() && a.postal_code?.trim() && a.city?.trim())
+/** Adresse inkl. Land: erst dann muss Lotte nicht (mehr) fragen. */
+export const addressComplete = (a: { street?: string | null; postal_code?: string | null; city?: string | null; country?: string | null }) =>
+  hasAddress(a) && !!a.country?.trim()
+
+/** Svens Regel (23.10.2026): Provisionsabrechnung nur mit kompletten Stammdaten.
+ *  Gibt zurück, was fehlt (leer = vollständig). */
+export function missingData(a: {
+  name?: string | null; email?: string | null; whatsapp?: string | null
+  street?: string | null; postal_code?: string | null; city?: string | null; country?: string | null
+  is_business?: boolean | null; vat_id?: string | null
+}): string[] {
+  const m: string[] = []
+  if ((a.name ?? '').trim().length < 2) m.push('Name')
+  if (!a.street?.trim()) m.push('Straße')
+  if (!a.postal_code?.trim()) m.push('PLZ')
+  if (!a.city?.trim()) m.push('Ort')
+  if (!a.country?.trim()) m.push('Land')
+  if (a.is_business && !a.vat_id?.trim()) m.push('USt-IdNr.')
+  if (!a.email?.trim() && !a.whatsapp?.trim()) m.push('E-Mail oder WhatsApp')
+  return m
+}
 
 // ── Namen vergleichen ─────────────────────────────────────────────────────────
 const norm = (s: string) => s.toLowerCase()

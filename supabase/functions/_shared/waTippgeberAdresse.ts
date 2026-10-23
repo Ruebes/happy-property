@@ -11,11 +11,11 @@ export async function maybeTippgeberAdresse(sb: SupabaseClient, digits: string, 
   try {
     const suffix = digits.slice(-8)
     if (suffix.length < 8) return
-    const { data } = await sb.from('affiliates').select('id, whatsapp, street, postal_code, city')
+    const { data } = await sb.from('affiliates').select('id, whatsapp, street, postal_code, city, country')
       .not('address_requested_at', 'is', null).not('whatsapp', 'is', null)
-      .or('street.is.null,postal_code.is.null,city.is.null').limit(100)
-    const hit = ((data ?? []) as Array<{ id: string; whatsapp: string; street: string | null; postal_code: string | null; city: string | null }>)
-      .find(a => !(a.street?.trim() && a.postal_code?.trim() && a.city?.trim()) && a.whatsapp.replace(/\D/g, '').endsWith(suffix))
+      .or('street.is.null,postal_code.is.null,city.is.null,country.is.null').limit(100)
+    const hit = ((data ?? []) as Array<{ id: string; whatsapp: string; street: string | null; postal_code: string | null; city: string | null; country: string | null }>)
+      .find(a => !(a.street?.trim() && a.postal_code?.trim() && a.city?.trim() && a.country?.trim()) && a.whatsapp.replace(/\D/g, '').endsWith(suffix))
     if (!hit) return
     const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     const p = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/affiliate-api`, {
