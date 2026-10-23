@@ -568,12 +568,16 @@ interface LegacyUnit {
 interface LegacyParams { ek?: number; growth?: number; ltv?: number; interest?: number; rentGrowth?: number; bundle?: boolean }
 
 export function migrateConfig(cfg: StrategyConfig | null | undefined): { units: SimUnit[]; params: SimParams } {
-  if (cfg?.unitsV2?.length) {
-    const saved = cfg.paramsV2 ?? {}
+  // Auch ein Fahrplan ohne Wohnung ist v2, wenn Annahmen gespeichert sind (Sven
+  // 23.10.26: Simulator ohne Wohnung freigeben) - sonst fielen Eigenkapital und
+  // Einlagen still auf die Standardwerte zurück.
+  if (cfg?.unitsV2?.length || (Array.isArray(cfg?.unitsV2) && cfg?.paramsV2)) {
+    const unitsV2 = cfg!.unitsV2!
+    const saved = cfg!.paramsV2 ?? {}
     // Alte Szenarien kannten keinen Steuersitz - dort stand er (wenn ueberhaupt)
     // in der Einzelberechnung der Wohnung. Den uebernehmen, sonst Deutschland.
-    const resFromUnits = cfg.unitsV2.some(u => u.calc?.res === 'cy') ? 'cy' : 'de'
-    return { units: cfg.unitsV2, params: { ...DEFAULT_SIM_PARAMS, res: resFromUnits, ...saved } }
+    const resFromUnits = unitsV2.some(u => u.calc?.res === 'cy') ? 'cy' : 'de'
+    return { units: unitsV2, params: { ...DEFAULT_SIM_PARAMS, res: resFromUnits, ...saved } }
   }
   const now = new Date()
   const baseYm = now.getFullYear() * 12 + now.getMonth()   // 0-basierter Monat

@@ -144,8 +144,10 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
     if (initialUnits.length > 0 || !lead) { setLoaded(true); return }
     try {
       const { data } = await supabase.from('crm_strategy_scenarios').select('config').eq('lead_id', lead.id).maybeSingle()
-      const mig = migrateConfig((data as { config?: unknown } | null)?.config as never)
-      if (mig.units.length) { setUnits(mig.units); setParams(mig.params) }
+      const cfg = (data as { config?: { paramsV2?: unknown } } | null)?.config
+      const mig = migrateConfig(cfg as never)
+      // Auch ohne Wohnung die gespeicherten Annahmen laden (Eigenkapital, Einlagen)
+      if (mig.units.length || cfg?.paramsV2) { setUnits(mig.units); setParams(mig.params) }
     } catch (err) { console.error('[StrategySimulator] load:', err) }
     setLoaded(true)
   })() }, [initialUnits.length, lead])
