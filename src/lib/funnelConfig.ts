@@ -26,7 +26,15 @@ export interface FunnelSocial { icon: string; label: string; url: string }
 
 // Zusätzlicher Fragebogen (Variante): erreichbar über /termin?f=<slug>.
 // Reservierter Slug 'none' = ganz ohne Fragebogen (nur Kontakt + Termin).
-export interface FunnelQuestionnaire { slug: string; name: string; questions: FunnelQuestion[] }
+// Optional je Variante (z. B. Anzeigen-Zielseite): eigene Startseite, Projektbild
+// als Seitenhintergrund und Standard-Fragen statt eigener Fragen.
+export interface FunnelQuestionnaire {
+  slug: string; name: string; questions: FunnelQuestion[]
+  welcome?: Partial<FunnelConfig['welcome']>
+  bg_url?: string
+  hero_label?: string
+  use_standard_questions?: boolean
+}
 
 // Kampagnen-/Quellen-Link (Funnel-Editor → „Links & Quellen"): ein teilbarer
 // /termin-Link, der eine Buchung einer Quelle zuordnet (deals.source →
@@ -231,7 +239,18 @@ export function normalizeFunnelConfig(raw: unknown): FunnelConfig {
   const questionnaires = Array.isArray(r.questionnaires)
     ? r.questionnaires
         .filter(x => x && typeof x.slug === 'string' && x.slug.trim() && x.slug !== 'none' && typeof x.name === 'string')
-        .map(x => ({ slug: x.slug.trim(), name: x.name, questions: cleanQuestions(x.questions) }))
+        .map(x => {
+          const w = (x.welcome && typeof x.welcome === 'object' ? x.welcome : {}) as Record<string, unknown>
+          const welcome = Object.fromEntries(Object.entries(w).filter(([k, v]) =>
+            ['title', 'subtitle', 'cta', 'footnote', 'hero_url'].includes(k) && typeof v === 'string' && v.trim()))
+          return {
+            slug: x.slug.trim(), name: x.name, questions: cleanQuestions(x.questions),
+            ...(Object.keys(welcome).length ? { welcome } : {}),
+            ...(typeof x.bg_url === 'string' && x.bg_url.trim() ? { bg_url: x.bg_url.trim() } : {}),
+            ...(typeof x.hero_label === 'string' && x.hero_label.trim() ? { hero_label: x.hero_label.trim() } : {}),
+            ...(x.use_standard_questions === true ? { use_standard_questions: true } : {}),
+          }
+        })
     : []
   // Kampagnen-/Quellen-Links: code + name Pflicht, source/questionnaire tolerant.
   const cleanKey = (v: unknown, max: number) => String(v ?? '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, max)

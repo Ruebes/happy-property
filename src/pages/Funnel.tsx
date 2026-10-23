@@ -176,11 +176,15 @@ export default function Funnel() {
     return mode === 'buchen' || mode === 'direkt' || mode === 'standard' ? '' : mode
   }, [cfg, directEntry.variant, utmBase.utm_campaign])
   // Fragebogen-Auswahl: 'none' = keine Fragen, sonst Variante per Slug, Fallback Standard
+  const qn = useMemo(() => (variant && variant !== 'none' ? cfg.questionnaires.find(x => x.slug === variant) : undefined), [cfg, variant])
   const QUESTIONS = useMemo(() => {
     if (variant === 'none') return []
-    if (variant) return cfg.questionnaires.find(x => x.slug === variant)?.questions ?? cfg.questions
+    if (variant) return qn?.use_standard_questions ? cfg.questions : (qn?.questions ?? cfg.questions)
     return cfg.questions
-  }, [cfg, variant])
+  }, [cfg, variant, qn])
+  // Variante mit eigener Startseite (Anzeigen-Zielseite) und Projektbild im Hintergrund
+  const WEL = { ...cfg.welcome, ...(qn?.welcome ?? {}) }
+  const BG = qn?.bg_url
   // Variante in die Session-UTM: macht Varianten in der Statistik auswertbar
   const utm = useMemo(() => variant ? { ...utmBase, funnel_variant: variant } : utmBase, [utmBase, variant])
   // Als Buchungs-Quelle (deals.source → Pipeline-Badge) zählen die festen Kanäle
@@ -191,7 +195,7 @@ export default function Funnel() {
     [cfg],
   )
   const QUESTION_TEXT: Record<string, string> = Object.fromEntries(QUESTIONS.map(q => [q.key, q.title]))
-  const HERO = cfg.welcome.hero_url || FUNNEL_HERO_DEFAULT
+  const HERO = WEL.hero_url || FUNNEL_HERO_DEFAULT
   // Ansprechpartner: eigenes Foto aus dem Editor oder Svens Standard-Foto
   const hostSq = cfg.host.photo_url ? funnelImageUrl(cfg.host.photo_url, 224, 224) : SVEN_SQ
   const hostSide = cfg.host.photo_url ? funnelImageUrl(cfg.host.photo_url, 512, 640) : SVEN_SIDE
@@ -430,11 +434,13 @@ export default function Funnel() {
   const showHost = phase === 'questions' || phase === 'contact' || phase === 'meeting_type' || phase === 'slot'
 
   return (
-    <div className="min-h-screen font-body flex flex-col" style={{ background: CREAM, color: INK }}>
+    <div className="min-h-screen font-body flex flex-col" style={BG
+      ? { backgroundImage: `linear-gradient(rgba(26,35,50,.30),rgba(26,35,50,.50)), url(${BG})`, backgroundSize: 'cover', backgroundPosition: 'center', color: INK }
+      : { background: CREAM, color: INK }}>
       <div className="h-1.5 w-full bg-black/5">
         <div className="h-full transition-all duration-500" style={{ width: `${(stepNow / totalSteps) * 100}%`, background: CORAL }} />
       </div>
-      <div className="flex items-center justify-between px-5 md:px-10 py-4">
+      <div className={`flex items-center justify-between px-5 md:px-10 py-4${BG ? ' bg-white/95' : ''}`}>
         <div className="flex items-center gap-3">
           <img src={DECK_LOGO} alt="Happy Property" className="h-8 md:h-9 w-auto" />
           {/* Handy/Tablet: kleiner Kopf statt Seitenspalte. Terminart zeigt ihn schon groß. */}
@@ -457,7 +463,7 @@ export default function Funnel() {
       <div className="flex-1 flex items-center justify-center px-5 pb-10">
         <div className="w-full flex justify-center items-start gap-10">
         {showHost && (
-          <aside className="hidden lg:block w-64 shrink-0 sticky top-8">
+          <aside className={`hidden lg:block w-64 shrink-0 sticky top-8${BG ? ' bg-white/95 rounded-2xl p-4 shadow-xl box-content' : ''}`}>
             <img src={hostSide} alt={cfg.host.name} className="w-64 h-80 object-cover rounded-2xl shadow-lg"
               style={{ objectPosition: cfg.host.photo_url ? '50% 30%' : '26% 50%' }} />
             {cfg.host.label && <p className="mt-5 text-xs font-bold tracking-widest uppercase" style={{ color: CORAL }}>{cfg.host.label}</p>}
@@ -465,16 +471,21 @@ export default function Funnel() {
             {cfg.host.note && <p className="mt-2 text-sm text-gray-600 leading-relaxed">{cfg.host.note}</p>}
           </aside>
         )}
-        <div className="w-full max-w-2xl min-w-0">
+        <div className={`w-full max-w-2xl min-w-0${BG ? ' mt-6 bg-white/95 backdrop-blur-md rounded-3xl shadow-xl p-5 md:p-10' : ''}`}>
 
           {phase === 'welcome' && (
             <div className="text-center">
-              <img src={HERO} alt="Sven – Happy Property" className="w-full h-56 md:h-72 object-cover rounded-2xl shadow-lg mb-8" />
+              <div className="relative mb-8">
+                <img src={HERO} alt="Sven – Happy Property" className="w-full h-56 md:h-72 object-cover rounded-2xl shadow-lg" />
+                {qn?.hero_label && (
+                  <span className="absolute right-3 bottom-3 text-[11px] px-2.5 py-1 rounded-md text-white" style={{ background: 'rgba(26,35,50,.7)' }}>{qn.hero_label}</span>
+                )}
+              </div>
               <h1 className="font-heading font-bold text-3xl md:text-5xl leading-tight" style={{ color: NAVY }}>
-                {cfg.welcome.title}
+                {WEL.title}
               </h1>
               <p className="mt-4 text-gray-600 text-[15px] md:text-base max-w-xl mx-auto">
-                {cfg.welcome.subtitle}
+                {WEL.subtitle}
               </p>
               <button onClick={() => {
                 void track(0, 'start')
@@ -483,9 +494,9 @@ export default function Funnel() {
               }}
                 className="mt-8 px-10 py-4 rounded-full text-white font-semibold text-lg shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition"
                 style={{ background: CORAL }}>
-                {cfg.welcome.cta}
+                {WEL.cta}
               </button>
-              <p className="mt-3 text-xs text-gray-400">{cfg.welcome.footnote}</p>
+              <p className="mt-3 text-xs text-gray-400">{WEL.footnote}</p>
             </div>
           )}
 
