@@ -65,7 +65,7 @@ const ymd = (d: Date) => d.toISOString().slice(0, 10)
 
 interface ZoomMeetingRec { uuid: string; id: number; topic: string; start_time: string; total_size?: number }
 
-async function listRecordings(token: string, months: number): Promise<{ meetings: ZoomMeetingRec[]; errors: string[] }> {
+async function listRecordings(token: string, months: number, trash = false): Promise<{ meetings: ZoomMeetingRec[]; errors: string[] }> {
   const seen = new Map<string, ZoomMeetingRec>()
   const errors: string[] = []
   const now = new Date()
@@ -74,7 +74,7 @@ async function listRecordings(token: string, months: number): Promise<{ meetings
     const from = new Date(to.getTime() - 30 * 86400000)
     let next = ''
     do {
-      const url = `https://api.zoom.us/v2/users/me/recordings?page_size=300&from=${ymd(from)}&to=${ymd(to)}` +
+      const url = `https://api.zoom.us/v2/users/me/recordings?page_size=300&from=${ymd(from)}&to=${ymd(to)}${trash ? '&trash=true' : ''}` +
         (next ? `&next_page_token=${encodeURIComponent(next)}` : '')
       const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
       if (!r.ok) { errors.push(`${ymd(from)}..${ymd(to)}: ${r.status} ${await r.text()}`); break }
@@ -339,7 +339,7 @@ Deno.serve(async (req) => {
   if (caller instanceof Response) return caller
 
   try {
-    const body = await req.json().catch(() => ({})) as { action?: string; months?: number; vtt?: string; started_at?: string }
+    const body = await req.json().catch(() => ({})) as { action?: string; months?: number; vtt?: string; started_at?: string; trash?: boolean }
 
     // Probelauf der KI-Auswertung ohne Schreiben (nur Service-Key)
     if (body.action === 'test') {
@@ -352,7 +352,7 @@ Deno.serve(async (req) => {
     if (body.action === 'scopes') return json({ scope: scope.split(' ').sort() })
 
     if (body.action === 'list' || body.action === 'trash_all') {
-      const { meetings, errors } = await listRecordings(token, Math.min(60, body.months ?? 36))
+      const { meetings, errors } = await listRecordings(token, Math.min(60, body.months ?? 36), body.action === 'list' && body.trash === true)
       const totalMb = Math.round(meetings.reduce((s, m) => s + (m.total_size ?? 0), 0) / 1048576)
       if (body.action === 'list') {
         return json({
