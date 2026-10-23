@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode, type CSSProperties } from 'react'
+import { Fragment, useEffect, useMemo, useState, type ReactNode, type CSSProperties } from 'react'
 import { useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
@@ -26,6 +26,8 @@ const furnGrossOf = (pa: { furnCost?: number | null; furnFree?: boolean; dealTyp
   const c = pa.furnFree ? 0 : (pa.furnCost ?? 0)
   return pa.dealType === 'share' ? c : Math.round(c * 1.19)
 }
+// Eine Tabellenspalte zählt als leer, wenn jeder Wert auf 0 € rundet.
+const anyNonZero = (vals: (number | null | undefined)[]) => vals.some(v => v != null && !isNaN(v) && Math.round(v) !== 0)
 const short = (v: number) => v >= 1e6 ? (v / 1e6).toFixed(2).replace('.', ',') + ' M' : v >= 1e3 ? Math.round(v / 1e3) + 'k' : Math.round(v).toString()
 
 interface Row { item: CalcItem; color: string; res: CalcResult | null }
@@ -391,65 +393,87 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
         )
       })()}
 
-      {/* 3. Tabelle A – Cashflow */}
+      {/* 3. Tabelle A – Cashflow (Spalten, die in allen Jahren 0 sind, entfallen; Sven 23.10.2026) */}
       <H2Section>{t('rechnung.tableACashflow', 'Tabelle A – Cashflow (10 Jahre)')}</H2Section>
-      <Card style={{ padding: 0, overflow: 'hidden' }}>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
-            <thead><tr>
-              <th style={{ ...th, textAlign: 'left' }}>{t('rechnung.yearCol', 'Jahr')}</th><th style={th}>{t('rechnung.grossRentCol', 'Bruttomiete')}</th>
-              <th style={th}>{r.letT === 'short' ? t('rechnung.holidayMgmtCol', 'Ferienverw.') : t('rechnung.ongoingCol', 'Laufend')}</th><th style={th}>{t('rechnung.interestCol', 'Zinsen')}</th>
-              <th style={th}>{t('rechnung.repaymentCol', 'Tilgung')}</th><th style={th}>{t('rechnung.loanRateCol', 'Kreditrate')}</th><th style={th}>{t('rechnung.vatRefundCol', 'USt.-Erst.')}</th><th style={th}>{t('rechnung.taxCol', 'Steuer')}</th><th style={th}>{t('rechnung.netCfCol', 'CF netto')}</th>
-            </tr></thead>
-            <tbody>
-              {r.yN.map((_, i) => {
-                const tx = r.resCY ? r.taxCY[i] : r.taxDE[i]
-                const cfN = r.cfA[i] - (r.vatA[i] || 0)
-                return (
-                  <tr key={i} style={{ background: i % 2 ? '#fafaf8' : '#fff' }}>
-                    <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{yl(i)}</td>
-                    <td style={td}>{eur(r.rents[i])}</td><td style={td}>{eur(r.mgmt[i])}</td>
-                    <td style={td}>{eur(r.intC[i])}</td><td style={td}>{eur(r.princC[i])}</td><td style={td}>{eur(r.rateC[i])}</td>
-                    <td style={{ ...td, color: GREEN, fontWeight: 700 }}>{r.vatA[i] > 0 ? eur(r.vatA[i]) : '–'}</td>
-                    <td style={{ ...td, color: tx < 0 ? GREEN : '#1a1a1a', fontWeight: tx < 0 ? 700 : 400 }}>{tx < 0 ? eur(-tx) : eur(tx)}</td>
-                    <td style={{ ...td, color: cfN >= 0 ? GREEN : RED, fontWeight: 700 }}>{eur(cfN)}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      {(() => {
+        const taxOf = (i: number) => r.resCY ? r.taxCY[i] : r.taxDE[i]
+        const colsA: { key: string; label: ReactNode; show: boolean; cell: (i: number) => ReactNode }[] = [
+          { key: 'rent', label: t('rechnung.grossRentCol', 'Bruttomiete'), show: anyNonZero(r.rents), cell: i => <td style={td}>{eur(r.rents[i])}</td> },
+          { key: 'mgmt', label: r.letT === 'short' ? t('rechnung.holidayMgmtCol', 'Ferienverw.') : t('rechnung.ongoingCol', 'Laufend'), show: anyNonZero(r.mgmt), cell: i => <td style={td}>{eur(r.mgmt[i])}</td> },
+          { key: 'int', label: t('rechnung.interestCol', 'Zinsen'), show: anyNonZero(r.intC), cell: i => <td style={td}>{eur(r.intC[i])}</td> },
+          { key: 'princ', label: t('rechnung.repaymentCol', 'Tilgung'), show: anyNonZero(r.princC), cell: i => <td style={td}>{eur(r.princC[i])}</td> },
+          { key: 'rate', label: t('rechnung.loanRateCol', 'Kreditrate'), show: anyNonZero(r.rateC), cell: i => <td style={td}>{eur(r.rateC[i])}</td> },
+          { key: 'vat', label: t('rechnung.vatRefundCol', 'USt.-Erst.'), show: r.vatA.some(v => v > 0), cell: i => <td style={{ ...td, color: GREEN, fontWeight: 700 }}>{r.vatA[i] > 0 ? eur(r.vatA[i]) : '–'}</td> },
+          { key: 'tax', label: t('rechnung.taxCol', 'Steuer'), show: anyNonZero(r.yN.map((_, i) => taxOf(i))), cell: i => { const tx = taxOf(i); return <td style={{ ...td, color: tx < 0 ? GREEN : '#1a1a1a', fontWeight: tx < 0 ? 700 : 400 }}>{tx < 0 ? eur(-tx) : eur(tx)}</td> } },
+        ]
+        const visA = colsA.filter(c => c.show)
+        return (
+          <Card style={{ padding: 0, overflow: 'hidden' }}>
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: Math.max(480, 120 + 90 * (visA.length + 1)) }}>
+                <thead><tr>
+                  <th style={{ ...th, textAlign: 'left' }}>{t('rechnung.yearCol', 'Jahr')}</th>
+                  {visA.map(c => <th key={c.key} style={th}>{c.label}</th>)}
+                  <th style={th}>{t('rechnung.netCfCol', 'CF netto')}</th>
+                </tr></thead>
+                <tbody>
+                  {r.yN.map((_, i) => {
+                    const cfN = r.cfA[i] - (r.vatA[i] || 0)
+                    return (
+                      <tr key={i} style={{ background: i % 2 ? '#fafaf8' : '#fff' }}>
+                        <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{yl(i)}</td>
+                        {visA.map(c => <Fragment key={c.key}>{c.cell(i)}</Fragment>)}
+                        <td style={{ ...td, color: cfN >= 0 ? GREEN : RED, fontWeight: 700 }}>{eur(cfN)}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )
+      })()}
       {r.letT === 'short' && r.hotelConcept && <Note>🏨 <b>{t('rechnung.hotelConceptLabel', 'Hotelkonzept')}:</b> {t('rechnung.hotelConceptNote', 'Verwaltung übernimmt komplettes Hotelservice inkl. Reinigung, Check-in, Marketing & 24/7 Gästebetreuung.')}</Note>}
       {r.selfUseMonths > 0 && <Note>🏠 <b>{t('rechnung.selfUse', 'Selbstnutzung')}:</b> {r.monthPlan
         ? t('rechnung.selfUseNoteMonths', 'Eigene Nutzung {{months}} ({{count}} Monate). Die Umsatzsteuer wird nur für den vermieteten Anteil ({{share}} %) erstattet, in den Eigennutzungsmonaten fallen keine Mieteinnahmen an.', { months: formatMonthRanges(monthsWithUse(r.monthPlan, 'self'), i18n.language, t('monthPlan.rangeJoiner', 'bis')), count: r.selfUseMonths, share: shareTxt })
         : t('rechnung.selfUseNote', '{{m}} Monate im Jahr eigene Nutzung. Die Umsatzsteuer wird nur für den vermieteten Anteil ({{share}} %) erstattet, in den Eigennutzungsmonaten fallen keine Mieteinnahmen an.', { m: r.selfUseMonths, share: shareTxt })}</Note>}
       <Note>{t('rechnung.cashflowNote', 'Der Cashflow zeigt die tatsächlichen Einnahmen nach allen Kosten, Kreditraten und Steuern. Positive Werte bedeuten Überschuss aus der Immobilie. Die einmalige USt.-Erstattung ist separat ausgewiesen.')}</Note>
 
-      {/* 4. Tabelle B – Darlehen / EK / Werte */}
-      <H2Section>{t('rechnung.tableBLoanEquity', 'Tabelle B – Darlehen / EK / Werte (10 Jahre)')}</H2Section>
-      <Card style={{ padding: 0, overflow: 'hidden' }}>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 600 }}>
-            <thead><tr>
-              <th style={{ ...th, textAlign: 'left' }}>{t('rechnung.yearCol', 'Jahr')}</th><th style={th}>{t('rechnung.repaymentCol', 'Tilgung')}</th><th style={th}>{t('rechnung.specialRepaymentCol', 'Sondertilg.')}</th>
-              <th style={th}>{t('rechnung.remainingDebtCol', 'Restschuld')}</th><th style={th}>{t('rechnung.propertyValueCol', 'Immobilienwert')}</th><th style={th}>{t('rechnung.equityCol', 'Eigenkapital')}</th>
-            </tr></thead>
-            <tbody>
-              {r.yN.map((_, j) => (
-                <tr key={j} style={{ background: j % 2 ? '#fafaf8' : '#fff' }}>
-                  <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{yl(j)}</td>
-                  <td style={td}>{eur(r.princC[j])}</td><td style={td}>{r.prepayC[j] > 0 ? eur(r.prepayC[j]) : t('rechnung.zeroEuro', '0 €')}</td>
-                  <td style={td}>{eur(r.restL[j])}</td>
-                  <td style={{ ...td, color: CORAL, fontWeight: 700 }}>{eur(r.propV[j])}</td>
-                  <td style={{ ...td, color: GREEN, fontWeight: 700 }}>{eur(ekYear[j])}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-      <Note>{t('rechnung.equityNote', 'Das Eigenkapital ergibt sich aus Immobilienwert minus Restschuld. Durch Wertsteigerung und Tilgung wächst das EK erheblich über die Zeit.')}</Note>
+      {/* 4. Tabelle B – Darlehen / EK / Werte: ohne Darlehen entfällt sie ganz, sonst nur Spalten mit Werten (Sven 23.10.2026) */}
+      {(anyNonZero(r.restL) || anyNonZero(r.princC) || anyNonZero(r.prepayC)) && (() => {
+        const colsB: { key: string; label: ReactNode; show: boolean; cell: (j: number) => ReactNode }[] = [
+          { key: 'princ', label: t('rechnung.repaymentCol', 'Tilgung'), show: anyNonZero(r.princC), cell: j => <td style={td}>{eur(r.princC[j])}</td> },
+          { key: 'prepay', label: t('rechnung.specialRepaymentCol', 'Sondertilg.'), show: anyNonZero(r.prepayC), cell: j => <td style={td}>{r.prepayC[j] > 0 ? eur(r.prepayC[j]) : t('rechnung.zeroEuro', '0 €')}</td> },
+          { key: 'rest', label: t('rechnung.remainingDebtCol', 'Restschuld'), show: anyNonZero(r.restL), cell: j => <td style={td}>{eur(r.restL[j])}</td> },
+          { key: 'value', label: t('rechnung.propertyValueCol', 'Immobilienwert'), show: true, cell: j => <td style={{ ...td, color: CORAL, fontWeight: 700 }}>{eur(r.propV[j])}</td> },
+          { key: 'equity', label: t('rechnung.equityCol', 'Eigenkapital'), show: true, cell: j => <td style={{ ...td, color: GREEN, fontWeight: 700 }}>{eur(ekYear[j])}</td> },
+        ]
+        const visB = colsB.filter(c => c.show)
+        return (
+          <>
+            <H2Section>{t('rechnung.tableBLoanEquity', 'Tabelle B – Darlehen / EK / Werte (10 Jahre)')}</H2Section>
+            <Card style={{ padding: 0, overflow: 'hidden' }}>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: Math.max(480, 120 + 100 * visB.length) }}>
+                  <thead><tr>
+                    <th style={{ ...th, textAlign: 'left' }}>{t('rechnung.yearCol', 'Jahr')}</th>
+                    {visB.map(c => <th key={c.key} style={th}>{c.label}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {r.yN.map((_, j) => (
+                      <tr key={j} style={{ background: j % 2 ? '#fafaf8' : '#fff' }}>
+                        <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{yl(j)}</td>
+                        {visB.map(c => <Fragment key={c.key}>{c.cell(j)}</Fragment>)}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+            <Note>{t('rechnung.equityNote', 'Das Eigenkapital ergibt sich aus Immobilienwert minus Restschuld. Durch Wertsteigerung und Tilgung wächst das EK erheblich über die Zeit.')}</Note>
+          </>
+        )
+      })()}
 
       {/* 5. Chart EK-Entwicklung */}
       <H2Section>{t('rechnung.equityDevelopmentTitle', 'Entwicklung des Eigenkapitals (Wert − Restschuld)')}</H2Section>
