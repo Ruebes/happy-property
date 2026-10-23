@@ -580,8 +580,25 @@ Deno.serve(async (req) => {
         ? (SOURCE_LABELS[source] ?? (source.charAt(0).toUpperCase() + source.slice(1)))
         : undefined
       const leadId = body.lead_id
-      const { data: leadRow } = await admin.from('leads').select('first_name, last_name, email, phone, whatsapp').eq('id', leadId).maybeSingle()
+      const { data: leadRow } = await admin.from('leads').select('first_name, last_name, email, phone, whatsapp, utm_campaign').eq('id', leadId).maybeSingle()
       if (!leadRow) return json({ error: 'lead_not_found' }, 404)
+      // Kampagnen-Kennzeichnung (Sven 23.10.26): utm_campaign dieses Besuchs, sonst die
+      // des Leads -> Label + Farbe aus crm_settings 'kalender_kampagnen'. Nur intern
+      // sichtbar (CRM-Kalender, Google-Kalender ohne Gäste), nie in Kundennachrichten.
+      let kampagne: { label?: string; color?: string; google_color_id?: string } | null = null
+      let kampagneCode = ''
+      try {
+        if (body.session_id) {
+          const { data: ss } = await admin.from('funnel_sessions').select('utm').eq('id', body.session_id).maybeSingle()
+          kampagneCode = String(((ss as { utm?: Record<string, string> | null } | null)?.utm ?? {}).utm_campaign ?? '')
+        }
+        if (!kampagneCode) kampagneCode = String((leadRow as { utm_campaign?: string | null }).utm_campaign ?? '')
+        if (kampagneCode) {
+          const { data: ks } = await admin.from('crm_settings').select('value').eq('key', 'kalender_kampagnen').maybeSingle()
+          const map = JSON.parse((ks as { value?: string } | null)?.value || '{}') as Record<string, { label?: string; color?: string; google_color_id?: string }>
+          kampagne = map[kampagneCode] ?? null
+        }
+      } catch (e) { console.warn('[funnel-api] Kampagnen-Kennzeichnung:', e) }
       const c = { first_name: (leadRow as { first_name?: string }).first_name ?? '', last_name: (leadRow as { last_name?: string }).last_name ?? '' }
       const phone = ((leadRow as { whatsapp?: string; phone?: string }).whatsapp || (leadRow as { phone?: string }).phone || '').replace(/[^\d+]/g, '')
       const email = ((leadRow as { email?: string }).email ?? '').trim().toLowerCase()
@@ -629,8 +646,9 @@ Deno.serve(async (req) => {
         const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calId)}/events`, {
           method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            summary: `${sourceLabel ? `[${sourceLabel}] ` : ''}${apptTitle} ${c.last_name ?? ''}`.trim(),
-            description: `${sourceLabel ? `Über ${sourceLabel.toUpperCase()} gebucht` : 'Über den Website-Funnel gebucht'} (${type === 'zoom' ? 'Zoom' : 'WhatsApp-Call'})${zoomLink ? `\nZoom: ${zoomLink}` : ''}\nTel: ${phone}\nMail: ${email}`,
+            summary: `${[sourceLabel, kampagne?.label].filter(Boolean).length ? `[${[sourceLabel, kampagne?.label].filter(Boolean).join(' · ')}] ` : ''}${apptTitle} ${c.last_name ?? ''}`.trim(),
+            description: `${sourceLabel ? `Über ${sourceLabel.toUpperCase()} gebucht` : 'Über den Website-Funnel gebucht'} (${type === 'zoom' ? 'Zoom' : 'WhatsApp-Call'})${kampagne?.label ? `\nKampagne: ${kampagne.label} (${kampagneCode})` : ''}${zoomLink ? `\nZoom: ${zoomLink}` : ''}\nTel: ${phone}\nMail: ${email}`,
+            ...(kampagne?.google_color_id ? { colorId: String(kampagne.google_color_id) } : {}),
             start: { dateTime: start.toISOString(), timeZone: TZ_CY }, end: { dateTime: end.toISOString(), timeZone: TZ_CY },
           }),
         })
@@ -647,6 +665,7 @@ Deno.serve(async (req) => {
         zoom_link: zoomLink, phone_number: type === 'whatsapp' ? phone : null,
         google_event_id: gcal?.id ?? null, google_calendar_id: gcal?.calId ?? null,
         source,
+        campaign_tag: kampagne?.label ?? null, campaign_color: kampagne?.color ?? null,
       }).select('id').single()
 
       // Betrifft die Buchung den HEUTIGEN Tag? Dann Sven sofort Bescheid geben —

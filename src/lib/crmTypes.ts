@@ -737,6 +737,9 @@ export interface CrmAppointment {
   google_event_id: string | null
   google_calendar_id: string | null
   source:          string | null   // 'newsletter' | 'direktlink' — Herkunft der Buchung
+  // Kampagnen-Kennzeichnung (z. B. Projekt der Anzeige), gesetzt von funnel-api book
+  campaign_tag?:   string | null
+  campaign_color?: string | null
   outcome:         'completed' | 'no_show' | null   // Termin-Ausgang (Vorbereitungs-Popup)
   // Interner Termin (z.B. Mitarbeiterin bucht ueber ihren persoenlichen Link bei Sven).
   // Wird von allen kundenorientierten Auswertungen ausgeschlossen: Terminerinnerungen,

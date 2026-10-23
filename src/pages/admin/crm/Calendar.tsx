@@ -52,6 +52,8 @@ function apptChannel(appt: CrmAppointment) {
   return channelBadgeFor(appt.source)
 }
 function apptColors(appt: CrmAppointment) {
+  // Kampagnen-Farbe (z. B. Projekt-Anzeige) schlägt Kanal und Terminart (Sven 23.10.26)
+  if (appt.campaign_color) return { bg: `${appt.campaign_color}22`, text: appt.campaign_color, pill: appt.campaign_color }
   const ch = apptChannel(appt)
   if (ch) return { bg: String(ch.badge.backgroundColor), text: String(ch.badge.color), pill: ch.pill }
   return APPT_COLORS[appt.type as keyof typeof APPT_COLORS] ?? APPT_COLORS.phone
@@ -198,6 +200,16 @@ function TypeBadge({ type, t }: { type: string; t: TFunction }) {
       style={{ backgroundColor: colors.bg, color: colors.text }}
     >
       {label}
+    </span>
+  )
+}
+
+function CampaignBadge({ appt }: { appt: CrmAppointment }) {
+  if (!appt.campaign_tag) return null
+  return (
+    <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold"
+      style={{ backgroundColor: appt.campaign_color ?? '#1a2332', color: '#fff' }}>
+      🏷️ {appt.campaign_tag}
     </span>
   )
 }
@@ -564,9 +576,9 @@ export default function CrmCalendar() {
                         // Kanal steht nicht mehr im Text (er schnitt in der schmalen
                         // Monatszelle den Betreff weg) — die Pillenfarbe codiert ihn,
                         // der volle Text inkl. Kanal haengt am Tooltip.
-                        title={`${time ? time + ' ' : ''}${appt.title}${apptChannel(appt) ? ' · ' + apptChannel(appt)!.label : ''}`}
+                        title={`${time ? time + ' ' : ''}${appt.title}${apptChannel(appt) ? ' · ' + apptChannel(appt)!.label : ''}${appt.campaign_tag ? ' · ' + appt.campaign_tag : ''}`}
                         style={{
-                          backgroundColor: apptChannel(appt)?.pill ?? '#ff795d',
+                          backgroundColor: appt.campaign_color ?? apptChannel(appt)?.pill ?? '#ff795d',
                           color: '#fff',
                           fontSize: '11px',
                           padding: '2px 4px',
@@ -674,7 +686,7 @@ export default function CrmCalendar() {
                       </p>
                       <p className="text-xs font-semibold text-gray-800 truncate">{appt.title}</p>
                       <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-                        <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <SourceBadge source={appt.source!} />}
+                        <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <SourceBadge source={appt.source!} />}<CampaignBadge appt={appt} />
                       </div>
                     </div>
                   )
@@ -777,7 +789,7 @@ export default function CrmCalendar() {
                     </p>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <SourceBadge source={appt.source!} />}
+                    <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <SourceBadge source={appt.source!} />}<CampaignBadge appt={appt} />
                   </div>
                 </div>
                 {appt.zoom_link && (
@@ -876,7 +888,7 @@ export default function CrmCalendar() {
               <p className="text-base font-bold text-gray-900 font-body pr-6">{appt.title}</p>
               <div className="mt-1">
                 <div className="inline-flex items-center gap-1.5">
-                  <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <SourceBadge source={appt.source!} />}
+                  <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <SourceBadge source={appt.source!} />}<CampaignBadge appt={appt} />
                 </div>
                 {appt.rsvps && Object.keys(appt.rsvps).length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1.5">
