@@ -19,7 +19,10 @@ const RELOAD_FLAG = 'hp_chunk_reloaded'
 // Safari) nicht bricht. Session (localStorage) bleibt bewusst erhalten — nur der
 // Code-Cache wird geleert, der Nutzer bleibt eingeloggt.
 export async function purgeAndReload(): Promise<void> {
-  try {
+  // Safari lässt getRegistrations()/caches.keys() manchmal nie auflösen - dann
+  // drehte sich der Kreis endlos (Sven 23.10.26). Deshalb höchstens 3 s warten
+  // und danach in jedem Fall neu laden.
+  const leeren = (async () => {
     if ('serviceWorker' in navigator) {
       const regs = await navigator.serviceWorker.getRegistrations()
       await Promise.all(regs.map(r => r.unregister()))
@@ -28,6 +31,9 @@ export async function purgeAndReload(): Promise<void> {
       const keys = await caches.keys()
       await Promise.all(keys.map(k => caches.delete(k)))
     }
+  })()
+  try {
+    await Promise.race([leeren, new Promise<void>(r => setTimeout(r, 3000))])
   } catch { /* im Zweifel trotzdem neu laden */ }
   // Cache-Buster in der URL erzwingt frische index.html vom Netz.
   const u = new URL(window.location.href)
