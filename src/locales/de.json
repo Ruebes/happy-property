@@ -1709,7 +1709,19 @@
       "link_processed": "über Revolut-Link abgeholt",
       "link_expired": "Revolut-Link abgelaufen",
       "link_cancelled": "Revolut-Link storniert",
-      "link_failed": "Revolut-Link fehlgeschlagen"
+      "link_failed": "Revolut-Link fehlgeschlagen",
+      "addrSearching": "Lotte sucht die Adresse gerade im Profil und in den Drive-Unterlagen …",
+      "addrNotFound": "In den Unterlagen nicht gefunden: {{note}}.",
+      "addrSearchAgain": "Erneut suchen",
+      "addrAskLater": "Lotte fragt {{name}} per WhatsApp danach, sobald der Deal auf Reservierung steht.",
+      "addrAskSoon": "Der Deal steht auf Reservierung: Lotte fragt {{name}} beim nächsten Lauf per WhatsApp (alle 30 Minuten, zwischen 8 und 20 Uhr).",
+      "addrNoWhatsapp": "Keine WhatsApp-Nummer hinterlegt: bitte die Adresse selbst eintragen.",
+      "addrRequested": "Per WhatsApp angefragt am {{date}}. Die Antwort trägt Lotte automatisch ein.",
+      "addrReply": "Bisherige Antwort (noch unvollständig): {{text}}",
+      "source_profil": "aus dem Eigentümer-Profil",
+      "source_rechnungskunde": "aus den Rechnungskunden",
+      "source_dokument": "aus den Drive-Unterlagen",
+      "source_whatsapp": "per WhatsApp"
     },
     "reviews": {
       "title": "Bewertungen",

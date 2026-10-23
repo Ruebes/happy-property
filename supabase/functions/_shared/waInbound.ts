@@ -11,6 +11,7 @@
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { maybeUpdateEmailFromWa } from './waMailUpdate.ts'
 import { anfragePaketAnstossen } from './anfragePaket.ts'
+import { maybeTippgeberAdresse } from './waTippgeberAdresse.ts'
 
 export type WaEvent = {
   uid:    string | null      // Message-ID des Anbieters (Dedupe)
@@ -129,6 +130,11 @@ export async function processWaEvent(sb: SupabaseClient, ev: WaEvent, tag: strin
       }
     } catch (e) { console.warn(`[${tag}] Task-Reply:`, e) }
   }
+
+  // ── Tippgeber-Adresse ───────────────────────────────────────────────────
+  // Antwort eines Empfehlungsgebers auf Lottes Adress-Frage → affiliate-api trägt
+  // die Adresse ein (additiv, im Hintergrund, auch wenn er kein Lead ist).
+  if (digits.length >= 8 && !ev.mediaOnly && !detectsStopIntent(text)) await maybeTippgeberAdresse(sb, digits, text, tag)
 
   let lead: { id: string } | null = null
   if (digits.length >= 7) {

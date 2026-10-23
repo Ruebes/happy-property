@@ -12,6 +12,17 @@
 //   POST { action:'commission_set', lead_id, amount|null } → Provision fuer diesen Kunden (null = 1.000 €)
 //   POST { action:'affiliate_update', affiliate_id, ... } → Kontakt/Adresse/Steuerstatus des Tippgebers
 //   POST { action:'preview_pdf', is_business? } → Muster-Abrechnung als base64 (Vorlage ansehen)
+//   POST { action:'address_lookup', affiliate_id } → Adresse erneut in den Unterlagen suchen (Hintergrund)
+//   POST { action:'address_request', affiliate_id } → Lotte fragt sofort per WhatsApp (ohne Reservierung)
+//   POST { action:'address_debug', affiliate_id } → Diagnose: Namen je Unterlage, speichert nichts
+//   POST { action:'address_reply', affiliate_id, text } → nur Service (waInbound): WhatsApp-Antwort
+//        auf Lottes Adress-Frage auswerten und eintragen
+//
+//   Adresse des Tippgebers (Sven 23.10.2026, address.ts): Bei der Zuweisung sucht die Function
+//   die Adresse im Profil, bei den Rechnungskunden und in seinem Drive-Ordner (Kaufvertrag,
+//   Reservierung, Ausweis ...), nur wenn sein Name dort mit Adresse steht. Fehlt sie, fragt
+//   Lotte per WhatsApp, sobald ein geworbener Kunde auf Reservierung (oder weiter) steht;
+//   die Antwort trägt address_reply ein. Läuft im commission_scan mit (Hintergrund).
 //
 //   POST { action:'commission_scan' }         → Cron (alle 30 Min): Deals geworbener Kunden in
 //        Phase provision_erhalten (auch danach archiviert) → Auszahlung anlegen + Abrechnungs-PDF
@@ -40,6 +51,7 @@ import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { PDFDocument, PDFFont, PDFImage, StandardFonts, rgb } from 'npm:pdf-lib@1.17.1'
 import fontkit from 'npm:@pdf-lib/fontkit@1.1.1'
 import { authorizeCaller, safeEqual } from '../_shared/callerAuth.ts'
+import { findAddress, hasAddress, parseReply } from './address.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -59,6 +71,11 @@ const AMOUNT = 1000          // Standard-Provision, je Kunde ueberschreibbar (le
 const LINK_MAX = 2500        // Revolut-Payout-Links gehen bis 2.500 £ → in EUR mit Puffer
 const LINK_DEAD = ['expired', 'cancelled', 'failed']
 const LINK_OPEN = ['created', 'awaiting', 'active', 'processing']
+// Ab diesen Phasen eines geworbenen Kunden fragt Lotte nach der Adresse des Tippgebers
+const REQUEST_PHASES = ['reservierung', 'kaufvertrag', 'anzahlung', 'provisionsrechnung', 'provision_erhalten']
+const SEARCHING = 'Suche läuft'          // Merker in affiliates.address_note während der Suche
+const RECHECK_MS = 12 * 3600_000         // vor der WhatsApp-Frage neue Drive-Dateien prüfen, wenn die Suche älter ist
+const MAX_LOOKUPS = 3                    // Unterlagen-Suchen je Scan-Lauf
 
 // CI (wie generate-invoice)
 const CORAL = rgb(1, 0x79 / 255, 0x5d / 255)     // #ff795d
@@ -82,6 +99,8 @@ interface Affiliate {
   code: string; source?: string | null; active: boolean; created_at: string
   street?: string | null; postal_code?: string | null; city?: string | null; country?: string | null
   is_business?: boolean; vat_id?: string | null
+  address_source?: string | null; address_note?: string | null; address_checked_at?: string | null
+  address_requested_at?: string | null; address_reply_text?: string | null
 }
 interface Payout {
   id: string; affiliate_id: string; referred_lead_id: string | null; amount: number; status: string
@@ -565,6 +584,218 @@ async function pollLinks(sb: SupabaseClient): Promise<unknown[]> {
   return out
 }
 
+// ── Adresse des Tippgebers (Sven 23.10.2026) ─────────────────────────────────
+const fmtAddr = (a: { street?: string | null; postal_code?: string | null; city?: string | null; country?: string | null }) =>
+  [a.street, `${a.postal_code ?? ''} ${a.city ?? ''}`.trim(), a.country].filter(s => s && s.trim()).join(', ')
+
+// Hintergrund-Arbeit (KI + Drive dauert länger, als ein Aufrufer warten soll)
+function background(p: Promise<unknown>) {
+  const er = (globalThis as { EdgeRuntime?: { waitUntil: (p: Promise<unknown>) => void } }).EdgeRuntime
+  const safe = p.catch(e => console.error('[affiliate-api] Hintergrund', e))
+  if (er) er.waitUntil(safe)
+  return safe
+}
+
+// Geworbene Kunden des Tippgebers, für die noch nicht abgerechnet ist
+async function openReferred(sb: SupabaseClient, affId: string): Promise<string[]> {
+  const { data: ls } = await sb.from('leads').select('id').eq('referred_by_affiliate', affId).limit(50)
+  const ids = ((ls ?? []) as Array<{ id: string }>).map(l => l.id)
+  if (!ids.length) return []
+  const { data: ps } = await sb.from('affiliate_payouts').select('referred_lead_id').in('referred_lead_id', ids)
+  const done = new Set(((ps ?? []) as Array<{ referred_lead_id: string | null }>).map(p => p.referred_lead_id))
+  return ids.filter(id => !done.has(id))
+}
+
+async function noteReferred(sb: SupabaseClient, affId: string, subject: string, content: string) {
+  for (const id of await openReferred(sb, affId)) await addNote(sb, id, subject, content)
+}
+
+/** Adresse in Profil, Rechnungskunden und Drive-Unterlagen suchen und eintragen.
+ *  onlyNew: im Drive nur Dateien, die seit der letzten Suche dazukamen. */
+async function lookupAddress(sb: SupabaseClient, affId: string, onlyNew: boolean): Promise<{ found: boolean; busy?: boolean; note: string }> {
+  const { data: a } = await sb.from('affiliates').select('*').eq('id', affId).maybeSingle()
+  const aff = a as Affiliate | null
+  if (!aff) return { found: false, note: 'Tippgeber nicht gefunden' }
+  if (hasAddress(aff)) return { found: true, note: 'schon eingetragen' }
+  const running = aff.address_note === SEARCHING && !!aff.address_checked_at && Date.now() - Date.parse(aff.address_checked_at) < 10 * 60_000
+  if (running) return { found: false, busy: true, note: 'Suche läuft schon' }
+  const prevChecked = aff.address_note === SEARCHING ? null : aff.address_checked_at ?? null
+  // Belegen, damit Zuweisung und Cron nicht gleichzeitig dieselben Unterlagen lesen
+  let claim = sb.from('affiliates').update({ address_checked_at: new Date().toISOString(), address_note: SEARCHING }).eq('id', affId)
+  claim = aff.address_checked_at ? claim.eq('address_checked_at', aff.address_checked_at) : claim.is('address_checked_at', null)
+  const { data: claimed } = await claim.select('id')
+  if (!claimed?.length) return { found: false, busy: true, note: 'Suche läuft schon' }
+  try {
+    const r = await findAddress(sb, aff, onlyNew ? prevChecked : null)
+    // In der Zwischenzeit von Hand oder per WhatsApp eingetragen? Dann nichts überschreiben.
+    const { data: cur } = await sb.from('affiliates').select('street, postal_code, city').eq('id', affId).maybeSingle()
+    if (cur && hasAddress(cur as Affiliate)) return { found: true, note: 'schon eingetragen' }
+    if (!r.found) {
+      await sb.from('affiliates').update({ address_note: r.note }).eq('id', affId)
+      return { found: false, note: r.note }
+    }
+    const f = r.found
+    await sb.from('affiliates').update({
+      street: f.street, postal_code: f.postal_code, city: f.city, country: f.country || aff.country || null,
+      address_source: f.source, address_note: f.note, address_reply_text: null,
+    }).eq('id', affId)
+    await noteReferred(sb, affId, '🏠 Adresse des Empfehlungsgebers eingetragen', `${aff.name}: ${fmtAddr({ ...f, country: f.country || aff.country })} (${f.note}).`)
+    return { found: true, note: f.note }
+  } catch (e) {
+    // Abgebrochen (z.B. Drive nicht erreichbar): Merker zurück, der nächste Lauf versucht es
+    // noch EINMAL. Scheitert auch das, gilt die Suche als erledigt (keine Dauerschleife).
+    const msg = e instanceof Error ? e.message : String(e)
+    const again = aff.address_note?.startsWith('Suche fehlgeschlagen')
+    await sb.from('affiliates').update(again
+      ? { address_note: `Unterlagen nicht lesbar (${msg})`.slice(0, 300) }
+      : { address_checked_at: prevChecked, address_note: `Suche fehlgeschlagen: ${msg}`.slice(0, 300) })
+      .eq('id', affId).eq('address_note', SEARCHING)
+    return { found: false, note: msg }
+  }
+}
+
+// Lotte schreibt nur tagsüber (deutsche Zeit)
+function sendWindow(): boolean {
+  // formatToParts: de-DE formatiert die Stunde als „08 Uhr“ (Number() wäre NaN)
+  const part = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', hourCycle: 'h23', timeZone: 'Europe/Berlin' })
+    .formatToParts(new Date()).find(p => p.type === 'hour')?.value
+  const h = Number(part)
+  return Number.isFinite(h) && h >= 8 && h < 20
+}
+
+async function sendLotte(sb: SupabaseClient, aff: Affiliate, eventType: string, text: string): Promise<boolean> {
+  // Ohne lang/already_translated: send-whatsapp wählt die Sprache des Empfängers selbst und übersetzt.
+  const { data, error } = await sb.functions.invoke('send-whatsapp', {
+    body: { event_type: eventType, override_text: text, auto: true, lead_id: aff.lead_id ?? undefined,
+      lead_data: { lead_name: aff.name, lead_phone: aff.whatsapp } },
+    headers: { Authorization: `Bearer ${SERVICE_ROLE}` },
+  })
+  return !error && (data as { success?: boolean } | null)?.success !== false
+}
+
+/** Lotte fragt den Tippgeber per WhatsApp nach der Adresse (genau einmal). */
+async function requestAddress(sb: SupabaseClient, aff: Affiliate): Promise<string> {
+  const { data: claimed } = await sb.from('affiliates').update({ address_requested_at: new Date().toISOString() })
+    .eq('id', aff.id).is('address_requested_at', null).select('id')
+  if (!claimed?.length) return 'schon angefragt'
+  if (!aff.whatsapp) {
+    await sb.from('affiliates').update({ address_note: 'Keine WhatsApp-Nummer: Aufgabe für Sven angelegt' }).eq('id', aff.id)
+    await addTask(sb, `🏠 Adresse von Tippgeber ${aff.name} fehlt`,
+      `Ein von ${aff.name} geworbener Kunde steht auf Reservierung. Für die Provisionsabrechnung fehlt die Postanschrift, und es ist keine WhatsApp-Nummer hinterlegt. Bitte erfragen und in der Kundenakte unter „Empfehlungsgeber → Bearbeiten“ eintragen.`)
+    return 'keine WhatsApp, Aufgabe'
+  }
+  if (aff.lead_id) {
+    const { data: opt } = await sb.from('communication_optouts').select('id').eq('lead_id', aff.lead_id).limit(1)
+    if (opt?.length) {
+      await sb.from('affiliates').update({ address_note: 'Hat Nachrichten abbestellt: Aufgabe für Sven angelegt' }).eq('id', aff.id)
+      await addTask(sb, `🏠 Adresse von Tippgeber ${aff.name} fehlt`,
+        `Für die Provisionsabrechnung fehlt die Postanschrift von ${aff.name}. Lotte schreibt nicht automatisch, weil ${aff.name} Nachrichten abbestellt hat. Bitte selbst klären und unter „Empfehlungsgeber → Bearbeiten“ eintragen.`)
+      return 'abbestellt, Aufgabe'
+    }
+  }
+  const text = `Hallo ${firstName(aff.name)} 🐾 hier ist Lotte von Happy Property. Danke dir nochmal für deine Empfehlung, darüber freuen wir uns sehr!\n\nDamit wir deine Tippgeber-Provision später richtig abrechnen können, brauche ich für die Abrechnung noch deine Postanschrift: Straße und Hausnummer, PLZ, Ort und Land. Schreib sie mir einfach hier als Antwort.\n\nLiebe Grüße, Lotte 🐾`
+  const sent = await sendLotte(sb, aff, 'tippgeber_adresse', text)
+  if (!sent) {
+    // Nicht raus: Merker zurück, der nächste Lauf versucht es erneut
+    await sb.from('affiliates').update({ address_requested_at: null }).eq('id', aff.id)
+    return 'WhatsApp fehlgeschlagen'
+  }
+  await sb.from('affiliates').update({ address_note: null, address_reply_text: null }).eq('id', aff.id)
+  await noteReferred(sb, aff.id, '📨 Adresse beim Empfehlungsgeber angefragt',
+    `Lotte hat ${aff.name} per WhatsApp nach der Postanschrift für die Provisionsabrechnung gefragt. Die Antwort wird automatisch eingetragen.`)
+  return 'angefragt'
+}
+
+/** Ein Tippgeber: Unterlagen durchsuchen (einmal) und, sobald ein geworbener Kunde auf
+ *  Reservierung steht, per WhatsApp fragen. Gibt zurück, ob eine Unterlagen-Suche lief. */
+async function addressStep(sb: SupabaseClient, affId: string): Promise<{ looked: boolean; result: string }> {
+  const load = async () => (await sb.from('affiliates').select('*').eq('id', affId).maybeSingle()).data as Affiliate | null
+  let aff = await load()
+  if (!aff || hasAddress(aff)) return { looked: false, result: 'Adresse da' }
+  const open = await openReferred(sb, affId)
+  if (!open.length) return { looked: false, result: 'nichts offen' }
+  let looked = false
+  if (!aff.address_checked_at) {
+    const r = await lookupAddress(sb, affId, false)
+    looked = true
+    if (r.found || r.busy) return { looked, result: r.note }
+    aff = await load()
+    if (!aff || hasAddress(aff)) return { looked, result: 'Adresse da' }
+  }
+  if (aff.address_requested_at) return { looked, result: 'schon angefragt' }
+  const { data: due } = await sb.from('deals').select('lead_id').in('lead_id', open).in('phase', REQUEST_PHASES).limit(1)
+  if (!due?.length) return { looked, result: 'noch keine Reservierung' }
+  if (!sendWindow()) return { looked, result: 'außerhalb 8-20 Uhr' }
+  // Seit der letzten Suche neue Unterlagen im Drive (z.B. Kaufvertrag)? Erst dort schauen.
+  if (!looked && aff.address_checked_at && Date.now() - Date.parse(aff.address_checked_at) > RECHECK_MS) {
+    const r = await lookupAddress(sb, affId, true)
+    looked = true
+    if (r.found || r.busy) return { looked, result: r.note }
+    aff = await load()
+    if (!aff || hasAddress(aff) || aff.address_requested_at) return { looked, result: 'erledigt' }
+  }
+  return { looked, result: await requestAddress(sb, aff) }
+}
+
+async function addressSweep(sb: SupabaseClient): Promise<unknown[]> {
+  const { data } = await sb.from('leads').select('referred_by_affiliate').not('referred_by_affiliate', 'is', null).limit(500)
+  const affIds = [...new Set(((data ?? []) as Array<{ referred_by_affiliate: string }>).map(l => l.referred_by_affiliate))]
+  const out: unknown[] = []
+  let lookups = 0
+  for (const id of affIds) {
+    if (lookups >= MAX_LOOKUPS) break
+    const r = await addressStep(sb, id)
+    if (r.looked) lookups++
+    if (r.result !== 'Adresse da' && r.result !== 'nichts offen') out.push({ affiliate: id, ...r })
+  }
+  return out
+}
+
+/** WhatsApp-Antwort auf Lottes Frage: sammeln, lesen, eintragen. */
+async function handleAddressReply(sb: SupabaseClient, affId: string, text: string): Promise<Record<string, unknown>> {
+  const { data: a } = await sb.from('affiliates').select('*').eq('id', affId).maybeSingle()
+  const aff = a as Affiliate | null
+  if (!aff || !aff.address_requested_at || hasAddress(aff)) return { ignored: true }
+  // Erst merken (mehrteilige Antworten), dann lesen
+  const buffer = `${aff.address_reply_text ?? ''}\n${text}`.trim().slice(-2000)
+  await sb.from('affiliates').update({ address_reply_text: buffer }).eq('id', affId)
+  const r = await parseReply(buffer, aff.name)
+  if (!r) return { ok: false, error: 'KI nicht erreichbar' }
+  const addr = { street: r.street.trim(), postal_code: r.postal_code.trim(), city: r.city.trim(), country: r.country.trim() }
+  if (r.kind !== 'address' || !hasAddress(addr)) return { ok: true, kind: r.kind }
+  if (r.company_name.trim() || r.for_other_person) {
+    if (aff.address_note?.startsWith('Antwort prüfen')) return { ok: true, kind: 'check' }
+    const why = r.company_name.trim() ? `auf die Firma „${r.company_name.trim()}“` : 'an eine andere Person'
+    await sb.from('affiliates').update({ address_note: `Antwort prüfen: Abrechnung soll ${why} gehen` }).eq('id', affId)
+    await addTask(sb, `🏠 Tippgeber ${aff.name}: Adresse prüfen`,
+      `${aff.name} hat auf Lottes Adress-Frage geantwortet, die Abrechnung soll aber ${why} gehen:\n\n${buffer}\n\nBei einer Firma: in der Kundenakte unter „Empfehlungsgeber → Bearbeiten“ auf Unternehmer stellen und die USt-IdNr. eintragen (dann wird es eine Gutschrift). Adresse dort eintragen.`)
+    return { ok: true, kind: 'check' }
+  }
+  const { data: cur } = await sb.from('affiliates').select('street, postal_code, city').eq('id', affId).maybeSingle()
+  if (cur && hasAddress(cur as Affiliate)) return { ignored: true }
+  const country = addr.country || aff.country || null
+  const { error: ue } = await sb.from('affiliates').update({
+    street: addr.street, postal_code: addr.postal_code, city: addr.city, country,
+    address_source: 'whatsapp', address_note: `per WhatsApp am ${dDate(new Date())}`, address_reply_text: null,
+  }).eq('id', affId)
+  if (ue) return { ok: false, error: ue.message }
+  const line = fmtAddr({ ...addr, country })
+  await noteReferred(sb, affId, '🏠 Adresse des Empfehlungsgebers per WhatsApp erhalten', `${aff.name}: ${line}.`)
+  const thanks = `Danke dir, ${firstName(aff.name)}! Ich habe deine Adresse für die Abrechnung gespeichert:\n\n${addr.street}\n${addr.postal_code} ${addr.city}${country ? `\n${country}` : ''}\n\nLiebe Grüße, Lotte 🐾`
+  await sendLotte(sb, aff, 'tippgeber_adresse_danke', thanks)
+  return { ok: true, kind: 'address', saved: line }
+}
+
+// Zustand für die Kundenakte
+function addressState(aff: Affiliate, due: boolean) {
+  const base = { source: aff.address_source ?? null, note: aff.address_note ?? null, checked_at: aff.address_checked_at ?? null,
+    requested_at: aff.address_requested_at ?? null, reply_text: aff.address_reply_text ?? null, due }
+  if (hasAddress(aff)) return { status: 'ok', ...base }
+  if (aff.address_requested_at) return { status: 'requested', ...base }
+  if (!aff.address_checked_at || aff.address_note === SEARCHING) return { status: 'searching', ...base }
+  return { status: 'not_found', ...base }
+}
+
 // Kunde gilt als „gekauft", wenn die Provision geflossen ist (Svens Definition):
 // Deal in provision_erhalten oder von dort aus archiviert.
 async function dealDone(sb: SupabaseClient, leadId: string): Promise<boolean> {
@@ -588,8 +819,14 @@ async function referrerState(sb: SupabaseClient, leadId: string) {
   const { data: ps } = await sb.from('affiliate_payouts').select('*').eq('referred_lead_id', leadId).order('created_at').limit(1)
   const p = (ps?.[0] ?? null) as Payout | null
   const payout = p ? { ...p, doc_url: docUrlOf(p) } : null
+  let address = null
+  if (referrer) {
+    const { data: dd } = await sb.from('deals').select('id').eq('lead_id', leadId).in('phase', REQUEST_PHASES).limit(1)
+    address = addressState(referrer, !!dd?.length)
+  }
   return {
     referrer,
+    address,
     commission: lead.referral_commission != null ? Number(lead.referral_commission) : null,
     default_commission: AMOUNT,
     link_max: LINK_MAX,
@@ -652,7 +889,11 @@ Deno.serve(async (req) => {
         }
       }
       const links = await pollLinks(sb)
-      return json({ ok: true, processed: results, links })
+      // Tippgeber-Adressen (Unterlagen lesen, WhatsApp-Frage) dauern: im Hintergrund,
+      // mit wait:true zum Testen direkt im Ergebnis.
+      const addrJob = addressSweep(sb)
+      const addresses = body.wait === true ? await addrJob : (background(addrJob), 'hintergrund')
+      return json({ ok: true, processed: results, links, addresses })
     }
 
     // ── Verwaltung (nur eingeloggt bzw. Service-Key) ─────────────────────────
@@ -854,6 +1095,8 @@ Deno.serve(async (req) => {
       const amt = Number((lc as { referral_commission: number | null } | null)?.referral_commission ?? AMOUNT)
       await addNote(sb, leadId, '🤝 Empfehlungsgeber zugewiesen',
         `Empfohlen von ${aff.name} (manuell zugewiesen). Bei Provisionseingang: ${eur(amt)} Tippgeber-Provision.`, userId)
+      // Adresse fehlt? In den Unterlagen suchen (und ggf. gleich fragen), im Hintergrund.
+      if (!hasAddress(aff)) background(addressStep(sb, aff.id))
       return json({ ok: true, ...(await referrerState(sb, leadId)) })
     }
 
@@ -872,10 +1115,57 @@ Deno.serve(async (req) => {
       }
       if ('is_business' in body) patch.is_business = body.is_business === true
       if (!Object.keys(patch).length) return json({ error: 'Nichts zu speichern.' }, 400)
+      // Adresse von Hand geändert → Herkunft „manuell“, offene WhatsApp-Antwort erledigt
+      const { data: before } = await sb.from('affiliates').select('street, postal_code, city, country').eq('id', affId).maybeSingle()
+      const b = (before ?? {}) as Record<string, string | null>
+      if ((['street', 'postal_code', 'city', 'country'] as const).some(k => k in patch && (patch[k] ?? null) !== (b[k] ?? null))) {
+        Object.assign(patch, { address_source: 'manuell', address_note: null, address_reply_text: null })
+      }
       const { error: ue } = await sb.from('affiliates').update(patch).eq('id', affId)
       if (ue) return json({ error: ue.message }, 500)
       const leadId = String(body.lead_id ?? '')
       return json({ ok: true, ...(leadId ? await referrerState(sb, leadId) : {}) })
+    }
+
+    // Adresse erneut in den Unterlagen suchen (Knopf in der Kundenakte), im Hintergrund
+    if (action === 'address_lookup') {
+      const affId = String(body.affiliate_id ?? '')
+      if (!affId) return json({ error: 'affiliate_id fehlt.' }, 400)
+      const job = lookupAddress(sb, affId, false)
+      if (body.wait === true) return json({ ok: true, ...(await job) })
+      background(job)
+      // Die Suche belegt sich selbst erst gleich: Zustand schon jetzt als „sucht“ melden
+      const leadId = String(body.lead_id ?? '')
+      const st = leadId ? await referrerState(sb, leadId) : null
+      if (st?.address && st.address.status !== 'ok') st.address = { ...st.address, status: 'searching' }
+      return json({ ok: true, started: true, ...(st ?? {}) })
+    }
+
+    // Diagnose: was steht in welchen Unterlagen (nichts wird gespeichert)
+    if (action === 'address_debug') {
+      const { data: a } = await sb.from('affiliates').select('*').eq('id', String(body.affiliate_id ?? '')).maybeSingle()
+      if (!a) return json({ error: 'Tippgeber nicht gefunden.' }, 404)
+      const r = await findAddress(sb, a as Affiliate, null)
+      return json({ ok: true, found: r.found ? { source: r.found.source, note: r.found.note, city: r.found.city } : null, note: r.note, seen: r.seen ?? [] })
+    }
+
+    // Lotte sofort nach der Adresse fragen lassen (ohne auf Reservierung zu warten)
+    if (action === 'address_request') {
+      const affId = String(body.affiliate_id ?? '')
+      const { data: a } = await sb.from('affiliates').select('*').eq('id', affId).maybeSingle()
+      const aff = a as Affiliate | null
+      if (!aff) return json({ error: 'Tippgeber nicht gefunden.' }, 404)
+      if (hasAddress(aff)) return json({ error: 'Adresse ist schon eingetragen.' }, 409)
+      return json({ ok: true, result: await requestAddress(sb, aff) })
+    }
+
+    // WhatsApp-Antwort auf Lottes Adress-Frage (nur von waInbound, Service-Key)
+    if (action === 'address_reply') {
+      if (caller.kind !== 'service') return json({ error: 'Nur intern.' }, 403)
+      const affId = String(body.affiliate_id ?? '')
+      const text = str(body.text, 1500)
+      if (!affId || !text) return json({ error: 'affiliate_id oder text fehlt.' }, 400)
+      return json(await handleAddressReply(sb, affId, text))
     }
 
     // Muster-Abrechnung mit echten Aussteller-Daten und Beispiel-Tippgeber

@@ -8,6 +8,8 @@ import { supabase } from '../../lib/supabase'
 // Kunde (Standard 1.000 €) und die Abrechnungsdaten des Tippgebers pflegen.
 // Sobald der Deal auf „Provision erhalten" steht, schickt affiliate-api (Cron)
 // Abrechnung + Revolut-Auszahlungslink automatisch an den Tippgeber.
+// Fehlt seine Adresse, sucht affiliate-api sie in Profil und Drive-Unterlagen; sonst
+// fragt Lotte per WhatsApp, sobald der Deal auf Reservierung steht (address.status).
 // Alles läuft über affiliate-api (Tabellen sind per RLS dicht).
 
 interface Referrer {
@@ -19,9 +21,13 @@ interface Payout {
   id: string; amount: number; status: string; doc_no: string | null; doc_url: string | null
   payout_link_state: string | null; payout_link_error: string | null; paid_at: string | null
 }
+interface AddressState {
+  status: 'ok' | 'searching' | 'not_found' | 'requested'
+  source: string | null; note: string | null; requested_at: string | null; reply_text: string | null; due: boolean
+}
 interface State {
   referrer: Referrer | null; commission: number | null; default_commission: number; link_max: number
-  payout: Payout | null; deal_done: boolean
+  payout: Payout | null; deal_done: boolean; address: AddressState | null
 }
 interface Hit { kind: 'affiliate' | 'lead'; id: string; name: string; email: string | null; hint: string }
 
@@ -75,6 +81,19 @@ export default function LeadReferrer({ leadId }: { leadId: string }) {
     } finally { setLoading(false) }
   }, [api])
   useEffect(() => { void load() }, [load])
+
+  // Solange Lotte in den Unterlagen sucht: still nachladen (alle 8 s, höchstens ~4 Min)
+  const addrSearching = st?.address?.status === 'searching' && mode === 'view'
+  const polls = useRef(0)
+  useEffect(() => {
+    if (!addrSearching) { polls.current = 0; return }
+    if (polls.current >= 30) return
+    const h = setTimeout(async () => {
+      polls.current++
+      try { apply(await api({ action: 'referrer_get' })) } catch { /* nächster Versuch */ }
+    }, 8000)
+    return () => clearTimeout(h)
+  }, [addrSearching, st, api])
 
   // Suche (entprellt, letzte Anfrage gewinnt)
   useEffect(() => {
@@ -140,6 +159,11 @@ export default function LeadReferrer({ leadId }: { leadId: string }) {
     if (!st?.referrer) return
     if (!form.email.trim() && !form.whatsapp.trim()) { setNotice(t('crm.referrer.needContact', 'Bitte E-Mail oder WhatsApp angeben.')); return }
     void run({ action: 'affiliate_update', affiliate_id: st.referrer.id, ...form }, () => setMode('view'))
+  }
+
+  const searchAgain = () => {
+    if (!st?.referrer) return
+    void run({ action: 'address_lookup', affiliate_id: st.referrer.id })
   }
 
   const createNew = () => {
@@ -324,10 +348,40 @@ export default function LeadReferrer({ leadId }: { leadId: string }) {
               <span className="text-gray-700">
                 {r.is_business ? `${t('crm.referrer.business', 'Unternehmer')}${r.vat_id ? ` (${r.vat_id})` : ''}` : t('crm.referrer.private', 'Privatperson')}
                 {' · '}{r.street}, {r.postal_code} {r.city}{r.country ? `, ${r.country}` : ''}
+                {st.address?.source && st.address.source !== 'manuell' && (
+                  <span className="text-gray-400"> ({st.address.note ?? t(`crm.referrer.source_${st.address.source}`, st.address.source)})</span>
+                )}
               </span>
             )}
             <button onClick={openEdit} className="text-hp-highlight hover:underline">{t('crm.referrer.edit', 'Bearbeiten')}</button>
           </div>
+
+          {/* Wie die Adresse beschafft wird */}
+          {addressMissing && !locked && st.address && (
+            <div className="text-xs text-gray-500 pl-0 sm:pl-[5.5rem] space-y-0.5">
+              {st.address.status === 'searching' ? (
+                <p>{t('crm.referrer.addrSearching', 'Lotte sucht die Adresse gerade im Profil und in den Drive-Unterlagen …')}</p>
+              ) : st.address.status === 'requested' ? (
+                <>
+                  <p>{st.address.note
+                    ?? t('crm.referrer.addrRequested', { date: st.address.requested_at ? new Date(st.address.requested_at).toLocaleDateString('de-DE') : '' })}</p>
+                  {st.address.reply_text && <p className="text-gray-400">{t('crm.referrer.addrReply', { text: st.address.reply_text })}</p>}
+                </>
+              ) : (
+                <>
+                  <p>
+                    {t('crm.referrer.addrNotFound', { note: st.address.note ?? '' })}{' '}
+                    <button onClick={searchAgain} disabled={busy} className="text-hp-highlight hover:underline disabled:opacity-40">{t('crm.referrer.addrSearchAgain', 'Erneut suchen')}</button>
+                  </p>
+                  <p>{!r.whatsapp
+                    ? t('crm.referrer.addrNoWhatsapp', 'Keine WhatsApp-Nummer hinterlegt: bitte die Adresse selbst eintragen.')
+                    : st.address.due
+                      ? t('crm.referrer.addrAskSoon', { name: r.name.split(/\s+/)[0] })
+                      : t('crm.referrer.addrAskLater', { name: r.name.split(/\s+/)[0] })}</p>
+                </>
+              )}
+            </div>
+          )}
 
           {/* Status */}
           <div className="text-xs rounded-lg bg-gray-50 px-3 py-2 text-gray-600 space-y-1">

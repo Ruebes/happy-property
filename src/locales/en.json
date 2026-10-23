@@ -1709,7 +1709,19 @@
       "link_processed": "claimed via Revolut link",
       "link_expired": "Revolut link expired",
       "link_cancelled": "Revolut link cancelled",
-      "link_failed": "Revolut link failed"
+      "link_failed": "Revolut link failed",
+      "addrSearching": "Lotte is looking for the address in the profile and the Drive documents …",
+      "addrNotFound": "Not found in the documents: {{note}}.",
+      "addrSearchAgain": "Search again",
+      "addrAskLater": "Lotte will ask {{name}} by WhatsApp as soon as the deal reaches Reservation.",
+      "addrAskSoon": "The deal is at Reservation: Lotte asks {{name}} by WhatsApp on the next run (every 30 minutes, between 8 am and 8 pm).",
+      "addrNoWhatsapp": "No WhatsApp number on file: please enter the address yourself.",
+      "addrRequested": "Requested by WhatsApp on {{date}}. Lotte enters the reply automatically.",
+      "addrReply": "Reply so far (incomplete): {{text}}",
+      "source_profil": "from the owner profile",
+      "source_rechnungskunde": "from the invoice customers",
+      "source_dokument": "from the Drive documents",
+      "source_whatsapp": "via WhatsApp"
     },
     "reviews": {
       "title": "Reviews",
