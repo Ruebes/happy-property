@@ -1,5 +1,5 @@
-import { Suspense, type ReactNode } from 'react'
-import { lazyWithReload as lazy, recoverUnknownRoute } from './lib/lazyWithReload'
+import { Suspense, useEffect, type ReactNode } from 'react'
+import { lazyWithReload as lazy, recoverUnknownRoute, purgeAndReload } from './lib/lazyWithReload'
 import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom'
 
 // Catch-all: Eine unbekannte Route heißt oft nur, dass der Browser eine ALTE,
@@ -15,6 +15,20 @@ function UnknownRoute() {
     )
   }
   return <Navigate to="/login" replace />
+}
+
+// /neu-laden: Service-Worker und Caches leeren, dann frisch laden.
+// purgeAndReload hängt ?v= an die Adresse; ist der Parameter da, ist die App
+// frisch vom Netz geladen und es geht ins CRM (kein zweites Leeren, keine Schleife).
+function NeuLaden() {
+  const frisch = new URLSearchParams(window.location.search).has('v')
+  useEffect(() => { if (!frisch) void purgeAndReload() }, [frisch])
+  if (frisch) return <Navigate to="/admin/crm" replace />
+  return (
+    <div className="flex items-center justify-center h-screen">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" />
+    </div>
+  )
 }
 import { AuthProvider } from './lib/auth'
 import PreviewBanner from './components/PreviewBanner'
@@ -191,8 +205,10 @@ export default function App() {
             <Route path="/login"       element={<Login />} />
             {/* Notfall-Link gegen veraltete App im Browser (Safari-Service-Worker):
                 Eine alte Version kennt die Route nicht, der Catch-all leert dann den
-                Cache und lädt neu; die neue Version leitet einfach ins CRM. */}
-            <Route path="/neu-laden"   element={<Navigate to="/admin/crm" replace />} />
+                Cache und lädt neu. Kennt die Version die Route, leert sie den Cache
+                jetzt ebenfalls selbst (Sven 23.10.26: vorher leitete sie nur ins CRM,
+                eine zwar neuere, aber nicht aktuelle Version blieb so hängen). */}
+            <Route path="/neu-laden"   element={<NeuLaden />} />
             <Route path="/sign/:token" element={<Sign />} />
             {/* Reservierungsvertrag digital unterschreiben (Bauträger, per Token, kein Login) */}
             <Route path="/sign/r/:token" element={<ReservationSign />} />

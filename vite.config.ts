@@ -70,7 +70,7 @@ export default defineConfig({
         // aktualisiert (Sven 27.8.: Bewertungs-Fragebogen zeigte alten Stand).
         navigateFallbackDenylist: [
           /^\/auth\//,
-          /^\/(bewertung|deck|rechnung|re|strategie|akte|partner|termin|sign|buchen|zusage|abmelden|anmelden|report|seo-report)(\/|$)/,
+          /^\/(bewertung|deck|rechnung|re|strategie|simulator|akte|partner|termin|sign|buchen|zusage|abmelden|anmelden|report|seo-report)(\/|$)/,
           /^\/(t|s)\//,
           // Vercel-Rewrites auf Edge Functions (Zypern-Report-PDF, Kalender-Feed):
           // der SW darf hier nie index.html ausliefern.
