@@ -141,14 +141,18 @@ Deno.serve(async (req) => {
     }
 
     // Optionale Einladung (vorbelegte Kontaktdaten + Bild + Sprache je Gast)
-    let inv: { slug: string; guest_name: string | null; guest_email: string | null; guest_phone: string | null; subject: string | null; image_url: string | null; image_focus: string | null; lang: string; internal: boolean; allow_calendar: boolean; allow_task: boolean } | null = null
+    let inv: { slug: string; guest_name: string | null; guest_email: string | null; guest_phone: string | null; subject: string | null; image_url: string | null; image_focus: string | null; lang: string; internal: boolean; allow_calendar: boolean; allow_task: boolean; duration_min: number | null; meeting_types: string[] | null; subject_locked: boolean } | null = null
     if (body.invite) {
-      const { data } = await admin.from('booking_invites').select('slug, guest_name, guest_email, guest_phone, subject, image_url, image_focus, lang, internal, allow_calendar, allow_task').eq('token', String(body.invite)).maybeSingle()
+      const { data } = await admin.from('booking_invites').select('slug, guest_name, guest_email, guest_phone, subject, image_url, image_focus, lang, internal, allow_calendar, allow_task, duration_min, meeting_types, subject_locked').eq('token', String(body.invite)).maybeSingle()
       inv = data as typeof inv
     }
     // Was darf der Link? Ohne Einladung (nackter /buchen/sven360): nur Kalender.
     const allowCalendar = inv ? inv.allow_calendar !== false : true
     const allowTask     = inv ? inv.allow_task === true : false
+    // Feste Vorgaben der Einladung (z. B. "Briefing Mito": 15 Min, nur Zoom/WhatsApp, fester Betreff)
+    const fixedDur = inv?.duration_min && inv.duration_min > 0 ? inv.duration_min : null
+    const allowedTypes = inv?.meeting_types?.length ? inv.meeting_types : ['onsite', 'whatsapp', 'zoom']
+    const lockedSubject = inv?.subject_locked && inv.subject ? inv.subject : null
     // Link laden (Slug aus Einladung oder direkt)
     const slug = (inv?.slug ?? String(body.slug ?? '')).trim()
     const { data: link } = await admin.from('personal_booking_links').select('slug, title, active, owner_id').eq('slug', slug).maybeSingle()
@@ -158,14 +162,15 @@ Deno.serve(async (req) => {
     if (action === 'config') return json({ ok: true, title: lk.title ?? 'Termin', owner: 'Sven Rüprich',
       guest: inv ? { name: inv.guest_name, email: inv.guest_email, phone: inv.guest_phone, subject: inv.subject } : null,
       image_url: inv?.image_url ?? null, image_focus: inv?.image_focus ?? null, lang: inv?.lang ?? 'de',
-      allow_calendar: allowCalendar, allow_task: allowTask })
+      allow_calendar: allowCalendar, allow_task: allowTask,
+      duration_min: fixedDur, meeting_types: inv?.meeting_types?.length ? inv.meeting_types : null, subject_locked: !!lockedSubject })
 
     // Kalender-Aktionen nur, wenn der Link das erlaubt (reiner Aufgaben-Link).
     if ((action === 'slots' || action === 'book') && !allowCalendar) return json({ error: 'Über diesen Link können keine Termine gebucht werden.' }, 403)
 
     // ── Freie Slots für die gewählte Dauer ─────────────────────────────────
     if (action === 'slots') {
-      const dur = Math.max(15, Math.min(360, Number(body.duration) || 30))
+      const dur = fixedDur ?? Math.max(15, Math.min(360, Number(body.duration) || 30))
       const now = Date.now(), minStart = now + MIN_LEAD_MIN * 60000
       const busy = await getBusy(admin, new Date(now), new Date(now + DAYS_AHEAD * 864e5))
       const days: { date: string; label: string; times: { iso: string; label: string; preferred: boolean }[] }[] = []
@@ -190,11 +195,11 @@ Deno.serve(async (req) => {
       const raw = body as { startIso?: string; subject?: string; type?: string; address?: string; name?: string; email?: string; phone?: string }
       const { type, email, phone } = raw
       // Längen kappen statt ablehnen (Befund E3-5); normale Eingaben bleiben unverändert.
-      const subject = typeof raw.subject === 'string' ? raw.subject.trim().slice(0, 150) : ''
+      const subject = lockedSubject ?? (typeof raw.subject === 'string' ? raw.subject.trim().slice(0, 150) : '')
       const name = typeof raw.name === 'string' ? raw.name.trim().slice(0, 100) : ''
       const address = typeof raw.address === 'string' ? raw.address.trim().slice(0, 250) : undefined
-      const dur = Math.max(15, Math.min(360, Number(body.duration) || 30))
-      if (!raw.startIso || !subject || !name || !['onsite', 'whatsapp', 'zoom'].includes(type ?? '')) return json({ error: 'Bitte alle Pflichtfelder ausfüllen.' }, 400)
+      const dur = fixedDur ?? Math.max(15, Math.min(360, Number(body.duration) || 30))
+      if (!raw.startIso || !subject || !name || !allowedTypes.includes(type ?? '')) return json({ error: 'Bitte alle Pflichtfelder ausfüllen.' }, 400)
       if (!email?.trim() && !phone?.trim()) return json({ error: 'Bitte E-Mail oder Telefon angeben.' }, 400)
       // Nachsichtige Formatprüfung: EINE Adresse (kein Leerzeichen, Komma, Semikolon,
       // spitze Klammern, keine LIKE-Platzhalter) bzw. eine Nummer mit 6-18 Ziffern.

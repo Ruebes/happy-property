@@ -96,6 +96,12 @@ export default function BookingPage() {
   const [taskDone, setTaskDone] = useState<null | { dueStr: string }>(null)
   const [subject, setSubject] = useState(''); const [duration, setDuration] = useState(30)
   const [type, setType] = useState<Type>('whatsapp')
+  // Feste Vorgaben einer Einladung (z. B. "Briefing Mito": 15 Min, nur Zoom/WhatsApp, Betreff fest).
+  // Slots erst laden, wenn die Einladung gelesen ist, sonst kämen kurz die 30-Min-Slots.
+  const [fixedDur, setFixedDur] = useState<number | null>(null)
+  const [types, setTypes] = useState<Type[]>(['whatsapp', 'zoom', 'onsite'])
+  const [subjectLocked, setSubjectLocked] = useState(false)
+  const [cfgReady, setCfgReady] = useState(false)
   const [address, setAddress] = useState(''); const [suggests, setSuggests] = useState<string[]>([])
   const [days, setDays] = useState<Day[]>([]); const [loadingSlots, setLoadingSlots] = useState(true)
   const [dayIdx, setDayIdx] = useState(0); const [pick, setPick] = useState<string | null>(null)
@@ -121,6 +127,13 @@ export default function BookingPage() {
         if (g.phone) setPhone(g.phone)
         if (g.subject) setSubject(g.subject)
       }
+      const fd = Number(d.duration_min) || 0
+      if (fd > 0) { setFixedDur(fd); setDuration(fd) }
+      const mt = (Array.isArray(d.meeting_types) ? d.meeting_types as string[] : [])
+        .filter((x): x is Type => x === 'whatsapp' || x === 'zoom' || x === 'onsite')
+      if (mt.length) { setTypes(mt); setType(mt[0]) }
+      if (d.subject_locked === true) setSubjectLocked(true)
+      setCfgReady(true)
     }).catch(() => setNotFound(true))
   }, [slug, invite])
 
@@ -130,7 +143,7 @@ export default function BookingPage() {
     catch { setDays([]) } finally { setLoadingSlots(false) }
   }, [slug, invite])
   // Reiner Aufgaben-Link: keine Slots laden (Edge würde 403 liefern)
-  useEffect(() => { if (allowCal) loadSlots(duration) }, [duration, loadSlots, allowCal])
+  useEffect(() => { if (allowCal && cfgReady) loadSlots(duration) }, [duration, loadSlots, allowCal, cfgReady])
 
   // Adress-Autocomplete (debounced)
   const tRef = useRef<number | undefined>(undefined)
@@ -292,24 +305,27 @@ export default function BookingPage() {
             {/* Betreff */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">{T.subjectLbl}</label>
-              <input value={subject} onChange={e => setSubject(e.target.value)} className={input} placeholder={T.subjectPh} />
+              {subjectLocked
+                ? <p className="text-base font-semibold text-gray-900">{subject}</p>
+                : <input value={subject} onChange={e => setSubject(e.target.value)} className={input} placeholder={T.subjectPh} />}
             </div>
             {/* Dauer */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">{T.durationLbl}</label>
+              {fixedDur ? <p className="text-base font-semibold text-gray-900">{lang === 'en' ? `${fixedDur} min` : `${fixedDur} Min`}</p> : (
               <div className="flex flex-wrap gap-1.5">
                 {DUR_VALUES.map(v => (
                   <button key={v} onClick={() => setDuration(v)}
                     className={`text-xs px-3 py-1.5 rounded-full border ${duration === v ? 'text-white border-transparent' : 'bg-white text-gray-600 border-gray-200'}`}
                     style={duration === v ? { backgroundColor: CORAL } : undefined}>{T.dur[v]}</button>
                 ))}
-              </div>
+              </div>)}
             </div>
             {/* Art */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1.5">{T.typeLbl}</label>
-              <div className="grid grid-cols-3 gap-1.5">
-                {([['whatsapp', T.whatsapp], ['zoom', T.zoom], ['onsite', T.onsite]] as [Type, string][]).map(([v, l]) => (
+              <div className={`grid ${types.length === 1 ? 'grid-cols-1' : types.length === 2 ? 'grid-cols-2' : 'grid-cols-3'} gap-1.5`}>
+                {([['whatsapp', T.whatsapp], ['zoom', T.zoom], ['onsite', T.onsite]] as [Type, string][]).filter(([v]) => types.includes(v)).map(([v, l]) => (
                   <button key={v} onClick={() => setType(v)}
                     className={`text-sm py-2 rounded-xl border ${type === v ? 'text-white border-transparent' : 'bg-white text-gray-600 border-gray-200'}`}
                     style={type === v ? { backgroundColor: CORAL } : undefined}>{l}</button>
