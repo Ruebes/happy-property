@@ -548,6 +548,9 @@ export default function Pipeline() {
   const [registrationDeal, setRegistrationDeal] = useState<Deal | null>(null)
   // Wohnungs-Auswahl beim Zug auf Reservierung/Kaufvertrag (wenn keine Unit verknüpft)
   const [unitPickState, setUnitPickState] = useState<{ deal: Deal; target: DealPhase } | null>(null)
+  // Reservierung mit schon verknüpfter Wohnung: Sondervereinbarungen abfragen (sonst im Wohnungs-Popup)
+  const [resNotesDeal, setResNotesDeal] = useState<Deal | null>(null)
+  const [resNotesText, setResNotesText] = useState('')
   const [holdDeal,     setHoldDeal]     = useState<Deal | null>(null)
   const [handoverDeal, setHandoverDeal] = useState<Deal | null>(null)
   const [depositDeal,  setDepositDeal]  = useState<Deal | null>(null)   // Provisionsrechnung → Rechnungs-Modal
@@ -591,7 +594,7 @@ export default function Pipeline() {
           id, lead_id, property_id, unit_id, phase, source, developer, created_at, updated_at,
           deposit_paid_at, commission_amount,
           registration_notes, finanzierung_de_notes, finanzierung_cy_notes,
-          immobilien_notes, kaufvertrag_notes, provision_notes,
+          immobilien_notes, kaufvertrag_notes, provision_notes, reservation_notes,
           lead:leads(id, first_name, last_name, email, phone, whatsapp, source, assigned_to,
             assignee:profiles!leads_assigned_to_fkey(full_name, email)
           ),
@@ -694,7 +697,8 @@ export default function Pipeline() {
   }
 
   // Zentrale Phasen-Wechsel-Logik — von Drag-Drop UND Rechtsklick-Menü genutzt.
-  const changePhase = async (deal: Deal, targetPhase: DealPhase) => {
+  // notesDone: Sondervereinbarungen zur Reservierung sind schon abgefragt (Popup nicht erneut öffnen)
+  const changePhase = async (deal: Deal, targetPhase: DealPhase, notesDone = false) => {
     if (deal.phase === targetPhase) return
 
     const oldPhase = deal.phase
@@ -709,6 +713,11 @@ export default function Pipeline() {
     // deren Status automatisch mitgezogen (reserviert bzw. verkauft).
     if ((targetPhase === 'reservierung' || targetPhase === 'kaufvertrag') && !deal.unit_id) {
       setUnitPickState({ deal: { ...deal }, target: targetPhase })
+      return
+    }
+    if (targetPhase === 'reservierung' && deal.unit_id && !notesDone) {
+      setResNotesText(deal.reservation_notes ?? '')
+      setResNotesDeal({ ...deal })
       return
     }
     if ((targetPhase === 'reservierung' || targetPhase === 'kaufvertrag') && deal.unit_id) {
@@ -793,6 +802,21 @@ export default function Pipeline() {
     setDragId(null)
     if (!deal) return
     changePhase(deal, targetPhase)
+  }
+
+  // Reservierung mit verknüpfter Wohnung: Sondervereinbarungen speichern, dann Phasenwechsel fortsetzen
+  const confirmResNotes = async () => {
+    if (!resNotesDeal) return
+    const deal = resNotesDeal
+    const reservation_notes = resNotesText.trim() || null
+    setModalBusy(true)
+    try {
+      const { error } = await supabase.from('deals').update({ reservation_notes }).eq('id', deal.id)
+      if (error) { console.error('[Pipeline] Sondervereinbarungen:', error.message); showToastMsg(t('crm.pipeline.reservationNotesError', 'Sondervereinbarungen konnten nicht gespeichert werden, Phase nicht geändert.')); return }
+      setDeals(prev => prev.map(d => (d.id === deal.id ? { ...d, reservation_notes } : d)))
+      setResNotesDeal(null); setResNotesText('')
+      void changePhase({ ...deal, reservation_notes }, 'reservierung', true)
+    } finally { setModalBusy(false) }
   }
 
   // Hold bestätigen (mit/ohne Kontaktaufnahme). last_hold_msg_at=jetzt → erste 6-Wochen-Mail in 6 Wochen.
@@ -1184,20 +1208,26 @@ export default function Pipeline() {
           confirmLabel={unitPickState.target === 'reservierung'
             ? t('unitPickerModal.confirmReserve', 'Reservieren')
             : t('unitPickerModal.confirmSell', 'Als verkauft übernehmen')}
+          {...(unitPickState.target === 'reservierung' ? {
+            notesLabel: t('crm.pipeline.reservationNotes', 'Sondervereinbarungen (optional, auf Deutsch)'),
+            notesPlaceholder: t('crm.pipeline.reservationNotesPh', 'z. B. Möbelpaket im Wert von 45.000 € kostenfrei. Kommt übersetzt ins Englische in den Reservierungsvertrag.'),
+            initialNotes: unitPickState.deal.reservation_notes ?? '',
+          } : {})}
           onClose={() => setUnitPickState(null)}
-          onSelect={async (unit, project) => {
+          onSelect={async (unit, project, notes) => {
             const { deal, target } = unitPickState
             setUnitPickState(null)
             const newStatus = target === 'reservierung' ? 'reserved' : 'sold'
             const { error: uErr } = await supabase.from('crm_project_units')
               .update({ status: newStatus }).eq('id', unit.id).neq('status', 'sold')
             if (uErr) { console.error('[Pipeline] Unit-Status:', uErr.message); showToastMsg(t('crm.pipeline.unitStatusError', 'Wohnungs-Status konnte nicht gesetzt werden — Phase nicht geändert.')); return }
+            const notesPatch = target === 'reservierung' ? { reservation_notes: notes || null } : {}
             const { error: dErr } = await supabase.from('deals')
-              .update({ unit_id: unit.id, developer: project.developer ?? null })
+              .update({ unit_id: unit.id, developer: project.developer ?? null, ...notesPatch })
               .eq('id', deal.id)
             if (dErr) { console.error('[Pipeline] Unit-Zuweisung:', dErr.message); showToastMsg(t('crm.pipeline.unitAssignError', 'Wohnung konnte nicht zugewiesen werden.')); return }
             // Verknüpfung auch lokal merken, sonst öffnet der nächste Wechsel die Auswahl erneut
-            setDeals(prev => prev.map(d => (d.id === deal.id ? { ...d, unit_id: unit.id, developer: project.developer ?? null } : d)))
+            setDeals(prev => prev.map(d => (d.id === deal.id ? { ...d, unit_id: unit.id, developer: project.developer ?? null, ...notesPatch } : d)))
             await supabase.from('activities').insert({
               lead_id: deal.lead_id, deal_id: deal.id, type: 'note', direction: 'outbound',
               content: `🏠 Wohnung verknüpft: ${project.name} · ${unit.unit_number} (${target === 'reservierung' ? 'reserviert' : 'verkauft'})`,
@@ -1205,7 +1235,7 @@ export default function Pipeline() {
             }).then(({ error: aErr }) => { if (aErr) console.warn('[Pipeline] Aktivität:', aErr.message) })
             // Phasenwechsel mit verknüpfter Unit fortsetzen (Automation bekommt jetzt
             // Projekt/Unit/Preis + den richtigen Developer-Empfänger)
-            void changePhase({ ...deal, unit_id: unit.id, developer: project.developer ?? null }, target)
+            void changePhase({ ...deal, unit_id: unit.id, developer: project.developer ?? null, ...notesPatch }, target, true)
           }}
         />
       )}
@@ -1229,6 +1259,23 @@ export default function Pipeline() {
           onConfirm={handleRegistrationConfirm}
           onCancel={() => setRegistrationDeal(null)}
         />
+      )}
+
+      {resNotesDeal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+            <h2 className="text-lg font-semibold text-gray-800 mb-1">🔖 {t('crm.pipeline.reservationTitle', 'Reservierung')}</h2>
+            <p className="text-xs text-gray-500 mb-3">{resNotesDeal.lead ? `${resNotesDeal.lead.first_name} ${resNotesDeal.lead.last_name}` : ''}</p>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('crm.pipeline.reservationNotes', 'Sondervereinbarungen (optional, auf Deutsch)')}</label>
+            <textarea rows={3} maxLength={1500} value={resNotesText} onChange={e => setResNotesText(e.target.value)}
+              placeholder={t('crm.pipeline.reservationNotesPh', 'z. B. Möbelpaket im Wert von 45.000 € kostenfrei. Kommt übersetzt ins Englische in den Reservierungsvertrag.')}
+              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-orange-400 resize-none" />
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={() => { setResNotesDeal(null); setResNotesText('') }} className="px-4 py-2 rounded-lg text-sm text-gray-600 border border-gray-200 hover:bg-gray-50">{t('common.cancel', 'Abbrechen')}</button>
+              <button onClick={() => void confirmResNotes()} disabled={modalBusy} className="px-5 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>{t('unitPickerModal.confirmReserve', 'Reservieren')}</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {holdDeal && (

@@ -81,6 +81,8 @@ export interface Deal {
   finanzierung_cy_notes:        string | null
   immobilien_notes:             string | null
   kaufvertrag_notes:            string | null
+  /** Sondervereinbarungen zur Reservierung (Deutsch), kommen übersetzt in den Reservierungsvertrag */
+  reservation_notes?:           string | null
   provision_notes:              string | null
   phase_changed_at:             string | null   // wann aktuelle Phase erreicht (Auto-Archiv)
   archived_from_phase:          string | null   // Ursprungsphase vor Archivierung (korrektes Restore)
@@ -646,6 +648,7 @@ export interface ReservationAgreement {
   sign_token:       string | null   // Link /sign/r/<token> für die digitale Unterschrift des Bauträgers
   seller_signed_at: string | null
   seller_signer_name: string | null
+  special_terms?:   { de: string; en: string } | null   // Sondervereinbarung: Svens Text + Übersetzung im Vertrag
   created_at:       string
   updated_at:       string
 }

@@ -122,6 +122,8 @@ export async function renderPafilia(t: TemplateRow, f: AgreementFields, seller?:
   row('RESERVATION DEPOSIT:', [f.deposit_text])
   if (x.payment_term) row('PAYMENT TERM:', [x.payment_term])
   if (x.reservation_term) row('RESERVATION TERM:', [x.reservation_term])
+  // Sondervereinbarung (Svens Eingabe bei der Reservierung, übersetzt): umbrechen statt verkleinern
+  if (f.special_terms) row('SPECIAL AGREEMENTS:', wrap(reg, LS, safe(reg, f.special_terms), valueW))
 
   // ── Bedingungen: „1. …" je Absatz, hängender Einzug, Blocksatz ──
   y -= 24

@@ -43,6 +43,7 @@ export interface AgreementFields {
   price_text: string        // EUR 634,800 + VAT
   deposit_text: string      // EUR 20,000 + 19% VAT = EUR 23,800
   id_types?: string[]       // passport | id_card | other, gleiche Reihenfolge wie purchasers
+  special_terms?: string    // Sondervereinbarung, englisch (Svens Eingabe bei der Reservierung, übersetzt)
 }
 
 const W = 595.28, H = 841.89
@@ -176,7 +177,8 @@ async function renderOnce(t: TemplateRow, f: AgreementFields, seller: SellerSign
   {
     const NS = compact ? 7.6 : 8.6, NL = compact ? 10.6 : 12.6
     // safe() vor dem Messen: Ligaturen wie „ﬁ" aus kopierten Texten würden sonst werfen
-    const notes = (t.notes ?? '').replace(/\n\s*\n/g, '\n').split('\n').map(l => safe(reg, l)).join('\n')
+    const all = [t.notes ?? '', f.special_terms ? `Special agreements: ${f.special_terms}` : ''].filter(Boolean).join('\n')
+    const notes = all.replace(/\n\s*\n/g, '\n').split('\n').map(l => safe(reg, l)).join('\n')
     const lines = wrap(reg, NS, notes, X1 - X0 - PAD * 2)
     const h = Math.max(compact ? 90 : 150, PAD * 2 + LH + lines.length * NL + 10)
     rect(X0, y, X1 - X0, h)

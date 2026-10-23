@@ -37,7 +37,8 @@
     "sealReplace": "Upload a new seal photo",
     "sealUpload": "Upload seal photo",
     "agreeDoc": "I have checked the document and sign it on behalf of {{company}}.",
-    "submitDoc": "Sign document"
+    "submitDoc": "Sign document",
+    "special": "Special agreements"
   },
   "reservation": {
     "title": "Reservation agreement",
@@ -70,7 +71,12 @@
     "resend": "Send to developer again",
     "confirmSend": "Send the reservation agreement to the developer now?",
     "testSent": "Test went to you (email + WhatsApp).",
-    "sentOk": "Agreement has been sent to the developer."
+    "sentOk": "Agreement has been sent to the developer.",
+    "notes": "Special agreements",
+    "notesPh": "Optional, in German. Translated into English for the agreement.",
+    "notesEn": "In the agreement:",
+    "notesSaved": "Saved. Goes into the agreement in English (the preview shows the wording).",
+    "notesSavedResend": "Saved. The developer already has the agreement, please send it again for the new version."
   },
   "reservationTpl": {
     "title": "Reservation template",
@@ -2452,7 +2458,11 @@
       "unitAssignError": "Could not assign the unit.",
       "unitStatusError": "Could not update the unit status — phase not changed.",
       "apptOn": "Appointment",
-      "createDeck": "Create deck / offer"
+      "createDeck": "Create deck / offer",
+      "reservationTitle": "Reservation",
+      "reservationNotes": "Special agreements (optional, in German)",
+      "reservationNotesPh": "e.g. furniture package worth EUR 45,000 free of charge. Translated into English for the reservation agreement.",
+      "reservationNotesError": "Special agreements could not be saved, phase not changed."
     },
     "archived": {
       "title": "Archived Deals",

@@ -16,6 +16,7 @@ import SignaturePad, { type SignaturePadHandle } from '../components/SignaturePa
 interface Fields {
   date: string; property_name: string; address: string; unit_number: string
   purchasers: string[]; id_numbers: string[]; price_text: string; deposit_text: string
+  special_terms?: string
 }
 interface View {
   test: boolean; signed: boolean; signer_name: string | null; signed_at: string | null
@@ -156,6 +157,7 @@ export default function ReservationSign({ mode = 'reservation' }: { mode?: Mode 
               <dd className="text-gray-900">{f.purchasers.map((p, i) => <span key={i} className="block">{p} <span className="text-gray-400 font-mono text-xs">{f.id_numbers[i]}</span></span>)}</dd>
               <dt className="text-gray-500">{t('reservationSign.price', 'Purchasing price')}</dt><dd className="text-gray-900">{f.price_text}</dd>
               <dt className="text-gray-500">{t('reservationSign.deposit', 'Holding deposit')}</dt><dd className="text-gray-900">{f.deposit_text}</dd>
+              {f.special_terms && <><dt className="text-gray-500">{t('reservationSign.special', 'Special agreements')}</dt><dd className="text-gray-900 whitespace-pre-line">{f.special_terms}</dd></>}
             </dl>
           ) : (
             <p className="mt-3 text-sm text-gray-600">

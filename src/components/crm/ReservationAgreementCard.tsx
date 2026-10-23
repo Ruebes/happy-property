@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ReservationAgreement, ReservationBuyer } from '../../lib/crmTypes'
 import { reservationCall, openPdfWindow, showPdf } from '../../lib/reservationAgreement'
+import { supabase } from '../../lib/supabase'
 
 // Reservierungsvertrag eines Deals: Status der Automatik (Ausweis erkannt,
 // ausgefüllt, an den Bauträger geschickt), Käuferdaten korrigieren, Vorschau,
@@ -12,6 +13,7 @@ interface StatusResponse {
   template: { id: string; name: string } | null
   reason: string | null
   mode: 'on' | 'test' | 'off'
+  reservation_notes?: string | null
 }
 
 const STATUS_STYLE: Record<string, string> = {
@@ -34,12 +36,19 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
   const setManual = (v: boolean) => { manualRef.current = v; setManualState(v) }
   const [busy, setBusy] = useState<'' | 'preview' | 'send' | 'test'>('')
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  // Sondervereinbarungen (deals.reservation_notes, Deutsch); kommen übersetzt in den Vertrag
+  const [notes, setNotes] = useState('')
+  const [notesSaved, setNotesSaved] = useState('')
+  const [notesBusy, setNotesBusy] = useState(false)
+  const notesDirtyRef = useRef(false)
 
   const load = useCallback(async () => {
     try {
       const r = await reservationCall<StatusResponse>({ action: 'status', deal_id: dealId })
       setSt(r)
       if (!manualRef.current) setBuyers(r.row?.buyers ?? [])
+      setNotesSaved(r.reservation_notes ?? '')
+      if (!notesDirtyRef.current) setNotes(r.reservation_notes ?? '')
     } catch {
       setSt(null)
     }
@@ -58,6 +67,21 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
   }
   const fmtDate = (s: string) => new Date(s).toLocaleString(i18n.language === 'en' ? 'en-GB' : 'de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
   const edited = manual ? buyers.filter(b => b.full_name.trim()) : undefined
+  const notesDirty = notes.trim() !== notesSaved.trim()
+  const notesEn = row?.special_terms && row.special_terms.de === notesSaved.trim() ? row.special_terms.en : ''
+
+  const saveNotes = async () => {
+    setNotesBusy(true); setMsg(null)
+    const value = notes.trim() || null
+    const { error } = await supabase.from('deals').update({ reservation_notes: value }).eq('id', dealId)
+    setNotesBusy(false)
+    if (error) { setMsg({ ok: false, text: error.message }); return }
+    notesDirtyRef.current = false
+    setNotesSaved(value ?? '')
+    setMsg({ ok: true, text: row?.status === 'gesendet' || row?.status === 'unterschrieben'
+      ? t('reservation.notesSavedResend', 'Gespeichert. Der Bauträger hat den Vertrag schon, für den neuen Stand bitte erneut senden.')
+      : t('reservation.notesSaved', 'Gespeichert. Kommt übersetzt in den Vertrag (Vorschau zeigt den Wortlaut).') })
+  }
 
   const preview = async () => {
     const win = openPdfWindow()
@@ -164,6 +188,21 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
           ))}
         </div>
       )}
+
+      <div className="bg-white rounded-lg p-3 space-y-1.5">
+        <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('reservation.notes', 'Sondervereinbarungen')}</p>
+        <textarea value={notes} rows={2} maxLength={1500}
+          onChange={e => { notesDirtyRef.current = true; setNotes(e.target.value) }}
+          placeholder={t('reservation.notesPh', 'Optional, auf Deutsch. Kommt übersetzt ins Englische in den Vertrag.')}
+          className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-orange-400 resize-y" />
+        {notesDirty ? (
+          <button onClick={saveNotes} disabled={notesBusy} className={`${btn} border-gray-200 text-gray-600 bg-white hover:bg-gray-50`}>
+            {notesBusy ? '…' : `💾 ${t('common.save', 'Speichern')}`}
+          </button>
+        ) : notesEn ? (
+          <p className="text-xs text-gray-500"><span className="font-medium">{t('reservation.notesEn', 'Im Vertrag:')}</span> {notesEn}</p>
+        ) : null}
+      </div>
 
       {msg && <p className={`text-xs ${msg.ok ? 'text-green-700' : 'text-amber-800'}`}>{msg.text}</p>}
 

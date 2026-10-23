@@ -4,6 +4,7 @@
 // Verfügbarkeits-Regel (Sven): Was im Sales-Deck anbietbar ist, ist auch hier
 // wählbar — d.h. NICHT verkauft, NICHT fremd-reserviert, NICHT an fremdem
 // aktiven Deal. Die Einheit des EIGENEN Kunden (currentLeadId) bleibt immer wählbar.
+// notesLabel gesetzt (Reservierung): nach der Auswahl ein Freifeld, z. B. Sondervereinbarungen.
 
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -16,8 +17,11 @@ interface Props {
   preselectedProjectId?: string | null
   currentLeadId?:        string | null
   confirmLabel?:         string
+  notesLabel?:           string
+  notesPlaceholder?:     string
+  initialNotes?:         string | null
   onClose:               () => void
-  onSelect:              (unit: CrmProjectUnit, project: Pick<CrmProject, 'id' | 'name' | 'location' | 'developer'>) => void
+  onSelect:              (unit: CrmProjectUnit, project: Pick<CrmProject, 'id' | 'name' | 'location' | 'developer'>, notes: string) => void
 }
 
 interface UnitHolder { lead_id: string; name: string }
@@ -42,7 +46,7 @@ function fmtDate(d: string | null): string {
   return new Date(d).toLocaleDateString('de-DE')
 }
 
-export default function UnitPickerModal({ leadName, preselectedProjectId, currentLeadId, confirmLabel, onClose, onSelect }: Props) {
+export default function UnitPickerModal({ leadName, preselectedProjectId, currentLeadId, confirmLabel, notesLabel, notesPlaceholder, initialNotes, onClose, onSelect }: Props) {
   const { t } = useTranslation()
   const STATUS_LABEL: Record<string, string> = {
     under_construction: t('unitPickerModal.statusUnderConstruction', 'Im Bau'),
@@ -59,6 +63,7 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, curren
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null)
   const [selectedUnit,   setSelectedUnit]   = useState<{ unit: CrmProjectUnit; project: CrmProject } | null>(null)
   const [unitHolders,    setUnitHolders]    = useState<Record<string, UnitHolder>>({})
+  const [notes,          setNotes]          = useState(initialNotes ?? '')
 
   useEffect(() => {
     load()
@@ -359,6 +364,19 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, curren
 
         {/* ── Footer ─────────────────────────────────────────────────────────── */}
         <div className="px-6 py-4 border-t border-gray-100 flex-shrink-0">
+          {selectedUnit && notesLabel && (
+            <div className="mb-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">{notesLabel}</label>
+              <textarea
+                value={notes}
+                onChange={e => setNotes(e.target.value)}
+                rows={3}
+                maxLength={1500}
+                placeholder={notesPlaceholder}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-[#ff795d] resize-none"
+              />
+            </div>
+          )}
           {selectedUnit ? (
             <div className="flex items-center justify-between gap-4">
               <div className="text-sm text-gray-700 min-w-0 truncate">
@@ -379,7 +397,7 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, curren
                   {t('unitPickerModal.cancel', 'Abbrechen')}
                 </button>
                 <button
-                  onClick={() => onSelect(selectedUnit.unit, selectedUnit.project)}
+                  onClick={() => onSelect(selectedUnit.unit, selectedUnit.project, notes.trim())}
                   className="px-5 py-2 text-sm font-medium text-white rounded-xl"
                   style={{ backgroundColor: '#ff795d' }}
                 >

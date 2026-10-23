@@ -37,7 +37,8 @@
     "sealReplace": "Neues Stempelfoto hochladen",
     "sealUpload": "Stempelfoto hochladen",
     "agreeDoc": "Ich habe das Dokument geprüft und unterschreibe für {{company}}.",
-    "submitDoc": "Dokument unterschreiben"
+    "submitDoc": "Dokument unterschreiben",
+    "special": "Sondervereinbarungen"
   },
   "reservation": {
     "title": "Reservierungsvertrag",
@@ -70,7 +71,12 @@
     "resend": "Erneut an Bauträger senden",
     "confirmSend": "Reservierungsvertrag jetzt an den Bauträger schicken?",
     "testSent": "Test ging an dich (Mail + WhatsApp).",
-    "sentOk": "Vertrag ist an den Bauträger raus."
+    "sentOk": "Vertrag ist an den Bauträger raus.",
+    "notes": "Sondervereinbarungen",
+    "notesPh": "Optional, auf Deutsch. Kommt übersetzt ins Englische in den Vertrag.",
+    "notesEn": "Im Vertrag:",
+    "notesSaved": "Gespeichert. Kommt übersetzt in den Vertrag (Vorschau zeigt den Wortlaut).",
+    "notesSavedResend": "Gespeichert. Der Bauträger hat den Vertrag schon, für den neuen Stand bitte erneut senden."
   },
   "reservationTpl": {
     "title": "Reservierungsvorlage",
@@ -2452,7 +2458,11 @@
       "unitAssignError": "Wohnung konnte nicht zugewiesen werden.",
       "unitStatusError": "Wohnungs-Status konnte nicht gesetzt werden — Phase nicht geändert.",
       "apptOn": "Termin",
-      "createDeck": "Deck / Angebot erstellen"
+      "createDeck": "Deck / Angebot erstellen",
+      "reservationTitle": "Reservierung",
+      "reservationNotes": "Sondervereinbarungen (optional, auf Deutsch)",
+      "reservationNotesPh": "z. B. Möbelpaket im Wert von 45.000 € kostenfrei. Kommt übersetzt ins Englische in den Reservierungsvertrag.",
+      "reservationNotesError": "Sondervereinbarungen konnten nicht gespeichert werden, Phase nicht geändert."
     },
     "archived": {
       "title": "Archivierte Deals",

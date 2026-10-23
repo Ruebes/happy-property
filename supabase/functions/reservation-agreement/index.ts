@@ -49,6 +49,7 @@ import { renderAgreement, type AgreementFields, type PropertyKind, type Template
 import { signView, signSubmit } from './sign.ts'
 import { docCreate, docView, docSubmit, docQueueSweep } from './docsign.ts'
 import { loadSeal, saveSeal, removeSeal, sealDataUrl, pngFromInput, MAX_SEAL_BYTES } from './seal.ts'
+import { specialTermsEn, type SpecialTerms } from './terms.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -108,9 +109,11 @@ export interface AgreementRow {
   sign_token: string | null; test_sign_token: string | null; test_payload: { fields: AgreementFields; template: TemplateDb } | null
   seller_signed_at: string | null; seller_signer_name: string | null; signed_pdf_path: string | null; signer_lang: string | null
   own_file_ids: string[] | null; updated_at: string; sending_at: string | null
+  special_terms: SpecialTerms | null
 }
 export interface Ctx {
-  deal: { id: string; lead_id: string; unit_id: string | null; phase: string }
+  /** reservation_notes = Sondervereinbarungen, von Sven auf Deutsch bei der Wohnungsauswahl */
+  deal: { id: string; lead_id: string; unit_id: string | null; phase: string; reservation_notes: string | null }
   lead: { id: string; first_name: string | null; last_name: string | null; email: string | null; drive_folder_id: string | null; drive_folder_url: string | null }
   unit: { id: string; unit_number: string; type: string | null; price_net: number | null; project_id: string }
   /** Teil-Wohnungen (Doppelapartment, z. B. A1 = A1a + A1b) */
@@ -143,7 +146,7 @@ async function mode(sb: Client): Promise<Mode> {
 
 // ── Kontext eines Deals laden ─────────────────────────────────────────────────
 export async function loadCtx(sb: Client, dealId: string, fallbackTemplate?: TemplateDb | null): Promise<Ctx | { error: string }> {
-  const { data: deal } = await sb.from('deals').select('id, lead_id, unit_id, phase').eq('id', dealId).maybeSingle()
+  const { data: deal } = await sb.from('deals').select('id, lead_id, unit_id, phase, reservation_notes').eq('id', dealId).maybeSingle()
   if (!deal) return { error: 'Deal nicht gefunden' }
   const d = deal as Ctx['deal']
   if (!d.unit_id) return { error: 'Am Deal ist keine Wohnung zugewiesen' }
@@ -303,8 +306,8 @@ function kindOf(type: string | null): PropertyKind {
   return 'apartment'
 }
 
-function fieldsFor(ctx: Ctx, buyers: Buyer[]): { fields: AgreementFields; problems: string[] } {
-  const problems: string[] = []
+function fieldsFor(ctx: Ctx, buyers: Buyer[], terms: { en: string; problem: string | null }): { fields: AgreementFields; problems: string[] } {
+  const problems: string[] = terms.problem ? [terms.problem] : []
   const t = ctx.template
   const net = ctx.unit.price_net != null ? Number(ctx.unit.price_net) : null
   if (!net) problems.push('An der Wohnung fehlt der Nettopreis')
@@ -330,6 +333,7 @@ function fieldsFor(ctx: Ctx, buyers: Buyer[]): { fields: AgreementFields; proble
       price_text: net ? `${eurEn(net)}${pafilia ? ' plus V.A.T.' : ' + VAT'}` : '',
       deposit_text: depositText,
       id_types: buyers.map(b => b.document_type),
+      ...(terms.en ? { special_terms: terms.en } : {}),
     },
     problems,
   }
@@ -533,11 +537,13 @@ async function sendOutLocked(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8
   const lines = fields.purchasers.map((p, i) => `${esc(p)} &middot; ${esc(fields.id_numbers[i] ?? '')}`).join('<br>')
   const btn = (label: string) => `<p><a href="${signLink}" style="display:inline-block;background:#1a2332;color:#ffffff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:600">${label}</a></p>
 <p style="font-size:13px;color:#6b7280">${signLink}</p>`
+  // Sondervereinbarung so, wie sie im Vertrag steht (englisch)
+  const terms = fields.special_terms ? `<p><b>Special agreements:</b> ${esc(fields.special_terms)}</p>\n` : ''
   const devHtmlDe = `<p>Hallo ${esc(ctx.developerName)}-Team,</p>
 <p>anbei der Reservierungsvertrag für <b>${esc(fields.property_name)}, Einheit ${esc(fields.unit_number)}</b>, bereits ausgefüllt mit den Käuferdaten aus ${buyers.length > 1 ? 'den Pässen' : 'dem Pass'}:</p>
 <p>${lines}</p>
 <p>Kaufpreis: ${esc(fields.price_text)}<br>Anzahlung: ${esc(fields.deposit_text)}</p>
-<p><b>Kein Ausdrucken nötig:</b> bitte den Vertrag prüfen und direkt am Handy unterschreiben (Unterschrift mit dem Finger + Name). Ort und Datum werden automatisch eingesetzt:</p>
+${terms}<p><b>Kein Ausdrucken nötig:</b> bitte den Vertrag prüfen und direkt am Handy unterschreiben (Unterschrift mit dem Finger + Name). Ort und Datum werden automatisch eingesetzt:</p>
 ${btn('Reservierungsvertrag unterschreiben')}
 <p>Der unterschriebene Vertrag liegt danach automatisch im gemeinsamen Google-Drive-Ordner, auf den Kunde und Anwalt Zugriff haben. Bitte nicht separat an den Kunden schicken.${folderLink ? ` Passkopien: <a href="${folderLink}">${folderLink}</a>` : ''}</p>
 <p>Vielen Dank!<br>Sven &middot; Happy Property</p>`
@@ -545,7 +551,7 @@ ${btn('Reservierungsvertrag unterschreiben')}
 <p>please find attached the reservation agreement for <b>${esc(fields.property_name)}, unit ${esc(fields.unit_number)}</b>, already filled in with the buyer details from the passport${buyers.length > 1 ? 's' : ''}:</p>
 <p>${lines}</p>
 <p>Purchasing price: ${esc(fields.price_text)}<br>Holding deposit: ${esc(fields.deposit_text)}</p>
-<p><b>No printing needed:</b> please check the agreement and sign it directly on your phone (finger signature + your name). Place and date are filled in automatically:</p>
+${terms}<p><b>No printing needed:</b> please check the agreement and sign it directly on your phone (finger signature + your name). Place and date are filled in automatically:</p>
 ${btn('Sign the reservation agreement')}
 <p>The signed agreement is then stored automatically in the shared Google Drive folder, where the client and the lawyer have access, so there is no need to send it to the client.${folderLink ? ` Passport copies: <a href="${folderLink}">${folderLink}</a>` : ''}</p>
 <p>Thank you very much!<br>Sven &middot; Happy Property</p>`
@@ -580,7 +586,7 @@ ${btn('Sign the reservation agreement')}
       html: `<p>Der Reservierungsvertrag ist automatisch ausgefüllt und an ${esc(ctx.devEmails.join(', '))} gegangen. ${esc(ctx.developerName)} unterschreibt am Handy über den Link; danach liegt der Vertrag automatisch im Drive-Ordner und an der Wohnung unter Verträge.</p>
 <p>Unterschriftslink (falls du ihn weiterleiten musst): <a href="${signLink}">${signLink}</a></p>
 <p>${fields.purchasers.map((p, i) => `${esc(p)} &middot; ${esc(fields.id_numbers[i] ?? '')}`).join('<br>')}</p>
-<p><a href="${CRM_LEAD}${ctx.lead.id}">Kunde im CRM</a></p>`,
+${fields.special_terms ? `<p><b>Sondervereinbarung</b> (deine Eingabe): ${esc((ctx.deal.reservation_notes ?? '').trim())}<br><b>Im Vertrag (englisch):</b> ${esc(fields.special_terms)}</p>\n` : ''}<p><a href="${CRM_LEAD}${ctx.lead.id}">Kunde im CRM</a></p>`,
       attachment, auto: true, lang: 'de', already_translated: true,
     })
     if (err) errors.push(`Kopie Sven: ${err}`)
@@ -694,7 +700,8 @@ async function processRow(sb: Client, initial: AgreementRow, m: Mode): Promise<R
   const c = cur as { status: string; sending_at: string | null } | null
   if (!c || c.status !== row.status || c.sending_at) return { deal: row.deal_id, skipped: 'Stand geändert' }
 
-  const { fields, problems } = fieldsFor(ctx, buyers)
+  const terms = await specialTermsEn(sb, row.id, row.special_terms, ctx.deal.reservation_notes)
+  const { fields, problems } = fieldsFor(ctx, buyers, terms)
   const reasons = gate(ctx, buyers, problems, scan.checked, minors)
   let pdf: Uint8Array
   try { pdf = await renderAgreement(ctx.template, fields) }
@@ -923,7 +930,7 @@ Deno.serve(async (req) => {
     if (action === 'status') {
       const { data } = await sb.from('reservation_agreements').select('*').eq('deal_id', dealId).maybeSingle()
       const ctx = await loadCtx(sb, dealId, (data as AgreementRow | null)?.template_snapshot)
-      return json({ ok: true, row: data ?? null, template: 'error' in ctx ? null : { id: ctx.template.id, name: ctx.template.name }, reason: 'error' in ctx ? ctx.error : null, mode: await mode(sb) })
+      return json({ ok: true, row: data ?? null, template: 'error' in ctx ? null : { id: ctx.template.id, name: ctx.template.name }, reason: 'error' in ctx ? ctx.error : null, mode: await mode(sb), reservation_notes: 'error' in ctx ? null : ctx.deal.reservation_notes })
     }
 
     const ctx = await loadCtx(sb, dealId)
@@ -942,7 +949,8 @@ Deno.serve(async (req) => {
         buyers = mergeBuyers(row, found.buyers, checked)
         minors = found.minors
       }
-      const { fields, problems } = fieldsFor(ctx, buyers)
+      const terms = await specialTermsEn(sb, row.id, row.special_terms, ctx.deal.reservation_notes)
+      const { fields, problems } = fieldsFor(ctx, buyers, terms)
       const reasons = gate(ctx, buyers, problems, checked, minors)
       const pdf = await renderAgreement(ctx.template, fields)
       // Vorschau ändert den Vertrag NICHT: row.data ist das, was der Bauträger unterschreibt.
