@@ -7,6 +7,8 @@ import { readCustomerSim, activeUnits } from '../lib/customerSim'
 import { EinlagenEditor } from '../components/EinlagenEditor'
 import { CustomSelect } from '../components/CustomSelect'
 import { StrategieView } from './Strategie'
+import { DECK_LOGO } from '../lib/deckTypes'
+import { simUnitFromStock, freeSimUnit, type StockProject, type StockUnit } from '../lib/simUnitBuild'
 
 // ── Strategie-Simulator für den Kunden (Sven 23.10.26) ──────────────────────
 // /simulator/:token - freigeschaltet über „Simulator freischalten" im CRM.
@@ -22,6 +24,9 @@ const eur = (n: number) => new Intl.NumberFormat('de-DE', { maximumFractionDigit
 const num = (n: number) => String(n).replace('.', ',')
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
+// Anbietbare Wohnungen für die eigene Auswahl (get_strategy_sim_catalog)
+type CatUnit = StockUnit & { project_id: string }
+const NO_DEV = '__none'
 
 export default function KundenSimulator() {
   const { t } = useTranslation()
@@ -36,6 +41,12 @@ export default function KundenSimulator() {
   const [save, setSave] = useState<SaveState>('idle')
   const dirty = useRef(false)
   const timer = useRef<ReturnType<typeof setTimeout>>()
+  // Wohnung hinzufügen (Sven 23.10.26: Fahrplan auch ohne Wohnung freigeben)
+  const [pickOpen, setPickOpen] = useState(false)
+  const [catalog, setCatalog] = useState<{ projects: StockProject[]; units: CatUnit[] } | null>(null)
+  const [catErr, setCatErr] = useState('')
+  const [pickDev, setPickDev] = useState('')
+  const [pickProject, setPickProject] = useState('')
 
   useEffect(() => { void (async () => {
     if (!token) return
@@ -51,8 +62,21 @@ export default function KundenSimulator() {
       setUnits(b.units); setParams(b.params); setOff([])
     }
     setRecipient(row.recipient_name ?? null)
+    // Ohne Wohnung im Plan gleich die Auswahl zeigen
+    const startUnits = row.customer_config ? readCustomerSim(row.customer_config).units : b.units
+    if (!startUnits.length) setPickOpen(true)
     setLoading(false)
   })() }, [token, t])
+
+  // Wohnungsliste erst laden, wenn der Kunde etwas hinzufügen will
+  useEffect(() => {
+    if (!pickOpen || catalog || !token) return
+    void (async () => {
+      const { data, error } = await supabase.rpc('get_strategy_sim_catalog', { p_token: token })
+      if (error || !data) { setCatErr(t('strategie.ksCatErr', 'Die Wohnungen konnten nicht geladen werden.')); return }
+      setCatalog(data as { projects: StockProject[]; units: CatUnit[] })
+    })()
+  }, [pickOpen, catalog, token, t])
 
   // Speichern, sobald der Kunde etwas verändert hat (entprellt)
   useEffect(() => {
@@ -70,6 +94,18 @@ export default function KundenSimulator() {
   const setP = (patch: Partial<SimParams>) => { touch(); setParams(p => p ? { ...p, ...patch } : p) }
   const patchUnit = (key: string, patch: Partial<SimUnit>) => { touch(); setUnits(us => us.map(u => u.key === key ? { ...u, ...patch } : u)) }
   const reset = () => { if (!base) return; touch(); setUnits(base.units); setParams(base.params); setOff([]) }
+  const addStock = (u: CatUnit) => {
+    if (units.some(x => x.key === u.id)) return
+    const proj = catalog?.projects.find(p => p.id === u.project_id)
+    touch(); setUnits(us => [...us, simUnitFromStock(u, proj, undefined, us)])
+    setPickOpen(false); setPickProject('')
+  }
+  const addOwn = () => {
+    touch()
+    setUnits(us => [...us, freeSimUnit(`frei-${Date.now()}`, t('strategie.ksOwnName', 'Eigene Wohnung {{n}}', { n: us.length + 1 }))])
+    setPickOpen(false)
+  }
+  const baseKeys = new Set((base?.units ?? []).map(u => u.key))
 
   const calcUnits = useMemo(() => activeUnits(units, off), [units, off])
   // Rechnen hinter der Eingabe her: Regler bleiben flüssig, die Auswertung folgt
@@ -160,14 +196,34 @@ export default function KundenSimulator() {
             const on = !off.includes(u.key)
             return (
               <div key={u.key} className={`rounded-xl border p-2.5 ${on ? 'border-gray-200' : 'border-dashed border-gray-200 opacity-60'}`}>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" className="w-4 h-4 accent-[#ff795d]" checked={on}
-                    onChange={e => { touch(); setOff(o => e.target.checked ? o.filter(k => k !== u.key) : [...o, u.key]) }} />
-                  <span className="text-sm font-semibold text-[#1a2332]">{u.name}</span>
-                  <span className="text-xs text-gray-500">{eur(u.priceNet)} {t('strategie.ksNet', 'netto')}</span>
-                </label>
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-2 cursor-pointer flex-1 min-w-0">
+                    <input type="checkbox" className="w-4 h-4 accent-[#ff795d]" checked={on}
+                      onChange={e => { touch(); setOff(o => e.target.checked ? o.filter(k => k !== u.key) : [...o, u.key]) }} />
+                    <span className="text-sm font-semibold text-[#1a2332] truncate">{u.name}</span>
+                    <span className="text-xs text-gray-500 shrink-0">{eur(u.priceNet)} {t('strategie.ksNet', 'netto')}</span>
+                  </label>
+                  {/* Selbst hinzugefügte Wohnungen kann der Kunde wieder entfernen */}
+                  {!baseKeys.has(u.key) && (
+                    <button type="button" title={t('strategie.ksRemove', 'Wohnung entfernen')}
+                      onClick={() => { touch(); setUnits(us => us.filter(x => x.key !== u.key)); setOff(o => o.filter(k => k !== u.key)) }}
+                      className="text-gray-300 hover:text-red-500 px-1">✕</button>
+                  )}
+                </div>
                 {on && (
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
+                    {u.key.startsWith('frei-') && (<>
+                      <div>
+                        <label className={lbl}>{t('strategie.ksPrice', 'Kaufpreis netto (€)')}</label>
+                        <input type="number" step={5000} min={0} className={inputCls} value={Math.round(u.priceNet)}
+                          onChange={e => patchUnit(u.key, { priceNet: Math.max(0, +e.target.value || 0) })} />
+                      </div>
+                      <div>
+                        <label className={lbl}>{t('strategie.ksFurn', 'Möbel netto (€)')}</label>
+                        <input type="number" step={1000} min={0} className={inputCls} value={Math.round(u.furnNet)}
+                          onChange={e => patchUnit(u.key, { furnNet: Math.max(0, +e.target.value || 0), furnMode: +e.target.value > 0 ? 'optional' : 'none' })} />
+                      </div>
+                    </>)}
                     <div>
                       <label className={lbl}>{t('strategie.ksFin', 'Finanzierung')}</label>
                       <div className="flex rounded-lg overflow-hidden border border-gray-200">
@@ -194,6 +250,53 @@ export default function KundenSimulator() {
             )
           })}
         </div>
+        {pickOpen ? (
+          <div className="mt-2 rounded-xl border border-dashed border-gray-300 p-2.5 space-y-2">
+            {!units.length && (
+              <p className="text-[12.5px] text-gray-600">{t('strategie.ksPickIntro', 'Wähle eine Wohnung aus, dann rechnet die Auswertung darunter.')}</p>
+            )}
+            {catErr && <p className="text-xs text-red-600">{catErr}</p>}
+            {!catalog && !catErr && <p className="text-xs text-gray-400">{t('strategie.loading', 'Lädt…')}</p>}
+            {catalog && (<>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <CustomSelect value={pickDev} onChange={v => { setPickDev(v); setPickProject('') }}
+                  options={[{ value: '', label: t('strategie.ksPickDev', 'Alle Bauträger') },
+                    ...[...new Set(catalog.projects.map(p => p.developer?.trim() || NO_DEV))]
+                      .sort((a, b) => a === NO_DEV ? 1 : b === NO_DEV ? -1 : a.localeCompare(b, 'de'))
+                      .map(d => ({ value: d, label: d === NO_DEV ? t('strategie.ksPickDevNone', 'Weitere') : d }))]} />
+                <CustomSelect value={pickProject} onChange={setPickProject}
+                  options={[{ value: '', label: t('strategie.ksPickProject', 'Projekt wählen…') },
+                    ...catalog.projects.filter(p => !pickDev || (p.developer?.trim() || NO_DEV) === pickDev)
+                      .map(p => ({ value: p.id, label: p.name }))]} />
+              </div>
+              {pickProject && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-60 overflow-y-auto">
+                  {catalog.units.filter(u => u.project_id === pickProject).map(u => (
+                    <button key={u.id} type="button" onClick={() => addStock(u)} disabled={units.some(x => x.key === u.id)}
+                      className="text-left border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white hover:border-orange-300 hover:bg-orange-50 disabled:opacity-40">
+                      <strong>{u.unit_number}</strong> · {u.bedrooms ?? '?'} {t('strategie.ksBedAbbr', 'SZ')} · {u.size_sqm ?? '?'} m² · {eur(u.price_net ?? 0)} {t('strategie.ksNet', 'netto')}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>)}
+            <div className="flex flex-wrap gap-3">
+              <button type="button" onClick={addOwn} className="text-xs font-medium text-[#1a2332] hover:underline">
+                {t('strategie.ksAddOwn', 'Eigene Wohnung frei eingeben')}
+              </button>
+              {units.length > 0 && (
+                <button type="button" onClick={() => { setPickOpen(false); setPickProject('') }} className="text-xs text-gray-400 hover:text-gray-600">
+                  {t('strategie.ksPickClose', 'Schließen')}
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <button type="button" onClick={() => setPickOpen(true)}
+            className="mt-2 px-3 py-1.5 rounded-lg text-sm border border-dashed border-gray-300 text-gray-600 hover:bg-gray-50">
+            + {t('strategie.ksAddUnit', 'Wohnung hinzufügen')}
+          </button>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
@@ -213,8 +316,20 @@ export default function KundenSimulator() {
   if (!calcUnits.length) {
     return (
       <div className="min-h-screen bg-[#f4f3f1] px-3 py-6">
-        <div className="max-w-[1080px] mx-auto">{controls}
-          <p className="text-sm text-gray-600 text-center">{t('strategie.ksNoUnits', 'Wähle mindestens eine Wohnung aus.')}</p>
+        <div className="max-w-[1080px] mx-auto">
+          <div className="flex items-center gap-3 mb-5">
+            <img src={DECK_LOGO} alt="Happy Property Cyprus" className="h-10 w-auto rounded-lg" />
+            <div>
+              <div className="text-xl font-extrabold text-[#2e3c47]" style={{ fontFamily: "'Playfair Display',Georgia,serif" }}>
+                {t('strategie.title2', 'Deine persönliche Investmentstrategie')}
+              </div>
+              {recipient && <div className="text-xs text-gray-500">{t('strategie.customer', 'Für')}: <b>{recipient}</b></div>}
+            </div>
+          </div>
+          {controls}
+          <p className="text-sm text-gray-600 text-center">{units.length
+            ? t('strategie.ksNoUnits', 'Wähle mindestens eine Wohnung aus.')
+            : t('strategie.ksNoUnitsAdd', 'Füge oben eine Wohnung hinzu, dann erscheint hier deine Auswertung.')}</p>
         </div>
       </div>
     )
