@@ -12,9 +12,14 @@
 // Nicht zuordenbare Calls (kein passender Termin) und Gruppen-Calls
 // (Masterclass) bleiben unangetastet: keine Notiz, nichts gelöscht.
 //
+// WhatsApp-Calls (Sven 23.10.26): Die Mac-App „HP Gesprächsnotiz" nimmt den Call
+// auf, schreibt die Abschrift lokal (whisper) und schickt nur den Text hierher
+// (Aktion upload). Audio verlässt den Mac nie.
+//
 // Aufrufer:
 //   Zoom-Webhook  Header x-zm-signature, geprüft mit ZOOM_WEBHOOK_SECRET
 //                 (connector_secrets, im CRM unter Einstellungen > Connectoren)
+//   Mac-App       Aktion upload, Header x-cron-secret == connector_secrets CALL_UPLOAD_SECRET
 //   Service-Key   Admin-Aktionen: scopes | list | trash_all | test
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
@@ -156,6 +161,7 @@ Regeln:
 - Nur was im Gespräch wirklich gesagt wurde. Nichts ergänzen, nichts schätzen. Zahlen und Daten exakt übernehmen. Unklares weglassen.
 - Relative Daten („nächsten Donnerstag", „Ende des Monats") mit dem Gesprächsdatum in ein echtes Datum umrechnen.
 - Die Abschrift ist automatisch erstellt und kann Hörfehler enthalten (Projektnamen, Zahlen). Offensichtliche Hörfehler sinnvoll lesen, bei Zweifel weglassen.
+- Auch die Sprecherangaben können vereinzelt falsch sein. Entscheide nach dem Inhalt, ob Sven oder der Kunde etwas über sich sagt. Was Sven über Objekte, Zypern oder seine Leistungen erzählt, ist kein Kundenfakt.
 - Deutsch mit echten Umlauten. Keine Gedankenstriche (— oder –), stattdessen Komma, Punkt oder Doppelpunkt.
 - Ruf das Werkzeug kundenprofil auf.
 
@@ -204,6 +210,19 @@ async function findAppointment(sb: SupabaseClient, meetingId: string, startIso: 
   }
   const zoom = rows.filter(a => a.type === 'zoom')
   return zoom.length === 1 ? zoom[0] : null
+}
+
+// ── Notiz beim Kunden ───────────────────────────────────────────────────────
+
+async function schreibeNotiz(sb: SupabaseClient, leadId: string, dealId: string | null, startedAt: string, kanal: string, profil: Profil) {
+  const tag = new Date(startedAt).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', timeZone: 'Asia/Nicosia' })
+  const { data, error } = await sb.from('activities').insert({
+    lead_id: leadId, deal_id: dealId, type: 'note', direction: 'outbound', auto: true,
+    subject: `📞 Gespräch ${tag} (${kanal}): Kundenprofil`,
+    content: `${profil.briefing}\n\n${profil.notiz}`,
+    completed_at: startedAt,
+  }).select('id').single()
+  return { act: data as { id: string } | null, actErr: error }
 }
 
 // ── Verarbeitung eines Calls ────────────────────────────────────────────────
@@ -273,13 +292,7 @@ async function processTranscript(obj: ZoomObject, downloadToken: string): Promis
     return { skipped: 'kein_kunde' }
   }
 
-  const tag = new Date(obj.start_time).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', timeZone: 'Asia/Nicosia' })
-  const { data: act, error: actErr } = await sb.from('activities').insert({
-    lead_id: appt.lead_id, deal_id: appt.deal_id, type: 'note', direction: 'outbound', auto: true,
-    subject: `📞 Gespräch ${tag} (Zoom): Kundenprofil`,
-    content: `${profil.briefing}\n\n${profil.notiz}`,
-    completed_at: obj.start_time,
-  }).select('id').single()
+  const { act, actErr } = await schreibeNotiz(sb, appt.lead_id!, appt.deal_id, obj.start_time, 'Zoom', profil)
   if (actErr) {
     await protokoll('fehler', { lead_id: appt.lead_id, appointment_id: appt.id, grund: `Notiz: ${actErr.message}` })
     return { error: 'notiz' }
@@ -299,10 +312,106 @@ async function processTranscript(obj: ZoomObject, downloadToken: string): Promis
     lead_id: appt.lead_id, deal_id: appt.deal_id, appointment_id: appt.id,
     briefing: profil.briefing, notiz: profil.notiz,
     fakten: { termine: profil.termine ?? [], kunde_name: profil.kunde_name ?? null },
-    activity_id: (act as { id: string }).id, aufnahme_geloescht: geloescht,
+    activity_id: act?.id ?? null, aufnahme_geloescht: geloescht,
     grund: geloescht ? null : `Aufnahme nicht gelöscht: ${loeschGrund}`.slice(0, 300),
   })
   return { ok: true, lead_id: appt.lead_id, geloescht }
+}
+
+// ── WhatsApp-Call von der Mac-App ───────────────────────────────────────────
+
+interface UploadBody {
+  id?: string; lead_id?: string | null; appointment_id?: string | null; phone?: string | null
+  started_at?: string; duration_min?: number; text?: string
+  /** Probelauf der Mac-App: nur auswerten, nichts schreiben */
+  test?: boolean
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Lead zur Nummer: letzte 9 Ziffern vorfiltern, dann exakt auf Ziffern vergleichen. Nur bei genau einem Treffer. */
+async function leadByPhone(sb: SupabaseClient, phone: string): Promise<string | null> {
+  const d = phone.replace(/\D/g, '').replace(/^00/, '')
+  if (d.length < 8) return null
+  const tail = d.slice(-9)
+  const { data } = await sb.from('leads').select('id, phone, whatsapp')
+    .or(`whatsapp.ilike.%${tail}%,phone.ilike.%${tail}%`).limit(10)
+  const norm = (v: string | null) => (v ?? '').replace(/\D/g, '').replace(/^00/, '').replace(/^0/, '')
+  const hits = ((data ?? []) as { id: string; phone: string | null; whatsapp: string | null }[])
+    .filter(l => [norm(l.whatsapp), norm(l.phone)].some(n => n.length >= 8 && (d.endsWith(n) || n.endsWith(d.slice(-n.length)))))
+  return hits.length === 1 ? hits[0].id : null
+}
+
+async function processUpload(b: UploadBody): Promise<Record<string, unknown>> {
+  const sb = sbAdmin()
+  const ext = String(b.id ?? '').slice(0, 80)
+  const text = typeof b.text === 'string' ? b.text : ''
+  const startedAt = b.started_at && !isNaN(Date.parse(b.started_at)) ? b.started_at : new Date().toISOString()
+  if (!ext) return { error: 'id fehlt' }
+  if (b.test === true) {
+    const profil = text.length >= 40 ? await extractProfil(text, startedAt) : null
+    return { ok: true, test: true, zeichen: text.length, profil }
+  }
+
+  const { data: vorhanden } = await sb.from('call_summaries').select('status, lead_id').eq('source', 'whatsapp').eq('external_id', ext).maybeSingle()
+  if (vorhanden && (vorhanden as { status: string }).status === 'fertig') return { ok: true, schon_verarbeitet: true }
+
+  const protokoll = async (status: 'fertig' | 'uebersprungen' | 'fehler', felder: Record<string, unknown>) => {
+    await sb.from('call_summaries').upsert({
+      source: 'whatsapp', external_id: ext, started_at: startedAt, duration_min: b.duration_min ?? null, status, ...felder,
+    }, { onConflict: 'source,external_id' })
+  }
+
+  let leadId: string | null = null
+  if (b.lead_id && UUID.test(b.lead_id)) {
+    const { data } = await sb.from('leads').select('id').eq('id', b.lead_id).maybeSingle()
+    leadId = (data as { id: string } | null)?.id ?? null
+  }
+  if (!leadId && b.phone) leadId = await leadByPhone(sb, b.phone)
+  if (!leadId) {
+    await protokoll('uebersprungen', { grund: 'kein Kunde zur Nummer gefunden' })
+    return { skipped: 'kein_kunde' }
+  }
+
+  let apptId: string | null = null
+  let dealId: string | null = null
+  if (b.appointment_id && UUID.test(b.appointment_id)) {
+    const { data } = await sb.from('crm_appointments').select('id, deal_id').eq('id', b.appointment_id).eq('lead_id', leadId).maybeSingle()
+    apptId = (data as { id: string } | null)?.id ?? null
+    dealId = (data as { deal_id: string | null } | null)?.deal_id ?? null
+  }
+  if (!dealId) {
+    const { data } = await sb.from('deals').select('id').eq('lead_id', leadId).order('updated_at', { ascending: false }).limit(1).maybeSingle()
+    dealId = (data as { id: string } | null)?.id ?? null
+  }
+
+  if (text.length < 200) {
+    await protokoll('uebersprungen', { lead_id: leadId, appointment_id: apptId, grund: 'Abschrift zu kurz' })
+    return { skipped: 'zu_kurz' }
+  }
+  const profil = await extractProfil(text, startedAt)
+  if (!profil) {
+    await protokoll('fehler', { lead_id: leadId, appointment_id: apptId, grund: 'KI-Auswertung fehlgeschlagen' })
+    return { error: 'ki' }
+  }
+  if (!profil.kundengespraech) {
+    await protokoll('uebersprungen', { lead_id: leadId, appointment_id: apptId, grund: 'kein Kundengespräch laut KI' })
+    return { skipped: 'kein_kundengespraech' }
+  }
+  const { act, actErr } = await schreibeNotiz(sb, leadId, dealId, startedAt, 'WhatsApp', profil)
+  if (actErr) {
+    await protokoll('fehler', { lead_id: leadId, appointment_id: apptId, grund: `Notiz: ${actErr.message}` })
+    return { error: 'notiz' }
+  }
+  await protokoll('fertig', {
+    lead_id: leadId, deal_id: dealId, appointment_id: apptId,
+    briefing: profil.briefing, notiz: profil.notiz,
+    fakten: { termine: profil.termine ?? [], kunde_name: profil.kunde_name ?? null },
+    activity_id: act?.id ?? null,
+  })
+  const { data: lead } = await sb.from('leads').select('first_name, last_name').eq('id', leadId).maybeSingle()
+  const l = lead as { first_name: string | null; last_name: string | null } | null
+  return { ok: true, kunde: `${l?.first_name ?? ''} ${l?.last_name ?? ''}`.trim() }
 }
 
 // ── Handler ─────────────────────────────────────────────────────────────────
@@ -335,11 +444,23 @@ Deno.serve(async (req) => {
     return json({ ok: true })
   }
 
+  const body = await req.clone().json().catch(() => ({})) as { action?: string; months?: number; vtt?: string; started_at?: string; trash?: boolean }
+
+  // Mac-App: eigener Schlüssel, darf nur hochladen
+  if (body.action === 'upload') {
+    const caller = await authorizeCaller(req, { cron: true, cronKey: 'CALL_UPLOAD_SECRET', service: true }, CORS)
+    if (caller instanceof Response) return caller
+    try {
+      return json(await processUpload(body as UploadBody))
+    } catch (e) {
+      return json({ error: String((e as Error).message ?? e) }, 500)
+    }
+  }
+
   const caller = await authorizeCaller(req, { service: true }, CORS)
   if (caller instanceof Response) return caller
 
   try {
-    const body = await req.json().catch(() => ({})) as { action?: string; months?: number; vtt?: string; started_at?: string; trash?: boolean }
 
     // Probelauf der KI-Auswertung ohne Schreiben (nur Service-Key)
     if (body.action === 'test') {

@@ -748,7 +748,7 @@ export interface CrmAppointment {
   created_at:      string
   updated_at:      string
   // joined
-  lead?: { id: string; first_name: string; last_name: string; phone?: string | null; whatsapp?: string | null; notes?: string | null } | null
+  lead?: { id: string; first_name: string; last_name: string; phone?: string | null; whatsapp?: string | null; notes?: string | null; language?: string | null } | null
 }
 
 // ── Ad-hoc / Sonstige Nachrichten ─────────────────────────────────────────────

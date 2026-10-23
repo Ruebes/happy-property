@@ -31,6 +31,7 @@ import {
 import type { GoogleCalendarEvent } from '../../../lib/googleCalendar'
 import GoogleEventModal from '../../../components/crm/GoogleEventModal'
 import { useAuth } from '../../../lib/auth'
+import { waCallHref, waCallTarget } from '../../../lib/callLink'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -273,7 +274,7 @@ export default function CrmCalendar() {
     try {
       const { data, error } = await supabase
         .from('crm_appointments')
-        .select('*, lead:leads(id, first_name, last_name, phone, whatsapp, notes)')
+        .select('*, lead:leads(id, first_name, last_name, phone, whatsapp, notes, language)')
         .gte('start_time', rangeStart.toISOString())
         .lte('start_time', rangeEnd.toISOString())
         .order('start_time', { ascending: true })
@@ -950,15 +951,22 @@ export default function CrmCalendar() {
             {(appt.type === 'whatsapp' || appt.type === 'phone') &&
              (appt.phone_number || appt.lead?.whatsapp || appt.lead?.phone) && (
               <div className="flex items-center gap-2 flex-wrap">
+                {(() => {
+                  const href = waCallHref((appt.phone_number || appt.lead?.whatsapp || appt.lead?.phone || '').replace(/[^0-9]/g, ''), {
+                    leadId: appt.lead_id, appointmentId: appt.id, language: appt.lead?.language,
+                    name: appt.lead ? `${appt.lead.first_name} ${appt.lead.last_name ?? ''}`.trim() : appt.title,
+                  })
+                  return (
                 <a
-                  href={`https://wa.me/${(appt.phone_number || appt.lead?.whatsapp || appt.lead?.phone || '').replace(/[^0-9]/g, '')}`}
-                  target="_blank"
-                  rel="noreferrer"
+                  href={href}
+                  {...waCallTarget(href)}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-white"
                   style={{ backgroundColor: '#25d366' }}
                 >
                   💬 {t('crm.appt.callWhatsApp', 'Per WhatsApp anrufen')}
                 </a>
+                  )
+                })()}
                 <span className="text-gray-500">{appt.phone_number || appt.lead?.whatsapp || appt.lead?.phone}</span>
               </div>
             )}
@@ -1063,7 +1071,8 @@ export default function CrmCalendar() {
                   )}
                   {phoneMatch && !zoomMatch && (
                     <div className="flex items-center gap-2 flex-wrap">
-                      <a href={`https://wa.me/${loc.replace(/[^0-9]/g, '')}`} target="_blank" rel="noreferrer"
+                      <a href={waCallHref(loc.replace(/[^0-9]/g, ''), { name: gEvt.summary ?? null })}
+                        {...waCallTarget(waCallHref(loc.replace(/[^0-9]/g, '')))}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-white"
                         style={{ backgroundColor: '#25d366' }}>
                         💬 {t('crm.appt.callWhatsApp', 'Per WhatsApp anrufen')}

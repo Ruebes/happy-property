@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import type { CrmAppointment } from '../../lib/crmTypes'
+import { waCallHref, waCallTarget } from '../../lib/callLink'
 
 // ── AppointmentPrepPopup ──────────────────────────────────────────────────────
 // Poppt ~2 Minuten VOR einem Termin automatisch im CRM auf, damit Sven sich
@@ -38,7 +39,7 @@ export default function AppointmentPrepPopup() {
     const until = new Date(now.getTime() + LEAD_WINDOW_MIN * 60_000)
     const { data, error } = await supabase
       .from('crm_appointments')
-      .select('*, lead:leads(id, first_name, last_name, phone, whatsapp, notes)')
+      .select('*, lead:leads(id, first_name, last_name, phone, whatsapp, notes, language)')
       // internal raus: das Popup ist die Kunden-Gespraechsvorbereitung (Badge
       // "Erstgespraech", Lead-Bewertung 👍/👎/No-Show). Bei einem internen Termin
       // mit einer Mitarbeiterin ergibt das nichts davon Sinn.
@@ -161,7 +162,8 @@ export default function AppointmentPrepPopup() {
               </a>
             )}
             {isWa && waDigits && (
-              <a href={`https://wa.me/${waDigits}`} target="_blank" rel="noreferrer"
+              <a href={waCallHref(waDigits, { leadId: appt.lead_id, appointmentId: appt.id, name, language: lead?.language })}
+                {...waCallTarget(waCallHref(waDigits))}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold text-white"
                 style={{ backgroundColor: '#25d366' }}>
                 💬 {t('crm.appt.callWhatsApp', 'Per WhatsApp anrufen')}
