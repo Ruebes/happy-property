@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useContext, createContext, type CSSProperties, type ReactNode } from 'react'
-import type { DeckBlock } from '../lib/deckTypes'
+import type { DeckBlock, DeckWhyPreis } from '../lib/deckTypes'
 import { WEB_CSS } from './deckWebCss'
 
 // ── Sales Deck im Stil der Projektseite (Sven 20.10.26) ─────────────────────────
@@ -56,7 +56,7 @@ export type WebBlock =
   | { type: 'w_loc'; page: ProjectPage }
   | { type: 'w_gallery'; page: ProjectPage }
   | { type: 'w_spec'; page: ProjectPage }
-  | { type: 'w_why' }
+  | { type: 'w_why'; preis?: DeckWhyPreis }
 export type AnyBlock = DeckBlock | WebBlock
 export const isWebBlock = (b: AnyBlock): b is WebBlock => b.type.startsWith('w_')
 
@@ -113,7 +113,7 @@ export function webBlocks(blocks: DeckBlock[], page: ProjectPage): AnyBlock[] {
   if (page.gallery?.length) out.push({ type: 'w_gallery', page })
   if (page.spec?.length) out.push({ type: 'w_spec', page })
   out.push(...of('inventory'))
-  out.push({ type: 'w_why' })
+  out.push({ type: 'w_why', preis: cover?.why })
   out.push(...of('cta'))
   return out
 }
@@ -438,13 +438,14 @@ const WHY: [string, string][] = [
   ['Verwaltung, die Bewertungen schützt', 'Das beste Objekt nützt nichts, wenn die Reinigung nicht stimmt. Wir übernehmen Gäste, Reinigung und Instandhaltung.'],
   ['Alles in der Happy Property App', 'Zahlungsplan, Baufortschritt mit Fotos, Belegung, Einnahmen und Dokumente an einem Ort.'],
 ]
-function Why() {
+function Why({ preis }: { preis?: DeckWhyPreis }) {
+  const items: [string, string][] = preis ? [[preis.title, preis.text], ...WHY.slice(1)] : WHY
   return (
     <section className="pj-why"><div className="pj-wrap">
       <p className="pj-kicker-gold">Warum mit Happy Property</p>
-      <h2 className="pj-h2w">Gleicher Preis. Aber du kaufst nicht allein.</h2>
+      <h2 className="pj-h2w">{preis?.h2 ?? 'Gleicher Preis. Aber du kaufst nicht allein.'}</h2>
       <div className="pj-whygrid">
-        {WHY.map(([t, d], i) => (
+        {items.map(([t, d], i) => (
           <div key={i} className="pj-whyi"><p className="pj-whyt">{t}</p><p className="pj-whyp">{d}</p>
             {t.includes('App') && <a className="pj-whylink" href="https://steuervorteil-zypern-immobilien.com/happy-property-app/" target="_blank" rel="noopener noreferrer">Die App ansehen →</a>}
           </div>
@@ -469,7 +470,7 @@ export function WebBlockView({ block }: { block: WebBlock }) {
     case 'w_loc':     inner = <Loc page={block.page} />; break
     case 'w_gallery': inner = <Gallery page={block.page} />; break
     case 'w_spec':    inner = <Spec page={block.page} />; break
-    case 'w_why':     inner = <Why />; break
+    case 'w_why':     inner = <Why preis={block.preis} />; break
   }
   // Abstand nach unten nur für die hellen Abschnitte, Hero/Kennzahlen/Dunkles schließen bündig an.
   const pad = !['w_hero', 'w_facts', 'w_amen', 'w_why'].includes(block.type) && !(block.type === 'w_more' && block.page.more?.[block.i]?.tone !== 'white')
