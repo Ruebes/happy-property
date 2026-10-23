@@ -24,6 +24,8 @@ export type ProjectPage = {
   h1: string
   usp_v?: string | null
   usp_k?: string | null
+  /** Karten-Pin und Marina-Startpunkt, Standard "Dein Zuhause" (Anlageobjekte z. B. "Die Anlage"). */
+  home_label?: string | null
   lead?: string | null
   facts?: [string, string][]
   day?: {
@@ -99,7 +101,7 @@ export function webBlocks(blocks: DeckBlock[], page: ProjectPage): AnyBlock[] {
   const f0 = of('facts')[0]
   const hasPin = f0?.mapLat != null && f0?.mapLng != null
   const facts = f0 && {
-    ...f0, mapLabel: HOME_LABEL, mapQuery: undefined, mapEmbed: undefined,
+    ...f0, mapLabel: page.home_label || HOME_LABEL, mapQuery: undefined, mapEmbed: undefined,
     mapUrl: hasPin ? `https://www.google.com/maps?q=${f0.mapLat},${f0.mapLng}` : undefined,
     image: hasPin ? f0.image : undefined,
   }
@@ -108,7 +110,7 @@ export function webBlocks(blocks: DeckBlock[], page: ProjectPage): AnyBlock[] {
     // Nur die Karte aus dem Deck-Block, die Entfernungen stehen schon im Lagetext.
     if (facts && hasPin) out.push({ ...facts, kicker: undefined, headline: undefined, items: [] })
   } else if (facts) out.push(facts)
-  out.push(...of('marina').map(m => ({ ...m, fromLabel: HOME_LABEL })))
+  out.push(...of('marina').map(m => ({ ...m, fromLabel: page.home_label || HOME_LABEL })))
   out.push(...of('payment'))
   if (page.gallery?.length) out.push({ type: 'w_gallery', page })
   if (page.spec?.length) out.push({ type: 'w_spec', page })
