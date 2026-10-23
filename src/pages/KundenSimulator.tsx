@@ -219,5 +219,6 @@ export default function KundenSimulator() {
       </div>
     )
   }
-  return <StrategieView units={dUnits} params={dParams ?? params} recipientName={recipient} top={controls} />
+  // Beim ersten Bild nach dem Laden ist der zurückgestellte Wert noch leer
+  return <StrategieView units={dUnits.length ? dUnits : calcUnits} params={dParams ?? params} recipientName={recipient} top={controls} />
 }

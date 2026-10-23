@@ -20,7 +20,7 @@ export function EinlagenEditor({ value, onChange, inputClass, labelClass }: {
   return (
     <div className="space-y-1.5">
       {value.map((e, i) => (
-        <div key={i} className="grid grid-cols-[64px_84px_1fr_24px] gap-1.5 items-end">
+        <div key={i} className="grid grid-cols-[80px_100px_minmax(0,1fr)_24px] gap-1.5 items-end">
           <div>
             {i === 0 && <label className={labelClass}>{t('crm.sim.einMonth', 'Monat')}</label>}
             <CustomSelect value={String(e.m)} onChange={v => set(i, { m: +v })} options={MONTHS} />
