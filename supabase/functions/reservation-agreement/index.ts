@@ -311,8 +311,10 @@ function fieldsFor(ctx: Ctx, buyers: Buyer[]): { fields: AgreementFields; proble
   const ps = ctx.project.payment_schedule ?? {}
   const dep = typeof ps.reservation === 'number' ? ps.reservation : null
   if (!dep) problems.push('Im Projekt fehlt die Reservierungsgebühr (Zahlungsplan)')
+  // Pafilia-Vordruck schreibt „EUR 10,000 plus V.A.T." (ohne Bruttobetrag)
+  const pafilia = t.layout === 'pafilia'
   const depositText = dep
-    ? (ps.reservationVat !== false ? `${eurEn(dep)} + 19% VAT = ${eurEn(Math.round(dep * 119) / 100)}` : eurEn(dep))
+    ? (ps.reservationVat !== false ? (pafilia ? `${eurEn(dep)} plus V.A.T.` : `${eurEn(dep)} + 19% VAT = ${eurEn(Math.round(dep * 119) / 100)}`) : eurEn(dep))
     : ''
   const address = t.project_addresses?.[ctx.project.id] || (ctx.project.location ?? '').replace(/Zypern/g, 'Cyprus')
   return {
@@ -325,8 +327,9 @@ function fieldsFor(ctx: Ctx, buyers: Buyer[]): { fields: AgreementFields; proble
       purchasers: buyers.map(b => b.full_name.toUpperCase()),
       id_numbers: buyers.map(b => b.document_number),
       property_kind: kindOf(ctx.unit.type),
-      price_text: net ? `${eurEn(net)} + VAT` : '',
+      price_text: net ? `${eurEn(net)}${pafilia ? ' plus V.A.T.' : ' + VAT'}` : '',
       deposit_text: depositText,
+      id_types: buyers.map(b => b.document_type),
     },
     problems,
   }
@@ -866,7 +869,10 @@ Deno.serve(async (req) => {
     if (action === 'preview_template') {
       const t = body.template as TemplateRow | undefined
       if (!t?.company_name) return json({ error: 'Vorlage fehlt' }, 400)
-      const pdf = await renderAgreement(t, { ...SAMPLE, ...(body.sample as Partial<AgreementFields> ?? {}) })
+      const base = t.layout === 'pafilia'
+        ? { ...SAMPLE, unit_number: 'B7/102', price_text: 'EUR 710,000 plus V.A.T.', deposit_text: 'EUR 10,000 plus V.A.T.' }
+        : SAMPLE
+      const pdf = await renderAgreement(t, { ...base, ...(body.sample as Partial<AgreementFields> ?? {}) })
       return json({ ok: true, pdf_base64: b64(pdf) })
     }
 

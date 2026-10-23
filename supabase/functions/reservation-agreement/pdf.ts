@@ -1,7 +1,9 @@
 // Reservierungsvertrag als PDF, Aufbau wie der Papier-Vordruck des Bauträgers
 // (Vorlage: Mito-Vordruck „Reservation agreement"). Unterschriften und Stempel
 // bleiben leer, die setzt der Bauträger bzw. der Käufer.
+// Bauträger mit eigenem Vordruck: reservation_templates.layout (z. B. 'pafilia' → pdfPafilia.ts).
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'npm:pdf-lib@1.17.1'
+import { renderPafilia } from './pdfPafilia.ts'
 
 export interface TemplateRow {
   logo_text: string | null
@@ -12,6 +14,10 @@ export interface TemplateRow {
   company_tel: string | null
   bank: { account_name?: string; account_number?: string; iban?: string; swift?: string; bank_name?: string }
   notes: string | null
+  /** Vordruck: leer/'mito' = Mito-Aufbau, 'pafilia' = Pafilia/Minthis-Aufbau */
+  layout?: string | null
+  /** Zusatzfelder einzelner Vordrucke (Pafilia: Registernummer, Zahlungs- und Reservierungsfrist) */
+  extra?: { registration_no?: string; payment_term?: string; reservation_term?: string; price_note?: string } | null
 }
 
 export type PropertyKind = 'villa' | 'townhouse' | 'apartment'
@@ -36,6 +42,7 @@ export interface AgreementFields {
   property_kind: PropertyKind
   price_text: string        // EUR 634,800 + VAT
   deposit_text: string      // EUR 20,000 + 19% VAT = EUR 23,800
+  id_types?: string[]       // passport | id_card | other, gleiche Reihenfolge wie purchasers
 }
 
 const W = 595.28, H = 841.89
@@ -45,14 +52,14 @@ const PAD = 7
 const DARK = rgb(0.2, 0.2, 0.22)
 const LINE = rgb(0.25, 0.25, 0.28)
 
-function hexColor(hex: string) {
+export function hexColor(hex: string) {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
   const n = m ? parseInt(m[1], 16) : 0xe3874a
   return rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255)
 }
 
 /** Nur Zeichen, die die Standardschrift kann (Namen aus dem Pass sind ohnehin lateinisch). */
-function safe(font: PDFFont, s: string): string {
+export function safe(font: PDFFont, s: string): string {
   let out = ''
   for (const ch of s) {
     try { font.encodeText(ch); out += ch; continue } catch { /* weiter */ }
@@ -63,7 +70,7 @@ function safe(font: PDFFont, s: string): string {
   return out
 }
 
-function wrap(font: PDFFont, size: number, text: string, width: number): string[] {
+export function wrap(font: PDFFont, size: number, text: string, width: number): string[] {
   const lines: string[] = []
   for (const para of text.split('\n')) {
     const words = para.split(/\s+/).filter(Boolean)
@@ -84,6 +91,7 @@ function wrap(font: PDFFont, size: number, text: string, width: number): string[
  * dann immer noch nicht, wirft die Funktion, statt Zeilen über den Seitenrand zu schreiben.
  */
 export async function renderAgreement(t: TemplateRow, f: AgreementFields, seller?: SellerSignature): Promise<Uint8Array> {
+  if (t.layout === 'pafilia') return await renderPafilia(t, f, seller)
   const normal = await renderOnce(t, f, seller, false)
   if (normal.bottom >= 24) return normal.bytes
   const compact = await renderOnce(t, f, seller, true)
