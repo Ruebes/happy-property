@@ -157,7 +157,7 @@ function UnitBlock(b: Extract<DeckBlock, { type: 'unit' }>) {
             {b.priceLines.map((l, i) => (
               <div key={i} className={`flex items-baseline justify-between gap-4 ${l.strong ? 'pt-1.5 mt-1.5 border-t border-white/15' : ''}`}>
                 <span className={`${l.strong ? 'text-white font-semibold' : 'text-gray-400'} text-[13px]`}>{l.label}</span>
-                <span className={`font-heading ${l.strong ? 'text-white text-2xl font-bold' : 'text-gray-200 text-base'} whitespace-nowrap`} style={l.strong ? undefined : { color: '#e5e0d5' }}>{l.value}</span>
+                <span className={`font-heading ${l.strong ? 'text-white text-2xl font-bold' : 'text-gray-200 text-base'} whitespace-nowrap${l.strike ? ' line-through' : ''}`} style={l.strong ? undefined : { color: l.strike ? '#9aa2ad' : '#e5e0d5' }}>{l.value}</span>
               </div>
             ))}
             <VatRefundRow unit={b.number} />
