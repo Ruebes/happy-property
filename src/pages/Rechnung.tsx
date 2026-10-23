@@ -127,7 +127,8 @@ export default function Rechnung() {
         </div>
         <div style={{ height: 3, background: `linear-gradient(90deg,${CORAL},#ffb89d)`, borderRadius: 2, marginBottom: 22 }} />
 
-        {content.intro && <p style={{ fontSize: isMobile ? 13.5 : 14.5, lineHeight: 1.7, color: '#444', whiteSpace: 'pre-wrap', margin: '0 0 24px', maxWidth: 760 }}>{content.intro}</p>}
+        {/* Einleitung = wichtige Annahme (z. B. angenommener Grenzsteuersatz), deshalb als Hinweiskasten. */}
+        {content.intro && <p style={{ fontSize: isMobile ? 14 : 15, lineHeight: 1.65, color: DARK, fontWeight: 600, whiteSpace: 'pre-wrap', margin: '0 0 24px', maxWidth: 760, background: '#fff', borderLeft: `4px solid ${CORAL}`, borderRadius: 8, padding: isMobile ? '12px 14px' : '14px 18px' }}>{content.intro}</p>}
 
         {/* ── EINZEL-ANSICHT: detaillierte Auswertung ─────────────── */}
         {!isCompare && withCalc && rows[0]?.res && <Single row={rows[0]} today={today} isMobile={isMobile} />}
