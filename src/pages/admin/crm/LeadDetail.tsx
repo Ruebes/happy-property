@@ -276,6 +276,26 @@ export default function LeadDetail() {
     showToast(t('crm.notesSaved', '✅ Notizen gespeichert'))
   }
 
+  // Handnotiz direkt im Notizen-Reiter (Sven 23.10.26). Betreff bleibt deutsch
+  // und beginnt mit „📞 Gespräch", sonst filtert isCallNote sie aus dem Reiter.
+  const [callNoteDraft, setCallNoteDraft] = useState('')
+  const [savingCallNote, setSavingCallNote] = useState(false)
+  const saveCallNote = async () => {
+    if (!lead || !callNoteDraft.trim()) return
+    setSavingCallNote(true)
+    const tag = new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', timeZone: 'Asia/Nicosia' })
+    const { error } = await supabase.from('activities').insert({
+      lead_id: lead.id, deal_id: deal?.id ?? null, type: 'note', direction: 'outbound',
+      subject: `📞 Gespräch ${tag}: Notiz`, content: callNoteDraft.trim(),
+      completed_at: new Date().toISOString(), created_by: profile?.id ?? null,
+    })
+    setSavingCallNote(false)
+    if (error) { showToast(`❌ ${error.message}`); return }
+    setCallNoteDraft('')
+    await fetchAll(true)
+    showToast(t('crm.notesSaved', '✅ Notiz gespeichert'))
+  }
+
   // ── KI-Antwort-Agent: Daten + Aktionen (sendet NICHTS) ──────────
   // Lädt die zuletzt für diesen Lead erzeugten/freigegebenen Entwürfe (Audit + „gelernt").
   const loadAiExamples = useCallback(async () => {
@@ -3418,6 +3438,17 @@ export default function LeadDetail() {
             {activeTab === 'notes' && (
               <div className="p-6">
                 <h3 className="text-sm font-semibold text-gray-700 mb-3">{t('crm.notesTab.callNotes', 'Gesprächsnotizen')}</h3>
+                <div className="mb-5">
+                  <textarea value={callNoteDraft} onChange={e => setCallNoteDraft(e.target.value)} rows={3}
+                    placeholder={t('crm.notesTab.callNotePlaceholder', 'Neue Notiz zum Gespräch schreiben…')}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40 resize-y" />
+                  <div className="flex justify-end mt-2">
+                    <button onClick={() => void saveCallNote()} disabled={savingCallNote || !callNoteDraft.trim()}
+                      className="px-4 py-1.5 rounded-lg text-white text-sm font-medium disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>
+                      {savingCallNote ? t('common.saving', 'Speichern…') : t('crm.notesTab.saveCallNote', 'Notiz speichern')}
+                    </button>
+                  </div>
+                </div>
                 {activities.filter(isCallNote).length === 0 ? (
                   <p className="text-sm text-gray-400 py-4">{t('crm.notesTab.noCallNotes', 'Noch keine Gesprächsnotizen. Die KI-Zusammenfassung aus Zoom- und WhatsApp-Calls erscheint hier.')}</p>
                 ) : (
