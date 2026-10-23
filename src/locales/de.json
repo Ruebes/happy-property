@@ -3556,7 +3556,7 @@
       "placeholder": "Notizen zum Kunden — Wünsche, Budget, Gesprächsergebnisse…",
       "hint": "Hier landen auch die Antworten aus dem Formular (Typeform).",
       "callNotes": "Gesprächsnotizen",
-      "noCallNotes": "Noch keine Gesprächsnotizen. Notizen aus dem Termin-Popup erscheinen hier.",
+      "noCallNotes": "Noch keine Gesprächsnotizen. Die KI-Zusammenfassung aus Zoom- und WhatsApp-Calls erscheint hier.",
       "note": "Notiz"
     },
     "botToggle": {
@@ -4563,6 +4563,8 @@
       "hint": "Erkannt über die Kennung im Link (z. B. ?src=youtube), den Website-Besuch oder die verweisende Seite. Erfasst seit 14.10.2026; ältere Anmeldungen stehen unter „Vor der Erfassung“."
     },
     "noActivitiesFilter": "Keine Aktivitäten in diesem Filter.",
+    "actMore": "mehr ▾",
+    "actLess": "weniger ▴",
     "actFilter": {
       "all": "Alle",
       "mine": "Von mir",

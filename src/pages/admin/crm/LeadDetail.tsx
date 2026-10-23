@@ -37,6 +37,12 @@ type TabId = 'overview' | 'notes' | 'activities' | 'ai' | 'emails' | 'tasks' | '
 interface LeadTaskRow { id: string; title: string; description: string | null; due_date: string | null; status: string; assignee_label: string }
 interface BizContactRow { id: string; name: string; email: string | null; phone: string | null; lang: 'de' | 'en' }
 
+// Notizen-Reiter zeigt nur Gesprächsnotizen (Sven 23.10.26): die KI-Kundenprofile
+// aus Zoom-/WhatsApp-Calls (zoom-calls) und die Handnotiz „Erstgespräch" aus dem
+// Termin-Popup. Alles andere steht unter Aktivitäten.
+const isCallNote = (a: { type: string; subject: string | null }) =>
+  a.type === 'note' && !!a.subject && (a.subject.startsWith('📞 Gespräch') || /^(Erstgespräch|First call)/.test(a.subject))
+
 const ACTIVITY_ICONS: Record<string, string> = {
   call: '📞',
   email: '📧',
@@ -150,6 +156,7 @@ export default function LeadDetail() {
   // UI state
   const [activeTab, setActiveTab] = useState<TabId>('overview')
   const [actFilter, setActFilter] = useState<'all' | 'mine' | 'client' | 'auto'>('all')
+  const [actOpen, setActOpen] = useState<Set<string>>(new Set())   // aufgeklappte Aktivitäten
   const tabsRef = useRef<HTMLDivElement | null>(null)
   // Tab wechseln UND hinscrollen — sonst wechselt der Tab unsichtbar weit unten
   // (Direkt-Aktions-Kacheln „Mail/WhatsApp/Notiz/Aufgabe" wirkten dadurch tot).
@@ -3407,43 +3414,26 @@ export default function LeadDetail() {
             )}
 
             {/* ── Tab: Aktivitäten ──────────────────────────────── */}
+            {/* ── Tab: Notizen (nur Gesprächsnotizen) ──────────────── */}
             {activeTab === 'notes' && (
-              <div className="p-6 space-y-6">
-                {/* Freies Notizfeld (lead.notes) */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-sm font-semibold text-gray-700">{t('crm.notesTab.title', 'Notizen zum Kunden')}</h3>
-                    <button onClick={() => void saveNotes()} disabled={savingNotes || notesDraft === (lead?.notes ?? '')}
-                      className="px-4 py-1.5 rounded-lg text-white text-sm font-medium disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>
-                      {savingNotes ? t('common.saving', 'Speichern…') : t('common.save', 'Speichern')}
-                    </button>
-                  </div>
-                  <textarea value={notesDraft} onChange={e => setNotesDraft(e.target.value)} rows={8}
-                    placeholder={t('crm.notesTab.placeholder', 'Notizen zum Kunden — Wünsche, Budget, Gesprächsergebnisse…')}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40 resize-y" />
-                  <p className="text-xs text-gray-400 mt-1">{t('crm.notesTab.hint', 'Hier landen auch die Antworten aus dem Formular (Typeform).')}</p>
-                </div>
-
-                {/* Gesprächsnotizen-Historie (aus dem Termin-Vorbereitungs-Popup) */}
-                <div className="border-t pt-4">
-                  <h3 className="text-sm font-semibold text-gray-700 mb-3">{t('crm.notesTab.callNotes', 'Gesprächsnotizen')}</h3>
-                  {activities.filter(a => a.type === 'note').length === 0 ? (
-                    <p className="text-sm text-gray-400 py-4">{t('crm.notesTab.noCallNotes', 'Noch keine Gesprächsnotizen. Notizen aus dem Termin-Popup erscheinen hier.')}</p>
-                  ) : (
-                    <ol className="space-y-3">
-                      {activities.filter(a => a.type === 'note').map(act => (
-                        <li key={act.id} className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3">
-                          <div className="flex items-center justify-between gap-2 flex-wrap">
-                            <span className="font-medium text-sm text-gray-800">{act.subject ?? t('crm.notesTab.note', 'Notiz')}</span>
-                            <span className="text-xs text-gray-400">{formatDate(act.created_at)}</span>
-                          </div>
-                          {act.content && <p className="text-sm text-gray-600 mt-1 whitespace-pre-wrap">{act.content}</p>}
-                          {act.creator && <p className="text-xs text-gray-400 mt-1">— {act.creator.full_name}</p>}
-                        </li>
-                      ))}
-                    </ol>
-                  )}
-                </div>
+              <div className="p-6">
+                <h3 className="text-sm font-semibold text-gray-700 mb-3">{t('crm.notesTab.callNotes', 'Gesprächsnotizen')}</h3>
+                {activities.filter(isCallNote).length === 0 ? (
+                  <p className="text-sm text-gray-400 py-4">{t('crm.notesTab.noCallNotes', 'Noch keine Gesprächsnotizen. Die KI-Zusammenfassung aus Zoom- und WhatsApp-Calls erscheint hier.')}</p>
+                ) : (
+                  <ol className="space-y-3">
+                    {activities.filter(isCallNote).map(act => (
+                      <li key={act.id} className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="font-medium text-sm text-gray-800">{act.subject ?? t('crm.notesTab.note', 'Notiz')}</span>
+                          <span className="text-xs text-gray-400">{formatDate(act.created_at)}</span>
+                        </div>
+                        {act.content && <p className="text-sm text-gray-600 mt-1 whitespace-pre-wrap">{act.content}</p>}
+                        {act.creator && <p className="text-xs text-gray-400 mt-1">— {act.creator.full_name}</p>}
+                      </li>
+                    ))}
+                  </ol>
+                )}
               </div>
             )}
 
@@ -3455,6 +3445,21 @@ export default function LeadDetail() {
                 : a.auto === true)
               return (
               <div className="p-6">
+                {/* Freies Notizfeld (lead.notes), seit 23.10.26 hier statt im Notizen-Reiter */}
+                <div className="mb-6">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-sm font-semibold text-gray-700">{t('crm.notesTab.title', 'Notizen zum Kunden')}</h3>
+                    <button onClick={() => void saveNotes()} disabled={savingNotes || notesDraft === (lead?.notes ?? '')}
+                      className="px-4 py-1.5 rounded-lg text-white text-sm font-medium disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>
+                      {savingNotes ? t('common.saving', 'Speichern…') : t('common.save', 'Speichern')}
+                    </button>
+                  </div>
+                  <textarea value={notesDraft} onChange={e => setNotesDraft(e.target.value)} rows={3}
+                    placeholder={t('crm.notesTab.placeholder', 'Notizen zum Kunden — Wünsche, Budget, Gesprächsergebnisse…')}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40 resize-y" />
+                  <p className="text-xs text-gray-400 mt-1">{t('crm.notesTab.hint', 'Hier landen auch die Antworten aus dem Formular (Typeform).')}</p>
+                </div>
+
                 {/* Filter */}
                 <div className="flex gap-1.5 mb-4 flex-wrap">
                   {([
@@ -3475,39 +3480,47 @@ export default function LeadDetail() {
                   </p>
                 ) : (
                   <ol className="relative border-l border-gray-200 space-y-6 mb-8">
-                    {shown.map((act) => (
+                    {shown.map((act) => {
+                      // Kompakt: Datum/Uhrzeit + max. 3 Zeilen, Klick klappt auf (Sven 23.10.26)
+                      const lang = !!act.content && (act.content.length > 220 || act.content.split('\n').length > 3)
+                      const open = actOpen.has(act.id)
+                      const toggle = () => setActOpen(prev => { const n = new Set(prev); if (n.has(act.id)) n.delete(act.id); else n.add(act.id); return n })
+                      return (
                       <li key={act.id} className="ml-4">
                         <div className="absolute -left-2 mt-1 w-4 h-4 rounded-full bg-white border-2 border-orange-300 flex items-center justify-center text-xs">
                           {ACTIVITY_ICONS[act.type] ?? '📌'}
                         </div>
-                        <div className={`rounded-xl px-4 py-3 ${
+                        <div onClick={lang ? toggle : undefined} className={`rounded-xl px-4 py-2.5 ${lang ? 'cursor-pointer' : ''} ${
                           act.type === 'whatsapp'
                             ? act.direction === 'outbound'
                               ? 'bg-green-50 border border-green-100'
                               : 'bg-gray-100 border border-gray-200'
                             : 'bg-gray-50'
                         }`}>
-                          <div className="flex items-center justify-between gap-2 flex-wrap">
-                            <span className={`font-medium text-sm ${
+                          <div className="flex items-baseline gap-2 min-w-0">
+                            <span className="text-xs text-gray-400 shrink-0 tabular-nums">{formatDate(act.created_at)}</span>
+                            <span className={`font-medium text-sm truncate ${
                               act.type === 'whatsapp'
                                 ? act.direction === 'outbound' ? 'text-green-800' : 'text-gray-700'
                                 : 'text-gray-800'
                             }`}>
                               {act.subject ?? act.type}
                             </span>
-                            <span className="text-xs text-gray-400">{formatDate(act.created_at)}</span>
                           </div>
                           {act.content && (
-                            <p className={`text-sm mt-1 whitespace-pre-wrap ${
+                            <p className={`text-sm mt-1 whitespace-pre-wrap ${open ? '' : 'line-clamp-3'} ${
                               act.type === 'whatsapp' ? 'text-green-900 font-mono text-xs leading-relaxed' : 'text-gray-600'
                             }`}>{act.content}</p>
                           )}
-                          {act.creator && (
-                            <p className="text-xs text-gray-400 mt-1">— {act.creator.full_name}</p>
+                          {(lang || act.creator) && (
+                            <div className="flex items-center justify-between gap-2 mt-1">
+                              <span className="text-xs text-gray-400">{act.creator ? `— ${act.creator.full_name}` : ''}</span>
+                              {lang && <span className="text-xs font-medium" style={{ color: '#ff795d' }}>{open ? t('crm.actLess', 'weniger ▴') : t('crm.actMore', 'mehr ▾')}</span>}
+                            </div>
                           )}
                         </div>
                       </li>
-                    ))}
+                      ) })}
                   </ol>
                 )}
 
