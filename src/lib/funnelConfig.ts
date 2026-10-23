@@ -34,6 +34,14 @@ export interface FunnelQuestionnaire {
   bg_url?: string
   hero_label?: string
   use_standard_questions?: boolean
+  // Weg B (Anzeige „Unterlagen anfordern“): nach dem Kontakt keine Terminwahl, sondern
+  // Danke-Seite; funnel-api verschickt das persönliche Deck. Texte frei pflegbar.
+  info_paket?: {
+    master_deck_token: string
+    wa_text?: string; mail_subject?: string; mail_html?: string
+    contact_title?: string; contact_subtitle?: string; contact_cta?: string
+    done_title?: string; done_text?: string; done_cta?: string
+  }
 }
 
 // Kampagnen-/Quellen-Link (Funnel-Editor → „Links & Quellen"): ein teilbarer
@@ -249,6 +257,9 @@ export function normalizeFunnelConfig(raw: unknown): FunnelConfig {
             ...(typeof x.bg_url === 'string' && x.bg_url.trim() ? { bg_url: x.bg_url.trim() } : {}),
             ...(typeof x.hero_label === 'string' && x.hero_label.trim() ? { hero_label: x.hero_label.trim() } : {}),
             ...(x.use_standard_questions === true ? { use_standard_questions: true } : {}),
+            ...(x.info_paket && typeof x.info_paket === 'object' && typeof x.info_paket.master_deck_token === 'string'
+              ? { info_paket: Object.fromEntries(Object.entries(x.info_paket).filter(([, v]) => typeof v === 'string')) as FunnelQuestionnaire['info_paket'] }
+              : {}),
           }
         })
     : []

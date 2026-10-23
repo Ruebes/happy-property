@@ -28,6 +28,7 @@ import { isInternalContact } from '../_shared/internalContact.ts'
 import { nextApptTitle } from '../_shared/apptTitle.ts'
 import { notifyIfToday, cyTime, isTodayCy } from '../_shared/notifyToday.ts'
 import { CAPI_EVENT_SOURCE_URL, META_UTM_SOURCES, istMetaLead, type MetaLeadMerkmale } from '../_shared/werbeCapi.ts'
+import { bookingUrl, PORTAL_URL } from '../_shared/bookingLink.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -238,6 +239,75 @@ async function capiLeadEinreihen(admin: SupabaseClient, req: Request, a: CapiLea
     })
     if (insErr && String(insErr.code ?? '') !== '23505') console.warn('[funnel-api] CAPI-Lead nicht eingereiht:', rpcErr.message, '/', insErr.message)
   } catch (e) { console.warn('[funnel-api] CAPI-Lead fehlgeschlagen:', e) }
+}
+
+
+// ── Weg B: Unterlagen statt Termin (Sven 23.10.26) ────────────────────────────
+// Eine Fragebogen-Variante mit `info_paket` (funnel_config.questionnaires[].info_paket)
+// verschickt nach dem Kontaktformular sofort die Unterlagen: ein persönlicher Klon
+// des Master-Decks (Ansichten je Kontakt sichtbar, Termin-Knopf im Deck) per
+// WhatsApp + Mail über scheduled_messages (Versand durch process-scheduled-messages,
+// mit Lotte-Bild, Kurzlinks und Kontaktsperren-Prüfung). Texte stehen in der Config,
+// nicht im Code (keine Projektnamen im Code). Platzhalter: {{vorname}}, {{link}},
+// {{termin_buchen}}.
+interface InfoPaket {
+  master_deck_token: string
+  wa_text?: string
+  mail_subject?: string
+  mail_html?: string
+}
+const fill = (t: string, v: Record<string, string>) => t.replace(/\{\{(\w+)\}\}/g, (m, k) => (k in v ? v[k] : m))
+const escHtml = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+async function unterlagenVersenden(admin: SupabaseClient, leadId: string, dealId: string | null, slug: string): Promise<boolean> {
+  const { data: fc } = await admin.from('funnel_config').select('config').eq('id', 'default').maybeSingle()
+  const qns = ((fc as { config?: { questionnaires?: Array<{ slug?: string; info_paket?: InfoPaket }> } } | null)?.config?.questionnaires) ?? []
+  const ip = qns.find(q => q?.slug === slug)?.info_paket
+  if (!ip?.master_deck_token || !ip.wa_text) return false
+  const { data: m } = await admin.from('sales_decks').select('project_id, angle, content').eq('token', ip.master_deck_token).maybeSingle()
+  if (!m) { console.warn('[funnel-api] Unterlagen: Master-Deck fehlt', ip.master_deck_token); return false }
+  const master = m as { project_id: string; angle: string | null; content: unknown }
+  const { data: l } = await admin.from('leads').select('first_name, last_name, booking_token').eq('id', leadId).maybeSingle()
+  const lead = (l ?? {}) as { first_name?: string | null; last_name?: string | null; booking_token?: string | null }
+  const vorname = (lead.first_name ?? '').trim()
+  // Gleicher Kontakt fordert zweimal an: vorhandenen Klon wiederverwenden statt neu klonen
+  const { data: ex } = await admin.from('sales_decks').select('token').eq('lead_id', leadId)
+    .eq('project_id', master.project_id).contains('quality_report', { source: 'funnel_unterlagen' }).limit(1)
+  let token = (ex as Array<{ token: string }> | null)?.[0]?.token ?? ''
+  if (!token) {
+    token = Array.from(crypto.getRandomValues(new Uint8Array(9)), b => b.toString(16).padStart(2, '0')).join('')
+    const { error: ie } = await admin.from('sales_decks').insert({
+      token, lead_id: leadId, project_id: master.project_id, angle: master.angle, status: 'ready',
+      recipient_name: `${vorname} ${(lead.last_name ?? '').trim()}`.trim() || null,
+      content: master.content,
+      // Klon eines geprüften Master-Decks (wie newsletter_clone): Gate läuft am Master.
+      quality_status: 'skipped',
+      quality_report: { status: 'skipped', source: 'funnel_unterlagen', master_token: ip.master_deck_token, variant: slug },
+    })
+    if (ie) { console.error('[funnel-api] Unterlagen: Deck-Klon fehlgeschlagen:', ie.message); return false }
+  }
+  const v = { vorname: vorname || 'du', link: `${PORTAL_URL}/deck/${token}`, termin_buchen: bookingUrl(lead.booking_token) }
+  const waText = fill(ip.wa_text, v).replace(/^Hallo du,/, 'Hallo,')
+  const htmlVars = { vorname: escHtml(v.vorname), link: v.link, termin_buchen: v.termin_buchen }
+  const mailHtml = ip.mail_html
+    ? fill(ip.mail_html, htmlVars)
+    : `<p>${escHtml(waText).replace(/\n/g, '<br>')}</p>`
+  const { error: se } = await admin.from('scheduled_messages').insert({
+    lead_id: leadId, deal_id: dealId, type: 'both', event_type: 'unterlagen', status: 'pending',
+    scheduled_at: new Date().toISOString(),
+    email_subject: fill(ip.mail_subject ?? 'Deine Unterlagen', { vorname: v.vorname }),
+    email_body: mailHtml, whatsapp_text: waText,
+  })
+  if (se) { console.error('[funnel-api] Unterlagen: Versand-Planung fehlgeschlagen:', se.message); return false }
+  try {
+    await admin.from('activities').insert({
+      lead_id: leadId, type: 'note', direction: 'inbound', auto: true,
+      subject: '📄 Unterlagen angefordert (Anzeige, Weg B)',
+      content: `Variante „${slug}“: persönliches Deck ${v.link} per WhatsApp und Mail verschickt.`,
+      completed_at: new Date().toISOString(),
+    })
+  } catch { /* egal */ }
+  return true
 }
 
 Deno.serve(async (req) => {
@@ -457,16 +527,32 @@ Deno.serve(async (req) => {
         const { data: nd } = await admin.from('deals').insert({ lead_id: leadId, phase: 'erstkontakt' }).select('id').single()
         dealId = (nd as { id: string } | null)?.id ?? null
       }
+      // Weg B (Variante mit info_paket): Unterlagen sofort verschicken
+      const variantSlug = String((utm as Record<string, string>).funnel_variant ?? '').trim()
+      let unterlagen = false
+      if (variantSlug) {
+        try { unterlagen = await unterlagenVersenden(admin, leadId, dealId, variantSlug) }
+        catch (e) { console.warn('[funnel-api] Unterlagen-Versand fehlgeschlagen:', e) }
+      }
       // Fallback-Automation: greift nur, wenn KEIN Termin gebucht wird (book storniert)
       try { await admin.functions.invoke('schedule-message', { body: { lead_id: leadId, deal_id: dealId, event_type: 'erstkontakt' } }) }
       catch (e) { console.warn('[funnel-api] erstkontakt-Trigger fehlgeschlagen:', e) }
+      // Weg B: die +20-Min-Mail („keine Terminbuchung angekommen“) passt nicht zu einer
+      // Unterlagen-Anfrage. Alles, was in der nächsten Stunde fällig wäre, entfällt;
+      // die späteren Nachfass-Nachrichten (+1/+3/+5/+14 Tage) bleiben.
+      if (unterlagen) {
+        const { error: ske } = await admin.from('scheduled_messages').update({ status: 'skipped' })
+          .eq('lead_id', leadId).eq('event_type', 'erstkontakt').eq('status', 'pending')
+          .lt('scheduled_at', new Date(Date.now() + 60 * 60 * 1000).toISOString())
+        if (ske) console.warn('[funnel-api] Erstkontakt +20 Min nicht übersprungen:', ske.message)
+      }
       // Werbe-Zuordnung + CAPI-Lead: beide fangen jeden Fehler selbst ab.
       if (utmGespeichert) await metaSpaltenSetzen(admin, leadId, utm)
       const eventUuid = uuidOderNull(String(mm.event_id ?? '').replace(/^lead-/i, ''))
       if (eventUuid) {
         await capiLeadEinreihen(admin, req, { leadId, eventUuid, utm, mm, email, phone, sessionId: body.session_id ?? null })
       }
-      return json({ ok: true, lead_id: leadId })
+      return json({ ok: true, lead_id: leadId, unterlagen })
     }
 
     // ── book ─────────────────────────────────────────────────────────────────

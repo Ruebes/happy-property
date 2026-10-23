@@ -28,7 +28,7 @@ const SVEN_SQ = DECK_PHOTO.replace('/object/public/', '/render/image/public/') +
 const SVEN_SIDE = funnelImageUrl(DECK_PHOTO, 960, 640, 'contain')
 
 
-type Phase = 'welcome' | 'questions' | 'contact' | 'meeting_type' | 'slot' | 'done'
+type Phase = 'welcome' | 'questions' | 'contact' | 'meeting_type' | 'slot' | 'done' | 'unterlagen'
 
 // Veröffentlichte Kanal-Links (/termin?src=youtube auf dem YouTube-Kanal usw.):
 // Buchungen darüber bekommen den Kanal als Quelle an Lead, Deal und Termin.
@@ -184,6 +184,7 @@ export default function Funnel() {
   }, [cfg, variant, qn])
   // Variante mit eigener Startseite (Anzeigen-Zielseite) und Projektbild im Hintergrund
   const WEL = { ...cfg.welcome, ...(qn?.welcome ?? {}) }
+  const INFO = qn?.info_paket
   const BG = qn?.bg_url
   // Variante in die Session-UTM: macht Varianten in der Statistik auswertbar
   const utm = useMemo(() => variant ? { ...utmBase, funnel_variant: variant } : utmBase, [utmBase, variant])
@@ -302,6 +303,8 @@ export default function Funnel() {
       try { metaPixel('track', 'Lead', {}, { eventID: `lead-${leadEventUuid}` }) } catch { /* Pixel darf nie blocken */ }
       // Schnellbuchung: Terminart + Slot stehen schon → jetzt verbindlich buchen.
       if (rebook && slot) { await performBooking(slot); return }
+      // Weg B: Unterlagen statt Termin (funnel-api verschickt das Deck)
+      if (INFO) { setPhase('unterlagen'); return }
       setPhase('meeting_type')
     } catch {
       setError(t('funnel.err_generic', 'Das hat leider nicht geklappt. Bitte versuche es noch einmal.'))
@@ -550,8 +553,8 @@ export default function Funnel() {
           {phase === 'contact' && (
             <div>
               <p className="text-xs font-bold tracking-widest uppercase mb-2" style={{ color: CORAL }}>{t('funnel.almost_done', 'Fast geschafft')}</p>
-              <h2 className="font-heading font-bold text-2xl md:text-3xl" style={{ color: NAVY }}>{rebook ? t('funnel.rebook_contact_title', 'Nur noch deine Kontaktdaten') : cfg.contact.title}</h2>
-              <p className="mt-1 text-sm text-gray-600">{rebook ? t('funnel.rebook_contact_sub', 'Danach buchen wir deinen Termin sofort verbindlich.') : cfg.contact.subtitle}</p>
+              <h2 className="font-heading font-bold text-2xl md:text-3xl" style={{ color: NAVY }}>{rebook ? t('funnel.rebook_contact_title', 'Nur noch deine Kontaktdaten') : (INFO?.contact_title ?? cfg.contact.title)}</h2>
+              <p className="mt-1 text-sm text-gray-600">{rebook ? t('funnel.rebook_contact_sub', 'Danach buchen wir deinen Termin sofort verbindlich.') : (INFO?.contact_subtitle ?? cfg.contact.subtitle)}</p>
               {rebook && slot && meetingType && (
                 <div className="mt-4 rounded-xl bg-white border border-[#e6dfd0] p-4 text-sm" style={{ color: NAVY }}>
                   <span className="font-semibold">{meetingType === 'zoom' ? t('funnel.zoom_call', '📹 Zoom-Call') : t('funnel.whatsapp_call', '💬 WhatsApp-Call')}</span> · {fmtSlotFull(slot)}{t('funnel.oclock', ' Uhr')}
@@ -585,10 +588,27 @@ export default function Funnel() {
                 <button onClick={() => void submitContact()} disabled={busy}
                   className="w-full py-3.5 rounded-full text-white font-semibold text-lg shadow-md hover:shadow-lg transition disabled:opacity-50"
                   style={{ background: CORAL }}>
-                  {busy ? t('funnel.one_moment', 'Einen Moment…') : (rebook ? t('funnel.book_binding', 'Termin verbindlich buchen') : cfg.contact.cta)}
+                  {busy ? t('funnel.one_moment', 'Einen Moment…') : (rebook ? t('funnel.book_binding', 'Termin verbindlich buchen') : (INFO?.contact_cta ?? cfg.contact.cta))}
                 </button>
                 <p className="text-[11px] text-gray-400 text-center">{cfg.contact.privacy}</p>
               </div>
+            </div>
+          )}
+
+          {phase === 'unterlagen' && (
+            <div className="text-center">
+              <div className="text-5xl mb-4">📬</div>
+              <h2 className="font-heading font-bold text-2xl md:text-3xl" style={{ color: NAVY }}>
+                {INFO?.done_title ?? 'Deine Unterlagen sind unterwegs'}
+              </h2>
+              <p className="mt-3 text-gray-600 text-[15px] max-w-lg mx-auto">
+                {INFO?.done_text ?? 'In wenigen Minuten bekommst du den Link per WhatsApp und Mail.'}
+              </p>
+              <button onClick={() => { setPhase('meeting_type'); void track(QUESTIONS.length + 2, 'meeting_type_view') }}
+                className="mt-8 px-8 py-3.5 rounded-full text-white font-semibold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition"
+                style={{ background: CORAL }}>
+                {INFO?.done_cta ?? 'Oder gleich einen Termin mit Sven aussuchen →'}
+              </button>
             </div>
           )}
 
