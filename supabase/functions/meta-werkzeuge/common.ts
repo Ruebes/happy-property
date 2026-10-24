@@ -7,7 +7,7 @@
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import type { AdsCaller } from '../_shared/adsAuth.ts'
 import {
-  getLastUsage, graphAll, graphGet, graphPost, GRAPH, logMetaWrite, MetaApiError, metaEnv, metaErrorFromBody,
+  getLastUsage, graphAll, graphGet, graphPost, GRAPH, logMetaWrite, MetaApiError, metaEnv, metaEnvFuer, metaErrorFromBody,
   metaErrorLogFelder, metaWritesDisabled, type MetaEnv, type MetaUsage,
 } from '../_shared/metaGraph.ts'
 import type { WerkzeugErrorCode, WerkzeugMode, WerkzeugUsage } from './typen.ts'
@@ -185,11 +185,12 @@ export interface Ctx {
   settings(): Promise<Settings>
 }
 
-export function makeCtx(sb: SupabaseClient, caller: AdsCaller, mode: WerkzeugMode): Ctx {
+/** kontoRaw: body.account_id (im CRM gewähltes Werbekonto); leer = Anlagekonto */
+export function makeCtx(sb: SupabaseClient, caller: AdsCaller, mode: WerkzeugMode, kontoRaw?: unknown): Ctx {
   let cached: Promise<Settings> | null = null
   return {
     sb, caller, mode,
-    env: metaEnv(),
+    env: metaEnvFuer(kontoRaw),
     settings() {
       if (!cached) cached = loadSettings(sb)
       return cached

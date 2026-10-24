@@ -10,6 +10,7 @@ import { berechneEmpfehlungen } from './empfehlungen'
 import { BTN_KLEIN } from './felder'
 import { dbFehlerText } from './autopilot/werbeTexte'
 import KampagnenZentrale from './zentrale/KampagnenZentrale'
+import { useGewaehltesKonto } from '../../../lib/werbeKonten'
 
 // ── Reiter „Statistik" des Werbemanagers ──────────────────────────────────────
 // KPI-Kacheln, Budget-Wächter, Leitplanken, Empfehlungen + Aktions-Warteschlange
@@ -107,6 +108,7 @@ function TrendChart({ points, fmt }: { points: { day: string; value: number }[];
 // Standard-Export ohne Props (lazyWithReload): Daten kommen aus dem WerbeKontext
 export default function WerbeStatistik() {
   const { t } = useTranslation()
+  const konto = useGewaehltesKonto()
   const { profile } = useAuth()
   const istAdmin = profile?.role === 'admin'
   const fmt = useWerbeFormat()
@@ -232,7 +234,7 @@ export default function WerbeStatistik() {
       {/* KPI-Kacheln */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-5">
         <KpiTile label={t('crm.ads.kpiSpend', 'Ausgaben')} value={eur(total.spendEur)}
-          sub={t('crm.ads.kpiSpendSub', 'umgerechnet aus USD')} />
+          sub={t('crm.ads.kpiSpendSubKonten', 'beide Werbekonten, in EUR')} />
         <KpiTile label={t('crm.ads.kpiCpl', 'Leadpreis')} value={per(total.spendEur, leadsShown)}
           sub={`${int(leadsShown)} Leads (${leadBasis}) · ${leadsShown > 0 && total.spendEur / leadsShown <= settings.target_cpl ? '✅' : '⚠️'} ${t('crm.ads.target', 'Ziel')}: ${eur(settings.target_cpl)}`} accent />
         <KpiTile label={t('crm.ads.kpiCostPerHeld', 'Preis / stattgef. Termin')} value={per(total.spendEur, total.stattgefunden)}
@@ -376,10 +378,10 @@ export default function WerbeStatistik() {
       </div>
 
       {/* Kampagnen-Zentrale: Kampagne > Anzeigengruppe > Werbeanzeige (zentrale/) */}
-      <KampagnenZentrale pendingByAd={pendingByAd} />
+      <KampagnenZentrale key={konto} pendingByAd={pendingByAd} />
 
       <p className="mt-3 text-[11px] text-gray-400">
-        {t('crm.ads.footnote', 'Datenstand: automatischer Sync jeden Morgen direkt aus dem Meta-Werbekonto (Sveru Marketing LLC, USD -> EUR umgerechnet) - oder sofort über „Aktualisieren". * = Lead-Zahl laut Meta, solange die CRM-Zuordnung über die Anzeigen-URL-Parameter noch nicht aktiv ist.')}
+        {t('crm.ads.footnoteKonten', 'Datenstand: automatischer Sync jeden Morgen direkt aus beiden Meta-Werbekonten (Sveru Marketing LLC in USD, umgerechnet in EUR; Happy Property/Sveru Ltd in EUR) - oder sofort über „Aktualisieren". Kacheln und Diagramme zählen beide Konten, die Kampagnen-Zentrale zeigt das oben gewählte. * = Lead-Zahl laut Meta, solange die CRM-Zuordnung über die Anzeigen-URL-Parameter noch nicht aktiv ist.')}
         {' '}<Link to="/admin/crm/leads" className="underline">{t('crm.ads.toLeads', 'Zu den Leads')}</Link>
       </p>
     </div>

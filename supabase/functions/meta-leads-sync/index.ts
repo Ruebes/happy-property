@@ -49,7 +49,7 @@
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { gateCaller } from '../_shared/callerGate.ts'
-import { GRAPH, metaEnv } from '../_shared/metaGraph.ts'
+import { GRAPH, metaEnv, metaKonten } from '../_shared/metaGraph.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -414,7 +414,7 @@ Deno.serve(async (req) => {
     }
 
     // ── Graph-API-Abruf ───────────────────────────────────────────
-    const { token, account, pageId } = metaEnv()
+    const { token, pageId } = metaEnv()
     if (!token) return json({ error: 'META_ACCESS_TOKEN fehlt' }, 500)
     const days = Math.min(90, Math.max(1, body.days ?? 30))
     const since = Math.floor((Date.now() - days * 86400e3) / 1000)
@@ -427,10 +427,27 @@ Deno.serve(async (req) => {
       // object_story_spec, bei Advantage+/Dynamischen Anzeigen dagegen im
       // asset_feed_spec.call_to_actions — genau dort lag sie bei „Investment 12
       // Jahre abbezahlt 2" (Formular LF 21/07/25 V4 Kapital). Beide prüfen.
-      const adsJson = await graphJson(`${GRAPH}/act_${account}/ads?fields=id,name,creative{object_story_spec,asset_feed_spec}&limit=200`, token)
-      if (adsJson?.error) return json({ error: `Meta: ${adsJson.error.message}`, hinweis: 'Für den Abruf braucht der Token leads_retrieval + pages_manage_ads.' }, 502)
+      // Alle eigenen Werbekonten (metaKonten); ein Konto ohne Zugriff bricht die anderen nicht ab
       type Cta = { value?: { lead_gen_form_id?: string } }
-      for (const ad of (adsJson?.data ?? []) as Array<{ creative?: {
+      const konten = metaKonten()
+      const adsListe: unknown[] = []
+      let kontoFehler: string | null = null
+      let fehlerZahl = 0
+      for (const account of konten) {
+        const adsJson = await graphJson(`${GRAPH}/act_${account}/ads?fields=id,name,creative{object_story_spec,asset_feed_spec}&limit=200`, token)
+        if (adsJson?.error) {
+          kontoFehler = String(adsJson.error.message ?? 'unbekannt')
+          fehlerZahl++
+          console.warn(`[meta-leads-sync] act_${account}/ads:`, kontoFehler)
+          continue
+        }
+        adsListe.push(...((adsJson?.data ?? []) as unknown[]))
+      }
+      // wie bisher: nur wenn KEIN Konto lesbar war, abbrechen
+      if (kontoFehler && fehlerZahl === konten.length) {
+        return json({ error: `Meta: ${kontoFehler}`, hinweis: 'Für den Abruf braucht der Token leads_retrieval + pages_manage_ads.' }, 502)
+      }
+      for (const ad of adsListe as Array<{ creative?: {
         object_story_spec?: { link_data?: { call_to_action?: Cta }; video_data?: { call_to_action?: Cta } }
         asset_feed_spec?: { call_to_actions?: Cta[] } } }>) {
         const spec = ad.creative?.object_story_spec

@@ -88,7 +88,7 @@ Deno.serve(async (req) => {
     const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
     // Werbe-Recht allein reicht nicht: Meta-Daten nur mit werbung oder werbung_meta
     await pruefeMetaRecht(sb, caller)
-    const result = await dispatch(makeCtx(sb, caller, mode), body)
+    const result = await dispatch(makeCtx(sb, caller, mode, body.account_id), body)
     console.log(`[${FN}] ${mode} ok in ${Date.now() - started} ms`)
     return json(result, 200)
   } catch (err) {

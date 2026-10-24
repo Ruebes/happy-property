@@ -61,8 +61,8 @@
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { requireAdsAccess, AdsAuthError, type AdsCaller } from '../_shared/adsAuth.ts'
 import {
-  graphGet, graphAll, graphPost, metaEnv, MetaApiError, logMetaWrite, metaErrorLogFelder,
-  getLastUsage, budgetHeadroom, type BudgetHeadroom,
+  graphGet, graphAll, graphPost, istEigenesKonto, kontoAuswahl, kontoInfo, metaEnv, MetaApiError, logMetaWrite,
+  metaErrorLogFelder, getLastUsage, budgetHeadroom, type BudgetHeadroom,
 } from '../_shared/metaGraph.ts'
 import {
   applyHousing, isHec, LIMITS, META_UNBEGRENZT, SPECIAL_AD_CATEGORIES,
@@ -119,8 +119,9 @@ const OPTIMIZATION_GOALS = new Set([
   'OFFSITE_CONVERSIONS', 'LINK_CLICKS', 'LEAD_GENERATION', 'REACH', 'IMPRESSIONS',
   'LANDING_PAGE_VIEWS', 'THRUPLAY', 'QUALITY_LEAD', 'QUALITY_CALL', 'VALUE', 'APP_INSTALLS',
 ])
-// Geldbeträge kommen in Cent der Konto-Währung (USD). 1 $ … 5.000 $ ist der
-// plausible Rahmen für dieses Konto — schützt vor Tippfehlern wie 5000 statt 50.
+// Geldbeträge kommen in Cent der Kontowährung des Objekts (USD-Konto oder EUR-Konto,
+// settings liefert account.currency). 1 … 5.000 je Tag ist der plausible Rahmen:
+// schützt vor Tippfehlern wie 5000 statt 50.
 const MONEY_MIN = 100
 const MONEY_MAX = 500_000
 
@@ -258,7 +259,7 @@ interface Ctx { sb: SupabaseClient; caller: AdsCaller; account: string; mode: st
 /** Liest eine Entität und prüft, dass sie zu unserem Werbekonto gehört. */
 async function ownEntity(ctx: Ctx, id: string, fields: string, fehlertext: string): Promise<Row> {
   const row = await graphGet<Row>(id, { fields })
-  if (digits(row?.account_id) !== ctx.account) throw new Error(fehlertext)
+  if (!istEigenesKonto(digits(row?.account_id))) throw new Error(fehlertext)
   return row
 }
 
@@ -408,7 +409,7 @@ const cents = (v: unknown): number => {
 }
 const eur = (n: number): string => n.toFixed(2).replace('.', ',')
 
-/** USD-Cent je Tag aus eigenem Budget (Laufzeitbudget: Rest / Resttage), optional nach dem Patch. */
+/** Cent der Kontowährung je Tag aus eigenem Budget (Laufzeitbudget: Rest / Resttage), optional nach dem Patch. */
 function centsJeTag(o: Row, endKey: 'stop_time' | 'end_time', patch: Row = {}): number {
   const hasDaily = patch.daily_budget !== undefined
   const hasLifetime = patch.lifetime_budget !== undefined
@@ -454,7 +455,8 @@ async function leitplanke(sb: SupabaseClient, level: string, id: string, before:
     }
   }
   if (!aktivieren && neu <= alt) return null
-  const h = await budgetHeadroom(sb, { addDailyUsdCents: neu, replaceEntityIds: ersetzt })
+  // neu ist in der Währung des Kontos, zu dem das Objekt gehört
+  const h = await budgetHeadroom(sb, { addDailyCents: neu, account: digits(before.account_id), replaceEntityIds: ersetzt })
   const gezaehlt = h.eintraege.some(e => ersetzt.indexOf(e.id) >= 0)
   if (aktivieren || gezaehlt) return h
   return { ...h, afterEur: h.activeEur, deltaEur: 0, ok: h.activeEur <= h.limitEur + 0.005 }
@@ -512,7 +514,10 @@ Deno.serve(async (req) => {
       const campaign = await graphGet<Row>(campaignId, {
         fields: 'name,objective,status,effective_status,special_ad_categories,special_ad_category_country,bid_strategy,daily_budget,lifetime_budget,spend_cap,start_time,stop_time,created_time,buying_type,account_id',
       })
-      if (digits(campaign.account_id) !== account) throw new Error('Kampagne gehört nicht zu unserem Werbekonto')
+      const kontoId = digits(campaign.account_id)
+      if (!istEigenesKonto(kontoId)) throw new Error('Kampagne gehört nicht zu unserem Werbekonto')
+      // Konto + Währung fürs UI: Geldfelder sind Cent dieser Währung
+      const konto = await kontoInfo(kontoId)
       const adsets = await graphAll<Row>(`${campaignId}/adsets`, {
         fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,bid_strategy,bid_amount,optimization_goal,billing_event,promoted_object,destination_type,attribution_spec,dsa_beneficiary,dsa_payor,start_time,end_time,targeting',
         limit: 50,
@@ -521,7 +526,7 @@ Deno.serve(async (req) => {
         fields: 'id,name,status,effective_status,adset_id,creative{id,url_tags,object_story_spec{link_data{link,name,call_to_action},page_id}}',
         limit: 50,
       }, { maxPages: 10 })
-      return json({ success: true, campaign, adsets, ads })
+      return json({ success: true, campaign, adsets, ads, account: { id: kontoId, name: konto.name, currency: konto.currency } })
     }
 
     // ── Einstellungen ändern (Kampagne, Adset oder Ad) ──────────────────────
@@ -534,6 +539,11 @@ Deno.serve(async (req) => {
       const patch = buildPatch(entityType, raw)
       // Guard: Entität muss zu unserem Konto gehören (liest gleich den Vorher-Zustand)
       const before = await ownEntity(ctx, entityId, ENTITY_FIELDS[entityType], 'Entität gehört nicht zu unserem Werbekonto')
+      // Geld kommt als Cent der Kontowährung: liegt das Objekt nicht in dem Konto, das der Client
+      // anzeigt (account_id), nichts schreiben (alte Clients ohne account_id: wie bisher)
+      if (digits(body.account_id) && digits(body.account_id) !== digits(before.account_id)) {
+        throw new Error('Objekt liegt in einem anderen Werbekonto als angezeigt. Bitte neu laden.')
+      }
       if (entityType === 'adset') roasPruefen(before, patch)
 
       let targetingInfo: { kept: string[]; housing: HousingInfo } | null = null
@@ -627,7 +637,8 @@ Deno.serve(async (req) => {
 
     // ── Custom Audiences unseres Kontos (Auswahlliste im Editor) ────────────
     if (mode === 'custom_audiences') {
-      const res = await graphGet<{ data?: Array<Record<string, unknown>> }>(`act_${account}/customaudiences`, {
+      // Zielgruppen gehören zu einem Werbekonto: das der bearbeiteten Kampagne (account_id), sonst Anlagekonto
+      const res = await graphGet<{ data?: Array<Record<string, unknown>> }>(`act_${kontoAuswahl(body.account_id)}/customaudiences`, {
         fields: 'id,name,approximate_count_lower_bound,subtype', limit: 200,
       })
       const rows = res?.data ?? []

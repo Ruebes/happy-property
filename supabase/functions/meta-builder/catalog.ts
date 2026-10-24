@@ -31,9 +31,9 @@ export async function pageInstagram(pageId: string): Promise<{ id: string; usern
   return str(ig.id) ? { id: str(ig.id), ...(str(ig.username) ? { username: str(ig.username) } : {}), ...(str(ig.name) ? { name: str(ig.name) } : {}) } : null
 }
 
-/** Konto-Standards für DSA (Begünstigte / Zahlende Person). */
-export async function accountDsaDefaults(): Promise<{ beneficiary: string | null; payor: string | null }> {
-  const j = await graphGet<Raw>(`act_${metaEnv().account}`, { fields: 'default_dsa_beneficiary,default_dsa_payor' })
+/** Konto-Standards für DSA (Begünstigte / Zahlende Person) des Kontos (Standard: Anlagekonto). */
+export async function accountDsaDefaults(account?: string): Promise<{ beneficiary: string | null; payor: string | null }> {
+  const j = await graphGet<Raw>(`act_${account || metaEnv().account}`, { fields: 'default_dsa_beneficiary,default_dsa_payor' })
   return { beneficiary: str(j.default_dsa_beneficiary) || null, payor: str(j.default_dsa_payor) || null }
 }
 

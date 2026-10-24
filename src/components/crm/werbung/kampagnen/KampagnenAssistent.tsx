@@ -12,7 +12,8 @@ import {
   type EditApplyResponse, type EditDiffResponse, type Level,
 } from '../../../../lib/metaSpec'
 import { lintHasBlockers } from '../../../../lib/metaLint'
-import { USD_PRO_EUR_FALLBACK } from '../felder'
+import { USD_PRO_EUR_FALLBACK, WaehrungKontext } from '../felder'
+import { ANLAGE_KONTO_ID, waehrungVon } from '../../../../lib/werbeKonten'
 import { useWerbeFormat } from '../format'
 import { ladeUsdProEur, useWerbeKontext } from '../useWerbeDaten'
 import AnzeigengruppenFormular from './AnzeigengruppenFormular'
@@ -60,12 +61,12 @@ export default function KampagnenAssistent({ start, einstellungen, onClose, onNe
   const confirm = useConfirm()
   const fmt = useWerbeFormat()
   const { profile } = useAuth()
-  const { settings: seitenSettings } = useWerbeKontext()
+  const { settings: seitenSettings, catalog } = useWerbeKontext()
   const istAdmin = profile?.role === 'admin'
 
   const [katalog, setKatalog] = useState<CatalogResponse | null>(null)
   const [katalogFehler, setKatalogFehler] = useState<string | null>(null)
-  const [kurs, setKurs] = useState<number>(USD_PRO_EUR_FALLBACK)
+  const [usdKurs, setKurs] = useState<number>(USD_PRO_EUR_FALLBACK)
   const [sel, setSel] = useState<string>('campaign')
   const [pruefLaeuft, setPruefLaeuft] = useState(false)
   const [forceGrund, setForceGrund] = useState('')
@@ -105,7 +106,14 @@ export default function KampagnenAssistent({ start, einstellungen, onClose, onNe
     : null
   const gepaart = e.templateKey === 'plan_b'
   const limitEur = vorgaben.limitEur ?? seitenSettings.max_account_daily_budget
-  const leitplanke = useLeitplanke(e.spec, e.validation, limitEur)
+  // Kontowährung des Entwurfs: vorhandene Ziel-Kampagne -> deren Konto (der Server legt dort an),
+  // sonst das Anlagekonto aus dem Katalog. Geldfelder sind Cent dieser Währung.
+  const zielKampagne = e.spec.campaign?.existing_id ?? ''
+  const zielKonto = zielKampagne ? catalog.find(c => c.campaign_id === zielKampagne)?.account_id ?? null : null
+  const waehrung = zielKonto ? waehrungVon(zielKonto) : waehrungVon(katalog?.account?.id ?? ANLAGE_KONTO_ID, katalog?.account?.currency)
+  /** Einheiten der Kontowährung je EUR (EUR-Konto 1) */
+  const kurs = waehrung === 'EUR' ? 1 : usdKurs
+  const leitplanke = useLeitplanke(e.spec, e.validation, limitEur, waehrung)
 
   /** Element sichtbar machen: umgebende „Alle Einstellungen" öffnen, hinscrollen, kurz markieren */
   const zeige = (el: HTMLElement | null) => {
@@ -560,6 +568,7 @@ export default function KampagnenAssistent({ start, einstellungen, onClose, onNe
   )
 
   return (
+    <WaehrungKontext.Provider value={waehrung}>
     <AssistentKontext.Provider value={werte}>
       <Modal open onClose={() => void schliessen()} size="full" title={titel} footer={bearbeiten ? footerBearbeiten : footer} closeOnBackdrop={false} bodyClassName="p-0">
         {e.laden ? (
@@ -666,5 +675,6 @@ export default function KampagnenAssistent({ start, einstellungen, onClose, onNe
       )}
       <DuplizierenDialog offen={dupItems.length > 0} items={dupItems} onClose={() => setDupItems([])} />
     </AssistentKontext.Provider>
+    </WaehrungKontext.Provider>
   )
 }

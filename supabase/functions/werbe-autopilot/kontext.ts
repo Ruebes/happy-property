@@ -471,49 +471,57 @@ export async function ladeVorrat(sb: Sb): Promise<PoolEintrag[]> {
 export async function ladeKonto(sb: Sb, heute: string, abDatum?: string): Promise<{
   konto: NonNullable<RegelKontext['konto']>
   fx: RegelKontext['fx']
-  tage: Map<string, { usd: number; eur: number }>
+  tage: Map<string, { usd: number; eur: number; eurUsd?: number }>
 }> {
   const gestern = datumPlus(heute, -1)
   const monatsStart = `${heute.slice(0, 7)}-01`
   const von = [monatsStart, datumPlus(heute, -8), ...(abDatum ? [abDatum] : [])].sort()[0]
   const rows = await alleZeilen<Record<string, unknown>>(
-    async (a, b) => await sb.from('ad_insights_daily').select('day, spend, spend_eur').eq('platform', 'meta')
+    async (a, b) => await sb.from('ad_insights_daily').select('day, spend, spend_eur, currency').eq('platform', 'meta')
       .gte('day', von).lte('day', gestern).order('day').order('ad_id').range(a, b),
     'ad_insights_daily (Konto)', 10000)
-  const tage = new Map<string, { usd: number; eur: number }>()
+  // eur = alle Konten (EUR); usd/eurUsd nur USD-Konten (für den Kurs, EUR-Konten würden ihn verfälschen)
+  const tage = new Map<string, { usd: number; eur: number; eurUsd?: number }>()
   for (const r of rows) {
     const d = String(r.day ?? '').slice(0, 10)
-    const t = tage.get(d) ?? { usd: 0, eur: 0 }
-    t.usd += toNum(r.spend) ?? 0
-    t.eur += toNum(r.spend_eur) ?? 0
+    const t = tage.get(d) ?? { usd: 0, eur: 0, eurUsd: 0 }
+    const eur = toNum(r.spend_eur) ?? 0
+    t.eur += eur
+    if (String(r.currency ?? 'USD').toUpperCase() === 'USD') {
+      t.usd += toNum(r.spend) ?? 0
+      t.eurUsd = (t.eurUsd ?? 0) + eur
+    }
     tage.set(d, t)
   }
   return { ...kontoAusTagen(tage, heute), tage }
 }
 
 /** Konto-Kennzahlen + Kurs für einen Lauftag aus vorab aggregierten Tageswerten (auch Replay). */
-export function kontoAusTagen(tage: Map<string, { usd: number; eur: number }>, heute: string): {
+export function kontoAusTagen(tage: Map<string, { usd: number; eur: number; eurUsd?: number }>, heute: string): {
   konto: NonNullable<RegelKontext['konto']>; fx: RegelKontext['fx']
 } {
   const gestern = datumPlus(heute, -1)
   const monatsStart = `${heute.slice(0, 7)}-01`
   const w7 = datumPlus(gestern, -6)
   let gEur = 0, wEur = 0, mEur = 0, wUsd = 0, wEurK = 0
-  let letzter: { usd: number; eur: number } | null = null
+  let letzter: { usd: number; eur: number; eurUsd?: number } | null = null
   let letzterTag = ''
   for (const [d, t] of tage) {
     if (d > gestern) continue
     if (d === gestern) gEur += t.eur
+    // Kurs nur aus USD-Zeilen (eurUsd); alte Tageswerte ohne eurUsd = alles USD
+    const eurK = t.eurUsd ?? t.eur
     if (d >= w7) {
       wEur += t.eur
-      if (t.usd > 0 && t.eur > 0) { wUsd += t.usd; wEurK += t.eur }
+      if (t.usd > 0 && eurK > 0) { wUsd += t.usd; wEurK += eurK }
     }
     if (d >= monatsStart) mEur += t.eur
-    if (d >= w7 && t.usd > 0 && t.eur > 0 && d > letzterTag) { letzterTag = d; letzter = t }
+    if (d >= w7 && t.usd > 0 && eurK > 0 && d > letzterTag) { letzterTag = d; letzter = t }
   }
   const plausibel = (k: number) => (Number.isFinite(k) && k >= 0.9 && k <= 1.6 ? k : null)
   const mittel = wEurK > 1 ? plausibel(wUsd / wEurK) : null
-  const aktuell = letzter && letzter.eur > 0.5 ? plausibel(letzter.usd / letzter.eur) : null
+  const letzterEur = letzter ? (letzter.eurUsd ?? letzter.eur) : 0
+  const aktuell = letzter && letzterEur > 0.5 ? plausibel(letzter.usd / letzterEur) : null
   return {
     konto: {
       spend_gestern_eur: Math.round(gEur * 100) / 100,

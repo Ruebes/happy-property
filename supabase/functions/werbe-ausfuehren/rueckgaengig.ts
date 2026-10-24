@@ -26,7 +26,7 @@
 //   Symmetrie-Prüfung des Ausführers und kein Paar bleibt mit ungleichen Budgets zurück.
 
 import type { Caller } from '../_shared/callerAuth.ts'
-import { graphGet, metaEnv, metaWritesDisabled, MetaApiError } from '../_shared/metaGraph.ts'
+import { graphGet, istEigenesKonto, metaWritesDisabled, MetaApiError } from '../_shared/metaGraph.ts'
 import { ausfuehren, preStateHash, type AusfuehrenErgebnis } from '../_shared/werbeAusfuehren.ts'
 import { akteurVon, darfSchreiben, digits, errMsg, fehler, json, nutzerClient, stoppMail, type Sb } from './gemeinsam.ts'
 
@@ -131,7 +131,7 @@ async function livePruefen(p: Plan, gegen: string, vor: string): Promise<Respons
     const me = err instanceof MetaApiError ? err : null
     return fehler(502, `${vor}Zustand bei Meta lesen: ${me?.userMsg ?? errMsg(err)}`, { meta: me?.detail() ?? null })
   }
-  if (digits(live.account_id) !== metaEnv().account) return fehler(403, `${vor}Objekt gehört nicht zu unserem Werbekonto`)
+  if (!istEigenesKonto(digits(live.account_id))) return fehler(403, `${vor}Objekt gehört nicht zu unserem Werbekonto`)
   if (p.erwartetJetzt.status && String(live.status ?? '') !== p.erwartetJetzt.status) {
     return fehler(409, `${vor}Zustand bei Meta hat sich seitdem geändert (jetzt ${String(live.status ?? '?')}), Rücknahme abgebrochen`)
   }

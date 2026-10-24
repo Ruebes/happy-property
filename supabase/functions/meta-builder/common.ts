@@ -4,8 +4,8 @@
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import type { AdsCaller } from '../_shared/adsAuth.ts'
 import {
-  getLastUsage, graphPost, logMetaWrite, MetaApiError, metaEnv, metaErrorLogFelder, metaWritesDisabled,
-  type BudgetHeadroom, type MetaEnv, type MetaUsage,
+  assertOwnAccount, getLastUsage, graphPost, istEigenesKonto, logMetaWrite, MetaApiError, metaEnv, metaErrorLogFelder,
+  metaWritesDisabled, type BudgetHeadroom, type MetaEnv, type MetaUsage,
 } from '../_shared/metaGraph.ts'
 import {
   apiPathToFieldKey, HP_DEFAULT_LINK, HP_PAGE_ID, HP_PIXEL_ID,
@@ -179,9 +179,53 @@ export interface SettingsRow extends BuilderSettings {
 export interface Ctx {
   sb: SupabaseClient
   caller: AdsCaller
+  /**
+   * env.account = Konto dieses Aufrufs: Anlagekonto für neue Kampagnen; sobald ein
+   * vorhandenes Objekt bzw. ein Entwurf mit Ziel-Kampagne geladen ist, dessen Konto
+   * (kontoUebernehmen). Pfade act_X/..., Medien und Geldbeträge folgen diesem Konto.
+   */
   env: MetaEnv
   mode: BuilderMode
   settings(): Promise<SettingsRow>
+}
+
+/**
+ * Prüft, dass ein Objekt zu einem unserer Werbekonten gehört, und übernimmt dessen Konto
+ * für den Rest des Aufrufs (ctx.env.account). Gibt das Konto zurück.
+ */
+export function kontoUebernehmen(ctx: Ctx, accountId: unknown, label = 'Das Objekt'): string {
+  const acc = String(accountId ?? '').replace(/[^0-9]/g, '')
+  if (!istEigenesKonto(acc)) throw new BuilderError(403, 'forbidden', `${label} gehört nicht zu unserem Werbekonto.`)
+  ctx.env.account = acc
+  return acc
+}
+
+/**
+ * Konto eines Entwurfs: Ziel-Kampagne (vorhanden oder schon angelegt) bzw. das bearbeitete
+ * Objekt; ohne solches das Anlagekonto. Setzt ctx.env.account.
+ */
+export async function entwurfKontoSetzen(ctx: Ctx, row: DraftRow): Promise<string> {
+  const ids = row.meta_ids ?? {}
+  const spec = obj(row.spec)
+  const ziel = str(obj(spec.campaign).existing_id) || str(row.target_campaign_id) || str(ids.campaign) || str(ids.edit?.id)
+  if (!ziel) return ctx.env.account
+  let acc: string
+  try {
+    acc = await assertOwnAccount(ziel)
+  } catch (err) {
+    if (err instanceof MetaApiError && err.kind === 'permission' && err.status === 403) {
+      throw new BuilderError(403, 'forbidden', 'Die Ziel-Kampagne gehört nicht zu unserem Werbekonto.')
+    }
+    // Meta gerade nicht erreichbar/gedrosselt: nicht raten (falsche Währung in der Leitplanke)
+    if (!(err instanceof MetaApiError) || err.kind !== 'validation') {
+      throw new BuilderError(503, 'meta_error', 'Das Werbekonto der Ziel-Kampagne ist gerade nicht lesbar. Bitte gleich noch einmal versuchen.')
+    }
+    // Objekt gibt es bei Meta nicht mehr: Anlagekonto behalten, damit Verwerfen und Lesen gehen;
+    // ein Schreibversuch scheitert bei Meta selbst (Objekt nicht im Konto).
+    console.warn(`[${FN}] Konto der Ziel-Kampagne ${ziel} nicht lesbar, nutze ${ctx.env.account}:`, errText(err).slice(0, 160))
+    return ctx.env.account
+  }
+  return kontoUebernehmen(ctx, acc, 'Die Ziel-Kampagne')
 }
 
 export function makeCtx(sb: SupabaseClient, caller: AdsCaller, mode: BuilderMode): Ctx {
@@ -323,7 +367,7 @@ export function usageInfo(u: MetaUsage | null, verbose = false): MetaUsageInfo {
 }
 
 export function guardrailInfo(h: BudgetHeadroom): GuardrailInfo {
-  return { limitEur: h.limitEur, activeEur: h.activeEur, afterEur: h.afterEur, rateEurPerUsd: h.rateEurPerUsd, ok: h.ok }
+  return { limitEur: h.limitEur, activeEur: h.activeEur, afterEur: h.afterEur, rateEurPerUsd: h.rateEurPerUsd, ok: h.ok, currency: h.currency }
 }
 
 // ── Entwürfe ─────────────────────────────────────────────────────────────────
@@ -339,6 +383,8 @@ export async function loadDraft(ctx: Ctx, idParam: unknown): Promise<DraftRow> {
   if (!data) throw new BuilderError(404, 'not_found', 'Entwurf nicht gefunden.')
   const row = data as DraftRow
   row.meta_ids = (row.meta_ids && typeof row.meta_ids === 'object') ? row.meta_ids : {}
+  // Konto folgt dem Entwurf (Ziel-Kampagne bzw. bearbeitetes Objekt)
+  await entwurfKontoSetzen(ctx, row)
   return row
 }
 

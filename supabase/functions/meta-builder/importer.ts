@@ -19,7 +19,7 @@ import {
   type MediaRef, type Objective, type ObjectStatus, type OptGoal, type Placements, type PromotedObject,
   type PublisherCategory, type PublisherPlatform, type SpecialCat, type TargetingSpec,
 } from '../_shared/metaSpec.ts'
-import { arr, BuilderError, clone, digits, metaId, num, obj, str, type Ctx, type Raw } from './common.ts'
+import { arr, BuilderError, clone, kontoUebernehmen, metaId, num, obj, str, type Ctx, type Raw } from './common.ts'
 
 const CAMPAIGN_FIELDS =
   'id,account_id,name,objective,buying_type,special_ad_categories,special_ad_category_country,daily_budget,' +
@@ -68,11 +68,10 @@ function statusFelder(v: unknown): { status?: EditableStatus; meta_status?: Obje
   return out
 }
 
+/** Objekt lesen, eigenes Konto prüfen und dessen Konto für den Aufruf übernehmen (kontoUebernehmen). */
 async function getOwn(ctx: Ctx, id: string, fields: string, label: string): Promise<Raw> {
   const j = await graphGet<Raw>(id, { fields })
-  if (digits(j.account_id) !== ctx.env.account) {
-    throw new BuilderError(403, 'forbidden', `${label} gehört nicht zu unserem Werbekonto.`)
-  }
+  kontoUebernehmen(ctx, j.account_id, label)
   return j
 }
 

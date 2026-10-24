@@ -12,6 +12,11 @@
 //                                  werbe-autopilot {aktion:'nacht'} anstoßen
 //
 // Schritte (Stand Oktober 2026, Graph-Version aus _shared/metaGraph.ts, Standard v25.0):
+//   Schritte 1, 1a, 1c laufen je eigenem Werbekonto (metaKonten(): Secret META_AD_ACCOUNT_IDS,
+//   Standard beide Konten). Währung je Konto per Graph (act_X?fields=currency): USD-Konten
+//   rechnen spend_eur mit dem Tageskurs um, EUR-Konten übernehmen spend als spend_eur.
+//   Ein Fehler in einem Konto bricht die anderen nicht ab (summary.konten, konten_fehler);
+//   nur wenn kein Konto gelesen werden kann, scheitert der Sync.
 //   1  Insights je Anzeige und Tag -> ad_insights_daily (Pflicht). Seit 10/2026 auch
 //      outbound_clicks, landing_page_views (actions), video_3s_true (actions video_view
 //      = echte 3-Sek.-Aufrufe), thruplays, platform_schedules, campaign_id, adset_id.
@@ -36,7 +41,8 @@
 //
 // ── Secrets (Supabase Dashboard → Settings → Edge Functions → Secrets) ──
 //   META_ACCESS_TOKEN   = System-User-Token „Analytics Sync" (ads_read + ads_management, Ablauf: nie)
-//   META_AD_ACCOUNT_ID  = 4065490590399677 (Sveru Marketing LLC, USD)
+//   META_AD_ACCOUNT_ID  = 4065490590399677 (Sveru Marketing LLC, USD; altes Einzelkonto)
+//   META_AD_ACCOUNT_IDS = optional, Liste aller Konten (Komma); Standard 4065490590399677,576349958305345
 //   META_PIXEL_ID       = 1083578343946189 (Sveru Marketing LLC's Pixel, das aktive)
 //   META_GRAPH_VERSION  = optional (Form vNN.0), sonst v25.0
 //   META_WRITES_DISABLED = 1 sperrt CAPI und Aktionen (Lesen läuft weiter)
@@ -47,8 +53,8 @@
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { requireAdsAccess, AdsAuthError } from '../_shared/adsAuth.ts'
 import {
-  GRAPH_VERSION, graphAll, getLastUsage, logMetaWrite, metaEnv, metaErrorLogFelder, MetaApiError,
-  type GraphParams,
+  GRAPH_VERSION, graphAll, getLastUsage, kontoInfo, kontoJeEur, logMetaWrite, metaEnv, metaErrorLogFelder,
+  metaKonten, MetaApiError, type GraphParams,
 } from '../_shared/metaGraph.ts'
 import {
   buildCapiEvent, CAPI_LEAD_FIELDS, CAPI_LEAD_FIELDS_ALT, CAPI_MAX_EVENTS_JE_POST, istMetaLead,
@@ -345,6 +351,11 @@ interface SnapshotEingabe {
   kampagnen: Row[]
   adsets: Row[]
   ads: Row[]
+  /**
+   * Einheiten der Kontowährung je EUR (Spalte usd_per_eur): USD-Konto = USD je EUR,
+   * EUR-Konto = 1. Spalten *_usd und *_cents stehen in der Kontowährung; geteilt durch
+   * usd_per_eur ergibt sich in beiden Fällen EUR.
+   */
   usdPerEur: number
   snapDate: string
   jetzt: string
@@ -652,6 +663,187 @@ async function capiRueckspielen(sb: Sb, summary: Summary): Promise<void> {
   console.log(`[${FN}] CAPI: ${events.length - verworfen.size} Events gesendet (${[...new Set(benutzt.map(c => c.event_name))].join(', ')}), ${keinMeta} ohne Meta-Herkunft übersprungen`)
 }
 
+// ── Schritt 1 je Werbekonto ──────────────────────────────────────────────────
+
+interface KontoLauf {
+  since: string
+  until: string
+  /** USD je EUR (Tageskurs) für USD-Konten */
+  usdPerEur: number
+  jetzt: string
+}
+
+/**
+ * Insights, Katalog, Spiegel und Tagesstand EINES Werbekontos. Schreibt die Kennzahlen in
+ * summary (je Konto ein eigenes Objekt). Wirft bei Pflichtdaten-Fehlern; der Aufrufer fängt
+ * das je Konto ab, damit ein Konto die anderen nicht mitreißt.
+ */
+async function kontoSyncen(supabase: Sb, account: string, lauf: KontoLauf, summary: Summary): Promise<void> {
+  const { since, until, jetzt } = lauf
+  // Währung je Konto (USD-Konto: Tageskurs, EUR-Konto: 1:1)
+  const { currency, name } = await kontoInfo(account)
+  const jeEur = kontoJeEur(currency, lauf.usdPerEur)
+  summary.account = account
+  summary.currency = currency
+  if (name) summary.name = name
+
+  const ins = await listeMitRueckfall<InsightRow>(`act_${account}/insights`, {
+    level: 'ad', time_increment: 1, time_range: { since, until }, limit: 500,
+  }, INSIGHT_FELDER, INSIGHT_FELDER_ALT)
+  const rows = ins.rows
+
+  // Ad-Stammdaten (Status, Prüfhinweise, Creative fürs Thumbnail): eine Abfrage fürs ganze Konto
+  const adsRes = await listeMitRueckfall<Row>(`act_${account}/ads`, { limit: 200 }, AD_FELDER, AD_FELDER_ALT)
+  const adMeta = new Map(adsRes.rows.map(a => [String(a.id), a]))
+
+  // Kampagnen/Anzeigengruppen: Namen fürs Katalog-Upsert (auch für Ads ohne Insights)
+  // und volle Felder für Spiegel + Tagesstand
+  const campRes = await listeMitRueckfall<Row>(`act_${account}/campaigns`, { limit: 100 }, KAMPAGNE_FELDER, KAMPAGNE_FELDER_ALT)
+  const adsetRes = await listeMitRueckfall<Row>(`act_${account}/adsets`, { limit: 100 }, ADSET_FELDER, ADSET_FELDER_ALT)
+  const campaignNames = new Map(campRes.rows.map(c => [String(c.id), String(c.name ?? '')]))
+  const adsetNames = new Map(adsetRes.rows.map(a => [String(a.id), String(a.name ?? '')]))
+
+  // Insights-Upsert
+  const insightRows: Row[] = rows
+    .filter(r => r.ad_id && r.date_start && (num(r.spend) > 0 || num(r.impressions) > 0))
+    .map(r => {
+      const spend = num(r.spend)
+      return {
+        day: r.date_start,
+        ad_id: r.ad_id,
+        platform: 'meta',
+        spend,
+        currency,
+        // EUR-Konto: spend ist schon EUR (jeEur = 1); USD-Konto: mit dem Tageskurs umgerechnet
+        spend_eur: currency === 'EUR' ? Math.round(spend * 100) / 100 : Math.round((spend / jeEur) * 100) / 100,
+        impressions: int(r.impressions),
+        reach: int(r.reach),
+        frequency: num(r.frequency),
+        link_clicks: Math.trunc(num(r.inline_link_clicks) || actionValue(r.actions, 'link_click')),
+        // Klicks, die zur Zielseite führen sollten, gegen tatsächlich geladene
+        // Seiten. Die Differenz sind Leute, die unterwegs abgesprungen sind,
+        // meistens wegen zu langer Ladezeit.
+        outbound_clicks: Math.trunc(actionValue(r.outbound_clicks, 'outbound_click')),
+        landing_page_views: Math.trunc(actionValue(r.actions, 'landing_page_view')),
+        platform_leads: Math.trunc(actionValue(r.actions, 'lead')),
+        // Bedeutung unverändert (2-Sekunden-Dauerwiedergabe); echte 3-Sek.-Aufrufe in video_3s_true
+        video_3s: Math.trunc(num(r.video_continuous_2_sec_watched_actions?.[0]?.value)),
+        synced_at: jetzt,
+        // ab Migration 20261003100000
+        campaign_id: r.campaign_id ?? null,
+        adset_id: r.adset_id ?? null,
+        video_3s_true: Math.trunc(actionValue(r.actions, 'video_view')),
+        thruplays: Math.trunc(aktionOderErste(r.video_thruplay_watched_actions, 'video_view')),
+        platform_schedules: Math.trunc(ersteAktion(r.actions, SCHEDULE_TYPEN)),
+      }
+    })
+  const insUp = await upsertMitRueckfall(supabase, 'ad_insights_daily', insightRows, 'day,ad_id',
+    ['campaign_id', 'adset_id', 'video_3s_true', 'thruplays', 'platform_schedules'])
+  if (insUp.ohneNeue) summary.insights_ohne_neue_spalten = true
+  if (!ins.voll) summary.insights_ohne_thruplays = true
+
+  // Katalog-Upsert (Namen aus Insights, Status + Thumbnail aus /ads).
+  // Zwei Gruppen mit je einheitlichem Spaltensatz: Ads mit Stammdaten bekommen die
+  // neuen Spalten, Ads nur aus den Insights (z. B. archiviert) wie bisher.
+  const NEUE_KATALOG_SPALTEN = ['effective_status', 'configured_status', 'issues_info', 'review_feedback', 'url_tags', 'created_time', 'updated_time'] as const
+  const neueKatalogFelder = (m: Row): Row => {
+    const creative = obj(m.creative)
+    return {
+      effective_status: str(m.effective_status),
+      configured_status: str(m.configured_status),
+      issues_info: m.issues_info ?? null,
+      review_feedback: m.ad_review_feedback ?? null,
+      url_tags: str(creative?.url_tags),
+      created_time: isoZeit(m.created_time),
+      updated_time: isoZeit(m.updated_time),
+    }
+  }
+  const seen = new Set<string>()
+  const mitStamm: Row[] = []
+  const ohneStamm: Row[] = []
+  for (const r of rows) {
+    if (!r.ad_id || seen.has(r.ad_id)) continue
+    seen.add(r.ad_id)
+    const meta = adMeta.get(r.ad_id)
+    const creative = obj(meta?.creative)
+    const zeile: Row = {
+      ad_id: r.ad_id,
+      platform: 'meta',
+      account_id: account,
+      campaign_id: r.campaign_id ?? '',
+      campaign_name: r.campaign_name ?? null,
+      adset_id: r.adset_id ?? null,
+      adset_name: r.adset_name ?? null,
+      ad_name: r.ad_name ?? str(meta?.name),
+      status: str(meta?.status),
+      creative_id: str(creative?.id),
+      thumbnail_url: str(creative?.thumbnail_url),
+      updated_at: jetzt,
+    }
+    if (meta && adsRes.voll) mitStamm.push({ ...zeile, ...neueKatalogFelder(meta) })
+    else ohneStamm.push(zeile)
+  }
+  // Ads OHNE frische Insights (z. B. neu angelegte, pausierte) trotzdem in den
+  // Katalog aufnehmen/aktualisieren, sonst fehlen sie im Werbemanager und
+  // haben keinen Aktivieren-Button. Thumbnails immer auffrischen (CDN läuft ab).
+  for (const [adId, meta] of adMeta) {
+    if (seen.has(adId)) continue
+    seen.add(adId)
+    const creative = obj(meta.creative)
+    const zeile: Row = {
+      ad_id: adId,
+      platform: 'meta',
+      account_id: account,
+      campaign_id: String(meta.campaign_id ?? ''),
+      campaign_name: campaignNames.get(String(meta.campaign_id ?? '')) ?? null,
+      adset_id: str(meta.adset_id),
+      adset_name: adsetNames.get(String(meta.adset_id ?? '')) ?? null,
+      ad_name: str(meta.name),
+      status: str(meta.status),
+      creative_id: str(creative?.id),
+      thumbnail_url: str(creative?.thumbnail_url),
+      updated_at: jetzt,
+    }
+    if (adsRes.voll) mitStamm.push({ ...zeile, ...neueKatalogFelder(meta) })
+    else ohneStamm.push(zeile)
+  }
+  const katUp = await upsertMitRueckfall(supabase, 'ad_catalog', mitStamm, 'ad_id', NEUE_KATALOG_SPALTEN)
+  if (katUp.ohneNeue) summary.catalog_ohne_neue_spalten = true
+  await upsertMitRueckfall(supabase, 'ad_catalog', ohneStamm, 'ad_id', [])
+
+  summary.insight_rows = insightRows.length
+  summary.catalog_rows = mitStamm.length + ohneStamm.length
+  console.log(`[${FN}] act_${account} (${currency}): ${insightRows.length} Insight-Zeilen (${since} bis ${until}), ${mitStamm.length + ohneStamm.length} Katalog-Zeilen`)
+
+  // ── 1a. Spiegel meta_campaigns / meta_adsets (optional) ───────────────
+  if (campRes.voll && campRes.rows.length) {
+    const f = await upsertOptional(supabase, 'meta_campaigns', campRes.rows.map(c => kampagnenZeile(c, account, jetzt)), 'campaign_id')
+    if (f) summary.mirror_campaigns_error = f
+    else summary.mirror_campaigns = campRes.rows.length
+  }
+  if (adsetRes.voll && adsetRes.rows.length) {
+    const f = await upsertOptional(supabase, 'meta_adsets', adsetRes.rows.map(a => adsetZeile(a, account, jetzt)), 'adset_id')
+    if (f) summary.mirror_adsets_error = f
+    else summary.mirror_adsets = adsetRes.rows.length
+  }
+
+  // ── 1c. Tagesstand ad_entity_snapshot (optional, nur lesend bei Meta) ──
+  if (campRes.voll && adsetRes.voll && adsRes.voll) {
+    try {
+      await snapshotSchreiben(supabase, account, {
+        kampagnen: campRes.rows, adsets: adsetRes.rows, ads: adsRes.rows,
+        usdPerEur: jeEur, snapDate: berlinTag().datum, jetzt,
+      }, summary)
+    } catch (err) {
+      const msg = errMsg(err).slice(0, 300)
+      console.warn(`[${FN}] Tagesstand nicht geschrieben:`, msg)
+      summary.snapshot_error = msg
+    }
+  } else {
+    summary.snapshot_error = 'Stammdaten nur mit Rückfall-Feldern gelesen, Tagesstand ausgelassen'
+  }
+}
+
 // ── Ledger ad_autopilot_runs (schritt 'sync') ────────────────────────────────
 
 async function ledgerStart(sb: Sb, datum: string): Promise<boolean> {
@@ -739,12 +931,14 @@ Deno.serve(async (req) => {
 
   let ledger: { sb: Sb; datum: string } | null = null
   const summary: Summary = {}
+  /** Fehlertext, wenn mindestens ein (nicht jedes) Werbekonto nicht gelesen werden konnte */
+  let teilAusfall: string | null = null
   try {
     // Rechte-Guard: läuft mit --no-verify-jwt. pg_cron ruft mit dem
     // Service-Role-Key (gilt als System-Aufruf), Menschen brauchen 'werbung'.
     const caller = await requireAdsAccess(req)
 
-    const { token, account } = metaEnv()
+    const { token } = metaEnv()
     if (!token) throw new Error('META_ACCESS_TOKEN fehlt (Supabase Secrets)')
 
     const body = await req.json().catch(() => ({})) as { days?: number; mode?: string; kette?: boolean }
@@ -766,169 +960,56 @@ Deno.serve(async (req) => {
       if (await ledgerStart(supabase, datum)) ledger = { sb: supabase, datum }
     }
 
-    // ── 1. Insights der letzten N Tage (tagesgenau je Ad) + Katalog ─────────
+    // ── 1. Insights der letzten N Tage (tagesgenau je Ad) + Katalog, je Konto ──
     if (!actionsOnly) {
-      const until = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10)   // gestern
-      const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
-      const usdPerEur = await usdJeEur()
-      const jetzt = new Date().toISOString()
-
-      const ins = await listeMitRueckfall<InsightRow>(`act_${account}/insights`, {
-        level: 'ad', time_increment: 1, time_range: { since, until }, limit: 500,
-      }, INSIGHT_FELDER, INSIGHT_FELDER_ALT)
-      const rows = ins.rows
-
-      // Ad-Stammdaten (Status, Prüfhinweise, Creative fürs Thumbnail): eine Abfrage fürs ganze Konto
-      const adsRes = await listeMitRueckfall<Row>(`act_${account}/ads`, { limit: 200 }, AD_FELDER, AD_FELDER_ALT)
-      const adMeta = new Map(adsRes.rows.map(a => [String(a.id), a]))
-
-      // Kampagnen/Anzeigengruppen: Namen fürs Katalog-Upsert (auch für Ads ohne Insights)
-      // und volle Felder für Spiegel + Tagesstand
-      const campRes = await listeMitRueckfall<Row>(`act_${account}/campaigns`, { limit: 100 }, KAMPAGNE_FELDER, KAMPAGNE_FELDER_ALT)
-      const adsetRes = await listeMitRueckfall<Row>(`act_${account}/adsets`, { limit: 100 }, ADSET_FELDER, ADSET_FELDER_ALT)
-      const campaignNames = new Map(campRes.rows.map(c => [String(c.id), String(c.name ?? '')]))
-      const adsetNames = new Map(adsetRes.rows.map(a => [String(a.id), String(a.name ?? '')]))
-
-      // Insights-Upsert
-      const insightRows: Row[] = rows
-        .filter(r => r.ad_id && r.date_start && (num(r.spend) > 0 || num(r.impressions) > 0))
-        .map(r => {
-          const spend = num(r.spend)
-          return {
-            day: r.date_start,
-            ad_id: r.ad_id,
-            platform: 'meta',
-            spend,
-            currency: 'USD',
-            spend_eur: Math.round((spend / usdPerEur) * 100) / 100,
-            impressions: int(r.impressions),
-            reach: int(r.reach),
-            frequency: num(r.frequency),
-            link_clicks: Math.trunc(num(r.inline_link_clicks) || actionValue(r.actions, 'link_click')),
-            // Klicks, die zur Zielseite führen sollten, gegen tatsächlich geladene
-            // Seiten. Die Differenz sind Leute, die unterwegs abgesprungen sind,
-            // meistens wegen zu langer Ladezeit.
-            outbound_clicks: Math.trunc(actionValue(r.outbound_clicks, 'outbound_click')),
-            landing_page_views: Math.trunc(actionValue(r.actions, 'landing_page_view')),
-            platform_leads: Math.trunc(actionValue(r.actions, 'lead')),
-            // Bedeutung unverändert (2-Sekunden-Dauerwiedergabe); echte 3-Sek.-Aufrufe in video_3s_true
-            video_3s: Math.trunc(num(r.video_continuous_2_sec_watched_actions?.[0]?.value)),
-            synced_at: jetzt,
-            // ab Migration 20261003100000
-            campaign_id: r.campaign_id ?? null,
-            adset_id: r.adset_id ?? null,
-            video_3s_true: Math.trunc(actionValue(r.actions, 'video_view')),
-            thruplays: Math.trunc(aktionOderErste(r.video_thruplay_watched_actions, 'video_view')),
-            platform_schedules: Math.trunc(ersteAktion(r.actions, SCHEDULE_TYPEN)),
-          }
-        })
-      const insUp = await upsertMitRueckfall(supabase, 'ad_insights_daily', insightRows, 'day,ad_id',
-        ['campaign_id', 'adset_id', 'video_3s_true', 'thruplays', 'platform_schedules'])
-      if (insUp.ohneNeue) summary.insights_ohne_neue_spalten = true
-      if (!ins.voll) summary.insights_ohne_thruplays = true
-
-      // Katalog-Upsert (Namen aus Insights, Status + Thumbnail aus /ads).
-      // Zwei Gruppen mit je einheitlichem Spaltensatz: Ads mit Stammdaten bekommen die
-      // neuen Spalten, Ads nur aus den Insights (z. B. archiviert) wie bisher.
-      const NEUE_KATALOG_SPALTEN = ['effective_status', 'configured_status', 'issues_info', 'review_feedback', 'url_tags', 'created_time', 'updated_time'] as const
-      const neueKatalogFelder = (m: Row): Row => {
-        const creative = obj(m.creative)
-        return {
-          effective_status: str(m.effective_status),
-          configured_status: str(m.configured_status),
-          issues_info: m.issues_info ?? null,
-          review_feedback: m.ad_review_feedback ?? null,
-          url_tags: str(creative?.url_tags),
-          created_time: isoZeit(m.created_time),
-          updated_time: isoZeit(m.updated_time),
-        }
+      const lauf: KontoLauf = {
+        until: new Date(Date.now() - 86_400_000).toISOString().slice(0, 10),   // gestern
+        since: new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10),
+        usdPerEur: await usdJeEur(),
+        jetzt: new Date().toISOString(),
       }
-      const seen = new Set<string>()
-      const mitStamm: Row[] = []
-      const ohneStamm: Row[] = []
-      for (const r of rows) {
-        if (!r.ad_id || seen.has(r.ad_id)) continue
-        seen.add(r.ad_id)
-        const meta = adMeta.get(r.ad_id)
-        const creative = obj(meta?.creative)
-        const zeile: Row = {
-          ad_id: r.ad_id,
-          platform: 'meta',
-          account_id: account,
-          campaign_id: r.campaign_id ?? '',
-          campaign_name: r.campaign_name ?? null,
-          adset_id: r.adset_id ?? null,
-          adset_name: r.adset_name ?? null,
-          ad_name: r.ad_name ?? str(meta?.name),
-          status: str(meta?.status),
-          creative_id: str(creative?.id),
-          thumbnail_url: str(creative?.thumbnail_url),
-          updated_at: jetzt,
-        }
-        if (meta && adsRes.voll) mitStamm.push({ ...zeile, ...neueKatalogFelder(meta) })
-        else ohneStamm.push(zeile)
-      }
-      // Ads OHNE frische Insights (z. B. neu angelegte, pausierte) trotzdem in den
-      // Katalog aufnehmen/aktualisieren, sonst fehlen sie im Werbemanager und
-      // haben keinen Aktivieren-Button. Thumbnails immer auffrischen (CDN läuft ab).
-      for (const [adId, meta] of adMeta) {
-        if (seen.has(adId)) continue
-        seen.add(adId)
-        const creative = obj(meta.creative)
-        const zeile: Row = {
-          ad_id: adId,
-          platform: 'meta',
-          account_id: account,
-          campaign_id: String(meta.campaign_id ?? ''),
-          campaign_name: campaignNames.get(String(meta.campaign_id ?? '')) ?? null,
-          adset_id: str(meta.adset_id),
-          adset_name: adsetNames.get(String(meta.adset_id ?? '')) ?? null,
-          ad_name: str(meta.name),
-          status: str(meta.status),
-          creative_id: str(creative?.id),
-          thumbnail_url: str(creative?.thumbnail_url),
-          updated_at: jetzt,
-        }
-        if (adsRes.voll) mitStamm.push({ ...zeile, ...neueKatalogFelder(meta) })
-        else ohneStamm.push(zeile)
-      }
-      const katUp = await upsertMitRueckfall(supabase, 'ad_catalog', mitStamm, 'ad_id', NEUE_KATALOG_SPALTEN)
-      if (katUp.ohneNeue) summary.catalog_ohne_neue_spalten = true
-      await upsertMitRueckfall(supabase, 'ad_catalog', ohneStamm, 'ad_id', [])
-
-      summary.insight_rows = insightRows.length
-      summary.catalog_rows = mitStamm.length + ohneStamm.length
-      summary.since = since
-      summary.until = until
-      console.log(`[${FN}] ${insightRows.length} Insight-Zeilen (${since} bis ${until}), ${mitStamm.length + ohneStamm.length} Katalog-Zeilen`)
-
-      // ── 1a. Spiegel meta_campaigns / meta_adsets (optional) ───────────────
-      if (campRes.voll && campRes.rows.length) {
-        const f = await upsertOptional(supabase, 'meta_campaigns', campRes.rows.map(c => kampagnenZeile(c, account, jetzt)), 'campaign_id')
-        if (f) summary.mirror_campaigns_error = f
-        else summary.mirror_campaigns = campRes.rows.length
-      }
-      if (adsetRes.voll && adsetRes.rows.length) {
-        const f = await upsertOptional(supabase, 'meta_adsets', adsetRes.rows.map(a => adsetZeile(a, account, jetzt)), 'adset_id')
-        if (f) summary.mirror_adsets_error = f
-        else summary.mirror_adsets = adsetRes.rows.length
-      }
-
-      // ── 1c. Tagesstand ad_entity_snapshot (optional, nur lesend bei Meta) ──
-      if (campRes.voll && adsetRes.voll && adsRes.voll) {
+      summary.since = lauf.since
+      summary.until = lauf.until
+      const konten: Summary[] = []
+      const kontenFehler: Array<{ account: string; error: string }> = []
+      for (const account of metaKonten()) {
+        const ks: Summary = { account }
+        konten.push(ks)
         try {
-          await snapshotSchreiben(supabase, account, {
-            kampagnen: campRes.rows, adsets: adsetRes.rows, ads: adsRes.rows,
-            usdPerEur, snapDate: berlinTag().datum, jetzt,
-          }, summary)
+          await kontoSyncen(supabase, account, lauf, ks)
         } catch (err) {
+          // Ein Konto darf die anderen nicht abbrechen (z. B. fehlende Rechte im zweiten Konto)
           const msg = errMsg(err).slice(0, 300)
-          console.warn(`[${FN}] Tagesstand nicht geschrieben:`, msg)
-          summary.snapshot_error = msg
+          console.error(`[${FN}] act_${account}:`, msg)
+          ks.error = msg
+          if (err instanceof MetaApiError) ks.meta = err.detail()
+          kontenFehler.push({ account, error: msg })
         }
-      } else {
-        summary.snapshot_error = 'Stammdaten nur mit Rückfall-Feldern gelesen, Tagesstand ausgelassen'
       }
+      summary.konten = konten
+      // Schlüssel wie in der Ein-Konto-Zeit auch oben (Zahlen summiert, sonst Anlagekonto zuerst)
+      const NUR_JE_KONTO = new Set(['account', 'currency', 'name', 'error', 'meta'])
+      for (const k of konten) {
+        for (const [key, wert] of Object.entries(k)) {
+          if (NUR_JE_KONTO.has(key)) continue
+          if (typeof wert === 'number') summary[key] = (Number(summary[key]) || 0) + wert
+          else if (summary[key] === undefined) summary[key] = wert
+        }
+      }
+      summary.insight_rows = konten.reduce((n, k) => n + (Number(k.insight_rows) || 0), 0)
+      summary.catalog_rows = konten.reduce((n, k) => n + (Number(k.catalog_rows) || 0), 0)
+      if (kontenFehler.length) {
+        summary.konten_fehler = kontenFehler
+        // strukturierte Meta-Fehler für den Autopilot (kontext.ts ladeSyncLedger liest meta_fehler)
+        summary.meta_fehler = konten.filter(k => k.meta).map(k => ({ ...(k.meta as Record<string, unknown>), account: k.account }))
+      }
+      if (kontenFehler.length === konten.length) {
+        throw new Error(`Kein Werbekonto lesbar: ${kontenFehler.map(f => `act_${f.account}: ${f.error}`).join(' | ').slice(0, 400)}`)
+      }
+      // Teil-Ausfall: Daten der lesbaren Konten sind geschrieben, der Tageslauf gilt aber als
+      // nicht vollständig (Ledger 'fehler', keine Nachtkette). Sonst rechnete der Autopilot mit
+      // veralteten Zahlen des ausgefallenen Kontos weiter. werbe-nachholen holt nach.
+      if (kontenFehler.length) teilAusfall = kontenFehler.map(f => `act_${f.account}: ${f.error}`).join(' | ').slice(0, 450)
     }
 
     // ── 1b. Conversions API: CRM-Qualität an Meta zurückspielen ──────────────
@@ -961,8 +1042,9 @@ Deno.serve(async (req) => {
       summary.actions_error = msg.slice(0, 300)
     }
 
-    if (ledger) await ledgerEnde(ledger.sb, ledger.datum, true, summary)
-    if (kette) {
+    if (ledger) await ledgerEnde(ledger.sb, ledger.datum, !teilAusfall, summary, teilAusfall ? `Teil-Ausfall: ${teilAusfall}` : undefined)
+    if (kette && teilAusfall) summary.kette = 'ausgelassen (Teil-Ausfall)'
+    else if (kette) {
       summary.kette = 'angestossen'
       await ketteAnstossen()
     }

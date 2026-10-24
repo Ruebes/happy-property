@@ -8,7 +8,7 @@
 //     (Anzeige > Gruppe > Kampagne). Nie löschen, nie archivieren.
 //   - Jeder POST in meta_write_log mit Vorher-Stand; danach Spiegel aktualisieren.
 
-import { graphGet, MetaApiError } from '../_shared/metaGraph.ts'
+import { graphGet, istEigenesKonto, MetaApiError } from '../_shared/metaGraph.ts'
 import {
   cleanName, LIMITS,
   type BulkRequest, type BulkResponse, type BulkResult, type GuardrailInfo, type Level,
@@ -180,7 +180,7 @@ export async function modeBulk(ctx: Ctx, req: BulkRequest): Promise<BulkResponse
     if (lesenStopp) { posten.push({ ...it, live: null, body: {}, before: {}, after: {}, error: lesenStopp, rang: 2 }); continue }
     try {
       const live = await graphGet<Raw>(it.id, { fields: FIELDS[it.level] })
-      if (digits(live.account_id) !== ctx.env.account) {
+      if (!istEigenesKonto(digits(live.account_id))) {
         posten.push({ ...it, live: null, body: {}, before: {}, after: {}, error: `${LEVEL_TEXT[it.level]} gehört nicht zu unserem Werbekonto.`, rang: 2 })
         continue
       }
@@ -188,6 +188,17 @@ export async function modeBulk(ctx: Ctx, req: BulkRequest): Promise<BulkResponse
     } catch (err) {
       posten.push({ ...it, live: null, body: {}, before: {}, after: {}, error: fehlerText(err), rang: 2 })
     }
+  }
+
+  // Fester Betrag (Cent) gilt in EINER Kontowährung: nur für Objekte eines Kontos, und wenn der
+  // Client sein Konto mitschickt (account_id der Ansicht), muss es dazu passen
+  const konten = new Set(posten.filter(p => !p.error && p.live).map(p => digits((p.live as Raw).account_id)))
+  const erwartet = digits(req.account_id)
+  if (erwartet && [...konten].some(k => k !== erwartet)) {
+    throw new BuilderError(409, 'invalid_request', 'Die Auswahl enthält Objekte aus einem anderen Werbekonto als dem gewählten.')
+  }
+  if (req.patch?.daily_budget_cents !== undefined && konten.size > 1) {
+    throw new BuilderError(409, 'invalid_request', 'Ein fester Budgetbetrag geht nur für Objekte eines Werbekontos (USD und EUR gemischt). Bitte je Konto einzeln oder mit Prozent ändern.')
   }
 
   // Leitplanke einmal für alles, was steigt (nichts schreiben, wenn darüber)

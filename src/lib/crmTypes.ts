@@ -840,6 +840,8 @@ export type WerbeZeitraum = 7 | 30 | 90
 
 export interface AdCatalogRow {
   ad_id: string
+  /** Meta-Werbekonto ohne act_ (seit 10/2026 zwei Konten; lib/werbeKonten) */
+  account_id?: string | null
   campaign_id: string
   campaign_name: string | null
   adset_id: string | null

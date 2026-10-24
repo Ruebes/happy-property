@@ -58,6 +58,8 @@ export interface TargetingEditorProps {
   showLocales?: boolean
   /** Einzelne Platzierungs-Positionen bearbeiten (nur bei manueller Plattform-Wahl) */
   showPositions?: boolean
+  /** Werbekonto des bearbeiteten Objekts (ohne act_): Zielgruppen gehören je Konto; leer = Anlagekonto */
+  accountId?: string | null
 }
 
 const PLATFORMS = [
@@ -250,23 +252,23 @@ function SearchBox({ kind, placeholder, onPick, disabled }: {
 }
 
 // ── Editor ──────────────────────────────────────────────────────────────────
-export default function TargetingEditor({ value, onChange, disabled, housing = false, onLocks, showLocales = false, showPositions = false }: TargetingEditorProps) {
+export default function TargetingEditor({ value, onChange, disabled, housing = false, onLocks, showLocales = false, showPositions = false, accountId }: TargetingEditorProps) {
   const { t } = useTranslation()
   const tg = (value ?? {}) as TargetingSpec
   const [audiences, setAudiences] = useState<NamedId[]>([])
   const [localeId, setLocaleId] = useState('')
 
-  // Custom Audiences des Kontos einmalig laden (Auswahlliste unten)
+  // Custom Audiences des Kontos einmalig laden (Auswahlliste unten); je Werbekonto eigene
   useEffect(() => {
     let cancelled = false
-    supabase.functions.invoke('meta-ads-tools', { body: { mode: 'custom_audiences' } })
+    supabase.functions.invoke('meta-ads-tools', { body: { mode: 'custom_audiences', ...(accountId ? { account_id: accountId } : {}) } })
       .then(({ data, error }) => {
         if (error || cancelled) return
         setAudiences((data as { audiences?: NamedId[] })?.audiences ?? [])
       })
       .catch(err => console.error('[TargetingEditor] Custom Audiences:', err))
     return () => { cancelled = true }
-  }, [])
+  }, [accountId])
 
   // Lookalike erkennen: subtype am Eintrag oder aus der Kontoliste
   const subtypeById = useMemo(() => new Map(audiences.map(a => [a.id, a.subtype ?? ''])), [audiences])

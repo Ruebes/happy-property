@@ -660,6 +660,9 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
   // Rückfallkurs aus STOPP kurs_fallback_usd_je_eur (nur plausible Werte 0,9 bis 1,6)
   const fxRueckfall = P('fx_fallback') >= 0.9 && P('fx_fallback') <= 1.6 ? P('fx_fallback') : USD_PRO_EUR_FALLBACK
   const fx = fxMit ?? fxCur ?? fxRueckfall
+  // Kurs je Objekt: EUR-Konten schreibt der Sync mit usd_per_eur = 1 (Einheiten der Kontowährung
+  // je EUR), deren Cent-Beträge sind schon EUR. Alle anderen (USD-Konto) mit dem Tageskurs fx.
+  const fxVon = (o: SnapshotZeile | null | undefined): number => (o && o.usd_per_eur === 1 ? 1 : fx)
   info.usd_per_eur = fx
   if (fxMit == null) hin({ code: 'kurs_fallback', text: `Kein 7-Tage-Kurs, rechne mit ${rund(fx, 4)} USD je EUR.` })
 
@@ -851,15 +854,15 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
 
   // Summe aktiver Tagesbudgets (EUR) je Schnappschuss-Tag, Konto gesamt
   const budgetSummeEur = (zeilen: SnapshotZeile[]): number => {
-    let cents = 0
+    let eur = 0
     for (const c of zeilen) {
       if (c.entity_level !== 'campaign' || !objektAktiv(c)) continue
-      if (zahl(c.daily_budget_cents) > 0) { cents += zahl(c.daily_budget_cents); continue }
+      if (zahl(c.daily_budget_cents) > 0) { eur += centsZuEur(zahl(c.daily_budget_cents), fxVon(c)); continue }
       for (const a of zeilen) {
-        if (a.entity_level === 'adset' && (a.parent_id ?? a.campaign_id) === c.entity_id && objektAktiv(a)) cents += zahl(a.daily_budget_cents)
+        if (a.entity_level === 'adset' && (a.parent_id ?? a.campaign_id) === c.entity_id && objektAktiv(a)) eur += centsZuEur(zahl(a.daily_budget_cents), fxVon(a))
       }
     }
-    return centsZuEur(cents, fx)
+    return eur
   }
   const summeAktuellEur = budgetSummeEur(alleAktuell)
   info.summe_budgets_eur = rund(summeAktuellEur, 2)
@@ -1268,11 +1271,11 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
     vorrat.filter(p => p.status === 'hochgeladen' && imReview(snap('ad', p.meta_ad_ids?.[adsetId]))).length
   const maxAktiv = (adsetId: string): number => {
     const as = snap('adset', adsetId)
-    let eur = centsZuEur(zahl(as?.daily_budget_cents), fx)
+    let eur = centsZuEur(zahl(as?.daily_budget_cents), fxVon(as))
     if (!(eur > 0) && as) {
       const c = snap('campaign', kampagneVonAdset(as))
       const n = (adsetsJeKampagne.get(kampagneVonAdset(as)) ?? []).filter(objektAktiv).length || 1
-      eur = centsZuEur(zahl(c?.daily_budget_cents), fx) / n
+      eur = centsZuEur(zahl(c?.daily_budget_cents), fxVon(c)) / n
     }
     return maxAktiveAnzeigen(eur, P('eur_pro_aktive_anzeige'), P('max_active_ads_min'), P('max_active_ads_max'))
   }
@@ -1525,11 +1528,13 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
   const restTage = tageZwischen(heute.datum, monatsende(heute.datum)) + 1
   const monat = ctx.konto?.spend_monat_eur
   const fl = P('adset_min_daily_eur', D1)
-  const floorCents = Math.ceil(eurZuCents(fl, fx))
   const minC = P('min_budget_cents'), maxC = P('max_budget_cents')
 
   for (const e of einheiten) {
     const objs = e.ids.map(id => snap(e.ebene, id) as SnapshotZeile)
+    // Kontowährung der Einheit (Plan-B-Paare liegen in einem Konto): Cent-Werte und Untergrenze darin
+    const fxE = fxVon(objs[0])
+    const floorCents = Math.ceil(eurZuCents(fl, fxE))
     const name = objs.map(o => o.name ?? o.entity_id).join(' + ')
     const schl = e.ids.join('+')
     const bf = P('budget_fenster', S1 ?? D1)
@@ -1602,8 +1607,9 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
           rule, aktion: 'budget_set', entity_level: e.ebene, entity_id: o.entity_id, entity_name: o.name ?? o.entity_id, ad_id: null,
           gruppe: `${rule.rule_key}:${schl}:${heute.datum}`,
           payload: { daily_budget: neuCents, daily_budget_cents: neuCents, vorher_cents: zahl(o.daily_budget_cents), gruppe_ids: e.ids },
-          before: { daily_budget_cents: zahl(o.daily_budget_cents), daily_budget_eur: rund(centsZuEur(zahl(o.daily_budget_cents), fx), 2) },
-          after: { daily_budget_cents: neuCents, daily_budget_eur: rund(centsZuEur(neuCents, fx), 2) },
+          // waehrung: Kontowährung der Cent-Werte (Anzeige im Autopilot)
+          before: { daily_budget_cents: zahl(o.daily_budget_cents), daily_budget_eur: rund(centsZuEur(zahl(o.daily_budget_cents), fxE), 2), waehrung: fxE === 1 ? 'EUR' : 'USD' },
+          after: { daily_budget_cents: neuCents, daily_budget_eur: rund(centsZuEur(neuCents, fxE), 2), waehrung: fxE === 1 ? 'EUR' : 'USD' },
           evidence: ev, nur_im_fenster: nurImFenster(rule), deckel: 3, prio, pre_state: preStateText(o), grund,
         })
       }
@@ -1643,7 +1649,7 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
           hin({ code: 'monatsprognose_unbekannt', rule_key: 'S1', entity_level: e.ebene, entity_id: e.ids[0], entity_name: name, text: 'S1 gesperrt: Monats-Spend unbekannt, Prognose nicht prüfbar.' })
         } else {
           const n = objs.length
-          const altEur = centsZuEur(altCents, fx)
+          const altEur = centsZuEur(altCents, fxE)
           const schritt = altEur * P('s1_step', S1) * n
           const kontoRaum = zahl(s.max_account_daily_budget) - summeAktuellEur
           const monatsRaum = (zahl(s.monthly_cap_eur) - monat) / restTage - summeAktuellEur
@@ -1653,12 +1659,12 @@ export function bewerteRegeln(ctx: RegelKontext): RegelErgebnis {
             hin({ code: 'kein_spielraum', rule_key: 'S1', entity_level: e.ebene, entity_id: e.ids[0], entity_name: name, text: `S1 (${grund}) ohne Spielraum: ${limit} erreicht.`, details: { konto_raum_eur: rund(kontoRaum, 2), monats_raum_eur: rund(monatsRaum, 2), summe_eur: rund(summeAktuellEur, 2) } })
           } else {
             const jeObjekt = erlaubt / n
-            let neu = Math.floor((altEur + jeObjekt) * fx * 100)
+            let neu = Math.floor((altEur + jeObjekt) * fxE * 100)
             neu = Math.min(neu, Math.floor(altCents * (1 + P('s1_step', S1))))
             if (neu < minC || neu > maxC) {
               hin({ code: 'cent_grenze', rule_key: 'S1', entity_level: e.ebene, entity_id: e.ids[0], entity_name: name, text: `S1: neues Budget ${neu} Cent außerhalb ${minC} bis ${maxC}.` })
             } else if (neu > altCents) {
-              const summeNach = summeAktuellEur + n * (centsZuEur(neu, fx) - altEur)
+              const summeNach = summeAktuellEur + n * (centsZuEur(neu, fxE) - altEur)
               budgetVorschlag(S1, neu, `${grund} Budget +${Math.round(((neu - altCents) / altCents) * 1000) / 10} %.`, evBasis({
                 details: {
                   booked: st.booked, kap_anteil: rund(kapAnteil, 3), freie_slots: slots, summe_vorher_eur: rund(summeAktuellEur, 2),

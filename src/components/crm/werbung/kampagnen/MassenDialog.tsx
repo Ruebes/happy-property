@@ -6,7 +6,7 @@ import Spinner from '../../../ui/Spinner'
 import { useToast } from '../../../ui/Toast'
 import { useConfirm } from '../../../ui/ConfirmDialog'
 import { LIMITS } from '../../../../lib/metaSpec'
-import { INPUT_CLS, USD_PRO_EUR_FALLBACK, UsdEurHinweis, parseDollar } from '../felder'
+import { INPUT_CLS, USD_PRO_EUR_FALLBACK, UsdEurHinweis, parseDollar, useKontoWaehrung } from '../felder'
 import { useWerbeFormat } from '../format'
 import { ladeUsdProEur } from '../useWerbeDaten'
 import { builderCall, fehlerText } from './builderApi'
@@ -15,6 +15,7 @@ import {
   type MassenErgebnis, type MassenPatch, type MassenRequest, type MassenResponse, type ObjektStatus,
 } from './bearbeitenTypen'
 import { LernphaseBadge, ebeneName, geldText, statusText, useSchreibSperre, wertText } from './bearbeitenHelfer'
+import { gewaehltesKonto } from '../../../../lib/werbeKonten'
 
 // ── Massenbearbeitung (mehrere Kampagnen, Anzeigengruppen oder Anzeigen) ─────
 // Status, Tagesbudget (neuer Betrag oder Prozent), Enddatum, Namenszusatz.
@@ -44,6 +45,8 @@ export default function MassenDialog({ offen, items, onClose, onFertig }: Massen
   const toast = useToast()
   const confirm = useConfirm()
   const fmt = useWerbeFormat()
+  // Kontowährung der Zentrale (ein Konto je Ansicht): Betrag in USD oder EUR
+  const waehrung = useKontoWaehrung()
   const { sperre } = useSchreibSperre(offen)
 
   const [status, setStatus] = useState<'' | ObjektStatus>('')
@@ -56,6 +59,8 @@ export default function MassenDialog({ offen, items, onClose, onFertig }: Massen
   const [laeuft, setLaeuft] = useState(false)
   const [ergebnis, setErgebnis] = useState<MassenErgebnis[] | null>(null)
   const [kurs, setKurs] = useState(USD_PRO_EUR_FALLBACK)
+  /** Einheiten der Kontowährung je EUR: EUR-Konto 1 */
+  const kursW = waehrung === 'EUR' ? 1 : kurs
 
   useEffect(() => {
     if (!offen) return
@@ -125,7 +130,7 @@ export default function MassenDialog({ offen, items, onClose, onFertig }: Massen
   if (sperre) gruende.push(sperre)
   if (!items.length) gruende.push(t('crm.werbung.bearbeiten.dup.nichtsGewaehlt', 'Nichts ausgewählt.'))
   if (items.length > MASSEN_MAX) gruende.push(t('crm.werbung.bearbeiten.zuViele', 'Höchstens {{max}} Objekte auf einmal.', { max: MASSEN_MAX }))
-  if (budgetArt === 'betrag' && !betragCents) gruende.push(t('crm.werbung.bearbeiten.masse.betragFehlt', 'Bitte einen Betrag in $ eintragen.'))
+  if (budgetArt === 'betrag' && !betragCents) gruende.push((waehrung === 'EUR' ? t('crm.werbung.bearbeiten.masse.betragFehltEur', 'Bitte einen Betrag in € eintragen.') : t('crm.werbung.bearbeiten.masse.betragFehlt', 'Bitte einen Betrag in $ eintragen.')))
   if (budgetArt === 'prozent' && prozentWert === null) gruende.push(t('crm.werbung.bearbeiten.masse.prozentFehlt', 'Bitte eine Änderung in Prozent eintragen, z. B. 10 oder -20.'))
   if (budgetArt === 'prozent' && prozentWert !== null && (prozentWert < -90 || prozentWert > 100)) gruende.push(t('crm.werbung.bearbeiten.masse.prozentGrenze', 'Prozent zwischen -90 und +100.'))
   if (endeAn && !endeIso) gruende.push(t('crm.werbung.bearbeiten.masse.endeFehlt', 'Bitte ein Enddatum wählen.'))
@@ -134,9 +139,9 @@ export default function MassenDialog({ offen, items, onClose, onFertig }: Massen
   const anwenden = async () => {
     const zeilen: string[] = []
     if (patch.status) zeilen.push(t('crm.werbung.bearbeiten.masse.zStatus', 'Status: {{s}}', { s: statusText(t, patch.status) }))
-    if (patch.daily_budget_cents) zeilen.push(t('crm.werbung.bearbeiten.masse.zBetrag', 'Tagesbudget: {{b}}', { b: geldText(fmt, patch.daily_budget_cents, kurs) }))
+    if (patch.daily_budget_cents) zeilen.push(t('crm.werbung.bearbeiten.masse.zBetrag', 'Tagesbudget: {{b}}', { b: geldText(fmt, patch.daily_budget_cents, kursW, waehrung) }))
     if (patch.budget_prozent !== undefined) zeilen.push(t('crm.werbung.bearbeiten.masse.zProzentBudget', 'Budget: {{p}} %', { p: `${patch.budget_prozent > 0 ? '+' : ''}${patch.budget_prozent}` }))
-    if (patch.end_time) zeilen.push(t('crm.werbung.bearbeiten.masse.zEnde', 'Enddatum: {{d}}', { d: wertText(t, fmt, kurs, 'end_time', patch.end_time) }))
+    if (patch.end_time) zeilen.push(t('crm.werbung.bearbeiten.masse.zEnde', 'Enddatum: {{d}}', { d: wertText(t, fmt, kursW, 'end_time', patch.end_time, waehrung) }))
     if (patch.name_suffix) zeilen.push(t('crm.werbung.bearbeiten.masse.zName', 'Name + „{{s}}“', { s: patch.name_suffix }))
     const ok = await confirm({
       title: t('crm.werbung.bearbeiten.masse.frage', '{{n}} Objekte bei Meta ändern?', { n: items.length }),
@@ -155,7 +160,8 @@ export default function MassenDialog({ offen, items, onClose, onFertig }: Massen
     setLaeuft(true)
     try {
       const req: MassenRequest = { items: items.map(i => ({ level: i.level, id: i.id })), patch, confirm: true }
-      const r: MassenResponse = await builderCall('bulk', req)
+      // Konto der Zentrale mitschicken: der Server lehnt Objekte aus anderen Konten ab (Beträge sind Konto-Cent)
+      const r: MassenResponse = await builderCall('bulk', { ...req, account_id: gewaehltesKonto() })
       const res = Array.isArray(r?.results) ? r.results : []
       setErgebnis(res)
       const gut = res.filter(x => x.ok).length
@@ -195,9 +201,9 @@ export default function MassenDialog({ offen, items, onClose, onFertig }: Massen
       const keys = [...Object.keys(bo), ...Object.keys(ao)].filter((k, i, arr) => arr.indexOf(k) === i)
       return keys
         .filter(k => JSON.stringify(bo[k]) !== JSON.stringify(ao[k]))
-        .map(k => `${FELD_TEXT[k] ?? k}: ${wertText(t, fmt, kurs, k, bo[k])} → ${wertText(t, fmt, kurs, k, ao[k])}`)
+        .map(k => `${FELD_TEXT[k] ?? k}: ${wertText(t, fmt, kursW, k, bo[k], waehrung)} → ${wertText(t, fmt, kursW, k, ao[k], waehrung)}`)
     }
-    return [`${wertText(t, fmt, kurs, 'bulk', b)} → ${wertText(t, fmt, kurs, 'bulk', a)}`]
+    return [`${wertText(t, fmt, kursW, 'bulk', b, waehrung)} → ${wertText(t, fmt, kursW, 'bulk', a, waehrung)}`]
   }
 
   const footer = ergebnis ? (
@@ -334,11 +340,11 @@ export default function MassenDialog({ offen, items, onClose, onFertig }: Massen
                       {v.hatBudget && v.alt !== null ? (
                         v.neu !== null ? (
                           <>
-                            <span>{geldText(fmt, v.alt, kurs)} → {geldText(fmt, v.neu, kurs)}</span>
+                            <span>{geldText(fmt, v.alt, kursW, waehrung)} → {geldText(fmt, v.neu, kursW, waehrung)}</span>
                             {v.pct !== null && <span className={v.pct > 0 ? 'text-emerald-700' : 'text-red-700'}>{v.pct > 0 ? '+' : ''}{v.pct} %</span>}
                             {v.pct !== null && Math.abs(v.pct) > BUDGET_LERN_SCHWELLE && <LernphaseBadge text={t('crm.werbung.bearbeiten.lernphaseKann', 'Lernphase kann neu starten')} />}
                           </>
-                        ) : <span>{geldText(fmt, v.alt, kurs)}</span>
+                        ) : <span>{geldText(fmt, v.alt, kursW, waehrung)}</span>
                       ) : (
                         <span className="text-amber-800">{v.unsicher ?? t('crm.werbung.bearbeiten.masse.keinBudget', 'kein eigenes Tagesbudget')}</span>
                       )}

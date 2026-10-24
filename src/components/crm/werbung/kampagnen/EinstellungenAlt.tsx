@@ -10,9 +10,10 @@ import type { MetaEntity } from '../../../../lib/crmTypes'
 import { metaLabel } from '../format'
 import {
   BID_STRATEGY_OPTIONS, BTN_KLEIN, Field, INPUT_CLS, LockedField, OPTIMIZATION_OPTIONS, UsdEurHinweis,
-  baueMetaPatch, metaFeldWert,
+  baueMetaPatch, metaFeldWert, WaehrungKontext,
 } from '../felder'
 import { ladeUsdProEur } from '../useWerbeDaten'
+import { waehrungVon, waehrungZeichen, type KontoWaehrung } from '../../../../lib/werbeKonten'
 
 // ── ⚙ Voll-Einstellungen einer Kampagne, bisheriger Weg (Übergang) ──────────
 // Solange ad_settings.builder_enabled nicht an ist, gehen edit_apply und bulk
@@ -42,6 +43,8 @@ interface Zustand {
   loading: boolean
   busy: boolean
   data?: { campaign: MetaEntity; adsets: MetaEntity[]; ads: MetaEntity[] }
+  /** Kontowährung der Kampagne (settings account.currency; alte Antworten: USD) */
+  waehrung?: KontoWaehrung
   // edits: entity_id -> offene Änderungen (erst beim Speichern zu Meta)
   edits: Record<string, Record<string, string>>
   // targetingEdits: adset_id -> bearbeitetes Targeting-Objekt
@@ -112,10 +115,11 @@ export default function EinstellungenAlt({ kampagne, onClose, onGeaendert, showT
     try {
       const { data, error } = await supabase.functions.invoke('meta-ads-tools', { body: { mode: 'settings', campaign_id: campaignId } })
       if (error) throw error
-      const d = data as { campaign: MetaEntity; adsets: MetaEntity[]; ads: MetaEntity[]; error?: string }
+      const d = data as { campaign: MetaEntity; adsets: MetaEntity[]; ads: MetaEntity[]; account?: { id?: string; currency?: string }; error?: string }
       if (d.error) throw new Error(d.error)
       if (nr !== anfrage.current) return
-      setZ(s => ({ ...s, loading: false, data: { campaign: d.campaign, adsets: d.adsets, ads: d.ads } }))
+      const waehrung = waehrungVon(d.account?.id ?? d.campaign?.account_id, d.account?.currency)
+      setZ(s => ({ ...s, loading: false, waehrung, data: { campaign: d.campaign, adsets: d.adsets, ads: d.ads } }))
     } catch (err) {
       if (nr !== anfrage.current) return
       console.error('[AdsManager] openSettings:', err)
@@ -154,7 +158,8 @@ export default function EinstellungenAlt({ kampagne, onClose, onGeaendert, showT
     setZ(s => ({ ...s, busy: true }))
     try {
       const { data, error } = await supabase.functions.invoke('meta-ads-tools', {
-        body: { mode: 'update_entity', entity_id: entityId, entity_type: entityType, patch },
+        // account_id: Server prüft, dass das Objekt im angezeigten Konto liegt (Geld = Cent dieser Währung)
+        body: { mode: 'update_entity', entity_id: entityId, entity_type: entityType, patch, account_id: String(z.data?.campaign?.account_id ?? '') || undefined },
       })
       // Edge-Fehler: invoke wirft bei non-2xx, die Klartext-Meldung steckt im Body
       if (error) throw new Error((await fnErrorDetail(error)).message)
@@ -222,7 +227,9 @@ export default function EinstellungenAlt({ kampagne, onClose, onGeaendert, showT
     )
   }
 
+  const zeichen = waehrungZeichen(z.waehrung ?? 'USD')
   return (
+    <WaehrungKontext.Provider value={z.waehrung ?? 'USD'}>
     <Modal open={!!kampagne} onClose={schliessen} size="xl" title={kampagne ? `⚙ ${kampagne.name}` : undefined}>
       {z.loading || !z.data || !cid || z.fuer !== cid ? (
         <div className="flex justify-center py-16"><Spinner size="lg" /></div>
@@ -251,15 +258,15 @@ export default function EinstellungenAlt({ kampagne, onClose, onGeaendert, showT
                         onChange={e => setEdit(cid, 'name', e.target.value)} className={INPUT_CLS} />
                     </Field>
                   </div>
-                  <Field label={`${t('crm.ads.setDailyBudget', 'Tagesbudget')} ($)`}
+                  <Field label={`${t('crm.ads.setDailyBudget', 'Tagesbudget')} (${zeichen})`}
                     hint={t('crm.ads.setBudgetHint', 'Nur wenn das Budget auf Kampagnen-Ebene liegt')}>
                     {dollarInput(cid, 'daily_budget', c.daily_budget)}
                   </Field>
-                  <Field label={`${t('crm.ads.setLifetimeBudget', 'Laufzeitbudget')} ($)`}
+                  <Field label={`${t('crm.ads.setLifetimeBudget', 'Laufzeitbudget')} (${zeichen})`}
                     hint={t('crm.ads.setLifetimeHint', 'Braucht ein Enddatum')}>
                     {dollarInput(cid, 'lifetime_budget', c.lifetime_budget)}
                   </Field>
-                  <Field label={`${t('crm.ads.setSpendCap', 'Ausgabenlimit gesamt')} ($)`}>
+                  <Field label={`${t('crm.ads.setSpendCap', 'Ausgabenlimit gesamt')} (${zeichen})`}>
                     {dollarInput(cid, 'spend_cap', c.spend_cap)}
                   </Field>
                   <Field label={t('crm.ads.setBidStrategy', 'Gebotsstrategie')}>
@@ -314,10 +321,10 @@ export default function EinstellungenAlt({ kampagne, onClose, onGeaendert, showT
                         onChange={e => setEdit(aid, 'name', e.target.value)} className={INPUT_CLS} />
                     </Field>
                   </div>
-                  <Field label={`${t('crm.ads.setDailyBudget', 'Tagesbudget')} ($)`}>
+                  <Field label={`${t('crm.ads.setDailyBudget', 'Tagesbudget')} (${zeichen})`}>
                     {dollarInput(aid, 'daily_budget', a.daily_budget)}
                   </Field>
-                  <Field label={`${t('crm.ads.setLifetimeBudget', 'Laufzeitbudget')} ($)`}
+                  <Field label={`${t('crm.ads.setLifetimeBudget', 'Laufzeitbudget')} (${zeichen})`}
                     hint={t('crm.ads.setLifetimeHint', 'Braucht ein Enddatum')}>
                     {dollarInput(aid, 'lifetime_budget', a.lifetime_budget)}
                   </Field>
@@ -335,7 +342,7 @@ export default function EinstellungenAlt({ kampagne, onClose, onGeaendert, showT
                         options={BID_STRATEGY_OPTIONS.map(o => ({ value: o, label: metaLabel(o) }))} />
                     </div>
                   </Field>
-                  <Field label={`${t('crm.ads.setBidAmount', 'Gebot')} ($)`}
+                  <Field label={`${t('crm.ads.setBidAmount', 'Gebot')} (${zeichen})`}
                     hint={t('crm.ads.setBidHint', 'Nur bei Gebots-/Kostenobergrenze')}>
                     {dollarInput(aid, 'bid_amount', a.bid_amount)}
                   </Field>
@@ -386,7 +393,7 @@ export default function EinstellungenAlt({ kampagne, onClose, onGeaendert, showT
                     )}
                   </div>
                   {targetingDraft ? (
-                    <TargetingEditor value={targetingDraft} disabled={z.busy}
+                    <TargetingEditor value={targetingDraft} disabled={z.busy} accountId={String(z.data?.campaign?.account_id ?? '') || null}
                       onChange={next => setZ(s => ({ ...s, targetingEdits: { ...s.targetingEdits, [aid]: next } }))} />
                   ) : (
                     <TargetingView targeting={a.targeting as Record<string, unknown>} />
@@ -431,5 +438,6 @@ export default function EinstellungenAlt({ kampagne, onClose, onGeaendert, showT
         </div>
       )}
     </Modal>
+    </WaehrungKontext.Provider>
   )
 }

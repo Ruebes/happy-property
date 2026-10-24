@@ -1,6 +1,7 @@
 import type { TFunction } from 'i18next'
 import { FunctionsHttpError } from '@supabase/supabase-js'
 import { supabase } from '../../../../lib/supabase'
+import { mitKonto } from '../../../../lib/werbeKonten'
 import { fnErrorDetail } from '../../../../lib/fnError'
 import {
   CAPI_EREIGNIS_LABEL, CAPI_GRUND_LABEL, CAPI_STANDARD_EREIGNISSE, CRM_LEAD_EVENT_SOURCE, CRM_LEADS_EMPFEHLUNG_MONAT, CRM_STUFEN,
@@ -84,7 +85,7 @@ async function istFunktionFehlt(error: unknown): Promise<boolean> {
  * vorschau: true). 200-Antworten mit { error } gelten als Fehler.
  */
 export async function kontoCall<M extends KontoMode>(mode: M, req: KontoRequestMap[M], retried = false): Promise<KontoResponseMap[M]> {
-  const { data, error } = await supabase.functions.invoke(KONTO_FN, { body: { mode, ...req } })
+  const { data, error } = await supabase.functions.invoke(KONTO_FN, { body: mitKonto({ mode, ...req }) })
   if (error) {
     const wiederholbar = !KONTO_WRITE_MODES.includes(mode) || (req as { vorschau?: boolean }).vorschau === true
     if (!retried && wiederholbar && NETZ_FEHLER.test(error.message ?? '')) {

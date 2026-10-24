@@ -104,7 +104,7 @@ export interface Basiswerte {
 
 export interface KennzahlOptionen {
   ergebnis: ErgebnisArt
-  /** USD je EUR (> 0) */
+  /** Einheiten der Kontowährung je EUR (> 0; USD-Konto USD je EUR, EUR-Konto 1) */
   usdPerEur: number
 }
 

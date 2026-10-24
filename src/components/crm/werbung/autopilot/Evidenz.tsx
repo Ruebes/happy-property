@@ -46,7 +46,7 @@ export function EvidenzLeiste({ evidence, kompakt = false }: { evidence: WerbeEv
   )
 }
 
-/** Ein Zustand (before/after) als Text: Budget in $ und €, sonst Status */
+/** Ein Zustand (before/after) als Text: Budget in Kontowährung (USD mit €-Gegenwert, EUR direkt), sonst Status */
 function zustandText(
   z: Record<string, unknown> | null | undefined,
   usdJeEur: number,
@@ -57,6 +57,8 @@ function zustandText(
   if (!z) return '-'
   const cents = zahl(z.daily_budget_cents) ?? zahl(z.daily_budget)
   if (cents != null) {
+    // EUR-Konto (seit 10/2026): Cent sind schon Euro
+    if (z.waehrung === 'EUR') return eur(cents / 100)
     const eurWert = zahl(z.daily_budget_eur) ?? cents / 100 / usdJeEur
     return `${usdAusCents(cents, locale)} (≈ ${eur(eurWert)})`
   }

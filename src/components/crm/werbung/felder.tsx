@@ -1,6 +1,7 @@
-import type { ReactNode } from 'react'
+import { createContext, useContext, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useWerbeFormat } from './format'
+import type { KontoWaehrung } from '../../../lib/werbeKonten'
 
 // ── Formularbausteine für Meta-Einstellungen (Werbemanager) ──────────────────
 // Felder, Geld-/Zeit-Umrechnung und der EUR-Hinweis neben Dollar-Eingaben.
@@ -90,14 +91,24 @@ export function baueMetaPatch(raw: Record<string, string>): { patch: Record<stri
 /** Ersatzkurs, wenn aus den Tageswerten keiner ermittelt werden kann (USD je EUR) */
 export const USD_PRO_EUR_FALLBACK = 1.14
 
+/**
+ * Kontowährung der Geldfelder im umgebenden Bereich (seit 24.10.2026 zwei Werbekonten:
+ * LLC in USD, Ltd in EUR). Geld geht immer in Cent dieser Währung an Meta. Ohne Provider
+ * USD wie bisher. Bei EUR ist der „kurs" der Geldfelder 1 und der Euro-Hinweis entfällt.
+ */
+export const WaehrungKontext = createContext<KontoWaehrung>('USD')
+export const useKontoWaehrung = (): KontoWaehrung => useContext(WaehrungKontext)
+
 /** Euro-Gegenwert neben einer Dollar-Eingabe. Das Werbekonto rechnet in USD,
  *  Kennzahlen und Leitplanken stehen in EUR: der Hinweis macht das sichtbar.
  *  kurs = USD je EUR (Schnitt der letzten 7 Tage), null = Ersatzkurs. */
 export function UsdEurHinweis({ usd, kurs }: { usd: string; kurs: number | null }) {
   const { t } = useTranslation()
   const fmt = useWerbeFormat()
+  const waehrung = useKontoWaehrung()
   const v = parseDollar(usd)
-  if (v == null || v <= 0) return null
+  // EUR-Konto: Eingabe ist schon Euro, kein Umrechnungs-Hinweis
+  if (waehrung === 'EUR' || v == null || v <= 0) return null
   const gemessen = kurs != null && kurs > 0
   const k = gemessen ? kurs : USD_PRO_EUR_FALLBACK
   const kursTxt = k.toLocaleString(fmt.locale, { maximumFractionDigits: 3 })

@@ -8,7 +8,8 @@ import { useConfirm } from '../../../ui/ConfirmDialog'
 import Modal from '../../../ui/Modal'
 import Spinner from '../../../ui/Spinner'
 import { dbFehlerText } from '../autopilot/werbeTexte'
-import { USD_PRO_EUR_FALLBACK } from '../felder'
+import { USD_PRO_EUR_FALLBACK, WaehrungKontext } from '../felder'
+import { ANLAGE_KONTO_ID, kontoVon, useGewaehltesKonto, waehrungVon } from '../../../../lib/werbeKonten'
 import { useWerbeFormat } from '../format'
 import { fehlerText } from '../kampagnen/builderApi'
 import DuplizierenDialog from '../kampagnen/DuplizierenDialog'
@@ -82,6 +83,14 @@ export default function KampagnenZentrale({ pendingByAd }: Props) {
     segment, days, loading, catalog, byAd, byAdset, byCampaign, campaignsSorted, crmVisible,
     fetchAll, openPreview, openSettings, showToast, setActions, settings,
   } = useWerbeKontext()
+  // Ein Werbekonto je Ansicht (Kontowahl oben): Objekte, Meta-Zahlen und Geld in dessen Währung
+  const konto = useGewaehltesKonto()
+  const waehrung = waehrungVon(konto)
+  const catalogKonto = useMemo(() => catalog.filter(c => (c.account_id || ANLAGE_KONTO_ID) === konto), [catalog, konto])
+  const kampagnenKonto = useMemo(() => {
+    const ids = new Set(catalogKonto.map(c => c.campaign_id))
+    return campaignsSorted.filter(([id]) => ids.has(id))
+  }, [catalogKonto, campaignsSorted])
 
   // ── Ansicht (Spalten, Ebene, Filter, Sortierung) ───────────────────────────
   const [start] = useState(() => ladeZuletzt())
@@ -115,7 +124,9 @@ export default function KampagnenZentrale({ pendingByAd }: Props) {
 
   // ── Spiegel + Kurs (Datenbank, seriell, nach dem Laden der Seitendaten) ─────
   const [spiegel, setSpiegel] = useState<Spiegel | null>(null)
-  const [kurs, setKurs] = useState<number>(USD_PRO_EUR_FALLBACK)
+  const [usdKurs, setKurs] = useState<number>(USD_PRO_EUR_FALLBACK)
+  /** Einheiten der Kontowährung je EUR (EUR-Konto 1) */
+  const kurs = waehrung === 'EUR' ? 1 : usdKurs
   const spiegelLauf = useRef(0)
   const spiegelNeu = useCallback(async () => {
     const nr = ++spiegelLauf.current
@@ -224,13 +235,13 @@ export default function KampagnenZentrale({ pendingByAd }: Props) {
   // CRM-Spalten leer, sonst teilten Kosten pro Termin & Co. Zahlen zweier Zeiträume.
   const crmImBaum = crmVisible && zeitraum.art !== 'frei'
   const baum = useMemo(() => baueBaum({
-    catalog, reihenfolge: campaignsSorted.map(([id]) => id), byCampaign, byAdset, byAd,
+    catalog: catalogKonto, reihenfolge: kampagnenKonto.map(([id]) => id), byCampaign, byAdset, byAd,
     crm: crmImBaum, spiegel, live, meta: metaKarte, frischSeit,
-  }), [catalog, campaignsSorted, byCampaign, byAdset, byAd, crmImBaum, spiegel, live, metaKarte, frischSeit])
+  }), [catalogKonto, kampagnenKonto, byCampaign, byAdset, byAd, crmImBaum, spiegel, live, metaKarte, frischSeit])
 
   const alle = useMemo(() => alleKnoten(baum), [baum])
   const knotenNachKey = useMemo(() => new Map(alle.map(k => [k.key, k])), [alle])
-  const catalogNachId = useMemo(() => new Map(catalog.map(c => [c.ad_id, c])), [catalog])
+  const catalogNachId = useMemo(() => new Map(catalogKonto.map(c => [c.ad_id, c])), [catalogKonto])
 
   const herkunft = useCallback((k: Knoten): string => {
     const kn = knotenNachKey.get(knotenKey('campaign', k.campaignId))?.name ?? k.campaignId
@@ -270,7 +281,7 @@ export default function KampagnenZentrale({ pendingByAd }: Props) {
       const f = sort.ab ? -1 : 1
       if (sort.key === 'name') return [...ks].sort((a, b) => f * a.name.localeCompare(b.name, fmt.locale))
       if (formatVon(sort.key, eigene) === 'text') {
-        return [...ks].sort((a, b) => f * textWert(a, sort.key, kurs, t, fmt).localeCompare(textWert(b, sort.key, kurs, t, fmt), fmt.locale))
+        return [...ks].sort((a, b) => f * textWert(a, sort.key, kurs, t, fmt, waehrung).localeCompare(textWert(b, sort.key, kurs, t, fmt, waehrung), fmt.locale))
       }
       return [...ks].sort((a, b) => {
         const x = zahl(a, sort.key), y = zahl(b, sort.key)
@@ -305,7 +316,7 @@ export default function KampagnenZentrale({ pendingByAd }: Props) {
       }
     }
     return { zeilen: out, summenKnoten: summe }
-  }, [baum, ebene, offen, sucheNorm, statusFilter, nurMitAusgaben, filterAktiv, sort, eigene, kurs, t, fmt])
+  }, [baum, ebene, offen, sucheNorm, statusFilter, nurMitAusgaben, filterAktiv, sort, eigene, kurs, waehrung, t, fmt])
 
   const summe = useMemo(() => {
     const w: Werte = {}
@@ -609,7 +620,7 @@ export default function KampagnenZentrale({ pendingByAd }: Props) {
       for (const key of sichtbareSpalten) {
         const f = formatVon(key, eigene)
         // Textspalten ohne Vergleichsspalten (siehe Kopf)
-        if (f === 'text') { out.push(k ? textWert(k, key, kurs, t, fmt) : ''); continue }
+        if (f === 'text') { out.push(k ? textWert(k, key, kurs, t, fmt, waehrung) : ''); continue }
         const v = wertVon(key, w, eigene)
         out.push(csvZahl(v, f))
         if (vergleichKarte) {
@@ -653,11 +664,15 @@ export default function KampagnenZentrale({ pendingByAd }: Props) {
   const SEL = 'border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-white text-gray-700 max-w-full'
 
   return (
+    <WaehrungKontext.Provider value={waehrung}>
     <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden min-w-0">
       {/* Kopf: Titel, Zeitraum, Ansicht, Spalten, Export */}
       <div className="px-4 py-3 border-b border-gray-100 space-y-2">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-sm font-bold text-gray-700 mr-auto">{t('crm.werbung.zentrale.titel', 'Kampagnen-Zentrale')}</h2>
+          <h2 className="text-sm font-bold text-gray-700 mr-auto">
+            {t('crm.werbung.zentrale.titel', 'Kampagnen-Zentrale')}
+            <span className="ml-2 font-normal text-gray-500">{t('crm.werbung.zentrale.konto', 'Konto: {{name}} ({{waehrung}})', { name: kontoVon(konto)?.name ?? konto, waehrung })}</span>
+          </h2>
           <button type="button" className={BTN} onClick={() => setZeitraumOffen(true)}>
             📅 {zeitText}{vergleich.an && <span className="font-normal text-gray-500"> · {t('crm.werbung.zentrale.zeit.mitVergleich', 'mit Vergleich')}</span>}
           </button>
@@ -880,5 +895,6 @@ export default function KampagnenZentrale({ pendingByAd }: Props) {
         </p>
       </Modal>
     </div>
+    </WaehrungKontext.Provider>
   )
 }

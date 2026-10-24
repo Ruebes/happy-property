@@ -63,11 +63,11 @@ const leaseBusy = () => new BuilderError(409, 'lease_busy', 'Dieser Entwurf wird
 export interface LeitplankenPosten {
   level: Level
   id: string
-  /** Live-Stand bei Meta (status, daily_budget, lifetime_budget, budget_remaining, stop_time/end_time) */
+  /** Live-Stand bei Meta (account_id, status, daily_budget, lifetime_budget, budget_remaining, stop_time/end_time) */
   live: Raw
   /** geplante Änderung (status, daily_budget, lifetime_budget, stop_time/end_time) */
   patch: Raw
-  /** zeitweise Erhöhung durch neue Budgetplanung (USD-Cent je Tag, Spitze) */
+  /** zeitweise Erhöhung durch neue Budgetplanung (Cent der Kontowährung je Tag, Spitze) */
   extraCents?: number
 }
 
@@ -76,7 +76,7 @@ const cents = (v: unknown): number => {
   return n !== null && n > 0 ? Math.round(n) : 0
 }
 
-/** USD-Cent je Tag aus eigenem Budget (Laufzeitbudget: Rest / Resttage), optional nach dem Patch. */
+/** Cent der Kontowährung je Tag aus eigenem Budget (Laufzeitbudget: Rest / Resttage), optional nach dem Patch. */
 export function centsJeTag(o: Raw, endKey: 'stop_time' | 'end_time', patch: Raw = {}): number {
   const hasDaily = patch.daily_budget !== undefined
   const hasLifetime = patch.lifetime_budget !== undefined
@@ -109,12 +109,18 @@ export async function leitplankePruefen(ctx: Ctx, posten: LeitplankenPosten[]): 
     return p.patch.status === 'ACTIVE' || (p.extraCents ?? 0) > 0 || centsJeTag(p.live, ek, p.patch) > centsJeTag(p.live, ek)
   })
   if (!steigt) return null
-  const h0 = await budgetHeadroom(ctx.sb, { addDailyUsdCents: 0 })
+  const h0 = await budgetHeadroom(ctx.sb, { addDailyCents: 0, account: ctx.env.account })
+  // Geld je Posten in der Währung seines Kontos (Live-Stand account_id, sonst Konto des Aufrufs)
+  const jeEurVon = (p: LeitplankenPosten): number => {
+    const k = h0.kurse[digits(p.live.account_id)] ?? h0.kurse[ctx.env.account]
+    if (!k) throw new BuilderError(403, 'forbidden', 'Objekt gehört nicht zu unserem Werbekonto.')
+    return k.jeEur
+  }
   const gezaehlt = new Map(h0.eintraege.map(e => [digits(e.id), e]))
   const byId = new Map(relevant.map(p => [digits(p.id), p]))
   const erledigt = new Set<string>()
   let minusEur = 0
-  let plusCents = 0
+  let plusEur = 0
   const sortiert = relevant.slice().sort((a, b) => (a.level === b.level ? 0 : a.level === 'campaign' ? -1 : 1))
   for (const p of sortiert) {
     const id = digits(p.id)
@@ -143,9 +149,9 @@ export async function leitplankePruefen(ctx: Ctx, posten: LeitplankenPosten[]): 
         neu += centsJeTag(gp ? { ...g, ...gp.live } : g, 'end_time', gp ? gp.patch : {}) + (gp?.extraCents ?? 0)
       }
     }
-    plusCents += neu + (p.extraCents ?? 0)
+    plusEur += (neu + (p.extraCents ?? 0)) / 100 / jeEurVon(p)
   }
-  const afterEur = h0.activeEur - minusEur + plusCents / 100 / h0.usdPerEur
+  const afterEur = h0.activeEur - minusEur + plusEur
   return {
     limitEur: h0.limitEur,
     activeEur: h0.activeEur,

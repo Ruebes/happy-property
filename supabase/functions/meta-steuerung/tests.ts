@@ -635,15 +635,13 @@ export async function modeStudyCreate(ctx: Ctx, req: StudyCreateRequest): Promis
       if (!(tagesEur > 0) || tagesEur > st.max_account_daily_budget) {
         throw new SteuerungError(422, 'guardrail', `Tagesbudget für den Test: mehr als 0 und höchstens ${eurText(st.max_account_daily_budget)} (Leitplanke).`)
       }
+      // Kontowährung USD oder EUR (loadGeld lehnt andere ab); die Leitplanke rechnet je Konto in EUR
       const geld = await ctx.geld()
-      if (geld.waehrung !== 'USD') {
-        throw new SteuerungError(409, 'unsupported', 'Die Leitplanken-Prüfung kennt nur USD-Werbekonten.', 'Statt eines Tagesbudgets einen Anteil wählen.')
-      }
       const tagesCent = eurZuKontoCent(tagesEur, geld)
       // UNGEPRÜFT, ob Meta das Testbudget aus dem vorhandenen Budget nimmt: im schlimmsten Fall zusätzlich
       let h
       try {
-        h = await budgetHeadroom(ctx.sb, { addDailyUsdCents: tagesCent })
+        h = await budgetHeadroom(ctx.sb, { addDailyCents: tagesCent, account: ctx.env.account })
       } catch (e) {
         throw new SteuerungError(503, 'guardrail', 'Die Leitplanke ließ sich nicht prüfen, deshalb wird nichts angelegt.', softMsg(e))
       }

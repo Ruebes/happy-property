@@ -30,7 +30,7 @@ import {
   adMediaRefs, APP_DEV_MODE_HINT, arr, BuilderError, digits, eigeneVorschaubilder, errText, fillAdMedia, forbiddenNames, fromMetaError,
   guardrailInfo, hashSpec, isUuid, issuesFromError, leaseActive, LEASE_MS, loadDraft, loadMediaRows, metaHint,
   metaId, metaPost, nowIso, num, obj, sha256Hex, specOf, stableStringify, str, uniq, VALIDATION_MAX_AGE_MS,
-  type Ctx, type DraftRow, type MediaIds, type Raw, type StoredValidation,
+  kontoUebernehmen, type Ctx, type DraftRow, type MediaIds, type Raw, type StoredValidation,
 } from './common.ts'
 import { accountDsaDefaults, pageInstagram } from './catalog.ts'
 import { ensureMediaReady, retryVideoThumbnails } from './media.ts'
@@ -121,7 +121,7 @@ async function fillDefaults(ctx: Ctx, spec: DraftSpec): Promise<void> {
   let pay = st.dsa_payor
   if (!ben || !pay) {
     try {
-      const d = await accountDsaDefaults()
+      const d = await accountDsaDefaults(ctx.env.account)
       ben = ben || d.beneficiary
       pay = pay || d.payor
     } catch (e) { console.warn('[meta-builder] DSA-Standard:', errText(e).slice(0, 200)) }
@@ -172,8 +172,8 @@ function lintNew(spec: DraftSpec, lctx: LintContext): LintIssue[] {
   }, lctx)
 }
 
-/** Tagesbudget (USD-Cent), das dieser Entwurf neu dazubringt (Laufzeitbudget je Resttag). */
-function draftDailyUsdCents(spec: DraftSpec): number {
+/** Tagesbudget (Cent der Kontowährung des Entwurfs), das dieser Entwurf neu dazubringt (Laufzeitbudget je Resttag). */
+function draftDailyCents(spec: DraftSpec): number {
   const now = Date.now()
   const perDay = (total: number, end?: string): number => {
     const e = end ? Date.parse(end) : NaN
@@ -372,7 +372,7 @@ export async function modeValidate(ctx: Ctx, req: ValidateRequest): Promise<Vali
 
   let guardrail: GuardrailInfo | null = null
   try {
-    guardrail = guardrailInfo(await budgetHeadroom(ctx.sb, { addDailyUsdCents: draftDailyUsdCents(prep.spec) }))
+    guardrail = guardrailInfo(await budgetHeadroom(ctx.sb, { addDailyCents: draftDailyCents(prep.spec), account: ctx.env.account }))
   } catch (e) { console.warn('[meta-builder] Leitplanke:', errText(e).slice(0, 200)) }
 
   const meta = await validateAtMeta(ctx, draft, prep.spec, ids, local, levels)
@@ -759,7 +759,10 @@ async function runSteps(st: RunState): Promise<CreateResponse> {
       if (ids.adsets[a.key]) continue
       if (a.existing_id) {
         setStep('adset', a.key)
-        await assertOwnAccount(a.existing_id)
+        // Anzeigen dieser Gruppe entstehen über act_<acct>: Gruppe muss im Konto des Entwurfs liegen
+        if ((await assertOwnAccount(a.existing_id)) !== acct) {
+          throw new BuilderError(409, 'invalid_request', 'Die Anzeigengruppe liegt in einem anderen Werbekonto als die Kampagne des Entwurfs.')
+        }
         continue
       }
       if (timeUp()) return await pause(st)
@@ -1027,7 +1030,7 @@ export async function modeActivateDraft(ctx: Ctx, req: ActivateDraftRequest): Pr
       if (v > 0) { addCents += v; budgetIds.push(id) }
     }
   }
-  const head = await budgetHeadroom(ctx.sb, { addDailyUsdCents: addCents, replaceEntityIds: budgetIds })
+  const head = await budgetHeadroom(ctx.sb, { addDailyCents: addCents, account: ctx.env.account, replaceEntityIds: budgetIds })
   const guardrail = guardrailInfo(head)
   if (!head.ok) {
     throw new BuilderError(409, 'guardrail_exceeded',
@@ -1160,7 +1163,7 @@ export async function modePreviewAlle(ctx: Ctx, req: PreviewAlleRequest): Promis
   } else {
     const adId = metaId(req.ad_id, 'ad_id')
     const j = await graphGet<Raw>(adId, { fields: 'id,account_id' })
-    if (digits(j.account_id) !== ctx.env.account) throw new BuilderError(403, 'forbidden', 'Die Anzeige gehört nicht zu unserem Werbekonto.')
+    kontoUebernehmen(ctx, j.account_id, 'Die Anzeige')
     quelle = { adId }
     passend = PREVIEW_FORMATS.slice()
   }
@@ -1276,12 +1279,15 @@ export async function modeDuplicate(ctx: Ctx, req: DuplicateRequest): Promise<Du
     return id
   }
   const rename = (k: number) => ({ rename_options: { rename_suffix: suffix(k), rename_strategy: 'ONLY_TOP_LEVEL_RENAME' } })
+  let kontoGesetzt = false
   const quelle = async (id: string): Promise<DupQuelle> => {
     const fields = level === 'campaign' ? 'account_id,name,objective,special_ad_categories'
       : level === 'adset' ? 'account_id,name,campaign_id,targeting,campaign{objective,special_ad_categories}'
         : 'account_id,name,adset_id,campaign_id,campaign{objective,special_ad_categories}'
     const j = await graphGet<Raw>(id, { fields })
-    if (digits(j.account_id) !== ctx.env.account) throw new BuilderError(403, 'forbidden', 'Das Objekt gehört nicht zu unserem Werbekonto.')
+    // Kopieren geht nur innerhalb eines Werbekontos: die erste Quelle bestimmt das Konto
+    if (!kontoGesetzt) { kontoUebernehmen(ctx, j.account_id, 'Das Objekt'); kontoGesetzt = true }
+    else if (digits(j.account_id) !== ctx.env.account) throw new BuilderError(409, 'invalid_request', 'Die Objekte liegen in verschiedenen Werbekonten. Bitte je Konto einzeln kopieren.')
     const camp = level === 'campaign' ? j : obj(j.campaign)
     return {
       id, name: str(j.name), campaignId: level === 'campaign' ? id : str(j.campaign_id), adsetId: level === 'ad' ? str(j.adset_id) : level === 'adset' ? id : '',

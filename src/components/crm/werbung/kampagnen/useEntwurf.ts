@@ -15,6 +15,7 @@ import { ladeUsdProEur } from '../useWerbeDaten'
 import { USD_PRO_EUR_FALLBACK } from '../felder'
 import { builderCall, type BuilderVorgaben } from './builderApi'
 import { hpVon, istGesperrt, mitHp, oberflaechenSperren, zielAusMetaIds, type EditZiel } from './bearbeitenTypen'
+import { kontoJeEur, waehrungVon, type KontoWaehrung } from '../../../../lib/werbeKonten'
 
 // ── Ein Entwurf des Kampagnen-Assistenten (meta_drafts) ──────────────────────
 // Lädt bzw. legt den Entwurf an, speichert 1,5 s nach der letzten Änderung
@@ -790,7 +791,7 @@ export function useEntwurf(start: AssistentStart, opt: Optionen): EntwurfApi {
 
 // ── Leitplanke: heute aktiv + diese Kampagne <= Limit ─────────────────────────
 // Bis zur Meta-Prüfung eine Schätzung aus den Spiegeltabellen (meta_adsets,
-// meta_campaigns: aktive Tagesbudgets in USD-Cent) mit dem 7-Tage-Kurs; danach
+// meta_campaigns: aktive Tagesbudgets je Zeile in Cent ihrer Kontowährung) mit dem 7-Tage-Kurs; danach
 // gilt der Wert des Servers (validation.guardrail).
 
 export interface Leitplanke {
@@ -803,9 +804,11 @@ export interface Leitplanke {
   kurs: number
 }
 
-export function useLeitplanke(spec: DraftSpec, validation: DraftValidation | null, limitEur: number | null): Leitplanke {
+/** waehrung: Kontowährung des Entwurfs (Geldfelder in Cent dieser Währung) */
+export function useLeitplanke(spec: DraftSpec, validation: DraftValidation | null, limitEur: number | null, waehrung: KontoWaehrung = 'USD'): Leitplanke {
   const [kurs, setKurs] = useState<number>(USD_PRO_EUR_FALLBACK)
-  const [aktivCents, setAktivCents] = useState<number | null>(null)
+  // Summe aktiver Tagesbudgets beider Konten in EUR (je Zeile in ihrer Kontowährung umgerechnet)
+  const [aktivEurSumme, setAktivEurSumme] = useState<number | null>(null)
 
   useEffect(() => {
     let abbruch = false
@@ -816,6 +819,7 @@ export function useLeitplanke(spec: DraftSpec, validation: DraftValidation | nul
       // seriell: erst Anzeigengruppen, dann Kampagnen (Micro-Instanz)
       let summe = 0
       let gelesen = 0
+      const inEur = (cents: number, konto: unknown) => cents / 100 / kontoJeEur(waehrungVon(konto), k)
       const tag = (daily: unknown, lifetime: unknown, ende: unknown): number => {
         const d = Number(daily) || 0
         if (d > 0) return d
@@ -826,41 +830,43 @@ export function useLeitplanke(spec: DraftSpec, validation: DraftValidation | nul
         return l / tage
       }
       const as = await supabase.from('meta_adsets')
-        .select('daily_budget_cents, lifetime_budget_cents, end_time').eq('effective_status', 'ACTIVE').limit(500)
+        .select('account_id, daily_budget_cents, lifetime_budget_cents, end_time').eq('effective_status', 'ACTIVE').limit(500)
       if (!as.error) {
         const rows = (as.data as Array<Record<string, unknown>> | null) ?? []
         gelesen += rows.length
-        for (const r of rows) summe += tag(r.daily_budget_cents, r.lifetime_budget_cents, r.end_time)
+        for (const r of rows) summe += inEur(tag(r.daily_budget_cents, r.lifetime_budget_cents, r.end_time), r.account_id)
       }
       if (abbruch) return
       const ca = await supabase.from('meta_campaigns')
-        .select('daily_budget_cents, lifetime_budget_cents, stop_time').eq('effective_status', 'ACTIVE').limit(200)
+        .select('account_id, daily_budget_cents, lifetime_budget_cents, stop_time').eq('effective_status', 'ACTIVE').limit(200)
       if (!ca.error) {
         const rows = (ca.data as Array<Record<string, unknown>> | null) ?? []
         gelesen += rows.length
-        for (const r of rows) summe += tag(r.daily_budget_cents, r.lifetime_budget_cents, r.stop_time)
+        for (const r of rows) summe += inEur(tag(r.daily_budget_cents, r.lifetime_budget_cents, r.stop_time), r.account_id)
       }
       if (abbruch) return
       // Leerer Spiegel = unbekannt (nicht 0 €, sonst wirkt die Leitplanke falsch grün)
-      setAktivCents(as.error && ca.error ? null : gelesen > 0 ? summe : null)
+      setAktivEurSumme(as.error && ca.error ? null : gelesen > 0 ? summe : null)
     })()
     return () => { abbruch = true }
   }, [])
 
   const g = validation?.guardrail ?? null
-  const dieseEurLokal = entwurfTagesbudgetCents(spec) / 100 / kurs
+  /** Einheiten der Entwurfs-Kontowährung je EUR (EUR-Konto 1) */
+  const kursW = waehrung === 'EUR' ? 1 : kurs
+  const dieseEurLokal = entwurfTagesbudgetCents(spec) / 100 / kursW
   if (g) {
     return {
       limitEur: g.limitEur, aktivEur: g.activeEur, dieseEur: Math.max(0, g.afterEur - g.activeEur),
-      nachherEur: g.afterEur, ok: g.ok, quelle: 'server', kurs: g.rateEurPerUsd > 0 ? 1 / g.rateEurPerUsd : kurs,
+      nachherEur: g.afterEur, ok: g.ok, quelle: 'server', kurs: g.rateEurPerUsd > 0 ? 1 / g.rateEurPerUsd : kursW,
     }
   }
-  const aktivEur = aktivCents === null ? null : aktivCents / 100 / kurs
+  const aktivEur = aktivEurSumme
   const nachherEur = aktivEur === null ? null : aktivEur + dieseEurLokal
   return {
     limitEur, aktivEur, dieseEur: dieseEurLokal, nachherEur,
     ok: nachherEur === null || limitEur === null ? null : nachherEur <= limitEur + 0.005,
-    quelle: 'schaetzung', kurs,
+    quelle: 'schaetzung', kurs: kursW,
   }
 }
 

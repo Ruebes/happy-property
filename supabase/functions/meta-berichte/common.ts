@@ -3,7 +3,7 @@
 
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import type { AdsCaller } from '../_shared/adsAuth.ts'
-import { getLastUsage, graphGet, MetaApiError, metaEnv, type GraphParams } from '../_shared/metaGraph.ts'
+import { getLastUsage, graphGet, kontoAuswahl, MetaApiError, type GraphParams } from '../_shared/metaGraph.ts'
 import type { BerichteErrorCode, BerichteMode, BerichtUsage, Zeitraum } from './types.ts'
 
 export const FN = 'meta-berichte'
@@ -22,8 +22,9 @@ export interface Ctx {
   hinweise: string[]
 }
 
-export function makeCtx(sb: SupabaseClient, caller: AdsCaller, mode: BerichteMode): Ctx {
-  return { sb, caller, mode, account: metaEnv().account, hinweise: [] }
+/** kontoRaw: body.account_id (im CRM gewähltes Werbekonto); leer = Anlagekonto */
+export function makeCtx(sb: SupabaseClient, caller: AdsCaller, mode: BerichteMode, kontoRaw?: unknown): Ctx {
+  return { sb, caller, mode, account: kontoAuswahl(kontoRaw), hinweise: [] }
 }
 
 export const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))

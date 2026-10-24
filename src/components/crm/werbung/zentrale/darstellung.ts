@@ -2,6 +2,7 @@ import type { TFunction } from 'i18next'
 import { metaLabel, type WerbeFormat } from '../format'
 import type { SpaltenFormat } from './spalten'
 import { auslieferungVon, lernStatus, problemText } from './status'
+import type { KontoWaehrung } from '../../../../lib/werbeKonten'
 import type { Ebene, Knoten } from './typen'
 
 // ── Anzeige-Helfer der Zentrale (Zahlen, Budget, Lernphase, Texte) ───────────
@@ -31,20 +32,21 @@ export function ebeneLabel(level: Ebene, t: TFunction, mehrzahl = false): string
   return mehrzahl ? t('crm.werbung.zentrale.ebene.anzeigen', 'Werbeanzeigen') : t('crm.werbung.zentrale.ebene.anzeige', 'Werbeanzeige')
 }
 
-const usd = (cents: number, fmt: WerbeFormat) =>
-  (cents / 100).toLocaleString(fmt.locale, { style: 'currency', currency: 'USD', maximumFractionDigits: cents >= 10_000 ? 0 : 2 })
+const geld = (cents: number, fmt: WerbeFormat, waehrung: KontoWaehrung) =>
+  (cents / 100).toLocaleString(fmt.locale, { style: 'currency', currency: waehrung, maximumFractionDigits: cents >= 10_000 ? 0 : 2 })
 
-/** Budget-Zelle: Haupttext (USD) + Euro-Hinweis */
-export function budgetText(k: Knoten, kurs: number, t: TFunction, fmt: WerbeFormat): { haupt: string; sub: string | null } {
+/** Budget-Zelle: Haupttext (Kontowährung) + bei USD Euro-Hinweis */
+export function budgetText(k: Knoten, kurs: number, t: TFunction, fmt: WerbeFormat, waehrung: KontoWaehrung = 'USD'): { haupt: string; sub: string | null } {
   if (k.level === 'ad') return { haupt: '-', sub: null }
   if (k.level === 'adset' && k.kampagnenbudget) {
     return { haupt: t('crm.werbung.zentrale.budget.kampagne', 'Budget der Kampagne'), sub: null }
   }
   const tag = k.budgetTagCents ?? 0
   const lauf = k.budgetLaufzeitCents ?? 0
-  const eur = (c: number) => t('crm.werbung.zentrale.budget.eur', '≈ {{eur}}', { eur: fmt.eur(c / 100 / (kurs > 0 ? kurs : 1.14)) })
-  if (tag > 0) return { haupt: t('crm.werbung.zentrale.budget.tag', '{{betrag}} / Tag', { betrag: usd(tag, fmt) }), sub: eur(tag) }
-  if (lauf > 0) return { haupt: t('crm.werbung.zentrale.budget.laufzeit', '{{betrag}} Laufzeit', { betrag: usd(lauf, fmt) }), sub: eur(lauf) }
+  const eur = (c: number) => (waehrung === 'EUR' ? null
+    : t('crm.werbung.zentrale.budget.eur', '≈ {{eur}}', { eur: fmt.eur(c / 100 / (kurs > 0 ? kurs : 1.14)) }))
+  if (tag > 0) return { haupt: t('crm.werbung.zentrale.budget.tag', '{{betrag}} / Tag', { betrag: geld(tag, fmt, waehrung) }), sub: eur(tag) }
+  if (lauf > 0) return { haupt: t('crm.werbung.zentrale.budget.laufzeit', '{{betrag}} Laufzeit', { betrag: geld(lauf, fmt, waehrung) }), sub: eur(lauf) }
   if (k.level === 'campaign' && k.ausSpiegel) return { haupt: t('crm.werbung.zentrale.budget.gruppen', 'Budget der Anzeigengruppen'), sub: null }
   return { haupt: '-', sub: null }
 }
@@ -81,12 +83,12 @@ export const zielText = (v: string | null, t: TFunction): string =>
   (v ? t(`crm.werbung.meta.goal.${v}`, metaLabel(v)) : '-')
 
 /** Text einer Textspalte (für Anzeige, Sortierung und CSV) */
-export function textWert(k: Knoten, key: string, kurs: number, t: TFunction, fmt: WerbeFormat): string {
+export function textWert(k: Knoten, key: string, kurs: number, t: TFunction, fmt: WerbeFormat, waehrung: KontoWaehrung = 'USD'): string {
   switch (key) {
     case 'auslieferung': { const a = auslieferungVon(k); return a.label.k ? t(a.label.k, a.label.d) : a.label.d }
     case 'lernphase': return k.level === 'ad' ? '-' : lernText(k, t)
     case 'letzte_aenderung': return k.level === 'ad' ? '-' : datumMitAbstand(k.lernphase?.last_sig_edit_ts, t, fmt)
-    case 'budget': { const b = budgetText(k, kurs, t, fmt); return b.sub ? `${b.haupt} (${b.sub})` : b.haupt }
+    case 'budget': { const b = budgetText(k, kurs, t, fmt, waehrung); return b.sub ? `${b.haupt} (${b.sub})` : b.haupt }
     case 'gebotsstrategie': return k.level === 'ad' ? '-' : gebotText(k.gebotsstrategie, t)
     case 'leistungsziel': return k.level === 'adset' ? zielText(k.leistungsziel, t) : '-'
     default: return ''

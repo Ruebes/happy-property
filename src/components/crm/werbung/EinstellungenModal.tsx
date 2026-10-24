@@ -11,6 +11,7 @@ import { LockedField, USD_PRO_EUR_FALLBACK } from './felder'
 import { ladeUsdProEur } from './useWerbeDaten'
 import EinstellungenAlt, { TargetingView } from './kampagnen/EinstellungenAlt'
 import { ladeBuilderEinstellungen } from './kampagnen/builderApi'
+import { waehrungVon, type KontoWaehrung } from '../../../lib/werbeKonten'
 
 // ── ⚙ Einstellungen einer Kampagne (Überblick, alles von Meta) ───────────────
 // Lädt Kampagne, Anzeigengruppen und Anzeigen live über meta-ads-tools mode
@@ -41,6 +42,8 @@ interface Zustand {
   loading: boolean
   busy: boolean
   data?: { campaign: MetaEntity; adsets: MetaEntity[]; ads: MetaEntity[] }
+  /** Kontowährung der Kampagne (meta-ads-tools settings account.currency; alte Antworten: USD) */
+  waehrung?: KontoWaehrung
 }
 
 const LEER: Zustand = { fuer: null, loading: true, busy: false }
@@ -92,10 +95,11 @@ function EinstellungenNeu({ kampagne, onClose, onGeaendert, showToast }: Props) 
     try {
       const { data, error } = await supabase.functions.invoke('meta-ads-tools', { body: { mode: 'settings', campaign_id: campaignId } })
       if (error) throw error
-      const d = data as { campaign: MetaEntity; adsets: MetaEntity[]; ads: MetaEntity[]; error?: string }
+      const d = data as { campaign: MetaEntity; adsets: MetaEntity[]; ads: MetaEntity[]; account?: { id?: string; currency?: string }; error?: string }
       if (d.error) throw new Error(d.error)
       if (nr !== anfrage.current) return
-      setZ(s => ({ ...s, loading: false, data: { campaign: d.campaign, adsets: d.adsets, ads: d.ads } }))
+      const waehrung = waehrungVon(d.account?.id ?? d.campaign?.account_id, d.account?.currency)
+      setZ(s => ({ ...s, loading: false, waehrung, data: { campaign: d.campaign, adsets: d.adsets, ads: d.ads } }))
     } catch (err) {
       if (nr !== anfrage.current) return
       console.error('[AdsManager] openSettings:', err)
@@ -152,8 +156,10 @@ function EinstellungenNeu({ kampagne, onClose, onGeaendert, showToast }: Props) 
     const n = Number(v)
     if (v == null || v === '' || !Number.isFinite(n) || n <= 0) return limit ? t('crm.werbung.bearbeiten.keinLimit', 'kein Limit') : '-'
     if (limit && n >= UNBEGRENZT_AB) return t('crm.werbung.bearbeiten.keinLimit', 'kein Limit')
-    const usd = n / 100
-    return `$ ${usd.toLocaleString(fmt.locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (≈ ${fmt.eur(usd / k)})`
+    const betrag = n / 100
+    // EUR-Konto: Betrag ist schon Euro
+    if (z.waehrung === 'EUR') return fmt.eur(betrag)
+    return `$ ${betrag.toLocaleString(fmt.locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (≈ ${fmt.eur(betrag / k)})`
   }
   const zeit = (v: unknown): string => {
     if (!v) return '-'

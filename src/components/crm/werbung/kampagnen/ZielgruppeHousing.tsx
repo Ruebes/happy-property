@@ -8,6 +8,7 @@ import {
 import { FeldHinweise } from './PruefPanel'
 import { GesperrteEinstellung, Schalter, SperrBanner, feldId, feldLabel } from './Bausteine'
 import { setzeAnzeigengruppe, useAssistent } from './useEntwurf'
+import { useWerbeKontext } from '../useWerbeDaten'
 
 // ── Zielgruppe einer Anzeigengruppe mit Sonderkategorie Wohnen ───────────────
 // Hülle um den bestehenden TargetingEditor: zeigt die Wohnen-Sperren (Banner,
@@ -33,6 +34,10 @@ const LAUTE_AENDERUNGEN: ReadonlyArray<HousingChange['code']> = [
 export default function ZielgruppeHousing({ adset, disabled }: { adset: AdsetDraft; disabled: boolean }) {
   const { t } = useTranslation()
   const { e } = useAssistent()
+  const { catalog } = useWerbeKontext()
+  // Zielgruppen je Werbekonto: Konto der vorhandenen Kampagne, sonst Anlagekonto (Server-Standard)
+  const zielKampagne = e.spec.campaign?.existing_id ?? ''
+  const konto = zielKampagne ? catalog.find(c => c.campaign_id === zielKampagne)?.account_id ?? null : null
   const hec = draftIsHec(e.spec)
   const node = adset.key
   const [entfernt, setEntfernt] = useState<HousingChange[]>([])
@@ -86,7 +91,7 @@ export default function ZielgruppeHousing({ adset, disabled }: { adset: AdsetDra
   }
 
   // Adapter: neue Props des TargetingEditors (housing, onLocks) per Spread
-  const editorZusatz = { housing: hec, onLocks: (l: string[]) => setEditorSperren(l), showLocales: true }
+  const editorZusatz = { housing: hec, onLocks: (l: string[]) => setEditorSperren(l), showLocales: true, accountId: konto }
 
   return (
     <div className="space-y-3">

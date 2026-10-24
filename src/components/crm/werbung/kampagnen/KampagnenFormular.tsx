@@ -275,7 +275,7 @@ export default function KampagnenFormular() {
               )}
               <div className="grid gap-3 sm:grid-cols-2">
                 <GeldFeld node={node} feld="campaign.spend_cap_cents" label={feldLabel(t, 'campaign.spend_cap_cents', 'Ausgabenlimit der Kampagne')}
-                  hilfe={t('crm.werbung.bearbeiten.hilfe.spendCap', 'Optional. Meta pausiert die Kampagne, wenn insgesamt so viel ausgegeben ist (100 $ bis 100.000 $).')}
+                  hilfe={t('crm.werbung.bearbeiten.hilfe.spendCapKonto', 'Optional. Meta pausiert die Kampagne, wenn insgesamt so viel ausgegeben ist (100 bis 100.000 in der Kontowährung).')}
                   entfernbar={t('crm.werbung.bearbeiten.limitEntfernen', 'Limit entfernen')}
                   cents={ohneUnbegrenzt(c.spend_cap_cents)} onChange={v => setC({ spend_cap_cents: v })} kurs={kurs} disabled={gesperrt} sperre={sp('campaign.spend_cap_cents')} />
               </div>

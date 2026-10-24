@@ -30,7 +30,7 @@ export const META_SOURCES = new Set(['meta', 'facebook', 'fb', 'instagram', 'ig'
 // Einzelne Abfragen (PostgREST-Builder laufen erst beim await)
 const ABFRAGEN = {
   katalog: (segment: AdSegment) =>
-    supabase.from('ad_catalog').select('ad_id, campaign_id, campaign_name, adset_id, adset_name, ad_name, status, thumbnail_url').eq('platform', segment),
+    supabase.from('ad_catalog').select('ad_id, account_id, campaign_id, campaign_name, adset_id, adset_name, ad_name, status, thumbnail_url').eq('platform', segment),
   insights: (segment: AdSegment, since: string) =>
     supabase.from('ad_insights_daily').select('day, ad_id, spend_eur, impressions, reach, link_clicks, outbound_clicks, landing_page_views, platform_leads, video_3s').eq('platform', segment).gte('day', since),
   // Vorbereitete (nicht freigegebene) Anzeigen
@@ -352,7 +352,8 @@ export function useWerbeKontext(): WerbeKontextWert {
 }
 
 // ── Kurs USD je EUR (Hinweis neben Dollar-Eingaben) ──────────────────────────
-// Schnitt der letzten 7 Tage: Summe spend (USD) / Summe spend_eur. Eine kleine
+// Schnitt der letzten 7 Tage: Summe spend (USD) / Summe spend_eur, nur Zeilen des
+// USD-Kontos (EUR-Konto: spend = spend_eur würde den Kurs verfälschen). Eine kleine
 // Abfrage, erst beim Öffnen der Einstellungen, danach aus dem Zwischenspeicher.
 // null = kein brauchbarer Wert (Aufrufer nimmt den Ersatzkurs).
 let kursCache: Promise<number | null> | null = null
@@ -363,7 +364,7 @@ export function ladeUsdProEur(): Promise<number | null> {
       try {
         const since = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10)
         const { data, error } = await supabase.from('ad_insights_daily')
-          .select('spend, spend_eur').eq('platform', 'meta').gte('day', since).limit(1000)
+          .select('spend, spend_eur').eq('platform', 'meta').eq('currency', 'USD').gte('day', since).limit(1000)
         if (error) throw error
         let usd = 0, eur = 0
         for (const r of (data as Array<{ spend: number | string | null; spend_eur: number | string | null }> | null) ?? []) {

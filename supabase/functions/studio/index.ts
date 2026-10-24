@@ -779,12 +779,14 @@ Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für 
       // Anzeigengruppe: gewählt (Konto + Wohnen-Kategorie geprüft) oder wie
       // bisher die erste Gruppe der System-Kampagne.
       let adsetId = ''
+      // Konto der Ziel-Anzeigengruppe: Bild, Creative und Anzeige entstehen dort
+      let konto = env.account
       const wantAdset = body.adset_id !== undefined && body.adset_id !== null && String(body.adset_id).trim() !== ''
       if (wantAdset) {
         adsetId = String(body.adset_id).replace(/[^0-9]/g, '')
         if (!adsetId) return json({ error: 'adset_id ist keine gültige ID einer Anzeigengruppe.', code: 'adset_invalid' }, 400)
         try {
-          await assertOwnAccount(adsetId)
+          konto = await assertOwnAccount(adsetId)
         } catch (e) {
           if (e instanceof MetaApiError && (e.kind === 'permission' || e.kind === 'validation')) {
             return json({ error: 'Die gewählte Anzeigengruppe gibt es nicht oder sie gehört nicht zu unserem Werbekonto.', code: 'adset_foreign' }, 400)
@@ -818,6 +820,7 @@ Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für 
         const adsetsJson = await graphGet<{ data?: Array<{ id?: string }> }>(`${sysCampaign}/adsets`, { fields: 'id', limit: 5 })
         adsetId = String(adsetsJson?.data?.[0]?.id ?? '')
         if (!adsetId) throw new Error('Kein Adset in der System-Kampagne')
+        konto = await assertOwnAccount(adsetId)
       }
 
       // Identität: Facebook-Seite + Instagram-Konto (sonst zeigt Instagram nur
@@ -856,10 +859,10 @@ Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für 
         const { bytes, type } = await ladeEigenesBild(url, 'Bild laden')
         const contentType = bildTyp(bytes, type)
         const name = `studio-${Date.now()}`
-        const path = `act_${env.account}/adimages`
+        const path = `act_${konto}/adimages`
         const request = { name, content_type: contentType, bytes: bytes.length, source: url.slice(0, 300) }
         try {
-          const hash = await uploadImage(env.account, bytes, contentType, name)
+          const hash = await uploadImage(konto, bytes, contentType, name)
           await logMetaWrite(supabase, { ...logBase(), entity_level: 'image', path, request, after: { image_hash: hash }, ok: true, http_status: 200, usage: getLastUsage() })
           return hash
         } catch (e) {
@@ -903,7 +906,7 @@ Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für 
         degrees_of_freedom_spec: { creative_features_spec: creativeFeaturesSpec(undefined) },
         contextual_multi_ads: { enroll_status: 'OPT_OUT' },
       }
-      const creativePath = `act_${env.account}/adcreatives`
+      const creativePath = `act_${konto}/adcreatives`
       let creativeId = ''
       try {
         const cr = await graphPost<{ id?: string }>(creativePath, creativeBody)
@@ -921,7 +924,7 @@ Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für 
         creative: { creative_id: creativeId },
         status: 'PAUSED',
       }
-      const adPath = `act_${env.account}/ads`
+      const adPath = `act_${konto}/ads`
       let adId = ''
       try {
         const ad = await graphPost<{ id?: string }>(adPath, adBody)

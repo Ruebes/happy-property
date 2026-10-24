@@ -94,7 +94,7 @@ Deno.serve(async (req) => {
       throw new KontoError(400, 'invalid_request', `Unbekannter Modus "${mode.slice(0, 40)}".`, `Erlaubt: ${KONTO_MODES.join(', ')}`)
     }
     const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-    const ctx = makeCtx(sb, caller, mode)
+    const ctx = makeCtx(sb, caller, mode, body.account_id)
     if (KONTO_WRITE_MODES.indexOf(mode) >= 0) {
       // Ausgabenlimit mit vorschau: true sendet nichts; Admin-Prüfung folgt im Modus
       const nurVorschau = mode === 'konto_ausgabenlimit' && body.vorschau === true

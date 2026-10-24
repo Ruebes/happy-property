@@ -119,7 +119,7 @@ Deno.serve(async (req) => {
       throw new WerkzeugError(400, 'invalid_request', `Unbekannter Modus "${mode.slice(0, 40)}".`, `Erlaubt: ${WERKZEUG_MODES.join(', ')}`)
     }
     const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-    const ctx = makeCtx(sb, caller, mode)
+    const ctx = makeCtx(sb, caller, mode, body.account_id)
     // vorschau nur bei genau true (einmal hier, damit Weiche und Modi gleich entscheiden:
     // {vorschau: 1} ist ein echter Aufruf mit allen Prüfungen)
     const vorschau = body.vorschau === true

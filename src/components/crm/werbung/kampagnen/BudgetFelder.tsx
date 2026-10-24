@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { INPUT_CLS, parseDollar, toLocalInput } from '../felder'
+import { INPUT_CLS, parseDollar, toLocalInput, useKontoWaehrung } from '../felder'
 import { useWerbeFormat } from '../format'
 import { FeldRahmen, type Empfehlung } from './Bausteine'
 import { WOCHENTAGE_META, isoAusZeit, type BudgetPlanung, type ZeitplanBlock } from './bearbeitenTypen'
@@ -39,6 +39,7 @@ const isoAus = (lokal: string): string | null => {
 export function BudgetPlanungFeld({ werte, onChange, kurs, tagesbudgetCents, ...b }: PlanProps) {
   const { t } = useTranslation()
   const fmt = useWerbeFormat()
+  const waehrung = useKontoWaehrung()
   const liste = werte ?? []
   const aus = !!b.disabled || !!b.sperre
   const setze = (i: number, patch: Partial<BudgetPlanung>) => onChange(liste.map((x, j) => (j === i ? { ...x, ...patch } : x)))
@@ -89,7 +90,7 @@ export function BudgetPlanungFeld({ werte, onChange, kurs, tagesbudgetCents, ...
                   </select>
                 </label>
                 <label className="block min-w-[7rem] flex-1 text-[10px] text-gray-500">
-                  {p.budget_value_type === 'ABSOLUTE' ? t('crm.werbung.bearbeiten.plan.plusBetrag', 'Plus ($ pro Tag)') : t('crm.werbung.bearbeiten.plan.plusProzent', 'Plus (%)')}
+                  {p.budget_value_type === 'ABSOLUTE' ? (waehrung === 'EUR' ? t('crm.werbung.bearbeiten.plan.plusBetragEur', 'Plus (€ pro Tag)') : t('crm.werbung.bearbeiten.plan.plusBetrag', 'Plus ($ pro Tag)')) : t('crm.werbung.bearbeiten.plan.plusProzent', 'Plus (%)')}
                   <input inputMode="decimal" disabled={fest} className={`${INPUT_CLS} tabular-nums`}
                     defaultValue={p.budget_value_type === 'ABSOLUTE' ? String(p.budget_value / 100).replace('.', ',') : String(p.budget_value)}
                     key={`${p.budget_value_type}-${i}`}
@@ -106,7 +107,7 @@ export function BudgetPlanungFeld({ werte, onChange, kurs, tagesbudgetCents, ...
                 )}
               </div>
               {p.budget_value_type === 'ABSOLUTE' && p.budget_value > 0 && (
-                <p className="text-[10px] text-gray-500 tabular-nums">+ {geldText(fmt, p.budget_value, kurs)}</p>
+                <p className="text-[10px] text-gray-500 tabular-nums">+ {geldText(fmt, p.budget_value, kurs, waehrung)}</p>
               )}
               {p.id && !aus && <p className="text-[10px] text-gray-500">🔒 {t('crm.werbung.bearbeiten.plan.bestehend', 'Schon bei Meta geplant: hier nicht änderbar und nicht entfernbar. Neue Zeiträume lassen sich hinzufügen.')}</p>}
               {fehler && <p className="text-[11px] text-red-700">{fehler}</p>}

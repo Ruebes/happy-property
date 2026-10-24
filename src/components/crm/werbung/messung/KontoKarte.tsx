@@ -85,10 +85,13 @@ export default function KontoKarte({ lader }: { lader: Lader<KontoResponse> }) {
               <dt className="text-gray-500">{t('crm.werbung.messung.konto.mindestbudget', 'Kleinstes Tagesbudget')}</dt>
               <dd className="tabular-nums text-gray-800">{geld(k.mindest_tagesbudget_cents, k.waehrung, fmt.locale)}</dd>
             </>)}
-            <dt className="text-gray-500">{t('crm.werbung.messung.konto.kurs', 'Umrechnung')}</dt>
-            <dd className="text-gray-800">{k.kurs_quelle === 'insights_7d'
-              ? t('crm.werbung.messung.konto.kursGemessen', '1 € = {{kurs}} $ (Schnitt 7 Tage)', { kurs: k.usd_pro_eur.toLocaleString(fmt.locale, { maximumFractionDigits: 3 }) })
-              : t('crm.werbung.messung.konto.kursErsatz', '1 € = {{kurs}} $ (Ersatzkurs)', { kurs: k.usd_pro_eur.toLocaleString(fmt.locale, { maximumFractionDigits: 3 }) })}</dd>
+            {/* EUR-Konto: keine Umrechnung nötig */}
+            {k.waehrung !== 'EUR' && (<>
+              <dt className="text-gray-500">{t('crm.werbung.messung.konto.kurs', 'Umrechnung')}</dt>
+              <dd className="text-gray-800">{k.kurs_quelle === 'insights_7d'
+                ? t('crm.werbung.messung.konto.kursGemessen', '1 € = {{kurs}} $ (Schnitt 7 Tage)', { kurs: k.usd_pro_eur.toLocaleString(fmt.locale, { maximumFractionDigits: 3 }) })
+                : t('crm.werbung.messung.konto.kursErsatz', '1 € = {{kurs}} $ (Ersatzkurs)', { kurs: k.usd_pro_eur.toLocaleString(fmt.locale, { maximumFractionDigits: 3 }) })}</dd>
+            </>)}
           </dl>
           <p className="text-[11px] leading-snug text-gray-500">{t('crm.werbung.messung.konto.nurLesen', 'Diese Einstellungen ändert ihr direkt bei Meta (Werbeeinstellungen). Hier nur zum Nachsehen.')}</p>
         </div>

@@ -217,7 +217,7 @@ export default function NeueConversionDialog({ offen, vorschlag, schreibSperre, 
                   </div>
                 </Einstellung>
                 <Einstellung label={t('crm.werbung.messung.conv.wert', 'Standardwert je Conversion')} fuer="conv-wert"
-                  erklaerung={t('crm.werbung.messung.conv.wertHilfe', 'Optional, in der Kontowährung (USD). Leer lassen, wenn das Ereignis selbst einen Wert mitbringt.')}>
+                  erklaerung={t('crm.werbung.messung.conv.wertHilfeKonto', 'Optional, in der Kontowährung (USD-Konto in $, EUR-Konto in €). Leer lassen, wenn das Ereignis selbst einen Wert mitbringt.')}>
                   <input id="conv-wert" value={f.standardwert} onChange={e => setze('standardwert', e.target.value)} inputMode="decimal" className={`${EINGABE_KLEIN} sm:max-w-[10rem]`} />
                 </Einstellung>
                 <Einstellung label={t('crm.werbung.messung.conv.beschreibung', 'Beschreibung')} fuer="conv-beschreibung"

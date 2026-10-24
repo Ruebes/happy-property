@@ -3789,8 +3789,11 @@ export interface GuardrailInfo {
   limitEur: number
   activeEur: number
   afterEur: number
+  /** EUR je Einheit der Kontowährung (USD-Konto: EUR je USD, EUR-Konto: 1) */
   rateEurPerUsd: number
   ok: boolean
+  /** Kontowährung der Geldfelder (USD oder EUR); fehlt bei alten Antworten = USD */
+  currency?: string
 }
 export interface MetaFieldIssue {
   /** FieldSpec.key aus apiPathToFieldKey, null = keinem Feld zuordenbar */
@@ -4128,7 +4131,11 @@ export interface BulkPatch {
   /** an den Namen anhängen */
   name_suffix?: string
 }
-export interface BulkRequest { items: BulkItem[]; patch: BulkPatch; confirm: true }
+export interface BulkRequest {
+  items: BulkItem[]; patch: BulkPatch; confirm: true
+  /** Werbekonto der Ansicht (ohne act_): Objekte aus anderen Konten lehnt der Server ab */
+  account_id?: string
+}
 export interface BulkResult {
   level: Level
   id: string

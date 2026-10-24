@@ -14,6 +14,7 @@ import { WerbeKontext, useWerbeDaten, type WerbeKontextWert } from '../../../com
 import { supabase } from '../../../lib/supabase'
 import { lazyWithReload } from '../../../lib/lazyWithReload'
 import { useAuth, hasAdSegment, hasPerm, AD_SEGMENTS, type AdSegment } from '../../../lib/auth'
+import { ANLAGE_KONTO_ID, WERBEKONTEN, kontoVon, setGewaehltesKonto, useGewaehltesKonto } from '../../../lib/werbeKonten'
 import type { AdCatalogRow, WerbeZeitraum } from '../../../lib/crmTypes'
 
 // ── Werbemanager (/admin/crm/ads) ─────────────────────────────────────────────
@@ -53,6 +54,12 @@ const REITER_KOMPONENTE: Record<ReiterId, LazyExoticComponent<ComponentType<obje
 // Reiter, die die Seitendaten zeigen: während fetchAll läuft, steht wie bisher
 // der Lade-Ring statt des Inhalts. Die übrigen Reiter laden selbst.
 const MIT_SEITENDATEN: ReadonlySet<ReiterId> = new Set<ReiterId>(['stats', 'werbemittel'])
+
+// Reiter, die je Werbekonto bei Meta lesen (Kontowahl oben, lib/werbeKonten). Beim
+// Kontowechsel werden sie neu eingehängt, damit nichts aus dem anderen Konto stehen bleibt.
+const PRO_KONTO: ReadonlySet<ReiterId> = new Set<ReiterId>(['zielgruppen', 'formulare', 'tests', 'messung', 'kommentare'])
+// Kontowahl sichtbar: dazu die Statistik (Kacheln zeigen beide Konten, die Zentrale darunter das gewählte)
+const KONTOWAHL: ReadonlySet<ReiterId> = new Set<ReiterId>([...PRO_KONTO, 'stats'])
 
 // Alte Adressen: ?tab=studio war das Anzeigen-Studio, heute Werbemittel
 const ALT_REITER: Record<string, ReiterId> = { studio: 'werbemittel' }
@@ -116,6 +123,7 @@ function Werbemanager() {
   const [syncing, setSyncing] = useState(false)
   const [vorschauAd, setVorschauAd] = useState<AdCatalogRow | null>(null)
   const [einstellungen, setEinstellungen] = useState<{ id: string; name: string } | null>(null)
+  const konto = useGewaehltesKonto()
 
   useEffect(() => {
     if (segments.length && !segments.includes(segment)) setSegment(segments[0])
@@ -153,8 +161,12 @@ function Werbemanager() {
     try {
       const { data, error } = await supabase.functions.invoke('meta-ads-sync', { body: { days: 3 } })
       if (error) throw error
-      const d = data as { insight_rows?: number } | null
+      const d = data as { insight_rows?: number; konten_fehler?: Array<{ account: string; error: string }> } | null
       showToast(t('crm.ads.toastSynced', '✅ Aktualisiert - {{n}} Tageswerte von Meta geholt', { n: d?.insight_rows ?? 0 }))
+      // Ein Konto nicht lesbar (z. B. fehlende Rechte): die anderen sind trotzdem da
+      for (const f of d?.konten_fehler ?? []) {
+        showToast(`❌ ${t('crm.ads.toastSyncKonto', 'Konto {{name}} nicht gelesen: {{fehler}}', { name: kontoVon(f.account)?.name ?? f.account, fehler: f.error })}`)
+      }
       await fetchAll()
     } catch (err) {
       console.error('[AdsManager] runSync:', err)
@@ -229,6 +241,27 @@ function Werbemanager() {
           <Tabs tabs={tabItems} value={tab} onChange={wechsleReiter} urlParam="tab" idBase="werbung"
             ariaLabel={t('crm.werbung.tabs.aria', 'Bereiche des Werbemanagers')} className="mb-5" />
 
+          {/* Kontowahl für die Reiter, die je Werbekonto bei Meta lesen (Statistik zeigt beide) */}
+          {tab === 'kampagnen' && (
+            <p className="mb-4 text-xs text-gray-500">
+              {t('crm.werbung.konto.anlage', 'Neue Kampagnen entstehen im Konto {{name}}.', { name: kontoVon(ANLAGE_KONTO_ID)?.name ?? ANLAGE_KONTO_ID })}
+              {' '}{t('crm.werbung.konto.bearbeiten', 'Bearbeiten und Kopieren wirkt im Konto des jeweiligen Objekts.')}
+            </p>
+          )}
+          {KONTOWAHL.has(tab) && (
+            <div className="flex flex-wrap items-center gap-2 mb-4 text-sm">
+              <span className="font-semibold text-gray-700">{t('crm.werbung.konto.label', 'Werbekonto')}</span>
+              <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+                {WERBEKONTEN.map(k => (
+                  <button key={k.id} type="button" onClick={() => setGewaehltesKonto(k.id)} aria-pressed={konto === k.id}
+                    className={`px-3 py-1.5 text-sm font-medium ${konto === k.id ? 'bg-hp-navy text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
+                    {k.name} ({k.waehrung})
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {REITER.filter(id => besucht.has(id)).map(id => {
             const Reiter = REITER_KOMPONENTE[id]
             const wartet = daten.loading && MIT_SEITENDATEN.has(id)
@@ -236,7 +269,7 @@ function Werbemanager() {
               <div key={id} {...tabPanelProps('werbung', id)} hidden={id !== tab || wartet}>
                 <ContentErrorBoundary scope={`Werbemanager/${id}`}>
                   <Suspense fallback={<Lader />}>
-                    <Reiter />
+                    <Reiter key={PRO_KONTO.has(id) ? konto : 'alle'} />
                   </Suspense>
                 </ContentErrorBoundary>
               </div>

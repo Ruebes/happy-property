@@ -539,10 +539,8 @@ const GRUPPE_LIEFERT_MIT_KAMPAGNE = ['ACTIVE', 'IN_PROCESS', 'WITH_ISSUES', 'CAM
 
 async function leitplanke(ctx: Ctx, g: { ebene: SteuerungEbene | null; aktion: RegelAktion | null; ids: string[]; grenzeCent: number | null },
   objekte: Map<string, KontoObjekt> | null, hinweise: string[]): Promise<void> {
-  const geld = await ctx.geld()
-  if (geld.waehrung !== 'USD') {
-    throw new SteuerungError(409, 'unsupported', 'Die Leitplanken-Prüfung kennt nur USD-Werbekonten.', 'Regel ohne Erhöhung anlegen oder Sven fragen.')
-  }
+  // Kontowährung USD oder EUR (ctx.geld lehnt andere ab); die Leitplanke rechnet je Konto in EUR
+  await ctx.geld()
   if (!g.ids.length || !g.ebene) {
     throw new SteuerungError(422, 'guardrail', 'Diese Regel gilt nicht für feste Objekte; die Leitplanke ist nicht prüfbar.',
       'Regel hier mit festen IDs neu anlegen.')
@@ -586,7 +584,7 @@ async function leitplanke(ctx: Ctx, g: { ebene: SteuerungEbene | null; aktion: R
   } else return
   let h
   try {
-    h = await budgetHeadroom(ctx.sb, { addDailyUsdCents: addCent, replaceEntityIds: ersetzt })
+    h = await budgetHeadroom(ctx.sb, { addDailyCents: addCent, account: ctx.env.account, replaceEntityIds: ersetzt })
   } catch (e) {
     throw new SteuerungError(503, 'guardrail', 'Die Leitplanke ließ sich nicht prüfen, deshalb wird nichts geändert.', softMsg(e))
   }

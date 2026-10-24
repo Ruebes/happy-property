@@ -8,6 +8,7 @@ import type { DraftSpec, EditApplyResponse, EditChange, EditDiffResponse, Level 
 import { useWerbeFormat } from '../format'
 import { issueText } from './PruefPanel'
 import { LernphaseBadge, ebeneName, wertText } from './bearbeitenHelfer'
+import { useKontoWaehrung } from '../felder'
 import { BUDGET_LERN_SCHWELLE, budgetProzent, istGeldFeld, objektName } from './bearbeitenTypen'
 import type { UebernehmenGruende } from './useEntwurf'
 
@@ -60,6 +61,7 @@ function gruppieren(changes: readonly EditChange[], spec: DraftSpec): Gruppe[] {
 export default function AenderungenDialog(p: Props) {
   const { t } = useTranslation()
   const fmt = useWerbeFormat()
+  const waehrung = useKontoWaehrung()
   const [forceGrund, setForceGrund] = useState('')
   const [housingGrund, setHousingGrund] = useState('')
   useEffect(() => { if (p.offen) { setForceGrund(''); setHousingGrund('') } }, [p.offen])
@@ -108,9 +110,9 @@ export default function AenderungenDialog(p: Props) {
             {c.blocked && <Badge tone="neutral">{t('crm.werbung.bearbeiten.diff.nichtGesendet', 'wird nicht gesendet')}</Badge>}
           </span>
           <span className="mt-0.5 block break-words text-gray-600 tabular-nums">
-            <span className="line-through decoration-gray-300">{wertText(t, fmt, p.kurs, c.field, c.before)}</span>
+            <span className="line-through decoration-gray-300">{wertText(t, fmt, p.kurs, c.field, c.before, waehrung)}</span>
             {' → '}
-            <span className="text-gray-900">{wertText(t, fmt, p.kurs, c.field, c.after)}</span>
+            <span className="text-gray-900">{wertText(t, fmt, p.kurs, c.field, c.after, waehrung)}</span>
             {pct !== null && <span className={`ml-1.5 ${pct > 0 ? 'text-emerald-700' : 'text-red-700'}`}>({pct > 0 ? '+' : ''}{pct} %)</span>}
           </span>
           {c.blocked && <span className="mt-0.5 block text-[11px] text-hp-navy/80">🔒 {c.blocked}</span>}
@@ -194,7 +196,7 @@ export default function AenderungenDialog(p: Props) {
               <p className="font-semibold">{t('crm.werbung.bearbeiten.diff.konflikte', 'Bei Meta seit dem Laden geändert (wird übersprungen)')}</p>
               <ul className="mt-0.5 list-disc space-y-0.5 pl-4">
                 {d.conflicts.map((k, i) => (
-                  <li key={i}>{objektName(p.spec, k.level, k.id) ?? k.id}: {k.field} = {wertText(t, fmt, p.kurs, k.field, k.live)}</li>
+                  <li key={i}>{objektName(p.spec, k.level, k.id) ?? k.id}: {k.field} = {wertText(t, fmt, p.kurs, k.field, k.live, waehrung)}</li>
                 ))}
               </ul>
               <p className="mt-1">{t('crm.werbung.bearbeiten.diff.konflikteText', 'Tipp: „Neu von Meta laden“ holt den aktuellen Stand.')}</p>
@@ -257,6 +259,7 @@ export default function AenderungenDialog(p: Props) {
 function Ergebnis({ ergebnis, spec, kurs }: { ergebnis: EditApplyResponse; spec: DraftSpec; kurs: number }) {
   const { t } = useTranslation()
   const fmt = useWerbeFormat()
+  const waehrung = useKontoWaehrung()
   const rb = ergebnis.readback
   const name = (c: { level: Level; id: string }) => objektName(spec, c.level, c.id) ?? c.id
   return (
@@ -270,7 +273,7 @@ function Ergebnis({ ergebnis, spec, kurs }: { ergebnis: EditApplyResponse; spec:
           {ergebnis.applied.map((c, i) => (
             <li key={`a${i}`} className="px-3 py-1.5 text-xs">
               <span className="mr-1 text-emerald-700" aria-hidden="true">✓</span>
-              <span className="font-medium text-gray-800">{name(c)}</span> · {t(c.label_key, c.field)}: {wertText(t, fmt, kurs, c.field, c.after)}
+              <span className="font-medium text-gray-800">{name(c)}</span> · {t(c.label_key, c.field)}: {wertText(t, fmt, kurs, c.field, c.after, waehrung)}
             </li>
           ))}
         </ul>

@@ -7,7 +7,7 @@
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import type { AdsCaller } from '../_shared/adsAuth.ts'
 import {
-  getLastUsage, graphAll, graphGet, graphPost, logMetaWrite, MetaApiError, metaEnv, metaErrorLogFelder,
+  getLastUsage, graphAll, graphPost, logMetaWrite, MetaApiError, kontoInfo, metaEnvFuer, metaErrorLogFelder,
   metaWritesDisabled, wechselkurs, type MetaEnv, type MetaUsage,
 } from '../_shared/metaGraph.ts'
 import type { SteuerungEbene, SteuerungErrorCode, SteuerungGeld, SteuerungMode, SteuerungUsage } from './typen.ts'
@@ -182,11 +182,12 @@ export function businessId(): string {
   return raw.length >= 6 ? raw : HP_BUSINESS_ID
 }
 
-export function makeCtx(sb: SupabaseClient, caller: AdsCaller, mode: SteuerungMode): Ctx {
+/** kontoRaw: body.account_id (gewähltes Werbekonto im CRM); leer = Anlagekonto */
+export function makeCtx(sb: SupabaseClient, caller: AdsCaller, mode: SteuerungMode, kontoRaw?: unknown): Ctx {
   let st: Promise<Settings> | null = null
   let g: Promise<SteuerungGeld> | null = null
   let k: Promise<KontoKopf> | null = null
-  const env = metaEnv()
+  const env = metaEnvFuer(kontoRaw)
   const konto = () => {
     if (!k) k = loadKontoKopf(env.account)
     return k
@@ -210,14 +211,14 @@ export function makeCtx(sb: SupabaseClient, caller: AdsCaller, mode: SteuerungMo
 
 interface KontoKopf { waehrung: string; zeitzone: string }
 
-/** Währung + Zeitzone des Werbekontos (ein Aufruf); nicht lesbar = USD bzw. UTC */
+/** Währung + Zeitzone des Werbekontos (ein Aufruf); nicht lesbar = bekannte Währung der eigenen Konten, sonst USD, bzw. UTC */
 async function loadKontoKopf(account: string): Promise<KontoKopf> {
   let waehrung = 'USD'
   let zeitzone = 'UTC'
   try {
-    const a = await graphGet<Raw>(`act_${account}`, { fields: 'currency,timezone_name' })
-    waehrung = str(a.currency).toUpperCase() || 'USD'
-    const tz = str(a.timezone_name)
+    const a = await kontoInfo(account)
+    waehrung = a.currency
+    const tz = str(a.timezone)
     if (tz && gueltigeZeitzone(tz)) zeitzone = tz
   } catch (e) {
     console.warn(`[${FN}] Kontowährung/Zeitzone nicht lesbar, nehme USD/UTC:`, softMsg(e))

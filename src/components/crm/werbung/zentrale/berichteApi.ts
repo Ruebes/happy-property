@@ -1,5 +1,6 @@
 import type { TFunction } from 'i18next'
 import { supabase } from '../../../../lib/supabase'
+import { mitKonto } from '../../../../lib/werbeKonten'
 import { fnErrorDetail, type FnErrorDetail } from '../../../../lib/fnError'
 import { USD_PRO_EUR_FALLBACK } from '../felder'
 import type {
@@ -40,7 +41,8 @@ function httpStatus(error: unknown): number | undefined {
 }
 
 async function aufruf(fn: string, body: Record<string, unknown>, retried = false): Promise<Record<string, unknown>> {
-  const { data, error } = await supabase.functions.invoke(fn, { body })
+  // Bericht je Werbekonto: das in der Seite gewählte Konto (lib/werbeKonten)
+  const { data, error } = await supabase.functions.invoke(fn, { body: mitKonto(body) })
   if (error) {
     if (!retried && NETZ_FEHLER.test(error.message ?? '')) {
       await warte(1500)

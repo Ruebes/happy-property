@@ -9,7 +9,11 @@
 //
 // Exporte (Kurzreferenz):
 //   GRAPH_VERSION, GRAPH         Secret META_GRAPH_VERSION (Form vNN.0), sonst v25.0
-//   metaEnv()                    { token, account, pixelId, pageId } aus den Secrets
+//   metaEnv()                    { token, account, accounts, pixelId, pageId } aus den Secrets
+//                                account = Anlagekonto (neue Objekte), accounts = alle eigenen Konten
+//   metaKonten(), anlageKonto(), istEigenesKonto(id), kontoAuswahl(raw), metaEnvFuer(raw)
+//   kontoInfo(account)           { account, name, currency, timezone } (Graph, je Aufruf zwischengespeichert)
+//   kontoJeEur(currency, usdPerEur)  Einheiten der Kontowährung je EUR (EUR = 1)
 //   graphGet<T>(path, params?, opts?)            GET, 25 s Timeout, 1 Wiederholung bei transient
 //   graphAll<T>(path, params, { maxPages, strict })  Liste mit Paging; stoppt über 90 % Nutzung
 //   graphPost<T>(path, body, { validateOnly, syncReview, timeoutMs, idempotent })
@@ -23,12 +27,20 @@
 //                                X-FB-Ads-Insights-Throttle -> MetaUsage
 //   logMetaWrite(sb, row)        Zeile in meta_write_log (wirft nie), metaErrorLogFelder(err)
 //   uploadImage(account, bytes, contentType, name) -> image_hash   (adimages, 120 s)
-//   assertOwnAccount(objectId)   GET ?fields=account_id, wirft wenn fremdes Konto
+//   assertOwnAccount(objectId)   GET ?fields=account_id, wirft wenn kein eigenes Konto; gibt das Konto zurück
 //   URL_TAGS_STANDARD, checkUrlTags(tags, link)
-//   wechselkurs(sb)              USD je EUR aus ad_insights_daily (7 Tage), Fallback 1,14
-//   budgetHeadroom(sb, { addDailyUsdCents, replaceEntityId?, replaceEntityIds? })
-//                                Summe aktiver Tagesbudgets (live bei Meta) in EUR gegen
-//                                ad_settings.max_account_daily_budget
+//   wechselkurs(sb)              USD je EUR aus ad_insights_daily (7 Tage, nur USD-Zeilen), Fallback 1,14
+//   budgetHeadroom(sb, { addDailyCents?, account?, addDailyEur?, addDailyUsdCents?, replaceEntityId?, replaceEntityIds? })
+//                                Summe aktiver Tagesbudgets ALLER eigenen Konten (live bei Meta,
+//                                je Konto in seiner Währung) in EUR gegen ad_settings.max_account_daily_budget
+//
+// Zwei Konten (seit 24.10.2026):
+//   4065490590399677 Sveru Marketing LLC, USD, läuft aus (bis auf Weiteres Anlagekonto)
+//   576349958305345  Happy Property (Sveru Ltd), EUR, vorbereitet
+//   Secrets: META_AD_ACCOUNT_IDS (Liste, Komma), META_CREATE_ACCOUNT_ID (Anlagekonto),
+//   META_AD_ACCOUNT_ID (alt, Einzelkonto; gilt als Anlagekonto, solange META_CREATE_ACCOUNT_ID fehlt).
+//   Wechsel des Anlagekontos = Secret META_CREATE_ACCOUNT_ID=576349958305345 setzen.
+//   Geldbeträge an Meta immer in Cent der Kontowährung des jeweiligen Objekts.
 //
 // Regeln:
 //   - Token IMMER im Authorization-Header, nie in URL, Log oder Fehlertext.
@@ -48,7 +60,12 @@ const ENV_VERSION = (Deno.env.get('META_GRAPH_VERSION') ?? '').trim()
 export const GRAPH_VERSION: string = VERSION_RE.test(ENV_VERSION) ? ENV_VERSION : 'v25.0'
 export const GRAPH = `https://graph.facebook.com/${GRAPH_VERSION}`
 
-export const DEFAULT_AD_ACCOUNT_ID = '4065490590399677'
+/** Sveru Marketing LLC (USD, Europe/Berlin): läuft aus, bis auf Weiteres Anlagekonto */
+export const ALTES_KONTO_ID = '4065490590399677'
+/** Happy Property (Sveru Ltd, EUR, Asia/Beirut): vorbereitet, Anlage erst nach Umschalten per Secret */
+export const NEUES_KONTO_ID = '576349958305345'
+export const DEFAULT_AD_ACCOUNT_ID = ALTES_KONTO_ID
+export const DEFAULT_AD_ACCOUNT_IDS: readonly string[] = [ALTES_KONTO_ID, NEUES_KONTO_ID]
 export const DEFAULT_PIXEL_ID = '1083578343946189'
 export const DEFAULT_PAGE_ID = '556440087559971'
 
@@ -59,21 +76,60 @@ export const UPLOAD_TIMEOUT_MS = 120_000
 export interface MetaEnv {
   /** System-User-Token; leer, wenn das Secret fehlt (dann wirft jeder Graph-Aufruf kind 'auth') */
   token: string
-  /** Werbekonto ohne Präfix act_ */
+  /** Werbekonto ohne Präfix act_: Anlagekonto bzw. das per kontoAuswahl gewählte Konto */
   account: string
+  /** alle eigenen Werbekonten (ohne act_), Anlagekonto zuerst */
+  accounts: string[]
   pixelId: string
   pageId: string
 }
 
 const digits = (v: string | undefined | null): string => String(v ?? '').replace(/[^0-9]/g, '')
 
+/** Anlagekonto für neue Objekte: META_CREATE_ACCOUNT_ID, sonst META_AD_ACCOUNT_ID, sonst das alte Konto. */
+export function anlageKonto(): string {
+  return digits(Deno.env.get('META_CREATE_ACCOUNT_ID')) || digits(Deno.env.get('META_AD_ACCOUNT_ID')) || DEFAULT_AD_ACCOUNT_ID
+}
+
+/** Alle eigenen Werbekonten (Secret META_AD_ACCOUNT_IDS, sonst beide bekannten), Anlagekonto zuerst. */
+export function metaKonten(): string[] {
+  const liste = String(Deno.env.get('META_AD_ACCOUNT_IDS') ?? '').split(/[\s,;]+/).map(digits).filter(Boolean)
+  const basis = liste.length ? liste : [...DEFAULT_AD_ACCOUNT_IDS]
+  const out = [anlageKonto(), ...basis]
+  return out.filter((k, i) => out.indexOf(k) === i)
+}
+
+export function istEigenesKonto(account: unknown): boolean {
+  const id = digits(String(account ?? ''))
+  return !!id && metaKonten().indexOf(id) >= 0
+}
+
+/**
+ * Konto aus einer Anfrage (z. B. body.account_id, mit oder ohne act_). Leer = Anlagekonto.
+ * Wirft MetaApiError(kind 'validation'), wenn das Konto nicht zu unseren gehört.
+ */
+export function kontoAuswahl(raw?: unknown): string {
+  const id = digits(String(raw ?? ''))
+  if (!id) return anlageKonto()
+  if (!istEigenesKonto(id)) {
+    throw new MetaApiError({ status: 400, kind: 'validation', message: `Werbekonto ${id} gehört nicht zu unseren Konten`, userMsg: 'Dieses Werbekonto ist im CRM nicht freigegeben.' })
+  }
+  return id
+}
+
 export function metaEnv(): MetaEnv {
   return {
     token: (Deno.env.get('META_ACCESS_TOKEN') ?? '').trim(),
-    account: digits(Deno.env.get('META_AD_ACCOUNT_ID')) || DEFAULT_AD_ACCOUNT_ID,
+    account: anlageKonto(),
+    accounts: metaKonten(),
     pixelId: digits(Deno.env.get('META_PIXEL_ID')) || DEFAULT_PIXEL_ID,
     pageId: digits(Deno.env.get('META_PAGE_ID')) || DEFAULT_PAGE_ID,
   }
+}
+
+/** metaEnv() mit dem gewählten Konto als account (kontoAuswahl; leer = Anlagekonto). */
+export function metaEnvFuer(raw?: unknown): MetaEnv {
+  return { ...metaEnv(), account: kontoAuswahl(raw) }
 }
 
 /** Globaler Not-Aus für alle Schreibzugriffe an Meta (Secret META_WRITES_DISABLED=1). */
@@ -578,17 +634,75 @@ export async function uploadImage(
   return hash
 }
 
-/** Wirft MetaApiError(kind 'permission'), wenn das Objekt nicht zu unserem Werbekonto gehört. */
+/**
+ * Wirft MetaApiError(kind 'permission'), wenn das Objekt zu keinem unserer Werbekonten
+ * gehört (metaKonten). Gibt das Konto des Objekts zurück (ohne act_): Schreibpfade wie
+ * act_X/adcreatives und Geldbeträge richten sich nach diesem Konto.
+ */
 export async function assertOwnAccount(objectId: string): Promise<string> {
   const id = digits(objectId)
   if (!id) throw new MetaApiError({ status: 0, kind: 'validation', message: 'Objekt-ID fehlt' })
-  const own = metaEnv().account
   const j = await graphGet<{ account_id?: string }>(id, { fields: 'account_id' })
   const acc = digits(j?.account_id)
-  if (!acc || acc !== own) {
+  if (!acc || !istEigenesKonto(acc)) {
     throw new MetaApiError({ status: 403, kind: 'permission', message: 'Objekt gehört nicht zu unserem Werbekonto', userMsg: 'Objekt gehört nicht zu unserem Werbekonto' })
   }
   return acc
+}
+
+// ── Konto-Stammdaten (Währung, Zeitzone) ─────────────────────────────────────
+
+export interface KontoInfo {
+  /** ohne act_ */
+  account: string
+  name: string | null
+  /** ISO-Währung des Werbekontos, z. B. USD oder EUR */
+  currency: string
+  timezone: string | null
+}
+
+/** Bekannte Währungen, falls Meta gerade nicht antwortet (nur für die zwei eigenen Konten). */
+const BEKANNTE_WAEHRUNG: Record<string, string> = { [ALTES_KONTO_ID]: 'USD', [NEUES_KONTO_ID]: 'EUR' }
+
+const kontoCache = new Map<string, Promise<KontoInfo>>()
+
+/**
+ * Name, Währung und Zeitzone eines Werbekontos (GET act_X?fields=name,currency,timezone_name).
+ * Je Function-Instanz zwischengespeichert. Ist Meta nicht erreichbar, gilt für die beiden
+ * bekannten Konten die bekannte Währung; für unbekannte Konten wirft es (lieber nichts tun
+ * als in der falschen Währung rechnen).
+ */
+export function kontoInfo(account: string): Promise<KontoInfo> {
+  const acc = digits(account)
+  const hit = kontoCache.get(acc)
+  if (hit) return hit
+  const p = (async (): Promise<KontoInfo> => {
+    try {
+      const j = await graphGet<{ name?: string; currency?: string; timezone_name?: string }>(`act_${acc}`, { fields: 'name,currency,timezone_name' })
+      const cur = String(j?.currency ?? '').trim().toUpperCase()
+      if (!/^[A-Z]{3}$/.test(cur)) throw new MetaApiError({ status: 200, kind: 'unknown', message: `Werbekonto ${acc}: keine Währung` })
+      return { account: acc, name: toStr(j?.name), currency: cur, timezone: toStr(j?.timezone_name) }
+    } catch (err) {
+      const bekannt = BEKANNTE_WAEHRUNG[acc]
+      if (!bekannt) throw err
+      console.warn(`[metaGraph] Konto ${acc} nicht lesbar, nutze bekannte Währung ${bekannt}:`, err instanceof Error ? err.message.slice(0, 160) : String(err))
+      return { account: acc, name: null, currency: bekannt, timezone: null }
+    }
+  })()
+  kontoCache.set(acc, p)
+  p.catch(() => kontoCache.delete(acc))
+  return p
+}
+
+/**
+ * Einheiten der Kontowährung je EUR: EUR = 1, USD = usdPerEur. Andere Währungen kennt das
+ * CRM nicht (wirft), damit nie ein Betrag in der falschen Währung an Meta geht.
+ */
+export function kontoJeEur(currency: string | null | undefined, usdPerEur: number): number {
+  const c = String(currency ?? '').trim().toUpperCase()
+  if (c === 'EUR') return 1
+  if (c === 'USD') return usdPerEur
+  throw new MetaApiError({ status: 0, kind: 'validation', message: `Kontowährung ${c || '?'} wird nicht unterstützt (nur EUR, USD)` })
 }
 
 // ── UTM-Schema ───────────────────────────────────────────────────────────────
@@ -648,12 +762,15 @@ export const USD_PER_EUR_FALLBACK = 1.14
 
 export interface Wechselkurs { usdPerEur: number; quelle: 'insights_7d' | 'fallback' }
 
-/** USD je EUR aus ad_insights_daily der letzten 7 Tage (spend / spend_eur), sonst 1,14. */
+/**
+ * USD je EUR aus ad_insights_daily der letzten 7 Tage (spend / spend_eur), sonst 1,14.
+ * Nur Zeilen in USD: EUR-Konten (spend = spend_eur) und YouTube würden den Kurs verfälschen.
+ */
 export async function wechselkurs(sb: SupabaseClient): Promise<Wechselkurs> {
   try {
     const since = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10)
     const { data, error } = await sb.from('ad_insights_daily')
-      .select('spend, spend_eur').gte('day', since).gt('spend', 0).limit(5000)
+      .select('spend, spend_eur').eq('currency', 'USD').gte('day', since).gt('spend', 0).limit(5000)
     if (error) throw new Error(String(error.message ?? error))
     let usd = 0, eur = 0
     for (const r of (data ?? []) as Array<{ spend: unknown; spend_eur: unknown }>) {
@@ -674,7 +791,13 @@ export interface BudgetEintrag {
   level: 'campaign' | 'adset'
   name: string
   art: 'daily' | 'lifetime'
-  /** USD-Cent je Tag (bei Laufzeitbudget: Restbudget / Resttage) */
+  /** Werbekonto (ohne act_) */
+  account: string
+  /** Kontowährung, z. B. USD oder EUR */
+  currency: string
+  /** Cent der Kontowährung je Tag (bei Laufzeitbudget: Restbudget / Resttage) */
+  cents: number
+  /** wie cents; alter Name aus der Ein-Konto-Zeit (USD), gilt nur bei currency USD als USD */
   usdCents: number
   eur: number
 }
@@ -682,22 +805,34 @@ export interface BudgetEintrag {
 export interface BudgetHeadroom {
   ok: boolean
   limitEur: number
-  /** Summe der heute aktiven Tagesbudgets in EUR */
+  /** Summe der heute aktiven Tagesbudgets in EUR (alle eigenen Konten) */
   activeEur: number
   /** Summe nach der geplanten Änderung in EUR */
   afterEur: number
   /** afterEur - activeEur */
   deltaEur: number
   usdPerEur: number
+  /** EUR je Einheit der Kontowährung von delta.account (EUR-Konto = 1); alt: EUR je USD */
   rateEurPerUsd: number
   rateQuelle: 'insights_7d' | 'fallback'
+  /** Konto und Währung, auf die sich addDailyCents bezieht */
+  account: string
+  currency: string
+  /** Einheiten je EUR je Konto (EUR = 1, USD = usdPerEur) */
+  kurse: Record<string, { currency: string; jeEur: number }>
   eintraege: BudgetEintrag[]
 }
 
 export interface BudgetDelta {
-  /** neues Tagesbudget in USD-Cent, das dazukommt (bzw. das ersetzte Budget ersetzt) */
-  addDailyUsdCents: number
-  /** Kampagne/Anzeigengruppe, deren heutiger Beitrag durch addDailyUsdCents ersetzt wird */
+  /** neues Tagesbudget in Cent der Kontowährung von account, das dazukommt (bzw. das ersetzte Budget ersetzt) */
+  addDailyCents?: number
+  /** Konto zu addDailyCents (ohne act_), Standard Anlagekonto */
+  account?: string
+  /** zusätzlich bereits in EUR umgerechnet (z. B. Summe über Objekte verschiedener Konten) */
+  addDailyEur?: number
+  /** alt (Ein-Konto-Zeit): neues Tagesbudget in USD-Cent */
+  addDailyUsdCents?: number
+  /** Kampagne/Anzeigengruppe, deren heutiger Beitrag durch das neue Budget ersetzt wird */
   replaceEntityId?: string
   /** wie replaceEntityId, für mehrere Objekte (Gruppen-Änderung) */
   replaceEntityIds?: string[]
@@ -717,11 +852,12 @@ const round2 = (n: number) => Math.round(n * 100) / 100
 
 /**
  * Leitplanke „Summe aktiver Tagesbudgets <= ad_settings.max_account_daily_budget“.
- * Liest live bei Meta alle laufenden Kampagnen (Kampagnenbudget zählt einmal) und
- * laufenden Anzeigengruppen mit eigenem Budget; „laufend“ = BUDGET_ZAEHLT_STATUS
- * (auch IN_PROCESS kurz nach dem Aktivieren und WITH_ISSUES); Laufzeitbudgets als Restbudget je
- * Resttag. Wirft, wenn die Liste nicht vollständig gelesen werden kann (lieber
- * nichts tun als falsch rechnen).
+ * Liest live bei Meta in JEDEM eigenen Konto (metaKonten) alle laufenden Kampagnen
+ * (Kampagnenbudget zählt einmal) und laufenden Anzeigengruppen mit eigenem Budget;
+ * „laufend“ = BUDGET_ZAEHLT_STATUS (auch IN_PROCESS kurz nach dem Aktivieren und
+ * WITH_ISSUES); Laufzeitbudgets als Restbudget je Resttag. Jedes Konto in seiner Währung
+ * nach EUR. Wirft, wenn ein Konto nicht vollständig gelesen werden kann (lieber nichts tun
+ * als falsch rechnen).
  */
 export async function budgetHeadroom(sb: SupabaseClient, delta: BudgetDelta): Promise<BudgetHeadroom> {
   const { data: st, error: stErr } = await sb.from('ad_settings')
@@ -730,7 +866,6 @@ export async function budgetHeadroom(sb: SupabaseClient, delta: BudgetDelta): Pr
   const limitEur = toNum((st as { max_account_daily_budget?: unknown } | null)?.max_account_daily_budget) ?? 250
 
   const kurs = await wechselkurs(sb)
-  const { account } = metaEnv()
   const now = Date.now()
   const perDay = (remaining: number, endIso: unknown): number => {
     const end = typeof endIso === 'string' ? Date.parse(endIso) : NaN
@@ -740,43 +875,57 @@ export async function budgetHeadroom(sb: SupabaseClient, delta: BudgetDelta): Pr
 
   type Row = Record<string, unknown>
   const zaehlt = (r: Row) => (BUDGET_ZAEHLT_STATUS as readonly string[]).indexOf(String(r.effective_status ?? '')) >= 0
-  const campaigns = await graphAll<Row>(`act_${account}/campaigns`, {
-    fields: 'id,name,effective_status,daily_budget,lifetime_budget,budget_remaining,stop_time',
-    effective_status: [...BUDGET_ZAEHLT_STATUS], limit: 200,
-  }, { strict: true })
-  const adsets = await graphAll<Row>(`act_${account}/adsets`, {
-    fields: 'id,name,campaign_id,effective_status,daily_budget,lifetime_budget,budget_remaining,end_time',
-    effective_status: [...BUDGET_ZAEHLT_STATUS], limit: 500,
-  }, { strict: true })
-
   const eintraege: BudgetEintrag[] = []
-  const cboCampaigns = new Set<string>()
-  for (const c of campaigns) {
-    if (!zaehlt(c)) continue
-    const daily = centsOf(c.daily_budget)
-    const lifetime = centsOf(c.lifetime_budget)
-    if (!daily && !lifetime) continue
-    cboCampaigns.add(String(c.id))
-    const usdCents = daily || perDay(centsOf(c.budget_remaining), c.stop_time)
-    eintraege.push({ id: String(c.id), level: 'campaign', name: String(c.name ?? ''), art: daily ? 'daily' : 'lifetime', usdCents, eur: usdCents / 100 / kurs.usdPerEur })
-  }
-  for (const a of adsets) {
-    if (!zaehlt(a)) continue
-    if (cboCampaigns.has(String(a.campaign_id ?? ''))) continue
-    const daily = centsOf(a.daily_budget)
-    const lifetime = centsOf(a.lifetime_budget)
-    if (!daily && !lifetime) continue
-    const usdCents = daily || perDay(centsOf(a.budget_remaining), a.end_time)
-    eintraege.push({ id: String(a.id), level: 'adset', name: String(a.name ?? ''), art: daily ? 'daily' : 'lifetime', usdCents, eur: usdCents / 100 / kurs.usdPerEur })
+  const kurse: BudgetHeadroom['kurse'] = {}
+  for (const account of metaKonten()) {
+    const { currency } = await kontoInfo(account)
+    const jeEur = kontoJeEur(currency, kurs.usdPerEur)
+    kurse[account] = { currency, jeEur }
+    const campaigns = await graphAll<Row>(`act_${account}/campaigns`, {
+      fields: 'id,name,effective_status,daily_budget,lifetime_budget,budget_remaining,stop_time',
+      effective_status: [...BUDGET_ZAEHLT_STATUS], limit: 200,
+    }, { strict: true })
+    const adsets = await graphAll<Row>(`act_${account}/adsets`, {
+      fields: 'id,name,campaign_id,effective_status,daily_budget,lifetime_budget,budget_remaining,end_time',
+      effective_status: [...BUDGET_ZAEHLT_STATUS], limit: 500,
+    }, { strict: true })
+
+    const eintrag = (id: string, level: 'campaign' | 'adset', name: string, art: 'daily' | 'lifetime', cents: number): BudgetEintrag =>
+      ({ id, level, name, art, account, currency, cents, usdCents: cents, eur: cents / 100 / jeEur })
+    const cboCampaigns = new Set<string>()
+    for (const c of campaigns) {
+      if (!zaehlt(c)) continue
+      const daily = centsOf(c.daily_budget)
+      const lifetime = centsOf(c.lifetime_budget)
+      if (!daily && !lifetime) continue
+      cboCampaigns.add(String(c.id))
+      const cents = daily || perDay(centsOf(c.budget_remaining), c.stop_time)
+      eintraege.push(eintrag(String(c.id), 'campaign', String(c.name ?? ''), daily ? 'daily' : 'lifetime', cents))
+    }
+    for (const a of adsets) {
+      if (!zaehlt(a)) continue
+      if (cboCampaigns.has(String(a.campaign_id ?? ''))) continue
+      const daily = centsOf(a.daily_budget)
+      const lifetime = centsOf(a.lifetime_budget)
+      if (!daily && !lifetime) continue
+      const cents = daily || perDay(centsOf(a.budget_remaining), a.end_time)
+      eintraege.push(eintrag(String(a.id), 'adset', String(a.name ?? ''), daily ? 'daily' : 'lifetime', cents))
+    }
   }
 
+  const deltaKonto = digits(delta.account) || anlageKonto()
+  const deltaKurs = kurse[deltaKonto] ?? (() => {
+    throw new MetaApiError({ status: 0, kind: 'validation', message: `Werbekonto ${deltaKonto} gehört nicht zu unseren Konten` })
+  })()
   const replaced = new Set<string>([
     ...(delta.replaceEntityId ? [digits(delta.replaceEntityId)] : []),
     ...(delta.replaceEntityIds ?? []).map(digits),
   ].filter(Boolean))
   const activeEur = eintraege.reduce((s, e) => s + e.eur, 0)
   const replacedEur = eintraege.filter(e => replaced.has(e.id)).reduce((s, e) => s + e.eur, 0)
-  const addEur = Math.max(0, Number(delta.addDailyUsdCents) || 0) / 100 / kurs.usdPerEur
+  const addEur = Math.max(0, Number(delta.addDailyCents) || 0) / 100 / deltaKurs.jeEur
+    + Math.max(0, Number(delta.addDailyUsdCents) || 0) / 100 / kurs.usdPerEur
+    + Math.max(0, Number(delta.addDailyEur) || 0)
   const afterEur = activeEur - replacedEur + addEur
 
   return {
@@ -786,8 +935,11 @@ export async function budgetHeadroom(sb: SupabaseClient, delta: BudgetDelta): Pr
     afterEur: round2(afterEur),
     deltaEur: round2(afterEur - activeEur),
     usdPerEur: kurs.usdPerEur,
-    rateEurPerUsd: 1 / kurs.usdPerEur,
+    rateEurPerUsd: 1 / deltaKurs.jeEur,
     rateQuelle: kurs.quelle,
+    account: deltaKonto,
+    currency: deltaKurs.currency,
+    kurse,
     eintraege: eintraege.map(e => ({ ...e, eur: round2(e.eur) })),
   }
 }

@@ -6,6 +6,7 @@ import type { Level } from '../../../../lib/metaSpec'
 import type { WerbeFormat } from '../format'
 import { ladeBuilderEinstellungen } from './builderApi'
 import { istGeldFeld } from './bearbeitenTypen'
+import type { KontoWaehrung } from '../../../../lib/werbeKonten'
 
 // ── Gemeinsame Bausteine für Bearbeiten, Duplizieren und Massenbearbeitung ───
 // Schreib-Freischaltung (ad_settings.builder_enabled), Ebenen-Namen,
@@ -49,19 +50,20 @@ export function statusText(t: TFunction, s: string | null | undefined): string {
   return k ? t(k[0], k[1]) : s
 }
 
-/** USD-Cent als „$ 40,00 (≈ 35 €)" */
-export function geldText(fmt: WerbeFormat, cents: number, kurs: number): string {
-  const usd = cents / 100
-  const usdTxt = usd.toLocaleString(fmt.locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  return `$ ${usdTxt} (≈ ${fmt.eur(usd / (kurs > 0 ? kurs : 1.14))})`
+/** Cent der Kontowährung: USD als „$ 40,00 (≈ 35 €)", EUR als „40,00 €" */
+export function geldText(fmt: WerbeFormat, cents: number, kurs: number, waehrung: KontoWaehrung = 'USD'): string {
+  const betrag = cents / 100
+  if (waehrung === 'EUR') return fmt.eur(betrag)
+  const usdTxt = betrag.toLocaleString(fmt.locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return `$ ${usdTxt} (≈ ${fmt.eur(betrag / (kurs > 0 ? kurs : 1.14))})`
 }
 
-/** Ein Vorher- oder Nachher-Wert aus edit_diff / bulk lesbar (Geld in $ mit EUR, Zeit lokal, Listen mit Komma). */
-export function wertText(t: TFunction, fmt: WerbeFormat, kurs: number, field: string, v: unknown): string {
+/** Ein Vorher- oder Nachher-Wert aus edit_diff / bulk lesbar (Geld in Kontowährung, Zeit lokal, Listen mit Komma). */
+export function wertText(t: TFunction, fmt: WerbeFormat, kurs: number, field: string, v: unknown, waehrung: KontoWaehrung = 'USD'): string {
   if (v === null || v === undefined || v === '') return t('crm.werbung.bearbeiten.wert.leer', 'nicht gesetzt')
   if (typeof v === 'boolean') return v ? t('crm.werbung.bearbeiten.wert.an', 'an') : t('crm.werbung.bearbeiten.wert.aus', 'aus')
   if (typeof v === 'number') {
-    if (istGeldFeld(field)) return geldText(fmt, v, kurs)
+    if (istGeldFeld(field)) return geldText(fmt, v, kurs, waehrung)
     return v.toLocaleString(fmt.locale)
   }
   if (typeof v === 'string') {
@@ -70,7 +72,7 @@ export function wertText(t: TFunction, fmt: WerbeFormat, kurs: number, field: st
       const d = new Date(v)
       if (!Number.isNaN(d.getTime())) return d.toLocaleString(fmt.locale, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
     }
-    if (istGeldFeld(field) && /^\d+$/.test(v)) return geldText(fmt, Number(v), kurs)
+    if (istGeldFeld(field) && /^\d+$/.test(v)) return geldText(fmt, Number(v), kurs, waehrung)
     return v.length > 160 ? `${v.slice(0, 157)}...` : v
   }
   if (Array.isArray(v)) {

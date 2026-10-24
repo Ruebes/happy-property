@@ -13,7 +13,7 @@ import type {
   AdVorschauLinkRequest, AdVorschauLinkResponse, BeitragQuelle, PostsListItem, PostsListRequest, PostsListResponse,
 } from '../_shared/metaSpec.ts'
 import { pageInstagram } from './catalog.ts'
-import { arr, BuilderError, digits, fromMetaError, metaId, num, obj, str, type Ctx, type Raw } from './common.ts'
+import { arr, BuilderError, digits, fromMetaError, kontoUebernehmen, metaId, num, obj, str, type Ctx, type Raw } from './common.ts'
 import { pageAccessToken, pageFetch } from './pages.ts'
 
 const TEXT_MAX = 280
@@ -129,7 +129,7 @@ export async function modeAdVorschauLink(ctx: Ctx, req: AdVorschauLinkRequest): 
   } catch (err) {
     throw err instanceof MetaApiError ? fromMetaError(err, 'Vorschaulink') : err
   }
-  if (digits(j.account_id) !== ctx.env.account) throw new BuilderError(403, 'forbidden', 'Die Anzeige gehört nicht zu unserem Werbekonto.')
+  kontoUebernehmen(ctx, j.account_id, 'Die Anzeige')
   const link = httpsOrNull(j.preview_shareable_link)
   return {
     ad_id: adId,

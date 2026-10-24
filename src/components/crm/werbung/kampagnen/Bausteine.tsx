@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { CustomSelect, type SelectOption } from '../../../CustomSelect'
 import type { EnumOption } from '../../../../lib/metaSpec'
-import { INPUT_CLS, UsdEurHinweis, parseDollar, toLocalInput } from '../felder'
+import { INPUT_CLS, UsdEurHinweis, parseDollar, toLocalInput, useKontoWaehrung } from '../felder'
+import { waehrungZeichen } from '../../../../lib/werbeKonten'
 import { useWerbeFormat } from '../format'
 import { FeldHinweise } from './PruefPanel'
 import { EmpfohlenBadge } from './bearbeitenHelfer'
@@ -179,7 +180,7 @@ export function AuswahlFeld<V extends string>({ value, optionen, onChange, leer,
   )
 }
 
-/** Betrag in USD (Kontowährung, Cent auf dem Draht) mit EUR-Gegenwert daneben */
+/** Betrag in der Kontowährung (USD oder EUR, WaehrungKontext; Cent auf dem Draht), bei USD mit EUR-Gegenwert daneben */
 export function GeldFeld({ cents, onChange, kurs, entfernbar, ...b }: Basis & {
   cents: number | undefined
   onChange: (c: number | undefined) => void
@@ -188,6 +189,7 @@ export function GeldFeld({ cents, onChange, kurs, entfernbar, ...b }: Basis & {
   entfernbar?: string
 }) {
   const fmt = useWerbeFormat()
+  const waehrung = useKontoWaehrung()
   const aus = !!b.disabled || !!b.sperre
   const zeige = (c: number | undefined) => (c && c > 0 ? (c / 100).toLocaleString(fmt.locale, { maximumFractionDigits: 2, useGrouping: false }) : '')
   const [txt, setTxt] = useState(() => zeige(cents))
@@ -204,7 +206,7 @@ export function GeldFeld({ cents, onChange, kurs, entfernbar, ...b }: Basis & {
     <FeldRahmen {...b}>
       <div className="mt-0.5 flex items-center gap-2">
         <div className="relative min-w-0 flex-1">
-          <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">$</span>
+          <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">{waehrungZeichen(waehrung)}</span>
           <input inputMode="decimal" value={txt} disabled={aus} aria-label={b.label}
             onChange={e => {
               setTxt(e.target.value)

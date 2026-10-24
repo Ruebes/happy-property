@@ -50,7 +50,7 @@
 import type { Caller } from '../_shared/callerAuth.ts'
 import { type AktionsZeile, budgetGruppenLesen, PLAN_B_BUDGET_GRUPPE, type Uebersprungen } from '../_shared/werbeAusfuehren.ts'
 import {
-  getLastUsage, graphGet, graphPost, logMetaWrite, metaEnv, metaErrorLogFelder, metaWritesDisabled,
+  ALTES_KONTO_ID, getLastUsage, graphGet, graphPost, istEigenesKonto, logMetaWrite, metaEnv, metaErrorLogFelder, metaWritesDisabled,
   MetaApiError, uploadImage, URL_TAGS_STANDARD, type MetaWriteLogRow,
 } from '../_shared/metaGraph.ts'
 import {
@@ -388,17 +388,22 @@ async function hochladenGesperrt(sb: Sb, pool: PoolZeile, l: Lauf): Promise<Resp
   // 3 Ziele live prüfen
   const ziele: Ziel[] = []
   const kampagnen = new Map<string, { name: string }>()
+  // Konto der Ziel-Anzeigengruppen: Bilder, Creatives und Anzeigen entstehen dort (alle Ziele in einem Konto)
+  let konto = ''
   try {
     for (const adsetId of adsetIds) {
       const a = await graphGet<Record<string, unknown>>(adsetId, { fields: 'account_id,name,campaign_id,effective_status,targeting' })
-      if (digits(a.account_id) !== env.account) return fehler(403, `Anzeigengruppe ${adsetId} gehört nicht zu unserem Werbekonto`)
+      const acc = digits(a.account_id)
+      if (!istEigenesKonto(acc)) return fehler(403, `Anzeigengruppe ${adsetId} gehört nicht zu unserem Werbekonto`)
+      if (konto && acc !== konto) return fehler(409, 'Die Ziel-Anzeigengruppen liegen in verschiedenen Werbekonten')
+      konto = acc
       const es = String(a.effective_status ?? '')
       if (['DELETED', 'ARCHIVED'].includes(es)) return fehler(409, `Anzeigengruppe ${adsetId} ist ${es}`)
       const campaignId = digits(a.campaign_id)
       if (!campaignId) return fehler(409, `Kampagne der Anzeigengruppe ${adsetId} unbekannt`)
       if (!kampagnen.has(campaignId)) {
         const c = await graphGet<Record<string, unknown>>(campaignId, { fields: 'account_id,name,special_ad_categories,effective_status' })
-        if (digits(c.account_id) !== env.account) return fehler(403, `Kampagne ${campaignId} gehört nicht zu unserem Werbekonto`)
+        if (digits(c.account_id) !== konto) return fehler(403, `Kampagne ${campaignId} gehört nicht zu unserem Werbekonto`)
         const cats = Array.isArray(c.special_ad_categories) ? c.special_ad_categories.map(String) : []
         if (!cats.includes('HOUSING')) {
           return fehler(409, `Kampagne „${String(c.name ?? campaignId)}“ hat nicht die Sonderkategorie Wohnen (HOUSING)`, { code: 'kein_housing' })
@@ -521,14 +526,20 @@ async function hochladenGesperrt(sb: Sb, pool: PoolZeile, l: Lauf): Promise<Resp
   }
 
   // 4 Bilder
-  const hashes: Record<string, string> = {}
+  // image_hash gilt nur im Werbekonto, in das das Bild geladen wurde: gespeicherte Hashes nur
+  // im selben Konto wiederverwenden (ohne Angabe = altes Einzelkonto), sonst neu hochladen.
+  // konto steht mit in meta_image_hashes.
+  const hashes: Record<string, string> = { konto }
   const alt = obj(pool.meta_image_hashes)
-  if (typeof alt?.feed === 'string' && alt.feed) hashes.feed = alt.feed
-  if (typeof alt?.story === 'string' && alt.story) hashes.story = alt.story
+  const altKonto = typeof alt?.konto === 'string' && alt.konto ? alt.konto : ALTES_KONTO_ID
+  if (altKonto === konto) {
+    if (typeof alt?.feed === 'string' && alt.feed) hashes.feed = alt.feed
+    if (typeof alt?.story === 'string' && alt.story) hashes.story = alt.story
+  }
   const bilder: Array<['feed' | 'story', string | null]> = [['feed', pool.asset_feed_url], ['story', pool.asset_story_url]]
   for (const [slot, url] of bilder) {
     if (!url || hashes[slot]) continue
-    const path = `act_${env.account}/adimages`
+    const path = `act_${konto}/adimages`
     let bild: { bytes: Uint8Array; type: string }
     try {
       bild = await ladeBild(url)
@@ -536,7 +547,7 @@ async function hochladenGesperrt(sb: Sb, pool: PoolZeile, l: Lauf): Promise<Resp
       return fehler(422, `${slot === 'feed' ? 'Feed' : 'Story'}-Bild: ${errMsg(err)}`)
     }
     try {
-      hashes[slot] = await uploadImage(env.account, bild.bytes, bild.type, `${kennung}_${slot}`)
+      hashes[slot] = await uploadImage(konto, bild.bytes, bild.type, `${kennung}_${slot}`)
       await logMetaWrite(sb, {
         actor: akteur, actor_kind: kind, fn: FN, mode: 'hochladen', entity_level: 'image', entity_id: hashes[slot], path,
         request: { name: `${kennung}_${slot}`, content_type: bild.type, bytes: bild.bytes.byteLength, pool_id: pool.id },
@@ -587,8 +598,8 @@ async function hochladenGesperrt(sb: Sb, pool: PoolZeile, l: Lauf): Promise<Resp
       return fehler(422, `Creative bauen: ${errMsg(err)}`)
     }
     const schritte: Array<[string, string, Record<string, unknown>]> = [
-      ['creative', `act_${env.account}/adcreatives`, creative],
-      ['ad', `act_${env.account}/ads`, buildAdPayload(ad, z.adsetId, creative)],
+      ['creative', `act_${konto}/adcreatives`, creative],
+      ['ad', `act_${konto}/ads`, buildAdPayload(ad, z.adsetId, creative)],
     ]
     for (const [level, path, payload] of schritte) {
       try {
@@ -631,8 +642,8 @@ async function hochladenGesperrt(sb: Sb, pool: PoolZeile, l: Lauf): Promise<Resp
   for (const z of offen) {
     const ad = entwurf(z)
     const creativePayload = buildCreativePayload(ad, { placements: z.placements }).payload
-    const cPath = `act_${env.account}/adcreatives`
-    const aPath = `act_${env.account}/ads`
+    const cPath = `act_${konto}/adcreatives`
+    const aPath = `act_${konto}/ads`
     let creativeId = ''
     let adId = ''
     // Idempotenz: Anzeige mit diesem Namen schon in der Gruppe (früherer Lauf, Timeout)? Übernehmen.
@@ -704,7 +715,7 @@ async function hochladenGesperrt(sb: Sb, pool: PoolZeile, l: Lauf): Promise<Resp
 
     const jetzt = new Date().toISOString()
     const { error: cErr } = await sb.from('ad_catalog').upsert({
-      ad_id: adId, platform: 'meta', account_id: env.account, campaign_id: z.campaignId, campaign_name: z.campaignName,
+      ad_id: adId, platform: 'meta', account_id: konto, campaign_id: z.campaignId, campaign_name: z.campaignName,
       adset_id: z.adsetId, adset_name: z.adsetName, ad_name: z.name, status, configured_status: status,
       effective_status: effektiv, creative_id: creativeId || null, creative_body: primaer[0] ?? null,
       thumbnail_url: pool.asset_feed_url, url_tags: URL_TAGS_STANDARD, created_time: jetzt, updated_time: jetzt, updated_at: jetzt,

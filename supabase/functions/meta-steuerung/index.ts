@@ -99,7 +99,7 @@ Deno.serve(async (req) => {
       throw new SteuerungError(400, 'invalid_request', `Unbekannter Modus "${mode.slice(0, 40)}".`, `Erlaubt: ${STEUERUNG_MODES.join(', ')}`)
     }
     const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-    const ctx = makeCtx(sb, caller, mode)
+    const ctx = makeCtx(sb, caller, mode, body.account_id)
     // vorschau nur als echtes true/false: "true" oder 1 wären sonst ein echter Schreibzugriff
     if (body.vorschau !== undefined && body.vorschau !== null && typeof body.vorschau !== 'boolean') {
       throw new SteuerungError(400, 'invalid_request', 'vorschau muss true oder false sein.')

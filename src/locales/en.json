@@ -3911,6 +3911,7 @@
       "comingSoon": "is not connected yet",
       "comingSoonSub": "META is already live - more channels will follow here in the same format.",
       "kpiSpend": "Spend",
+      "kpiSpendSubKonten": "both ad accounts, in EUR",
       "kpiSpendSub": "converted from USD",
       "kpiCpl": "Cost per lead",
       "kpiCostPerHeld": "Cost / held appointment",
@@ -3936,6 +3937,7 @@
       "colHeld": "Held",
       "paused": "paused",
       "empty": "No ad data in the selected period.",
+      "footnoteKonten": "Data: automatic sync every morning directly from both Meta ad accounts (Sveru Marketing LLC in USD, converted to EUR; Happy Property/Sveru Ltd in EUR) - or right away via \"Refresh\". Tiles and charts count both accounts, the campaign hub shows the account selected above. * = lead count according to Meta while CRM attribution via the ad URL parameters is not active yet.",
       "footnote": "Data: automatic sync every morning directly from the Meta ad account (Sveru Marketing LLC, converted USD → EUR) - or instantly via \"Refresh\". * = lead count per Meta while CRM attribution via ad URL parameters is not yet active.",
       "toLeads": "Go to leads",
       "clickHint": "👆 Click a campaign to expand its individual ads",
@@ -3963,6 +3965,7 @@
       "toastActivateQueued": "▶ Activating on Meta …",
       "toastCancelled": "Action cancelled",
       "toastError": "Error while saving",
+      "toastSyncKonto": "Account {{name}} not read: {{fehler}}",
       "syncNow": "Refresh",
       "toastSynced": "✅ Refreshed - fetched {{n}} daily values from Meta",
       "toastSyncError": "Refresh failed",
@@ -7520,6 +7523,7 @@
           "ortTyp": "Both on (recommended): people who live there or were there recently.",
           "os": "Only people with this mobile operating system. Not needed for HP (recommended: all).",
           "seite": "The Facebook Page that runs the instant form or messages.",
+          "spendCapKonto": "Optional. Meta pauses the campaign once this much has been spent in total (100 to 100,000 in the account currency).",
           "spendCap": "Optional. Meta pauses the campaign once this much has been spent in total ($100 to $100,000).",
           "start": "Empty: from activation.",
           "status": "Active: Meta delivers and costs occur. Paused: no delivery, all settings stay.",
@@ -7573,6 +7577,7 @@
           "aktivHinweis": "Activating starts delivery immediately. The server checks the guardrail (sum of all active daily budgets) for all items together and refuses if the limit would be exceeded.",
           "aktivWarnung": "{{n}} items become active: Meta delivers immediately, costs occur. The guardrail is checked for all together.",
           "betrag": "New amount for all",
+          "betragFehltEur": "Please enter an amount in €.",
           "betragFehlt": "Please enter an amount in $.",
           "bleibtGanz": "Status and name then stay unchanged as well.",
           "budget": "Daily budget",
@@ -7639,6 +7644,7 @@
           "entfernen": "Remove",
           "keine": "No periods scheduled.",
           "neu": "Add period",
+          "plusBetragEur": "Plus (€ per day)",
           "plusBetrag": "Plus ($ per day)",
           "plusProzent": "Plus (%)",
           "prozent": "Percent",
@@ -8544,10 +8550,12 @@
           "video": "Video engagement"
         },
         "hilfe": {
+          "ausgabenKonto": "What was spent in the period, in euro (USD account converted).",
           "ausgaben": "What was spent in the period, converted from USD to euro.",
           "ausgehende_klicks": "Clicks that leave Facebook or Instagram and lead to our site.",
           "auslieferung": "Whether Meta is delivering right now, including learning phase, review and rejection.",
           "beitrags_interaktionen": "All actions on the post: reactions, comments, shares, clicks.",
+          "budgetKonto": "Daily or lifetime budget in the account currency (USD account with a rough euro value, EUR account as is).",
           "budget": "Daily or lifetime budget in the account currency (USD), with a rough euro value.",
           "cpc": "Amount spent divided by the link clicks.",
           "cpm": "What 1,000 impressions cost. Rises when the audience is contested.",
@@ -8782,6 +8790,7 @@
         },
         "suche": "Search by name or ID",
         "summe": "Total ({{n}})",
+        "konto": "Account: {{name}} ({{waehrung}})",
         "titel": "Campaign hub",
         "var": {
           "bild": "Image",
@@ -8880,6 +8889,9 @@
         }
       },
       "konto": {
+        "label": "Ad account",
+        "anlage": "New campaigns are created in the account {{name}}.",
+        "bearbeiten": "Editing and copying act in the account of each object.",
         "status": {
           "aktiv": "Active",
           "deaktiviert": "Disabled",
@@ -9082,6 +9094,7 @@
             "Schedule": "Counts every booked consultation (website and CRM). A good optimization goal for website campaigns."
           },
           "wert": "Default value per conversion",
+          "wertHilfeKonto": "Optional, in the account currency (USD account in $, EUR account in €). Leave empty if the event brings its own value.",
           "wertHilfe": "Optional, in the account currency (USD). Leave empty if the event brings its own value.",
           "wertKurz": "Value {{wert}}",
           "zaehler": "{{n}} of {{max}} possible conversions used.",

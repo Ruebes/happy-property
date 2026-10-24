@@ -35,7 +35,7 @@
 //   vorherige Mitglieder zurücksetzen + Stopp    10 Rate-Limit -> Claim lösen, 'bestätigt' lassen, Abbruch.
 //
 // Payload-Vertrag (vom Regel-Motor geschrieben):
-//   budget_set: payload.daily_budget_cents (Ziel, USD-Cent, ganzzahlig), entity_level adset|campaign
+//   budget_set: payload.daily_budget_cents (Ziel, Cent der Kontowährung des Objekts, ganzzahlig), entity_level adset|campaign
 //   payload.nur_im_fenster === true: Zeile nur an Tagen aus ad_settings.change_window_dows
 //   activate, ersatz_aktivieren, budget_set laufen IMMER nur im Änderungsfenster.
 //   ersatz_aktivieren: payload.pool_id (+ ersetzt_kennung); nach Erfolg Vorrat -> aktiv,
@@ -58,8 +58,8 @@
 
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import {
-  type BudgetHeadroom, budgetHeadroom, graphGet, graphPost, logMetaWrite, metaEnv, metaErrorLogFelder,
-  metaWritesDisabled, MetaApiError, getLastUsage, wechselkurs,
+  type BudgetHeadroom, budgetHeadroom, graphGet, graphPost, istEigenesKonto, kontoInfo, kontoJeEur, logMetaWrite,
+  metaEnv, metaErrorLogFelder, metaKonten, metaWritesDisabled, MetaApiError, getLastUsage, wechselkurs,
 } from './metaGraph.ts'
 
 type Sb = SupabaseClient
@@ -179,7 +179,8 @@ const centsOrNull = (v: unknown): number | null => {
   const n = toNum(v)
   return n !== null && n > 0 ? Math.round(n) : null
 }
-const eur = (cents: number, usdPerEur: number) => Math.round((cents / 100 / usdPerEur) * 100) / 100
+/** Cent der Kontowährung -> EUR; jeEur = Einheiten der Kontowährung je EUR (EUR-Konto 1, USD-Konto USD je EUR) */
+const eur = (cents: number, jeEur: number) => Math.round((cents / 100 / jeEur) * 100) / 100
 const istAutopilot = (r: AktionsZeile) => r.origin === 'autopilot'
 const levelOf = (r: AktionsZeile): Level => {
   const l = String(r.entity_level ?? 'ad')
@@ -614,12 +615,14 @@ async function pruefeLeitplanken(
   ctx: Ctx, rows: AktionsZeile[], live: Map<string, LiveZustand>, st: Einstellungen,
 ): Promise<Pruefung> {
   const kurs = await wechselkurs(ctx.sb)
+  // Geld je Objekt in seiner Kontowährung: Einheiten je EUR aus dem Konto des Objekts
+  const jeEurVon = async (z: LiveZustand): Promise<number> => kontoJeEur((await kontoInfo(z.account_id)).currency, kurs.usdPerEur)
   const budgetRows = rows.filter(r => r.action === 'budget_set')
   const aktivRows = rows.filter(r => r.action === 'activate' || r.action === 'ersatz_aktivieren')
   const pauseRows = rows.filter(r => r.action === 'pause')
   let erhoehung = false
   const ersetzt: string[] = []
-  let addCents = 0
+  let addEur = 0
 
   // Budget je Zeile
   for (const r of budgetRows) {
@@ -627,7 +630,9 @@ async function pruefeLeitplanken(
     const id = entityOf(r)
     const ziel = zielCents(r)
     if (ziel === null) return { art: 'ablehnen', grund: 'Zielbudget fehlt (payload.daily_budget_cents)', zeile: r.id }
-    if (ziel < BUDGET_MIN_CENTS || ziel > BUDGET_MAX_CENTS) return { art: 'ablehnen', grund: `Budget ${ziel} USD-Cent außerhalb ${BUDGET_MIN_CENTS}..${BUDGET_MAX_CENTS}`, zeile: r.id }
+    if (ziel < BUDGET_MIN_CENTS || ziel > BUDGET_MAX_CENTS) return { art: 'ablehnen', grund: `Budget ${ziel} Cent außerhalb ${BUDGET_MIN_CENTS}..${BUDGET_MAX_CENTS}`, zeile: r.id }
+    let jeEur: number
+    try { jeEur = await jeEurVon(z) } catch (err) { return metaFehlerPruefung(err, 'Kontowährung lesen') }
     if (z.lifetime_budget) return { art: 'ablehnen', grund: 'Laufzeitbudgets ändert der Autopilot nie', zeile: r.id }
     const alt = z.daily_budget
     if (!alt) return { art: 'ablehnen', grund: 'Kein eigenes Tagesbudget (Kampagnenbudget?)', zeile: r.id }
@@ -641,7 +646,7 @@ async function pruefeLeitplanken(
     } else {
       if (ziel > Math.round(alt * (1 + MAX_BUDGET_SCHRITT))) return { art: 'ablehnen', grund: 'Erhöhung über +20 %', zeile: r.id }
       if (ziel < Math.round(alt * (1 - MAX_BUDGET_SCHRITT))) return { art: 'ablehnen', grund: 'Senkung über -20 %', zeile: r.id }
-      if (ziel < alt && eur(ziel, kurs.usdPerEur) < MIN_TAGESBUDGET_EUR * (1 - UNTERGRENZE_KURS_TOLERANZ)) {
+      if (ziel < alt && eur(ziel, jeEur) < MIN_TAGESBUDGET_EUR * (1 - UNTERGRENZE_KURS_TOLERANZ)) {
         return { art: 'ablehnen', grund: `Untergrenze ${MIN_TAGESBUDGET_EUR} €/Tag`, zeile: r.id }
       }
       if (z.last_sig_edit_ms && Date.now() - z.last_sig_edit_ms < LERNSCHUTZ_MS) {
@@ -652,7 +657,7 @@ async function pruefeLeitplanken(
     }
     if (ziel > alt) erhoehung = true
     ersetzt.push(id)
-    addCents += ziel
+    addEur += ziel / 100 / jeEur
   }
 
   // Plan-B-Gruppen symmetrisch (alle Mitglieder in derselben Gruppe, gleiches Ziel)
@@ -682,7 +687,11 @@ async function pruefeLeitplanken(
       }
     } else {
       if (z.lifetime_budget) return { art: 'ablehnen', grund: 'Laufzeitbudget: Aktivieren nur von Hand', zeile: r.id }
-      if (z.daily_budget) { erhoehung = true; ersetzt.push(entityOf(r)); addCents += z.daily_budget }
+      if (z.daily_budget) {
+        let jeEur: number
+        try { jeEur = await jeEurVon(z) } catch (err) { return metaFehlerPruefung(err, 'Kontowährung lesen') }
+        erhoehung = true; ersetzt.push(entityOf(r)); addEur += z.daily_budget / 100 / jeEur
+      }
     }
   }
   if (neueAnzeigen.length) {
@@ -721,7 +730,7 @@ async function pruefeLeitplanken(
   if (erhoehung) {
     let h: BudgetHeadroom
     try {
-      h = await budgetHeadroom(ctx.sb, { addDailyUsdCents: addCents, replaceEntityIds: ersetzt })
+      h = await budgetHeadroom(ctx.sb, { addDailyEur: addEur, replaceEntityIds: ersetzt })
     } catch (err) {
       return err instanceof MetaApiError ? metaFehlerPruefung(err, 'Budget-Summe lesen') : { art: 'warten', grund: `leitplanke_nicht_pruefbar: ${errMsg(err)}`.slice(0, 180) }
     }
@@ -917,7 +926,7 @@ async function verarbeiteGruppe(ctx: Ctx, gruppe: AktionsZeile[], st: Einstellun
   for (const r of rows) {
     try {
       const z = await liveZustand(levelOf(r), entityOf(r), r.action === 'activate' || r.action === 'ersatz_aktivieren')
-      if (z.account_id !== ctx.account) return await gruppeBeenden(ctx, rows, { art: 'ablehnen', grund: 'Objekt gehört nicht zu unserem Werbekonto', zeile: r.id })
+      if (!istEigenesKonto(z.account_id)) return await gruppeBeenden(ctx, rows, { art: 'ablehnen', grund: 'Objekt gehört nicht zu unserem Werbekonto', zeile: r.id })
       if (r.pre_state_hash && (await preStateHash(z)) !== r.pre_state_hash) {
         return await gruppeBeenden(ctx, rows, { art: 'ablehnen', grund: 'Zustand bei Meta hat sich seit dem Vorschlag geändert', freigabe: 'veraltet', zeile: r.id })
       }
@@ -1041,7 +1050,7 @@ async function verarbeiteGruppe(ctx: Ctx, gruppe: AktionsZeile[], st: Einstellun
 
     // 8 Status, Spiegel, Log
     const result = r.action === 'budget_set'
-      ? `Tagesbudget ${vorher.daily_budget} → ${rb.daily_budget} USD-Cent`
+      ? `Tagesbudget ${vorher.daily_budget} → ${rb.daily_budget} Cent (Kontowährung)`
       : `Status → ${rb.status}`
     const patchRow: Record<string, unknown> = {
       status: 'ausgeführt', executed_at: new Date().toISOString(), result,
@@ -1077,7 +1086,7 @@ async function manuellAusfuehren(ctx: Ctx, a: AktionsZeile): Promise<void> {
     if (a.action !== 'pause' && a.action !== 'activate') throw new Error(`Unbekannte Aktion "${a.action}"`)
     // Sicherheitscheck: Ad muss zu unserem Konto gehören
     const { data: cat } = await ctx.sb.from('ad_catalog')
-      .select('ad_id').eq('ad_id', adId).eq('account_id', ctx.account).maybeSingle()
+      .select('ad_id').eq('ad_id', adId).in('account_id', metaKonten()).maybeSingle()
     if (!cat) throw new Error('Ad nicht im Konto-Katalog')
 
     newStatus = a.action === 'pause' ? 'PAUSED' : 'ACTIVE'

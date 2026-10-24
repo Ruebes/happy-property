@@ -8,7 +8,7 @@
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import type { AdsCaller } from '../_shared/adsAuth.ts'
 import {
-  getLastUsage, graphAll, GRAPH, logMetaWrite, MetaApiError, metaEnv, metaErrorFromBody, metaErrorLogFelder,
+  getLastUsage, graphAll, GRAPH, logMetaWrite, MetaApiError, metaEnv, metaEnvFuer, metaErrorFromBody, metaErrorLogFelder,
   metaWritesDisabled, parseUsage, type MetaEnv, type MetaUsage,
 } from '../_shared/metaGraph.ts'
 import type { KontoErrorCode, KontoMode, KontoUsage } from './typen.ts'
@@ -160,14 +160,15 @@ export interface Ctx {
   settings(): Promise<Settings>
 }
 
-export function makeCtx(sb: SupabaseClient, caller: AdsCaller, mode: KontoMode): Ctx {
+/** kontoRaw: body.account_id (im CRM gewähltes Werbekonto); leer = Anlagekonto */
+export function makeCtx(sb: SupabaseClient, caller: AdsCaller, mode: KontoMode, kontoRaw?: unknown): Ctx {
   let cached: Promise<Settings> | null = null
   // Seiten-Auslastung gilt nur innerhalb eines Aufrufs: ein alter Wert aus einem früheren
   // Aufruf derselben Instanz würde sonst Abfragen sperren, ohne je aufgefrischt zu werden.
   seitenUsage = null
   return {
     sb, caller, mode,
-    env: metaEnv(),
+    env: metaEnvFuer(kontoRaw),
     settings() {
       if (!cached) cached = loadSettings(sb)
       return cached

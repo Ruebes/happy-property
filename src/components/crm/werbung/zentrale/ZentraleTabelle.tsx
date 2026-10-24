@@ -8,6 +8,7 @@ import type { Sortierung, ZentraleEbene } from './ansichten'
 import { budgetText, ebeneLabel, formatWert, problemeTitel, textWert, veraenderung } from './darstellung'
 import { EIGEN_PREFIX, SPALTE, formatVon, wertVon, type EigeneSpalte } from './spalten'
 import { auslieferungVon, istAn } from './status'
+import { useKontoWaehrung } from '../felder'
 import type { Knoten, Werte } from './typen'
 
 // ── Tabelle der Kampagnen-Zentrale ───────────────────────────────────────────
@@ -75,6 +76,7 @@ function Schalter({ an, label, disabled, onClick }: { an: boolean; label: string
 export default function ZentraleTabelle(p: Props) {
   const { t } = useTranslation()
   const fmt = useWerbeFormat()
+  const waehrung = useKontoWaehrung()
   const { zeilen, spalten, eigene, vergleich } = p
 
   const label = (key: string): string => {
@@ -109,7 +111,7 @@ export default function ZentraleTabelle(p: Props) {
         )
       }
       if (key === 'budget') {
-        const b = budgetText(k, p.kurs, t, fmt)
+        const b = budgetText(k, p.kurs, t, fmt, waehrung)
         return (
           <span className="block leading-tight">
             <span className="text-xs text-gray-700">{b.haupt}</span>

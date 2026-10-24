@@ -7,7 +7,7 @@
 // Zeitraum im Zwischenspeicher (cache.ts). Lehnt Meta einzelne Felder ab und nennt
 // sie (z. B. Reichweite bei stündlicher Aufschlüsselung), einmal ohne sie.
 
-import { MetaApiError, wechselkurs, type GraphParams, type Wechselkurs } from '../_shared/metaGraph.ts'
+import { kontoInfo, kontoJeEur, MetaApiError, wechselkurs, type GraphParams, type Wechselkurs } from '../_shared/metaGraph.ts'
 import {
   BerichtError, FN, graphSeiten, heuteBerlin, MAX_RUECKBLICK_13_MONATE, MAX_RUECKBLICK_TAGE, monatePlus, obj, pruefeId,
   pruefeIds, pruefeZeitraum, uniq, usageJetzt, enthaeltHeute, type Ctx, type Raw, type Seiten,
@@ -26,7 +26,14 @@ import {
 /** 500 Zeilen je Seite, höchstens 10 Seiten (5.000 Zeilen) je Zeitraum */
 const SEITE = 500
 const MAX_SEITEN = 10
-const WAEHRUNG = 'USD'
+/** Kurs des gewählten Kontos: usdPerEur = Einheiten der Kontowährung je EUR (EUR-Konto 1) */
+type KontoKurs = Wechselkurs & { currency: string }
+
+async function kontoKurs(ctx: Ctx): Promise<KontoKurs> {
+  const { currency } = await kontoInfo(ctx.account)
+  const k = await wechselkurs(ctx.sb)
+  return { usdPerEur: kontoJeEur(currency, k.usdPerEur), quelle: k.quelle, currency }
+}
 
 const ID_FELDER: Record<BerichtLevel, string[]> = {
   account: ['account_id'],
@@ -186,7 +193,7 @@ function sortiere(rows: BerichtZeile[]): BerichtZeile[] {
     String(x.breakdown_label ?? '').localeCompare(String(y.breakdown_label ?? '')))
 }
 
-async function teilLaden(ctx: Ctx, a: InsightsAnfrage, z: Zeitraum, kurs: () => Promise<Wechselkurs>, label: string): Promise<Teil> {
+async function teilLaden(ctx: Ctx, a: InsightsAnfrage, z: Zeitraum, kurs: () => Promise<KontoKurs>, label: string): Promise<Teil> {
   const key = await cacheSchluessel({
     mode: 'insights', account: ctx.account, level: a.level, ids: [...a.ids].sort(), campaign_id: a.campaign_id,
     breakdowns: a.breakdowns, time_increment: a.time_increment, felder: a.felder, ergebnis: a.ergebnis,
@@ -214,7 +221,7 @@ async function teilLaden(ctx: Ctx, a: InsightsAnfrage, z: Zeitraum, kurs: () => 
     const seiten = await metaAbfrage(ctx, a, z)
     const k = await kurs()
     const rows = sortiere(seiten.rows.map(r => normalisiereZeile(r, {
-      breakdowns: a.breakdowns, felder: a.felder, ergebnis: a.ergebnis, usdPerEur: k.usdPerEur, currency: WAEHRUNG,
+      breakdowns: a.breakdowns, felder: a.felder, ergebnis: a.ergebnis, usdPerEur: k.usdPerEur, currency: k.currency,
     })))
     if (seiten.grund) ctx.hinweise.push(`${label}: ${seiten.grund}`)
     const payload: TeilPayload = {
@@ -241,8 +248,8 @@ async function teilLaden(ctx: Ctx, a: InsightsAnfrage, z: Zeitraum, kurs: () => 
 
 export async function modeInsights(ctx: Ctx, body: Raw): Promise<InsightsResponse> {
   const a = pruefeInsightsAnfrage(body, ctx.hinweise)
-  let kursP: Promise<Wechselkurs> | null = null
-  const kurs = () => (kursP ??= wechselkurs(ctx.sb))
+  let kursP: Promise<KontoKurs> | null = null
+  const kurs = () => (kursP ??= kontoKurs(ctx))
 
   const haupt = await teilLaden(ctx, a, a.haupt, kurs, 'Zeitraum')
   let vor: Teil | null = null
@@ -265,7 +272,7 @@ export async function modeInsights(ctx: Ctx, body: Raw): Promise<InsightsRespons
     totals,
     cached: haupt.cached && (!a.compare || (vor !== null && vor.cached)),
     fetched_at: haupt.fetched_at,
-    currency: WAEHRUNG,
+    currency: (await kurs()).currency,
     usd_per_eur: haupt.usd_per_eur,
     kurs_quelle: haupt.kurs_quelle,
     unvollstaendig: haupt.unvollstaendig || (vor?.unvollstaendig ?? false),

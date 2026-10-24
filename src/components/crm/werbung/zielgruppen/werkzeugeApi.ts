@@ -1,6 +1,7 @@
 import type { TFunction } from 'i18next'
 import { FunctionsHttpError } from '@supabase/supabase-js'
 import { supabase } from '../../../../lib/supabase'
+import { mitKonto } from '../../../../lib/werbeKonten'
 import { fnErrorDetail } from '../../../../lib/fnError'
 import { BuilderFehler, builderCall, fehlerCode, fehlerText, ladeKatalog } from '../kampagnen/builderApi'
 import { WERKZEUG_WRITE_MODES } from '../../../../lib/werbeWerkzeuge'
@@ -46,7 +47,7 @@ async function istFunktionFehlt(error: unknown): Promise<boolean> {
 
 /** Ein Modus von meta-werkzeuge. 200-Antworten mit { error } gelten als Fehler. */
 export async function werkzeugCall<M extends WerkzeugMode>(mode: M, req: WerkzeugRequestMap[M], retried = false): Promise<WerkzeugResponseMap[M]> {
-  const { data, error } = await supabase.functions.invoke(FN, { body: { mode, ...req } })
+  const { data, error } = await supabase.functions.invoke(FN, { body: mitKonto({ mode, ...req }) })
   if (error) {
     const wiederholbar = !WERKZEUG_WRITE_MODES.includes(mode) || (req as { vorschau?: boolean }).vorschau === true
     if (!retried && wiederholbar && NETZ_FEHLER.test(error.message ?? '')) {
