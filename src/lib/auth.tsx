@@ -140,7 +140,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Browsersprache. Das Profil ist damit die einzige Wahrheit (Login-Mails,
       // WhatsApp und UI ziehen alle daran). Kein Supabase-Call → im async-Kontext
       // von fetchProfile unkritisch (nicht im synchronen Auth-Callback).
-      if ((p.language === 'en' || p.language === 'de') && i18n.language !== p.language) void i18n.changeLanguage(p.language)
+      // Ausnahme Kundenseiten hinter Token (Deck, Rechnung): dort gilt die Sprache des
+      // Kunden. Sonst sieht ein eingeloggter Admin das englische Deck halb deutsch.
+      const customerPage = /^\/(deck|rechnung)\//.test(window.location.pathname)
+      if (!customerPage && (p.language === 'en' || p.language === 'de') && i18n.language !== p.language) void i18n.changeLanguage(p.language)
       return { ...p, permissions: p.permissions ?? {} }
     } catch {
       // fetch timed out (AbortError) oder Netzwerkfehler → einmal retry

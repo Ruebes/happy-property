@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase'
 import { compute, seasonBreakdown, type CalcContent, type CalcItem, type CalcResult } from '../lib/rechner'
 import { formatMonthRanges, monthName, monthsWithUse } from '../lib/monthPlan'
 import { DECK_LOGO } from '../lib/deckTypes'
+import i18n from '../lib/i18n'
 
 // ── Öffentliche Rendite-Rechnung / Immobilienvergleich (HTML-Microsite) ───────
 // /rechnung/:token — Einzelobjekt = detaillierte Auswertung (8 Abschnitte, exakt
@@ -17,10 +18,12 @@ const PALETTE = ['#2f6b4f', '#226f8f', '#ff795d', '#7a5a9e', '#b8860b']
 const SERIF = "'Playfair Display',Georgia,serif"
 const SANS = "'Montserrat','Helvetica Neue',Arial,sans-serif"
 
+// Zahlen und Datum im Format der Seitensprache (englische Kunden: 165,000 €).
+const LOC = (): string => (i18n.language?.startsWith('en') ? 'en-GB' : LOC())
 const eur = (n: number | null | undefined) => n == null || isNaN(n) ? '–'
-  : new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(Math.round(n))
+  : new Intl.NumberFormat(LOC(), { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(Math.round(n))
 const pct = (n: number | null | undefined, d = 1) => n == null || isNaN(n) ? '–'
-  : new Intl.NumberFormat('de-DE', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n) + ' %'
+  : new Intl.NumberFormat(LOC(), { minimumFractionDigits: d, maximumFractionDigits: d }).format(n) + ' %'
 // Einrichtung inkl. MwSt: 19% außer im Share-Deal (sdMode, netto ausgewiesen).
 const furnGrossOf = (pa: { furnCost?: number | null; furnFree?: boolean; dealType?: string }): number => {
   const c = pa.furnFree ? 0 : (pa.furnCost ?? 0)
@@ -108,7 +111,7 @@ export default function Rechnung() {
   const name = meta?.recipient_name || content.recipient_name || ''
   const withCalc = (meta?.with_calc ?? content.with_calc) && rows.some(r => r.res)
   const isCompare = rows.length > 1
-  const today = new Date().toLocaleDateString('de-DE')
+  const today = new Date().toLocaleDateString(LOC())
   const projLabel = rows[0]?.item.label || rows[0]?.item.project || ''
 
   return (
@@ -197,7 +200,7 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
   const p = row.item.params!
   // Vermietungsanteil in der Sprache des Lesers (Komma statt Punkt auf der deutschen Seite).
   const shareTxt = (Math.round(r.letShare * 1000) / 10).toLocaleString(i18n.language)
-  const yl = (i: number) => i === 0 ? `${r.yN[0]} (${r.mF} Mon.)` : String(r.yN[i])
+  const yl = (i: number) => i === 0 ? `${r.yN[0]} (${t('rechnung.monthsShort', '{{n}} Mon.', { n: r.mF })})` : String(r.yN[i])
   // abgeleitete Reihen (Formeln 1:1 aus dem Original-Export)
   const cumRent: number[] = []; { let a = 0; r.rents.forEach(x => { a += x; cumRent.push(a) }) }
   const ekYear = r.propV.map((v, i) => v - r.restL[i])
@@ -370,19 +373,19 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
                       <tr key={x.key}>
                         <td style={{ ...td, textAlign: 'left', fontWeight: 600 }}>{t(`rechnung.seasonName.${x.key}`, x.label)}</td>
                         <td style={{ ...td, textAlign: 'left' }}>{x.period}</td>
-                        <td style={td}>{x.occPct.toLocaleString('de-DE')} %</td>
+                        <td style={td}>{x.occPct.toLocaleString(LOC())} %</td>
                         <td style={td}>{x.occDays} {t('rechnung.seasonOf', 'von')} {x.days}</td>
-                        <td style={td}>{x.adr.toLocaleString('de-DE')} €</td>
-                        <td style={td}>{x.revenue.toLocaleString('de-DE')} €</td>
+                        <td style={td}>{x.adr.toLocaleString(LOC())} €</td>
+                        <td style={td}>{x.revenue.toLocaleString(LOC())} €</td>
                       </tr>
                     ))}
                     <tr style={{ background: '#FAF6EC' }}>
                       <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{t('rechnung.seasonTotal', 'Gesamt')}</td>
                       <td style={td} />
-                      <td style={{ ...td, fontWeight: 700 }}>{sb.occPct.toLocaleString('de-DE')} %</td>
+                      <td style={{ ...td, fontWeight: 700 }}>{sb.occPct.toLocaleString(LOC())} %</td>
                       <td style={{ ...td, fontWeight: 700 }}>{sb.occDays} {t('rechnung.seasonOf', 'von')} {sb.letDays}</td>
                       <td style={td} />
-                      <td style={{ ...td, fontWeight: 700 }}>{sb.rent.toLocaleString('de-DE')} €</td>
+                      <td style={{ ...td, fontWeight: 700 }}>{sb.rent.toLocaleString(LOC())} €</td>
                     </tr>
                   </tbody>
                 </table>
@@ -528,7 +531,7 @@ function BarChart({ labels, series, pct: isPct }: { labels: (string | number)[];
   const groups = series.length
   const bw = step * (groups > 1 ? 0.22 : 0.52)
   const totalBarW = bw * groups
-  const fmt = (v: number) => isPct ? v.toFixed(1).replace('.', ',') + '%' : short(v)
+  const fmt = (v: number) => isPct ? v.toLocaleString(LOC(), { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%' : short(v)
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
       {[0, 1, 2, 3, 4].map(g => { const y = pT + plotH * g / 4; return <line key={g} x1={pL} y1={y} x2={W - pR} y2={y} stroke="#eee" strokeWidth={1} /> })}
