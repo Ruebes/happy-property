@@ -368,7 +368,7 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
                   <tbody>
                     {sb.rows.map(x => (
                       <tr key={x.key}>
-                        <td style={{ ...td, textAlign: 'left', fontWeight: 600 }}>{x.label}</td>
+                        <td style={{ ...td, textAlign: 'left', fontWeight: 600 }}>{t(`rechnung.seasonName.${x.key}`, x.label)}</td>
                         <td style={{ ...td, textAlign: 'left' }}>{x.period}</td>
                         <td style={td}>{x.occPct.toLocaleString('de-DE')} %</td>
                         <td style={td}>{x.occDays} {t('rechnung.seasonOf', 'von')} {x.days}</td>
