@@ -140,6 +140,8 @@ export const NAV_ENTRIES: NavEntry[] = [
     mobileRank: { mitarbeiter: 11 }, keywords: ['bilder', 'vorschaubild', 'youtube'] },
   { id: 'youtube',      path: '/admin/crm/youtube',       labelKey: 'shell.nav.youtube',      icon: 'youtube',      group: 'marketing', order: 5, roles: AVM,  perm: 'youtube',    module: 'm6',
     mobileRank: { mitarbeiter: 12 }, keywords: ['videos', 'upload', 'kanal'] },
+  { id: 'blog',         path: '/admin/crm/blog',          labelKey: 'shell.nav.blog',         icon: 'documents',    group: 'marketing', order: 5.5, roles: [A], module: 'tbd',
+    keywords: ['blog', 'artikel', 'autopilot', 'wordpress', 'freigabe'] },
   { id: 'reviews',      path: '/admin/crm/reviews',       labelKey: 'shell.nav.reviews',      icon: 'reviews',      group: 'marketing', order: 6, roles: [A], module: 'tbd',
     keywords: ['sterne', 'fragebogen', 'feedback'] },
   { id: 'affiliates',   path: '/admin/crm/affiliates',    labelKey: 'shell.nav.affiliates',   icon: 'affiliates',   group: 'marketing', order: 7, roles: [A], module: 'tbd',

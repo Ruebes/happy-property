@@ -113,6 +113,7 @@ const CrmCalendar           = lazy(() => import('./pages/admin/crm/Calendar'))
 const Statistics            = lazy(() => import('./pages/admin/crm/Statistics'))
 const WebAnalytics          = lazy(() => import('./pages/admin/crm/WebAnalytics'))
 const Seo                   = lazy(() => import('./pages/admin/crm/Seo'))
+const CrmBlog               = lazy(() => import('./pages/admin/crm/Blog'))
 const CrmReviews            = lazy(() => import('./pages/admin/crm/Reviews'))
 const CrmAffiliates         = lazy(() => import('./pages/admin/crm/Affiliates'))
 const FunnelStats           = lazy(() => import('./pages/admin/crm/FunnelStats'))
@@ -271,6 +272,7 @@ export default function App() {
               <Route path="/admin/crm/webanalytics"      element={<WebAnalytics />} />
               <Route path="/admin/crm/seo"               element={<Seo />} />
               <Route path="/admin/crm/reviews"           element={<CrmReviews />} />
+              <Route path="/admin/crm/blog"              element={<CrmBlog />} />
               <Route path="/admin/crm/affiliates"        element={<CrmAffiliates />} />
             </Route>
 

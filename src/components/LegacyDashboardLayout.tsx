@@ -143,6 +143,7 @@ export default function LegacyDashboardLayout({ children, basePath }: Props) {
     { to: '/admin/crm/webanalytics',  key: 'crm.nav.webanalytics' },
     { to: '/admin/crm/seo',           key: 'crm.nav.seo'          },
     { to: '/admin/crm/reviews',       key: 'crm.nav.reviews'      },
+    { to: '/admin/crm/blog',          key: 'crm.nav.blog'         },
     { to: '/admin/crm/affiliates',    key: 'crm.nav.affiliates'   },
     { to: '/admin/crm/funnel',        key: 'crm.nav.funnel'       },
     { to: '/admin/crm/funnel-editor', key: 'crm.nav.funnelEditor' },

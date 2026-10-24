@@ -272,3 +272,6 @@ verify_jwt = false
 
 [functions.reservation-agreement]
 verify_jwt = false
+
+[functions.blog-autopilot]
+verify_jwt = false
