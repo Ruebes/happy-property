@@ -129,7 +129,9 @@ Deno.serve(async (req) => {
       if (error) throw new Error(error.message)
       const id = (data as { id: string }).id
       const cfg = await einstellung(sb)
-      if (cfg.enabled === true) {
+      // Autobetrieb nur für Artikel mit voller Punktzahl der Chefredaktion (auto_ok); knappe
+      // Artikel bleiben immer zur Prüfung liegen.
+      if (cfg.enabled === true && a.auto_ok !== false) {
         const { data: termin } = await sb.rpc('blog_naechster_termin')
         await sb.from('blog_artikel').update({ status: 'freigegeben', geplant_fuer: termin, freigegeben_am: new Date().toISOString(),
           updated_at: new Date().toISOString() }).eq('id', id)
