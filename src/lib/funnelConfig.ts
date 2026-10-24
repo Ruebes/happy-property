@@ -300,6 +300,22 @@ export function normalizeFunnelConfig(raw: unknown): FunnelConfig {
   }
 }
 
+// Terminseite je Projekt (Tabelle funnel_projects, öffentlich lesbar ohne project_id).
+// Erreichbar über /termin?p=<seiten-slug> oder utm_campaign=projekt-<seiten-slug>.
+export interface FunnelProjectPage { title?: string | null; subtitle?: string | null; hero_url?: string | null; bg_url?: string | null; hero_label?: string | null }
+
+export async function loadFunnelProject(slug: string): Promise<FunnelProjectPage | null> {
+  try {
+    const { data, error } = await supabase.from('funnel_projects')
+      .select('title, subtitle, hero_url, bg_url, hero_label').eq('slug', slug).maybeSingle()
+    if (error) throw error
+    return (data as FunnelProjectPage | null) ?? null
+  } catch (err) {
+    console.warn('[funnelConfig] Projekt-Terminseite nicht ladbar:', err)
+    return null
+  }
+}
+
 export async function loadFunnelConfig(): Promise<FunnelConfig> {
   try {
     const { data, error } = await supabase.from('funnel_config').select('config').eq('id', 'default').maybeSingle()

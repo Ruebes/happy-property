@@ -4,8 +4,8 @@ import { supabase } from '../lib/supabase'
 import { DECK_LOGO, DECK_PHOTO } from '../lib/deckTypes'
 import { OptionVisual } from '../components/FunnelIcon'
 import {
-  loadFunnelConfig, DEFAULT_FUNNEL_CONFIG, FUNNEL_HERO_DEFAULT, funnelImageUrl,
-  type FunnelQuestion, type FunnelOption,
+  loadFunnelConfig, loadFunnelProject, DEFAULT_FUNNEL_CONFIG, FUNNEL_HERO_DEFAULT, funnelImageUrl,
+  type FunnelQuestion, type FunnelOption, type FunnelProjectPage,
 } from '../lib/funnelConfig'
 
 // ── Termin-Funnel (/termin) — ersetzt Typeform + Calendly ────────────────────
@@ -57,7 +57,8 @@ function useUtm(): Record<string, string> {
 //   ?direkt=1&d=<deck-token> → derselbe Direkteinstieg über ein Deck (Newsletter).
 //   ?f=<slug> → Fragebogen-Variante aus dem Editor; ?f=none → GAR KEIN Fragebogen
 //     (Welcome → Kontakt → Termin). Unbekannter Slug fällt auf den Standard zurück.
-function useEntryParams(): { wanted: boolean; deckToken: string; leadToken: string; variant: string; rebook: boolean } {
+//   ?p=<seiten-slug> → Projekt-Terminseite (Tabelle funnel_projects), siehe projectSlug.
+function useEntryParams(): { wanted: boolean; deckToken: string; leadToken: string; variant: string; rebook: boolean; project: string } {
   return useMemo(() => {
     const p = new URLSearchParams(window.location.search)
     const deckToken = (p.get('d') ?? '').trim()
@@ -73,6 +74,7 @@ function useEntryParams(): { wanted: boolean; deckToken: string; leadToken: stri
       // Schnellbuchung ohne Fragebogen (z.B. aus dem „Termin verwalten"-Fallback,
       // wenn der alte Termin weg ist): direkt Terminart → Slot → Kontakt.
       rebook: p.get('buchen') === '1',
+      project: (p.get('p') ?? '').trim(),
     }
   }, [])
 }
@@ -182,12 +184,36 @@ export default function Funnel() {
     if (variant) return qn?.use_standard_questions ? cfg.questions : (qn?.questions ?? cfg.questions)
     return cfg.questions
   }, [cfg, variant, qn])
-  // Variante mit eigener Startseite (Anzeigen-Zielseite) und Projektbild im Hintergrund
-  const WEL = { ...cfg.welcome, ...(qn?.welcome ?? {}) }
+  // Projekt-Terminseite (Sven 24.10.26): ?p=<seiten-slug> oder utm_campaign=projekt-<slug>
+  // (so verlinken alle Projektseiten der Website). Zeigt Projektbild, Hintergrund und
+  // Überschrift aus funnel_projects; funnel-api ordnet die Buchung dem Projekt zu.
+  const projectSlug = useMemo(() => {
+    const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 80)
+    const direkt = clean(directEntry.project)
+    if (direkt) return direkt
+    const code = utmBase.utm_campaign ?? ''
+    return code.startsWith('projekt-') ? clean(code.slice(8)) : ''
+  }, [directEntry.project, utmBase.utm_campaign])
+  const [proj, setProj] = useState<FunnelProjectPage | null>(null)
+  const [projReady, setProjReady] = useState(!projectSlug)
+  useEffect(() => {
+    if (!projectSlug) return
+    void loadFunnelProject(projectSlug).then(p => { setProj(p); setProjReady(true) })
+  }, [projectSlug])
+  const projWelcome = proj
+    ? Object.fromEntries(Object.entries({ title: proj.title, subtitle: proj.subtitle, hero_url: proj.hero_url }).filter(([, v]) => !!v))
+    : {}
+  // Variante mit eigener Startseite (Anzeigen-Zielseite) und Projektbild im Hintergrund.
+  // Reihenfolge: Standard < Projekt < Variante (eine Anzeigen-Variante gewinnt immer).
+  const WEL = { ...cfg.welcome, ...projWelcome, ...(qn?.welcome ?? {}) }
   const INFO = qn?.info_paket
-  const BG = qn?.bg_url
-  // Variante in die Session-UTM: macht Varianten in der Statistik auswertbar
-  const utm = useMemo(() => variant ? { ...utmBase, funnel_variant: variant } : utmBase, [utmBase, variant])
+  const BG = qn?.bg_url || proj?.bg_url
+  const HERO_LABEL = qn?.hero_label || proj?.hero_label
+  // Variante und Projekt in die Session-UTM: macht sie in der Statistik auswertbar,
+  // und funnel-api liest das Projekt bei der Buchung aus der Session.
+  const utm = useMemo(() => (variant || projectSlug)
+    ? { ...utmBase, ...(variant ? { funnel_variant: variant } : {}), ...(projectSlug ? { projekt: projectSlug } : {}) }
+    : utmBase, [utmBase, variant, projectSlug])
   // Als Buchungs-Quelle (deals.source → Pipeline-Badge) zählen die festen Kanäle
   // PLUS alle im Funnel-Editor angelegten Link-Quellen — sonst würde eine frei
   // definierte Quelle (z.B. „podcast") verworfen.
@@ -477,11 +503,12 @@ export default function Funnel() {
         <div className={`w-full max-w-2xl min-w-0${BG ? ' mt-6 bg-white/95 backdrop-blur-md rounded-3xl shadow-xl p-5 md:p-10' : ''}`}>
 
           {phase === 'welcome' && (
-            <div className="text-center">
+            // Projektseite: erst zeigen, wenn Bild + Text da sind (kein kurzes Aufblitzen des Standards)
+            <div className="text-center" style={projReady ? undefined : { visibility: 'hidden' }}>
               <div className="relative mb-8">
-                <img src={HERO} alt="Sven – Happy Property" className="w-full h-56 md:h-72 object-cover rounded-2xl shadow-lg" />
-                {qn?.hero_label && (
-                  <span className="absolute right-3 bottom-3 text-[11px] px-2.5 py-1 rounded-md text-white" style={{ background: 'rgba(26,35,50,.7)' }}>{qn.hero_label}</span>
+                <img src={HERO} alt={proj?.title ? '' : 'Sven – Happy Property'} className="w-full h-56 md:h-72 object-cover rounded-2xl shadow-lg" />
+                {HERO_LABEL && (
+                  <span className="absolute right-3 bottom-3 text-[11px] px-2.5 py-1 rounded-md text-white" style={{ background: 'rgba(26,35,50,.7)' }}>{HERO_LABEL}</span>
                 )}
               </div>
               <h1 className="font-heading font-bold text-3xl md:text-5xl leading-tight" style={{ color: NAVY }}>

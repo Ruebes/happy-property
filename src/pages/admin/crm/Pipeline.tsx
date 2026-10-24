@@ -400,6 +400,12 @@ function DealCard({ deal, apptDate, onDragStart, onClick, onContextMenu }: DealC
         </p>
       )}
 
+      {deal.source_project && (
+        <p className="text-xs font-semibold mb-1 truncate" style={{ color: '#c2410c' }} title={t('crm.pipeline.sourceProjectHint', 'Über dieses Projekt gekommen (Projekt-Terminseite)')}>
+          🏗️ {deal.source_project.name}
+        </p>
+      )}
+
       {deal.property && (
         <p className="text-xs text-gray-500 mb-1 truncate">
           🏠 {deal.property.project_name}
@@ -591,14 +597,15 @@ export default function Pipeline() {
       const { data, error } = await supabase
         .from('deals')
         .select(`
-          id, lead_id, property_id, unit_id, phase, source, developer, created_at, updated_at,
+          id, lead_id, property_id, unit_id, phase, source, source_project_id, developer, created_at, updated_at,
           deposit_paid_at, commission_amount,
           registration_notes, finanzierung_de_notes, finanzierung_cy_notes,
           immobilien_notes, kaufvertrag_notes, provision_notes, reservation_notes,
           lead:leads(id, first_name, last_name, email, phone, whatsapp, source, assigned_to,
             assignee:profiles!leads_assigned_to_fkey(full_name, email)
           ),
-          property:properties(id, project_name, unit_number)
+          property:properties(id, project_name, unit_number),
+          source_project:crm_projects!deals_source_project_id_fkey(id, name)
         `)
         .neq('phase', 'archiviert')
         .order('updated_at', { ascending: false })

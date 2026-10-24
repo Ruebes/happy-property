@@ -66,6 +66,7 @@ export interface Deal {
   unit_id:                      string | null   // direkte CRM-Einheit
   phase:                        DealPhase
   source?:                      string | null   // 'newsletter' | 'direktlink' — Buchungs-Herkunft
+  source_project_id?:           string | null   // über welches Projekt der Kontakt kam (Projekt-Terminseite)
   developer:                    string | null
   registration_sent_at:         string | null
   financing_required:           boolean
@@ -91,6 +92,7 @@ export interface Deal {
   // joined
   lead?:     Lead | null
   property?: { id: string; project_name: string; unit_number: string | null } | null
+  source_project?: { id: string; name: string } | null
 }
 
 export interface Activity {

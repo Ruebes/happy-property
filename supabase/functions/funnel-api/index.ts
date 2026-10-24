@@ -259,6 +259,35 @@ interface InfoPaket {
 const fill = (t: string, v: Record<string, string>) => t.replace(/\{\{(\w+)\}\}/g, (m, k) => (k in v ? v[k] : m))
 const escHtml = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
+// Projekt-Terminseite (Sven 24.10.26): Über welches Projekt kam der Kontakt? Die Seite
+// trägt den Seiten-Slug (?p= bzw. utm_campaign=projekt-<slug>, im Funnel als utm.projekt),
+// Anzeigen-Varianten (?f=) sind über funnel_projects.variants einem Projekt zugeordnet.
+// Ergebnis landet am Deal (source_project_id) und im Kalender. Name = CRM-intern.
+async function projektAufloesen(admin: SupabaseClient, utm: Record<string, string> | null | undefined): Promise<{ id: string; name: string; via: string } | null> {
+  try {
+    const slug = String(utm?.projekt ?? '').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 80)
+    const variante = String(utm?.funnel_variant ?? '').trim().slice(0, 60)
+    let row: { project_id: string } | null = null
+    let via = 'über die Projektseite der Website'
+    if (slug) {
+      const { data } = await admin.from('funnel_projects').select('project_id').eq('slug', slug).maybeSingle()
+      row = data as { project_id: string } | null
+    }
+    if (!row && variante) {
+      const { data } = await admin.from('funnel_projects').select('project_id').contains('variants', [variante]).limit(1)
+      row = ((data ?? [])[0] as { project_id: string } | undefined) ?? null
+      via = `über die Zielseite „${variante}“`
+    }
+    if (!row) return null
+    const { data: pr } = await admin.from('crm_projects').select('id, name').eq('id', row.project_id).maybeSingle()
+    const p = pr as { id: string; name: string } | null
+    return p ? { ...p, via } : null
+  } catch (e) {
+    console.warn('[funnel-api] Projekt-Zuordnung:', e)
+    return null
+  }
+}
+
 async function unterlagenVersenden(admin: SupabaseClient, leadId: string, dealId: string | null, slug: string): Promise<boolean> {
   const { data: fc } = await admin.from('funnel_config').select('config').eq('id', 'default').maybeSingle()
   const qns = ((fc as { config?: { questionnaires?: Array<{ slug?: string; info_paket?: InfoPaket }> } } | null)?.config?.questionnaires) ?? []
@@ -450,7 +479,9 @@ Deno.serve(async (req) => {
           if (byAltP?.length) leadId = (byAltP[0] as { id: string }).id
         }
       }
-      const utmNote = body.utm && Object.keys(body.utm).length ? `\nKanal: ${JSON.stringify(body.utm)}` : ''
+      const projekt = await projektAufloesen(admin, body.utm)
+      const utmNote = (projekt ? `\nProjekt: ${projekt.name} (${projekt.via})` : '')
+        + (body.utm && Object.keys(body.utm).length ? `\nKanal: ${JSON.stringify(body.utm)}` : '')
       const answersText = (body.answers ?? []).map(a => `• ${a.question}: ${a.answer}`).join('\n')
       const utm = body.utm ?? {}
       // Klick-/Browser-ID nur übernehmen, wenn wirklich etwas ankam — sonst
@@ -513,7 +544,7 @@ Deno.serve(async (req) => {
       try {
         await admin.from('activities').insert({
           lead_id: leadId, type: 'note', direction: 'inbound',
-          subject: '📋 Fragebogen (Website-Funnel)', content: `${answersText}${utmNote}`,
+          subject: projekt ? `📋 Fragebogen (Website-Funnel) · ${projekt.name}` : '📋 Fragebogen (Website-Funnel)', content: `${answersText}${utmNote}`,
           completed_at: new Date().toISOString(),
         })
       } catch { /* egal */ }
@@ -522,9 +553,15 @@ Deno.serve(async (req) => {
       // gleiche Semantik wie typeform-webhook. Bestands-Deals behalten ihre Phase.
       let dealId: string | null = null
       const { data: exDeals } = await admin.from('deals').select('id').eq('lead_id', leadId).limit(1)
-      if (exDeals?.length) dealId = (exDeals[0] as { id: string }).id
-      else {
-        const { data: nd } = await admin.from('deals').insert({ lead_id: leadId, phase: 'erstkontakt' }).select('id').single()
+      if (exDeals?.length) {
+        dealId = (exDeals[0] as { id: string }).id
+        if (projekt) {
+          const { error: pe } = await admin.from('deals').update({ source_project_id: projekt.id }).eq('id', dealId)
+          if (pe) console.warn('[funnel-api] Projekt am Deal:', pe.message)
+        }
+      } else {
+        const { data: nd, error: ne } = await admin.from('deals').insert({ lead_id: leadId, phase: 'erstkontakt', ...(projekt ? { source_project_id: projekt.id } : {}) }).select('id').single()
+        if (ne) console.warn('[funnel-api] Deal-Insert:', ne.message)
         dealId = (nd as { id: string } | null)?.id ?? null
       }
       // Weg B (Variante mit info_paket): Unterlagen sofort verschicken
@@ -587,10 +624,12 @@ Deno.serve(async (req) => {
       // sichtbar (CRM-Kalender, Google-Kalender ohne Gäste), nie in Kundennachrichten.
       let kampagne: { label?: string; color?: string; google_color_id?: string } | null = null
       let kampagneCode = ''
+      let sessionUtm: Record<string, string> | null = null
       try {
         if (body.session_id) {
           const { data: ss } = await admin.from('funnel_sessions').select('utm').eq('id', body.session_id).maybeSingle()
-          kampagneCode = String(((ss as { utm?: Record<string, string> | null } | null)?.utm ?? {}).utm_campaign ?? '')
+          sessionUtm = (ss as { utm?: Record<string, string> | null } | null)?.utm ?? null
+          kampagneCode = String((sessionUtm ?? {}).utm_campaign ?? '')
         }
         if (!kampagneCode) kampagneCode = String((leadRow as { utm_campaign?: string | null }).utm_campaign ?? '')
         if (kampagneCode) {
@@ -599,6 +638,9 @@ Deno.serve(async (req) => {
           kampagne = map[kampagneCode] ?? null
         }
       } catch (e) { console.warn('[funnel-api] Kampagnen-Kennzeichnung:', e) }
+      // Projekt-Terminseite: Projekt am Deal und im Kalender (Label, wenn keine Kampagne greift)
+      const projekt = await projektAufloesen(admin, sessionUtm)
+      const kalenderLabel = kampagne?.label ?? projekt?.name
       const c = { first_name: (leadRow as { first_name?: string }).first_name ?? '', last_name: (leadRow as { last_name?: string }).last_name ?? '' }
       const phone = ((leadRow as { whatsapp?: string; phone?: string }).whatsapp || (leadRow as { phone?: string }).phone || '').replace(/[^\d+]/g, '')
       const email = ((leadRow as { email?: string }).email ?? '').trim().toLowerCase()
@@ -619,9 +661,9 @@ Deno.serve(async (req) => {
         const { data: exDeals } = await admin.from('deals').select('id').eq('lead_id', leadId).limit(1)
         if (exDeals?.length) {
           dealId = (exDeals[0] as { id: string }).id
-          await admin.from('deals').update({ phase: 'termin_gebucht', archived_from_phase: null, ...(source ? { source } : {}) }).eq('id', dealId)
+          await admin.from('deals').update({ phase: 'termin_gebucht', archived_from_phase: null, ...(source ? { source } : {}), ...(projekt ? { source_project_id: projekt.id } : {}) }).eq('id', dealId)
         } else {
-          const { data: nd } = await admin.from('deals').insert({ lead_id: leadId, phase: 'termin_gebucht', ...(source ? { source } : {}) }).select('id').single()
+          const { data: nd } = await admin.from('deals').insert({ lead_id: leadId, phase: 'termin_gebucht', ...(source ? { source } : {}), ...(projekt ? { source_project_id: projekt.id } : {}) }).select('id').single()
           dealId = (nd as { id: string } | null)?.id ?? null
         }
       }
@@ -646,8 +688,8 @@ Deno.serve(async (req) => {
         const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calId)}/events`, {
           method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            summary: `${[sourceLabel, kampagne?.label].filter(Boolean).length ? `[${[sourceLabel, kampagne?.label].filter(Boolean).join(' · ')}] ` : ''}${apptTitle} ${c.last_name ?? ''}`.trim(),
-            description: `${sourceLabel ? `Über ${sourceLabel.toUpperCase()} gebucht` : 'Über den Website-Funnel gebucht'} (${type === 'zoom' ? 'Zoom' : 'WhatsApp-Call'})${kampagne?.label ? `\nKampagne: ${kampagne.label} (${kampagneCode})` : ''}${zoomLink ? `\nZoom: ${zoomLink}` : ''}\nTel: ${phone}\nMail: ${email}`,
+            summary: `${[sourceLabel, kalenderLabel].filter(Boolean).length ? `[${[sourceLabel, kalenderLabel].filter(Boolean).join(' · ')}] ` : ''}${apptTitle} ${c.last_name ?? ''}`.trim(),
+            description: `${sourceLabel ? `Über ${sourceLabel.toUpperCase()} gebucht` : 'Über den Website-Funnel gebucht'} (${type === 'zoom' ? 'Zoom' : 'WhatsApp-Call'})${kampagne?.label ? `\nKampagne: ${kampagne.label} (${kampagneCode})` : ''}${projekt ? `\nProjekt: ${projekt.name} (${projekt.via})` : ''}${zoomLink ? `\nZoom: ${zoomLink}` : ''}\nTel: ${phone}\nMail: ${email}`,
             ...(kampagne?.google_color_id ? { colorId: String(kampagne.google_color_id) } : {}),
             start: { dateTime: start.toISOString(), timeZone: TZ_CY }, end: { dateTime: end.toISOString(), timeZone: TZ_CY },
           }),
@@ -660,12 +702,12 @@ Deno.serve(async (req) => {
       const { data: appt } = await admin.from('crm_appointments').insert({
         lead_id: isInternal ? null : leadId, deal_id: dealId, internal: isInternal,
         title: apptTitle,
-        description: 'Über den Website-Funnel gebucht', type,
+        description: projekt ? `Über den Website-Funnel gebucht, Projekt: ${projekt.name} (${projekt.via})` : 'Über den Website-Funnel gebucht', type,
         start_time: start.toISOString(), end_time: end.toISOString(),
         zoom_link: zoomLink, phone_number: type === 'whatsapp' ? phone : null,
         google_event_id: gcal?.id ?? null, google_calendar_id: gcal?.calId ?? null,
         source,
-        campaign_tag: kampagne?.label ?? null, campaign_color: kampagne?.color ?? null,
+        campaign_tag: kalenderLabel ?? null, campaign_color: kampagne?.color ?? null,
       }).select('id').single()
 
       // Betrifft die Buchung den HEUTIGEN Tag? Dann Sven sofort Bescheid geben —

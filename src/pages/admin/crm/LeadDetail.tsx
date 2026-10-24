@@ -499,7 +499,7 @@ export default function LeadDetail() {
           .single(),
         supabase
           .from('deals')
-          .select('*, property:properties(id, project_name, unit_number)')
+          .select('*, property:properties(id, project_name, unit_number), source_project:crm_projects!deals_source_project_id_fkey(id, name)')
           .eq('lead_id', id)
           .neq('phase', 'archiviert')
           .order('created_at', { ascending: false })
@@ -3036,6 +3036,15 @@ export default function LeadDetail() {
                             )}
                             {lead.utm_campaign && <span className="text-gray-500">{adChannelLabel(lead.utm_source) ? ' · ' : ''}{lead.utm_campaign}</span>}
                             {lead.utm_content && <span className="text-gray-400"> · {lead.utm_content}</span>}
+                          </dd>
+                        </div>
+                      )}
+                      {deal?.source_project && (
+                        <div className="flex gap-2">
+                          <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.lead.sourceProject', 'Projekt')}</dt>
+                          <dd className="text-gray-900">
+                            <Link to={`/admin/crm/projects/${deal.source_project.id}`} className="font-medium text-orange-500 hover:underline">🏗️ {deal.source_project.name}</Link>
+                            <span className="text-gray-500"> · {t('crm.lead.sourceProjectHint', 'über dieses Projekt gekommen')}</span>
                           </dd>
                         </div>
                       )}
