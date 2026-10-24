@@ -438,9 +438,32 @@ async function infoRequest(body: Record<string, unknown>): Promise<{ status: num
   }
   // Anfrage-Paket (Sven 13.10.26): Ist das Infopaket nicht automatisch raus, bereitet
   // anfrage-paket Deck, Rechnungen und Mail als Entwurf im Postausgang vor.
+  // Hat die Person zu dieser Wohnung schon ein Paket (14 Tage)? Dann kein zweites und
+  // keine „wird vorbereitet“-Meldung, sondern „fragt erneut“ (Sven 24.10.26: Silvia
+  // fragte nach dem Versand im eigenen Paket-Deck noch einmal, die Meldung kam doppelt).
+  let schon: { status: string; datum: string | null } | null = null
+  if (nr && d.project_id && (leadId || subId || email)) {
+    const { data: u } = await sb.from('crm_project_units').select('id').eq('project_id', d.project_id).eq('unit_number', nr).limit(1).maybeSingle()
+    const unitId = (u as { id: string } | null)?.id
+    if (unitId) {
+      let q = sb.from('anfrage_pakete').select('outbox_id').eq('unit_id', unitId).in('status', ['deck', 'fertig'])
+        .gte('created_at', new Date(Date.now() - 14 * 864e5).toISOString()).order('created_at', { ascending: false }).limit(1)
+      q = leadId ? q.eq('lead_id', leadId) : subId ? q.eq('subscriber_id', subId) : q.eq('empfaenger_email', email ?? '')
+      const { data: ap } = await q
+      const a = ((ap ?? []) as { outbox_id: string | null }[])[0]
+      if (a) {
+        const { data: ob } = a.outbox_id ? await sb.from('deck_outbox').select('status, sent_at').eq('id', a.outbox_id).maybeSingle() : { data: null }
+        const o = ob as { status: string; sent_at: string | null } | null
+        schon = { status: o?.status ?? 'deck', datum: o?.sent_at ?? null }
+      }
+    }
+  }
   const { data: apRow } = await sb.from('crm_settings').select('value').eq('key', 'anfrage_paket_mode').maybeSingle()
-  const anfragePaket = !paket.sent && String((apRow as { value?: string } | null)?.value ?? '').trim() === 'on'
-  const paketZeile = paket.sent
+  const anfragePaket = !paket.sent && !schon && String((apRow as { value?: string } | null)?.value ?? '').trim() === 'on'
+  const schonZeile = schon
+    ? `Infopaket zu dieser Wohnung hat ${wer} schon (${schon.status === 'sent' && schon.datum ? `verschickt am ${new Date(schon.datum).toLocaleDateString('de-DE', { timeZone: 'Asia/Nicosia' })}` : schon.status === 'draft' ? 'Entwurf liegt im Postausgang' : 'wird gerade vorbereitet'}). Kein neues Paket, bitte persönlich antworten.`
+    : ''
+  const paketZeile = schonZeile || paket.sent
     ? `Infopaket: automatisch per Mail verschickt (2 Rechnungen, Wohnung als PDF, Guide, Baufotos). Finanziert: ${paket.calc_url ?? ''} · Ohne Kredit: ${paket.calc_url_cash ?? ''}`
     : anfragePaket
       ? 'Infopaket: wird gerade vorbereitet (eigenes Deck mit Grundriss und Baubeschreibung, 2 Rechnungen, Datenblatt) und liegt in wenigen Minuten im Postausgang. Prüfen und senden.'
@@ -457,7 +480,7 @@ async function infoRequest(body: Record<string, unknown>): Promise<{ status: num
     ...(paketZeile ? [paketZeile] : []),
     paket.sent ? 'Nächster Schritt: anrufen oder schreiben, solange das Interesse frisch ist.'
       : 'Versprochen auf der Seite: persönliche Antwort von Sven, in der Regel innerhalb von 24 Stunden.',
-    ...(wuensche.includes('rechnung') && leadId && !paket.sent ? ['Tipp: Rechnung im Lead über „📊 Rechnung erstellen“, der Mail-Entwurf liegt dann im Postausgang.'] : []),
+    ...(wuensche.includes('rechnung') && leadId && !paket.sent && !schon ? ['Tipp: Rechnung im Lead über „📊 Rechnung erstellen“, der Mail-Entwurf liegt dann im Postausgang.'] : []),
   ]
   const beschreibung = zeilen.join('\n')
 
@@ -469,7 +492,7 @@ async function infoRequest(body: Record<string, unknown>): Promise<{ status: num
   const { data: admin } = await sb.from('profiles').select('id').eq('role', 'admin').order('created_at').limit(1).maybeSingle()
   const adminId = (admin as { id: string } | null)?.id ?? null
   const { data: task, error: tErr } = await sb.from('crm_tasks').insert({
-    title: `${intern ? '[Test] ' : ''}📩 ${wer}: ${paket.sent ? `Infopaket zu ${objekt} verschickt, bitte nachfassen` : `möchte mehr Infos zu ${objekt}`}`.slice(0, 200),
+    title: `${intern ? '[Test] ' : ''}📩 ${wer}: ${paket.sent ? `Infopaket zu ${objekt} verschickt, bitte nachfassen` : schon ? `fragt erneut zu ${objekt}` : `möchte mehr Infos zu ${objekt}`}`.slice(0, 200),
     description: beschreibung, created_by: adminId, assigned_to: adminId, status: 'offen',
     due_date: cyDate(new Date()),
     // Zustellung laeuft ueber die Zustaendigen-Zeile (wie Tasks.tsx), alten Pfad stumm.
