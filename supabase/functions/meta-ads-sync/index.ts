@@ -532,6 +532,8 @@ async function capiRueckspielen(sb: Sb, summary: Summary): Promise<void> {
     if (!lead) return
     // Nur Meta-Leads (fbp allein zählt nicht, siehe werbeCapi.istMetaLead)
     if (!istMetaLead(lead)) { keinMeta++; return }
+    // Dieselbe event_id nur einmal je Lauf (QualifiedLead kann aus Termin UND Bewertung kommen)
+    if (kandidaten.some(k => k.event_id === basis.event_id)) return
     kandidaten.push(kandidatAusLead(lead, basis))
   }
 
@@ -545,8 +547,13 @@ async function capiRueckspielen(sb: Sb, summary: Summary): Promise<void> {
     .not('lead_id', 'is', null)
     .limit(1000)
   if (appts.error) throw new Error(`Termine lesen: ${fehlerText(appts.error)}`)
-  for (const a of (appts.data ?? []) as Array<{ id: string; created_at: string; lead: CapiLead | null }>) {
+  for (const a of (appts.data ?? []) as Array<{ id: string; lead_id: string; created_at: string; lead: CapiLead | null }>) {
     nimm(a.lead, { event_id: `appt-${a.id}`, event_name: 'Schedule', event_time: sek(a.created_at), from_website: true })
+    // Termin gebucht -> zusaetzlich QualifiedLead (Sven 24.10.2026: „Leute, die einen
+    // Termin gebucht haben, sind automatisch gute Leads“). Vorher kam QualifiedLead nur
+    // aus Svens Bewertung von Hand (zuletzt 24.9.), Meta bekam kein Qualitaetssignal.
+    // event_id wie bei der Bewertung (`goodlead-<lead_id>`): capi_log filtert Dubletten.
+    nimm(a.lead, { event_id: `goodlead-${a.lead_id}`, event_name: 'QualifiedLead', event_time: sek(a.created_at) })
   }
 
   // Termin stattgefunden -> AppointmentHeld (Bewertungszeitpunkt = updated_at)
