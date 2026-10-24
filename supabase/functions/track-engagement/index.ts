@@ -463,13 +463,13 @@ async function infoRequest(body: Record<string, unknown>): Promise<{ status: num
   const schonZeile = schon
     ? `Infopaket zu dieser Wohnung hat ${wer} schon (${schon.status === 'sent' && schon.datum ? `verschickt am ${new Date(schon.datum).toLocaleDateString('de-DE', { timeZone: 'Asia/Nicosia' })}` : schon.status === 'draft' ? 'Entwurf liegt im Postausgang' : 'wird gerade vorbereitet'}). Kein neues Paket, bitte persönlich antworten.`
     : ''
-  const paketZeile = schonZeile || paket.sent
+  const paketZeile = schonZeile || (paket.sent
     ? `Infopaket: automatisch per Mail verschickt (2 Rechnungen, Wohnung als PDF, Guide, Baufotos). Finanziert: ${paket.calc_url ?? ''} · Ohne Kredit: ${paket.calc_url_cash ?? ''}`
     : anfragePaket
       ? 'Infopaket: wird gerade vorbereitet (eigenes Deck mit Grundriss und Baubeschreibung, 2 Rechnungen, Datenblatt) und liegt in wenigen Minuten im Postausgang. Prüfen und senden.'
     : paket.reason && paket.reason !== 'automatik_aus'
       ? `Infopaket: NICHT automatisch verschickt (${PAKET_GRUND[paket.reason] ?? paket.reason}), bitte selbst schicken.`
-      : ''
+      : '')
 
   const zeilen = [
     `Wer: ${[wer, email, phone].filter(Boolean).join(' · ')}${person ? '' : ' (selbst eingetragen)'}`,
