@@ -6,7 +6,7 @@ import { supabase } from '../../../lib/supabase'
 // ── Blog ──────────────────────────────────────────────────────────────────────
 // Prüfwarteschlange für den Blog-Autopiloten (GitHub Ruebes/hp-blog-autopilot).
 // Der Autopilot hält immer 4 ungeprüfte Artikel vor. Sven liest sie hier, gibt frei
-// (nächster freier Montag 07:00 Zypern) oder lehnt ab. Der tägliche Lauf plant freigegebene
+// (nächster freier Dienstag 07:00 Zypern) oder lehnt ab. Der tägliche Lauf plant freigegebene
 // Artikel in WordPress ein und legt die Social-Posts an (LinkedIn, Facebook, Instagram).
 // Autobetrieb (crm_settings.blog_autopilot.enabled): neue Artikel werden ohne Prüfung freigegeben.
 
@@ -146,7 +146,7 @@ export default function Blog() {
           <div>
             <h1 className="font-heading text-2xl text-hp-slate">{t('crm.blog.title', 'Blog')}</h1>
             <p className="text-sm text-gray-500 mt-1">
-              {t('crm.blog.subtitle', 'Artikel vom Autopiloten für steuervorteil-zypern-immobilien.com prüfen und freigeben. Erscheinen montags 07:00 (Zypern), Social-Posts am selben Tag.')}
+              {t('crm.blog.subtitle', 'Artikel vom Autopiloten für steuervorteil-zypern-immobilien.com prüfen und freigeben. Erscheinen dienstags 07:00 (Zypern), Social-Posts am selben Tag mit mindestens 3 Stunden Abstand zu anderen Posts.')}
             </p>
           </div>
           <div className="bg-white rounded-2xl shadow-sm px-4 py-3 flex items-center gap-3">
@@ -272,7 +272,7 @@ export default function Blog() {
               <div className="p-4 border-t border-gray-100 space-y-3">
                 <p className="text-sm font-semibold text-hp-slate">{t('crm.blog.socialTitle', 'Social-Posts am Erscheinungstag')}</p>
                 {offen.social?.bild_url && <img src={offen.social.bild_url} alt="" className="w-40 rounded-lg" />}
-                {([['linkedin', 'LinkedIn · 08:30'], ['facebook', 'Facebook · 18:30'], ['instagram', 'Instagram · 18:30']] as const).map(([k, label]) => (
+                {([['linkedin', 'LinkedIn · 08:30'], ['facebook', 'Facebook · 12:30'], ['instagram', 'Instagram · 12:30']] as const).map(([k, label]) => (
                   offen.social?.[k] ? (
                     <div key={k}>
                       <p className="text-xs font-medium text-gray-400">{label}</p>

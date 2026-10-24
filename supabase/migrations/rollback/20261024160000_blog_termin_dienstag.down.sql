@@ -1,0 +1,1 @@
+-- zurück auf Montag: Funktion aus 20261024130000_blog_artikel.sql erneut einspielen
