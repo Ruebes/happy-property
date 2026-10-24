@@ -270,6 +270,7 @@ async function deckFuerWohnung(q: { blocks: Block[]; ctx: DeckCtx }, nr: string,
 Schreibe die Texte der folgenden Blöcke so um, dass sie von dieser einen Wohnung sprechen. Regeln:
 - Nur umformulieren. Keine neuen Fakten, keine neuen Zahlen, keine Versprechen. Jede Zahl muss aus den Eingaben stammen (Blöcke oder Wohnung).
 - Dass die Wohnung zu einem Sonderkontingent bzw. einer Auswahl gehört, darf erwähnt bleiben.
+- Für die Wohnung gibt es ZWEI persönliche Berechnungen (ohne Kredit und mit Finanzierung), beide beim Preis der Wohnung verlinkt. Wo die Texte eine Berechnung erwähnen, sprich von beiden.
 - Du-Ansprache, Svens Ton, echte Umlaute, keine Gedankenstriche (— oder –), keine Projekt- oder Bauträgernamen.
 ${gruss ? `- Das Anschreiben (letter) beginnt mit diesem Absatz, wörtlich: "${gruss}" Danach darfst du in einem Satz sagen, wo er das Gewünschte im Deck findet (Grundriss weiter unten, Berechnung beim Preis der Wohnung, Konditionen ganz unten), nur was es im Deck gibt.` : ''}
 - Gib exakt dieselbe JSON-Struktur zurück (gleiche Blöcke, gleiche Felder, gleiche Anzahl an steps), nur mit neuen Texten. Felder wie type, image, kicker, rows, phase1, phase2 unverändert.
@@ -805,7 +806,7 @@ function mailHtml(m: {
   const w = (s: string) => m.wuensche.some(x => x.toLowerCase().includes(s))
   const antworten = [
     w('grundriss') ? `<b>Grundriss und Ausstattung</b> findest du auf der Wohnungsseite${m.pdfUrl ? ' und im Datenblatt' : ''}.` : '',
-    w('zahlungsplan') ? `<b>Den Zahlungsplan</b> mit jeder Rate siehst du unten${m.guide ? ', die <b>Kaufnebenkosten</b> stehen im Immobilienguide' : ''}.` : '',
+    w('zahlungsplan') ? `<b>Den Zahlungsplan</b> ${m.plan || m.zahlung ? 'mit jeder Rate siehst du unten' : 'findest du auf der Wohnungsseite'}${m.guide ? ', die <b>Kaufnebenkosten</b> stehen im Immobilienguide' : ''}.` : '',
     w('mietrechnung') ? '<b>Deine Kosten- und Mietrechnung</b> gibt es zweimal: mit Finanzierung und ohne Kredit.' : '',
     w('ablauf') ? (m.guide ? '<b>Den Ablauf beim Kauf aus Deutschland</b> erklärt der Immobilienguide Schritt für Schritt, was nach dem Kauf passiert, steht unten.'
       : '<b>Den Ablauf beim Kauf aus Deutschland</b> gehe ich gern im Gespräch mit dir durch, was nach dem Kauf passiert, steht unten.') : '',
