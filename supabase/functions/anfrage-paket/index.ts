@@ -119,13 +119,18 @@ async function anbietbar(sb: SupabaseClient, u: UnitRow, leadId: string | null):
 
 // Lage + Objekttyp statt Projektname (Sven 30.9.26). Bevorzugt das Label, das ein
 // früheres Deck derselben Wohnung schon ohne Namen trägt (Newsletter-Decks).
+// Allgemeine Kartenlabels ohne Ort („Die Anlage", „Dein Investment") taugen nicht als Lage.
+const LAGE_LEER = /^(die |deine |unsere |eure |the |your )?(anlage|wohnung|projekt|investment|zuhause|immobilie|development|property|project|apartment|home)$/i
 function lageAusDeck(blocks: Block[], namen: string[]): string | null {
-  const roh = blocks.find(x => x.type === 'facts' && x.mapLabel)?.mapLabel
-    ?? blocks.find(x => x.type === 'cover' && x.kicker)?.kicker?.replace(/\s*·\s*/g, ' ')
-  const l = String(roh ?? '').trim()
-  if (!l || l.length > 60) return null
-  if (namen.some(n => n.length >= 3 && l.toLowerCase().includes(n.toLowerCase()))) return null
-  return l
+  const roh = [blocks.find(x => x.type === 'facts' && x.mapLabel)?.mapLabel,
+    blocks.find(x => x.type === 'cover' && x.kicker)?.kicker?.replace(/\s*·\s*/g, ' ')]
+  for (const r of roh) {
+    const l = String(r ?? '').trim()
+    if (!l || l.length > 60 || LAGE_LEER.test(l)) continue
+    if (namen.some(n => n.length >= 3 && l.toLowerCase().includes(n.toLowerCase()))) return null
+    return l
+  }
+  return null
 }
 function lageAusProjekt(p: ProjektRow): string {
   const ort = String(p.location ?? '').split(',').map(x => x.trim()).filter(Boolean)
@@ -229,6 +234,74 @@ Antworte nur mit JSON: {"anfrage": true|false, "kandidat": <Nummer oder null>, "
   } catch { return { anfrage: false, kandidat: null, sicher: false, grund: 'Antwort nicht lesbar' } }
 }
 
+// ── Deck mit mehreren Wohnungen auf eine kürzen ─────────────────────────────
+// Behalten wird alles außer den anderen Wohnungen und deren Grundrissen. Texte, die von
+// mehreren Wohnungen sprechen (Titel, Anschreiben, Konditionen, nächste Schritte), schreibt
+// die KI auf diese eine Wohnung um. Sicherung: keine neue Zahl, kein Projekt-/Bauträgername,
+// kein Gedankenstrich, sonst bleiben die Texte wie im Quell-Deck (nur Titel + Gruß neu).
+const FP_NR = (bl: Block) => (bl.kicker ?? '').split('·').pop()?.trim().toLowerCase() ?? ''
+async function deckFuerWohnung(q: { blocks: Block[]; ctx: DeckCtx }, nr: string, p: Person, wuensche: string[], namen: string[]):
+  Promise<{ content: { blocks: Block[] }; ctx: DeckCtx; texte: 'ki' | 'einfach' }> {
+  const n = nr.trim().toLowerCase()
+  const nummern = new Set(q.blocks.filter(bl => bl.type === 'unit').map(bl => (bl.number ?? '').trim().toLowerCase()))
+  const blocks: Block[] = JSON.parse(JSON.stringify(q.blocks.filter(bl =>
+    bl.type === 'unit' ? (bl.number ?? '').trim().toLowerCase() === n
+      : bl.type === 'floorplan' && nummern.has(FP_NR(bl)) ? FP_NR(bl) === n : true)))
+  const unitBl = blocks.find(bl => bl.type === 'unit')
+  if (!unitBl) throw new Error(`Wohnung ${nr} nicht im Quell-Deck`)
+  const ctx: DeckCtx = { ...q.ctx, units: (q.ctx.units ?? []).filter(u => String(u.unitNumber ?? '').trim().toLowerCase() === n) }
+  // Grundriss-Kennzahlen, die alle Typen des Quell-Decks zusammenfassen, passen nicht mehr.
+  for (const bl of blocks) if (bl.type === 'floorplan' && FP_NR(bl) === n) { delete bl.stats; delete bl.bullets }
+
+  const TEXT_TYPEN = ['cover', 'letter', 'payment', 'cta']
+  const vorher = blocks.filter(bl => TEXT_TYPEN.includes(bl.type ?? ''))
+  const gruss = wuensche.length
+    ? `Hallo ${p.first || ''}, du hattest zur Wohnung ${nr} nach ${wuensche.map(w => w.replace(/^Persönliche /, 'eine persönliche ').replace(/^Ablauf /, 'den Ablauf ')).join(', ').replace(/, ([^,]*)$/, ' und $1')} gefragt. Hier ist alles für dich zusammengestellt.`.replace('Hallo ,', 'Hallo,')
+    : ''
+  const einfach = () => {
+    for (const bl of blocks) {
+      if (bl.type === 'cover') bl.title = `Wohnung ${nr}`
+      if (bl.type === 'letter' && gruss) (bl as { paragraphs?: string[] }).paragraphs = [gruss, ...((bl as { paragraphs?: string[] }).paragraphs ?? [])]
+    }
+    return { content: { blocks }, ctx, texte: 'einfach' as const }
+  }
+  if (!ANTHROPIC_API_KEY || !vorher.length) return einfach()
+  const prompt = `Ein Verkaufsdeck stellte mehrere Wohnungen vor. Ein Kunde hat Infos zu GENAU EINER Wohnung angefordert: ${nr}. Das Deck zeigt jetzt nur noch diese Wohnung.
+Schreibe die Texte der folgenden Blöcke so um, dass sie von dieser einen Wohnung sprechen. Regeln:
+- Nur umformulieren. Keine neuen Fakten, keine neuen Zahlen, keine Versprechen. Jede Zahl muss aus den Eingaben stammen (Blöcke oder Wohnung).
+- Dass die Wohnung zu einem Sonderkontingent bzw. einer Auswahl gehört, darf erwähnt bleiben.
+- Du-Ansprache, Svens Ton, echte Umlaute, keine Gedankenstriche (— oder –), keine Projekt- oder Bauträgernamen.
+${gruss ? `- Das Anschreiben (letter) beginnt mit diesem Absatz, wörtlich: "${gruss}" Danach darfst du in einem Satz sagen, wo er das Gewünschte im Deck findet (Grundriss weiter unten, Berechnung beim Preis der Wohnung, Konditionen ganz unten), nur was es im Deck gibt.` : ''}
+- Gib exakt dieselbe JSON-Struktur zurück (gleiche Blöcke, gleiche Felder, gleiche Anzahl an steps), nur mit neuen Texten. Felder wie type, image, kicker, rows, phase1, phase2 unverändert.
+
+WOHNUNG:
+${JSON.stringify({ number: unitBl.number, kicker: unitBl.kicker, specs: unitBl.specs, priceLines: unitBl.priceLines, note: (unitBl.note ?? '').replace(/<[^>]+>/g, '') })}
+
+BLÖCKE:
+${JSON.stringify(vorher)}
+
+Antworte nur mit dem JSON-Array.`
+  const res = await callAnthropic(ANTHROPIC_API_KEY, {
+    model: 'claude-opus-5-5', fallbackModels: ['claude-sonnet-4-6'], max_tokens: 6000, label: 'anfrage-deck-kuerzen',
+    messages: [{ role: 'user', content: prompt }],
+  })
+  if (!res.ok) return einfach()
+  let neu: Block[] | null = null
+  try { neu = JSON.parse(textOf(res).match(/\[[\s\S]*\]/)?.[0] ?? 'null') } catch { neu = null }
+  if (!Array.isArray(neu) || neu.length !== vorher.length || neu.some((bl, i) => bl?.type !== vorher[i].type)) return einfach()
+  const quelle = JSON.stringify(vorher) + JSON.stringify(unitBl)
+  const zahlen = (s: string) => (s.match(/\d+(?:[.,]\d+)*/g) ?? []).map(z => z.replace(/[.,]$/, ''))
+  const raus = JSON.stringify(neu)
+  const fremd = zahlen(raus).filter(z => !quelle.includes(z))
+  if (fremd.length || /[—–]/.test(raus) || namen.some(x => raus.toLowerCase().includes(x.toLowerCase()))) {
+    console.warn('[anfrage-paket] Deck-Texte verworfen:', fremd.slice(0, 5))
+    return einfach()
+  }
+  let k = 0
+  const fertig = blocks.map(bl => TEXT_TYPEN.includes(bl.type ?? '') ? { ...bl, ...neu![k++], type: bl.type, image: bl.image } as Block : bl)
+  return { content: { blocks: fertig }, ctx, texte: 'ki' }
+}
+
 // ── start ───────────────────────────────────────────────────────────────────
 async function start(sb: SupabaseClient, b: Record<string, unknown>): Promise<Record<string, unknown>> {
   if (await modus(sb) !== 'on') return { ok: true, started: false, reason: 'automatik_aus' }
@@ -259,11 +332,14 @@ async function start(sb: SupabaseClient, b: Record<string, unknown>): Promise<Re
   let unit: UnitRow | null = null
   let quellToken: string | null = null
   let quellDeck: { blocks: Block[]; ctx: DeckCtx } | null = null
+  // Wohnung aus einem Deck mit mehreren Wohnungen gewählt: das geprüfte Quell-Deck wird
+  // auf diese Wohnung gekürzt statt neu erzeugt (Sven 24.10.26, Flora-Sonderkontingent).
+  let ausMehreren: { token: string; projectId: string | null; angle: string | null } | null = null
   let erkennung: (Erkennung & { kandidaten?: string[] }) | null = null
   if (typeof b.token === 'string' && b.token) {
     quellToken = b.token
-    const { data: d } = await sb.from('sales_decks').select('content, deck_context').eq('token', b.token).maybeSingle()
-    const dd = d as { content: { blocks?: Block[] } | null; deck_context: DeckCtx | null } | null
+    const { data: d } = await sb.from('sales_decks').select('content, deck_context, project_id, angle').eq('token', b.token).maybeSingle()
+    const dd = d as { content: { blocks?: Block[] } | null; deck_context: DeckCtx | null; project_id: string | null; angle: string | null } | null
     if (!dd) return await notiere('uebersprungen', 'deck_fehlt', { quell_token: quellToken })
     quellDeck = { blocks: dd.content?.blocks ?? [], ctx: dd.deck_context ?? {} }
     const alle = (quellDeck.ctx.units ?? []).filter(u => u.unitId)
@@ -271,6 +347,7 @@ async function start(sb: SupabaseClient, b: Record<string, unknown>): Promise<Re
     const gew = typeof b.wohnung === 'string' ? b.wohnung.trim().toLowerCase() : ''
     const us = alle.length > 1 && gew ? alle.filter(u => String(u.unitNumber ?? '').trim().toLowerCase() === gew) : alle
     if (us.length !== 1) return await notiere('uebersprungen', gew ? 'wohnung_fehlt' : 'mehrere_wohnungen', { quell_token: quellToken })
+    if (alle.length > 1) ausMehreren = { token: b.token, projectId: dd.project_id, angle: dd.angle }
     const { data: u } = await sb.from('crm_project_units').select(UNIT_COLS).eq('id', us[0].unitId!).maybeSingle()
     unit = u as UnitRow | null
   } else if (typeof b.unit_id === 'string' && b.unit_id) {
@@ -331,6 +408,26 @@ async function start(sb: SupabaseClient, b: Record<string, unknown>): Promise<Re
   }).select('id').single()
   if (rErr || !row) return { ok: false, started: false, reason: 'db_fehler', error: rErr?.message }
   const id = (row as { id: string }).id
+
+  if (ausMehreren && quellDeck && p.lang === 'de') {
+    try {
+      const gekuerzt = await deckFuerWohnung(quellDeck, unit.unit_number, p, wuensche, namen)
+      const { data: nd, error: dErr } = await sb.from('sales_decks').insert({
+        lead_id: leadId, recipient_name: p.name || p.first || null, project_id: ausMehreren.projectId, unit_id: unit.id,
+        angle: ausMehreren.angle, status: 'ready', content: gekuerzt.content, deck_context: gekuerzt.ctx,
+      }).select('token').single()
+      if (dErr || !nd) throw new Error(`Deck: ${dErr?.message ?? 'kein Token'}`)
+      await sb.from('anfrage_pakete').update({ deck_token: (nd as { token: string }).token }).eq('id', id)
+      const fertig = abschliessen(sb, id).catch(e => ({ fertig: false, fehler: String(e) }))
+      if (edgeRt) edgeRt.waitUntil(fertig); else await fertig
+      return { ok: true, started: true, id, unit: unit.unit_number, lage, deck: 'gekuerzt', texte: gekuerzt.texte }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      await sb.from('anfrage_pakete').update({ status: 'fehler', grund: msg.slice(0, 300) }).eq('id', id)
+      await svenAufgabe(sb, { id, p, unitNr: unit.unit_number, projektName: projekt.name, quelle, text, frage, taskId, fehler: msg })
+      return { ok: false, started: false, reason: 'deck_kuerzen_fehler', error: msg }
+    }
+  }
 
   const fpList = Array.isArray(a.floorplans) ? a.floorplans : []
   // Grundriss: zuerst der aus dem Quell-Deck zu genau dieser Wohnung (dort liegt unser
@@ -406,7 +503,7 @@ async function start(sb: SupabaseClient, b: Record<string, unknown>): Promise<Re
 interface PaketRow {
   id: string; quelle: Quelle; lead_id: string | null; subscriber_id: string | null; empfaenger_email: string | null; empfaenger_name: string | null
   project_id: string; unit_id: string; nachricht: string | null; status: string; job_id: string | null; task_id: string | null
-  wuensche?: string[] | null
+  wuensche?: string[] | null; deck_token?: string | null
   versuche: number; abschluss_at: string | null; created_at: string
 }
 
@@ -415,8 +512,11 @@ async function abschliessen(sb: SupabaseClient, id: string): Promise<{ fertig: b
   const row = r0 as PaketRow | null
   if (!row) return { fertig: true, status: 'fehlt' }
   if (row.status !== 'deck') return { fertig: true, status: row.status }
-  if (!row.job_id) return { fertig: false }
-  const { data: j } = await sb.from('deck_generation_jobs').select('status, deck_token, error').eq('id', row.job_id).maybeSingle()
+  if (!row.job_id && !row.deck_token) return { fertig: false }
+  // Gekürztes Deck (aus einem Deck mit mehreren Wohnungen) hat keinen Job, es steht sofort.
+  const { data: j } = row.job_id
+    ? await sb.from('deck_generation_jobs').select('status, deck_token, error').eq('id', row.job_id).maybeSingle()
+    : { data: { status: 'ready', deck_token: row.deck_token, error: null } }
   const job = j as { status: string; deck_token: string | null; error: string | null } | null
   const p = await person(sb, { lead_id: row.lead_id, subscriber_id: row.subscriber_id, email: row.empfaenger_email, name: row.empfaenger_name })
   const { data: u } = await sb.from('crm_project_units').select(UNIT_COLS).eq('id', row.unit_id).maybeSingle()
@@ -513,6 +613,18 @@ async function baueEntwurf(sb: SupabaseClient, row: PaketRow, p: Person, unit: U
   const calcUrl = vorhanden?.calcTokens[0] ? `${PORTAL_URL}/rechnung/${vorhanden.calcTokens[0]}` : await rechnung('yes', 'finanziert')
   const calcUrlCash = vorhanden?.calcTokens[1] ? `${PORTAL_URL}/rechnung/${vorhanden.calcTokens[1]}` : await rechnung('no', 'ohne Kredit')
   if (vorhanden) calcTokens.push(...vorhanden.calcTokens.slice(0, 2))
+  // Gekürztes Deck: der Rechnungslink bei der Wohnung zeigte auf die allgemeine Rechnung
+  // des Quell-Decks, jetzt auf seine beiden persönlichen.
+  if (!row.job_id && !vorhanden) {
+    const A = 'target="_blank" rel="noopener" style="color:#b8913f;font-weight:700;text-decoration:underline;"'
+    let geaendert = false
+    for (const bl of blocks) {
+      if (bl.type !== 'unit' || !bl.note || !bl.note.includes('/rechnung/')) continue
+      bl.note = bl.note.replace(/<a [^>]*\/rechnung\/[^>]*>[\s\S]*?<\/a>/, `Berechnung: <a href="${calcUrlCash}" ${A}>ohne Kredit →</a> · <a href="${calcUrl}" ${A}>mit Finanzierung →</a>`)
+      geaendert = true
+    }
+    if (geaendert) await sb.from('sales_decks').update({ content: { ...(deck.content ?? {}), blocks } }).eq('token', token)
+  }
 
   // Baustellenfotos (nur saubere, Svens feste Regel) + Datenblatt/Zahlungsplan-PDF
   const { fotos, fotoStand } = await kundenFotos(sb, projekt.id).catch(() => ({ fotos: [] as string[], fotoStand: '' }))
@@ -695,7 +807,8 @@ function mailHtml(m: {
     w('grundriss') ? `<b>Grundriss und Ausstattung</b> findest du auf der Wohnungsseite${m.pdfUrl ? ' und im Datenblatt' : ''}.` : '',
     w('zahlungsplan') ? `<b>Den Zahlungsplan</b> mit jeder Rate siehst du unten${m.guide ? ', die <b>Kaufnebenkosten</b> stehen im Immobilienguide' : ''}.` : '',
     w('mietrechnung') ? '<b>Deine Kosten- und Mietrechnung</b> gibt es zweimal: mit Finanzierung und ohne Kredit.' : '',
-    w('ablauf') ? `<b>Den Ablauf beim Kauf aus Deutschland</b> ${m.guide ? 'erklärt der Immobilienguide Schritt für Schritt, ' : ''}was nach dem Kauf passiert, steht unten.` : '',
+    w('ablauf') ? (m.guide ? '<b>Den Ablauf beim Kauf aus Deutschland</b> erklärt der Immobilienguide Schritt für Schritt, was nach dem Kauf passiert, steht unten.'
+      : '<b>Den Ablauf beim Kauf aus Deutschland</b> gehe ich gern im Gespräch mit dir durch, was nach dem Kauf passiert, steht unten.') : '',
   ].filter(Boolean)
   const wunschHtml = antworten.length ? `<p style="margin:0 0 8px;font-family:${SANS};font-size:15px;line-height:1.65;color:${CI.ink};">Du wolltest wissen:</p>
     <ul style="margin:0 0 14px;padding-left:20px;font-family:${SANS};font-size:15px;line-height:1.65;color:${CI.ink};">${antworten.map(a => `<li style="margin:0 0 6px;">${a}</li>`).join('')}</ul>` : ''
