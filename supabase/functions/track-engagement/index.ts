@@ -272,14 +272,15 @@ async function logEvent(type: string, token: string | null, ref: string | null =
       // Deck um 12:08 angesehen, keine WhatsApp, weil die Kette „schon pending" war).
       // Kein Doppel, weil dieselbe Zeile nur früher dran ist.
       const kette0 = (pend ?? []).find((p) => (p as { bot_nudge_source?: string; bot_nudge_stage?: number }).bot_nudge_source === 'immobilienauswahl' && (p as { bot_nudge_stage?: number }).bot_nudge_stage === 0) as { id: string; scheduled_at: string } | undefined
-      const in40 = new Date(Date.now() + 40 * 60000).toISOString()
+      // Nie nachts (Sven 24.10.26: Lottes Nachfrage kam um 4:33 Uhr): in Bürozeiten schieben.
+      const in40 = toBusinessHours(new Date(Date.now() + 40 * 60000)).toISOString()
       if (kette0 && kette0.scheduled_at > in40) {
         await supabase.from('scheduled_messages').update({ scheduled_at: in40 }).eq('id', kette0.id)
       } else if (!(pend && pend.length) && !(activeConv && activeConv.length)) {
         await supabase.from('scheduled_messages').insert({
           lead_id: leadId, type: 'whatsapp', event_type: 'bot_nudge',
           bot_nudge_stage: 0, bot_nudge_source: 'deck_viewed', status: 'pending',
-          scheduled_at: new Date(Date.now() + 40 * 60000).toISOString(),
+          scheduled_at: in40,
         })
       }
     } else {

@@ -97,6 +97,34 @@ async function sendEmail(params: {
   }
 }
 
+// ── Mail-Ersatz, wenn die WhatsApp nicht zugestellt werden konnte ───────
+// Sven 24.10.26: Die Handynummer ist im Funnel Pflichtfeld, aber jede siebte
+// ist vertippt oder gehoert zu keinem WhatsApp-Konto (91 Fehlschlaege in 60
+// Tagen). Bisher bekam der Kunde dann gar nichts. Jetzt geht derselbe Text als
+// Mail raus. Nur bei echter Ablehnung — bei Kontingent oder getrenntem Konto
+// greift die Wiederholung weiter unten, da waere eine Mail verfrueht.
+const WA_ERSATZ_BETREFF: Record<string, string> = {
+  deck_viewed_followup: 'Konntest du schon schauen?',
+  immobilienauswahl:    'Deine Immobilienauswahl',
+  erstkontakt:          'Dein persönliches Investment-Gespräch',
+  bot_nudge:            'Dein Termin mit Sven',
+  no_show:              'Dein Termin mit Sven',
+}
+// WhatsApp-Text als schlichtes HTML: Zeilenumbrueche, *fett*, nackte Links.
+function waTextAlsHtml(text: string): string {
+  const esc = text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const mitLinks = esc.replace(
+    /(https?:\/\/[^\s<]+)/g,
+    '<a href="$1" style="color:#ff795d;font-weight:bold">$1</a>',
+  )
+  const fett = mitLinks.replace(/\*([^*\n]+)\*/g, '<strong>$1</strong>')
+  return '<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;'
+    + 'color:#1a2332;font-size:15px;line-height:1.55">'
+    + fett.replace(/\n/g, '<br>')
+    + '</div>'
+}
+
 // ── WhatsApp senden — ueber send-whatsapp, NICHT direkt an Timelines ──────────
 // Vorher postete diese Datei selbst an die Timelines-API. Damit war der gesamte
 // Pipeline-, Drip- und Termin-Verkehr strukturell bildunfaehig: die komplette
@@ -677,6 +705,31 @@ Deno.serve(async (req: Request) => {
 
           // no_phone/no_slots/error = echtes Problem → failed + Grund (sichtbar im Postausgang).
           // disabled/optout/has_appointment/engaged/engaged_or_closed = gewollt kein Versand → skipped.
+          // Deck angesehen, aber WhatsApp geht nicht (keine/falsche Nummer, Bot-Fehler):
+          // Lottes Nachfrage mit Terminlink als Mail (Sven 24.10.26: „Wenn die WhatsApp
+          // nicht funktioniert, das Gleiche dann per Mail. Automatisch.“).
+          let deckMail = false
+          if ((botSkip === 'no_phone' || botSkip === 'error') && msg.bot_nudge_source === 'deck_viewed' && msg.lead_id && smtpUser && smtpPass) {
+            try {
+              const { data: ld } = await supabase.from('leads').select('first_name, email, booking_token, language').eq('id', msg.lead_id).maybeSingle()
+              const { data: opt } = await supabase.from('communication_optouts').select('id').eq('lead_id', msg.lead_id).limit(1)
+              const l = ld as { first_name?: string | null; email?: string | null; booking_token?: string | null; language?: string | null } | null
+              if (l?.email && !(opt && opt.length)) {
+                const vor = (l.first_name ?? '').trim()
+                const link = l.booking_token ? `https://portal.happy-property.com/termin?direkt=1&b=${l.booking_token}` : 'https://portal.happy-property.com/termin?f=none'
+                const text = `${vor ? `Hallo ${vor}` : 'Hallo'}, hier ist Lotte, Svens persönliche Assistentin 🐾\n\n`
+                  + 'Ich wollte kurz nachhören: Konntest du schon in Ruhe über die Wohnungen schauen? Welche spricht dich am meisten an?\n\n'
+                  + `Wenn du magst, nehmt ihr euch 30 Minuten per Zoom oder WhatsApp und Sven beantwortet dir alle offenen Fragen. Hier kannst du dir direkt einen Termin aussuchen: ${link}\n\n`
+                  + 'Liebe Grüße, Lotte 🐾'
+                await sendEmail({ to: l.email, subject: WA_ERSATZ_BETREFF.deck_viewed_followup, html: withSocialFooter(waTextAlsHtml(text), l.language ?? 'de'), smtpUser, smtpPass })
+                await logActivity(supabase, { lead_id: msg.lead_id, deal_id: msg.deal_id, type: 'email', subject: `${WA_ERSATZ_BETREFF.deck_viewed_followup} (Ersatz für WhatsApp)`, content: text })
+                await supabase.from('scheduled_messages').update({ status: 'sent', error_message: 'WhatsApp nicht möglich — Lottes Nachfrage als Mail gesendet', sent_at: new Date().toISOString() }).eq('id', msg.id)
+                processed.push({ id: msg.id, result: 'bot_mail_ersatz' })
+                deckMail = true
+              }
+            } catch (e) { console.warn('[process-scheduled] Deck-Nachfrage als Mail fehlgeschlagen:', e) }
+          }
+          if (deckMail) continue
           if (botSkip === 'no_phone' || botSkip === 'no_slots' || botSkip === 'error') {
             const reason = botSkip === 'no_phone' ? 'Keine Telefonnummer am Lead — WhatsApp konnte nicht gesendet werden'
               : botSkip === 'no_slots' ? 'Keine freien Termine für den Vorschlag verfügbar'
@@ -1040,6 +1093,39 @@ Deno.serve(async (req: Request) => {
             continue
           }
           console.error(`[process-scheduled] Retry-Update fehlgeschlagen (${msg.id}):`, rqErr.message)
+        }
+
+        // ── WhatsApp unzustellbar → derselbe Text als Mail ────────────────
+        // Erst hier, nach dem Wiederholungsplan: Kontingent und getrenntes Konto
+        // sind voruebergehend, da wird spaeter nochmal per WhatsApp versucht.
+        if (
+          msg.type === 'whatsapp' && msg.whatsapp_text &&
+          !waSent && !emailSent && !waQuotaHit && !waAccountGone &&
+          rcpt.email && smtpUser && smtpPass
+        ) {
+          const ersatzText = whatsappText ?? msg.whatsapp_text
+          const betreff = WA_ERSATZ_BETREFF[msg.event_type] ?? 'Nachricht von Happy Property'
+          try {
+            await sendEmail({
+              to:       rcpt.email,
+              subject:  betreff,
+              html:     withSocialFooter(waTextAlsHtml(ersatzText), rcpt.language),
+              smtpUser, smtpPass,
+            })
+            success = true
+            errors.push('WhatsApp nicht zustellbar — als Mail gesendet')
+            await logActivity(supabase, {
+              lead_id: msg.lead_id,
+              deal_id: msg.deal_id,
+              type:    'email',
+              subject: `${betreff} (Ersatz für WhatsApp)`,
+              content: ersatzText,
+            })
+            console.log(`[process-scheduled] WhatsApp unzustellbar, Mail-Ersatz an ${rcpt.email}`)
+          } catch (ersatzErr) {
+            console.error('[process-scheduled] Mail-Ersatz fehlgeschlagen:', ersatzErr)
+            errors.push(`mail-ersatz: ${ersatzErr instanceof Error ? ersatzErr.message : String(ersatzErr)}`)
+          }
         }
 
         // ── Status zurückschreiben ────────────────────────────────────────────
