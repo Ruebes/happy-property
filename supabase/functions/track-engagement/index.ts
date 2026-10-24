@@ -381,15 +381,22 @@ async function infoRequest(body: Record<string, unknown>): Promise<{ status: num
   const subId = person?.kind === 'sub' ? person.id : null
   const wuensche = (Array.isArray(body.wants) ? body.wants : []).map(String).filter(k => k in WUNSCH)
   const frage = kurz(body.question, 1000)
+  // Decks mit mehreren Wohnungen: das Formular schickt die gewählte Wohnung mit (unit).
+  // Ohne gültige Wahl bleibt die Wohnung offen, statt still die erste anzunehmen.
+  const deckNrs = (d.content?.blocks ?? []).flatMap(b => b?.type === 'unit' && b.number?.trim() ? [b.number.trim()] : [])
+  const gewaehlt = kurz(body.unit, 30)
+  const nr = deckNrs.includes(gewaehlt) ? gewaehlt : deckNrs.length === 1 ? deckNrs[0] : ''
 
   // Missbrauchsbremse: oeffentlicher Endpunkt, der Aufgaben anlegt.
   const vorStunde = new Date(Date.now() - 3600e3).toISOString()
   const { count } = await sb.from('engagement_events').select('id', { count: 'exact', head: true })
     .eq('type', 'info_request').gte('occurred_at', vorStunde)
   if ((count ?? 0) >= 30) return { status: 429, body: { error: 'Gerade zu viele Anfragen. Bitte versuche es später noch einmal.' } }
-  // Doppelt abgeschickt: dieselbe Person zum selben Deck binnen 12 h nur einmal.
+  // Doppelt abgeschickt: dieselbe Person zum selben Deck (bei mehreren Wohnungen: zur
+  // selben Wohnung) binnen 12 h nur einmal.
   const vor12 = new Date(Date.now() - 12 * 3600e3).toISOString()
   let dq = sb.from('engagement_events').select('id').eq('type', 'info_request').eq('token', token).gte('occurred_at', vor12).limit(1)
+  if (deckNrs.length > 1 && nr) dq = dq.eq('meta->>unit', nr)
   dq = leadId ? dq.eq('lead_id', leadId) : subId ? dq.eq('subscriber_id', subId)
     : email ? dq.eq('meta->>email', email) : dq.eq('meta->>phone', phone ?? '')
   const { data: dup } = await dq
@@ -401,8 +408,8 @@ async function infoRequest(body: Record<string, unknown>): Promise<{ status: num
     const { data: p } = await sb.from('crm_projects').select('name').eq('id', d.project_id).maybeSingle()
     projekt = ((p as { name?: string } | null)?.name) ?? ''
   }
-  const nr = (d.content?.blocks ?? []).find(b => b?.type === 'unit')?.number?.trim() ?? ''
-  const objekt = nr ? `Wohnung ${nr}${projekt ? ` (${projekt})` : ''}` : (projekt || 'ein Objekt')
+  const objekt = nr ? `Wohnung ${nr}${projekt ? ` (${projekt})` : ''}`
+    : deckNrs.length > 1 ? `${projekt || 'ein Projekt'}, Wohnung nicht gewählt` : (projekt || 'ein Objekt')
 
   let herkunft = d.lead_id ? 'persönliches Deck' : 'Deck-Link ohne Empfänger (weitergeleitet oder Website)'
   if (!d.lead_id && UUID_RE.test(campaign)) {
@@ -456,7 +463,7 @@ async function infoRequest(body: Record<string, unknown>): Promise<{ status: num
 
   await sb.from('engagement_events').insert({
     type: 'info_request', token, lead_id: leadId, subscriber_id: subId, label: objekt.slice(0, 120),
-    meta: { wants: wuensche, question: frage || null, name: wer, email, phone, campaign: UUID_RE.test(campaign) ? campaign : null, internal: intern, paket: paket.sent ? "sent" : (paket.reason ?? null) },
+    meta: { unit: nr || null, wants: wuensche, question: frage || null, name: wer, email, phone, campaign: UUID_RE.test(campaign) ? campaign : null, internal: intern, paket: paket.sent ? "sent" : (paket.reason ?? null) },
   })
 
   const { data: admin } = await sb.from('profiles').select('id').eq('role', 'admin').order('created_at').limit(1).maybeSingle()
@@ -492,7 +499,7 @@ async function infoRequest(body: Record<string, unknown>): Promise<{ status: num
     const p = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/anfrage-paket`, {
       method: 'POST', headers: { Authorization: `Bearer ${svc}`, apikey: svc, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        quelle: 'formular', token, lead_id: leadId, subscriber_id: subId, email: person ? null : email, name: wer, phone,
+        quelle: 'formular', token, wohnung: nr || null, lead_id: leadId, subscriber_id: subId, email: person ? null : email, name: wer, phone,
         wuensche: wuensche.map(k => WUNSCH[k]), frage, task_id: taskId,
       }),
     }).then(r => r.text()).catch((e: unknown) => console.warn('[track-engagement] anfrage-paket:', e))

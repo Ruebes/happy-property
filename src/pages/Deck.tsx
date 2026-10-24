@@ -107,6 +107,10 @@ function LetterBlock(b: Extract<DeckBlock, { type: 'letter' }>) {
 // (jüngste Berechnung des Leads je Wohnung). Nur Text, keine eigene Rechnung: der
 // erstattete Anteil folgt rechner.ts, (12 - Monate Selbstnutzung) / 12.
 type VatRefund = { letMonths: number }
+// Decks mit mehreren Wohnungen: jede Wohnung hat einen eigenen „Mehr Infos“-Knopf,
+// der das Formular mit genau dieser Wohnung öffnet (Sven 24.10.26, vorher bekam jede
+// Anfrage die erste Wohnung des Decks). null = Deck mit nur einer Wohnung.
+const InfoOpenCtx = createContext<((nr: string) => void) | null>(null)
 const VatRefundCtx = createContext<{ byUnit: Record<string, VatRefund>; units: string[] }>({ byUnit: {}, units: [] })
 const unitNorm = (s?: string) => (s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')
 function vatRefundMap(rows: unknown): Record<string, VatRefund> {
@@ -136,6 +140,18 @@ function VatRefundRow({ unit }: { unit?: string }) {
           : t('deck.vatRefundPartial', 'MwSt. anteilig erstattet ({{n}} von 12 Monaten vermietet)', { n: r.letMonths })}
       </span>
     </div>
+  )
+}
+
+function UnitInfoButton({ nr }: { nr?: string }) {
+  const { t } = useTranslation()
+  const open = useContext(InfoOpenCtx)
+  const n = nr?.trim()
+  if (!open || !n) return null
+  return (
+    <button onClick={() => open(n)} className="mt-5 px-5 py-2.5 rounded-full font-semibold text-sm shadow print:hidden transition hover:brightness-105" style={{ background: GOLD, color: DARK }}>
+      {t('deck.unitInfo', 'Mehr Infos zu {{nr}} anfordern', { nr: n })} <span aria-hidden>→</span>
+    </button>
   )
 }
 
@@ -171,6 +187,7 @@ function UnitBlock(b: Extract<DeckBlock, { type: 'unit' }>) {
           </div>
         )}
         {b.note && <p className="mt-4 text-[13px] leading-relaxed text-gray-600" dangerouslySetInnerHTML={{ __html: b.note }} />}
+        <UnitInfoButton nr={b.number} />
       </div>
     </section>
   )
@@ -1280,11 +1297,14 @@ function InlineCta({ onInfo, terminUrl }: { onInfo: () => void; terminUrl: strin
   )
 }
 
-function InfoModal({ token, refId, campaign, person, unitNr, internal, terminUrl, onClose }: {
+function InfoModal({ token, refId, campaign, person, unitNr, units, internal, terminUrl, onClose }: {
   token: string; refId: string | null; campaign: string | null; person: DeckPerson | null
-  unitNr: string | null; internal: boolean; terminUrl: string; onClose: () => void
+  unitNr: string | null; units: string[]; internal: boolean; terminUrl: string; onClose: () => void
 }) {
   const { t } = useTranslation()
+  // Bei mehreren Wohnungen wählt der Kunde (vorbelegt, wenn er den Knopf an einer Wohnung genommen hat).
+  const [wohnung, setWohnung] = useState<string>(unitNr ?? (units.length === 1 ? units[0] : ''))
+  const mehrere = units.length > 1
   const [wants, setWants] = useState<string[]>([])
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -1312,13 +1332,14 @@ function InfoModal({ token, refId, campaign, person, unitNr, internal, terminUrl
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+    if (mehrere && !wohnung) { setError(t('deck.infoErrUnit', 'Bitte wähle die Wohnung aus, zu der du Infos möchtest.')); return }
     if (!known) {
       if (!name.trim()) { setError(t('deck.infoErrName', 'Bitte gib deinen Namen an.')); return }
       if (!email.trim() && !phone.trim()) { setError(t('deck.infoErrContact', 'Bitte gib eine E-Mail-Adresse oder Telefonnummer an.')); return }
     }
     setState('sending')
     const { data: res, error: fnErr } = await supabase.functions.invoke('track-engagement', { body: {
-      type: 'info_request', token, ref: refId, campaign, wants, question, website, internal,
+      type: 'info_request', token, ref: refId, campaign, wants, question, website, internal, unit: wohnung || null,
       ...(known ? {} : { name, email, phone }),
     } })
     if (fnErr) {
@@ -1332,7 +1353,8 @@ function InfoModal({ token, refId, campaign, person, unitNr, internal, terminUrl
     setState('done')
   }
 
-  const title = unitNr ? t('deck.infoTitleUnit', 'Mehr Infos zu Wohnung {{nr}}', { nr: unitNr }) : t('deck.infoTitle', 'Mehr Infos zu dieser Wohnung')
+  const title = wohnung ? t('deck.infoTitleUnit', 'Mehr Infos zu Wohnung {{nr}}', { nr: wohnung })
+    : mehrere ? t('deck.infoTitleMulti', 'Mehr Infos anfordern') : t('deck.infoTitle', 'Mehr Infos zu dieser Wohnung')
   const field = 'w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-[15px] focus:outline-none focus:ring-2'
   return (
     <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/60 print:hidden" onClick={onClose}>
@@ -1365,6 +1387,15 @@ function InfoModal({ token, refId, campaign, person, unitNr, internal, terminUrl
               {first ? t('deck.infoIntroName', 'Hallo {{name}}, du bekommst per E-Mail: deine persönliche Kosten- und Mietrechnung, die Wohnung als PDF und unseren Immobilienguide. Kostenlos und unverbindlich.', { name: first })
                 : t('deck.infoIntro', 'Du bekommst per E-Mail: deine persönliche Kosten- und Mietrechnung, die Wohnung als PDF und unseren Immobilienguide. Kostenlos und unverbindlich.')}
             </p>
+            {mehrere && (
+              <label className="block">
+                <span className="block text-[11px] font-semibold uppercase tracking-[0.15em] mb-2" style={{ color: GOLD }}>{t('deck.infoUnit', 'Welche Wohnung?')}</span>
+                <select className={field} value={wohnung} onChange={e => setWohnung(e.target.value)} required>
+                  <option value="">{t('deck.infoUnitPick', 'Bitte wählen')}</option>
+                  {units.map(n => <option key={n} value={n}>{t('deck.infoUnitOption', 'Wohnung {{nr}}', { nr: n })}</option>)}
+                </select>
+              </label>
+            )}
             <fieldset>
               <legend className="text-[11px] font-semibold uppercase tracking-[0.15em] mb-2" style={{ color: GOLD }}>{t('deck.infoWhat', 'Was interessiert dich besonders? (optional)')}</legend>
               <div className="space-y-2">
@@ -1412,6 +1443,7 @@ export default function Deck() {
   const [loading, setLoading] = useState(true)
   const [err,     setErr]     = useState(false)
   const [info, setInfo] = useState(false)
+  const [infoUnit, setInfoUnit] = useState<string | null>(null)
   const [internal, setInternal] = useState(false)
   const [person, setPerson] = useState<DeckPerson | null>(null)
   const [vatRefund, setVatRefund] = useState<Record<string, VatRefund>>({})
@@ -1532,6 +1564,7 @@ export default function Deck() {
   const view: AnyBlock[] = web && page ? webBlocks(content.blocks, page) : content.blocks
   const unitNr = (content.blocks.find(b => b.type === 'unit') as Extract<DeckBlock, { type: 'unit' }> | undefined)?.number?.trim() || null
   const deckUnits = content.blocks.flatMap(b => b.type === 'unit' && b.number?.trim() ? [b.number.trim()] : [])
+  const openInfo = (nr: string | null) => { setInfoUnit(nr); setInfo(true) }
   const terminUrl = person?.booking_url ?? '/termin?src=deck'
   const waUrl = `https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(unitNr
     ? t('deck.waTextUnit', 'Hallo Sven, ich habe mir die Wohnung {{nr}} angesehen und hätte eine Frage.', { nr: unitNr })
@@ -1598,6 +1631,7 @@ export default function Deck() {
 
   return (
     <VatRefundCtx.Provider value={{ byUnit: vatRefund, units: deckUnits }}>
+    <InfoOpenCtx.Provider value={!isPrint && deckUnits.length > 1 ? openInfo : null}>
     <div className={web ? 'font-body hpweb-deck' : 'font-body'} style={{ background: CREAM, color: INK }}>
       {isPrint && (
         <div className="print:hidden sticky top-0 z-50 flex justify-center p-3" style={{ background: DARK }}>
@@ -1617,7 +1651,7 @@ export default function Deck() {
           {b.type !== 'w_facts' && <img src={DECK_LOGO} alt="" aria-hidden="true"
             className="absolute top-3 right-3 md:top-4 md:right-6 h-7 md:h-9 w-auto rounded-md opacity-80 pointer-events-none select-none ring-1 ring-white/10"
             onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />}
-          {!isPrint && showInline && i === ctaAfter && <InlineCta onInfo={() => setInfo(true)} terminUrl={terminUrl} />}
+          {!isPrint && showInline && i === ctaAfter && <InlineCta onInfo={() => openInfo(null)} terminUrl={terminUrl} />}
         </div>
       ))}
       </VideoAutoCtx.Provider>
@@ -1626,13 +1660,14 @@ export default function Deck() {
       </div>
 
       {/* Feste Leiste unten: WhatsApp, Termin, Mehr Infos (auch über dem Buch) */}
-      {!isPrint && <ActionBar onInfo={() => setInfo(true)} terminUrl={terminUrl} waUrl={waUrl} />}
+      {!isPrint && <ActionBar onInfo={() => openInfo(null)} terminUrl={terminUrl} waUrl={waUrl} />}
       {info && token && (
-        <InfoModal token={token} refId={ref} campaign={campaign} person={person} unitNr={unitNr}
+        <InfoModal token={token} refId={ref} campaign={campaign} person={person} unitNr={deckUnits.length > 1 ? infoUnit : unitNr} units={deckUnits}
           internal={internal} terminUrl={terminUrl} onClose={() => setInfo(false)} />
       )}
       {book && !isPrint && <DeckBook count={bookPages.length} renderPage={renderBookPage} titles={bookTitles} cover={bookCover} onClose={closeBook} />}
     </div>
+    </InfoOpenCtx.Provider>
     </VatRefundCtx.Provider>
   )
 }

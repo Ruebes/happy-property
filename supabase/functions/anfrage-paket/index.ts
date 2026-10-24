@@ -266,8 +266,11 @@ async function start(sb: SupabaseClient, b: Record<string, unknown>): Promise<Re
     const dd = d as { content: { blocks?: Block[] } | null; deck_context: DeckCtx | null } | null
     if (!dd) return await notiere('uebersprungen', 'deck_fehlt', { quell_token: quellToken })
     quellDeck = { blocks: dd.content?.blocks ?? [], ctx: dd.deck_context ?? {} }
-    const us = (quellDeck.ctx.units ?? []).filter(u => u.unitId)
-    if (us.length !== 1) return await notiere('uebersprungen', 'mehrere_wohnungen', { quell_token: quellToken })
+    const alle = (quellDeck.ctx.units ?? []).filter(u => u.unitId)
+    // Deck mit mehreren Wohnungen: die im Formular gewählte (Sven 24.10.26).
+    const gew = typeof b.wohnung === 'string' ? b.wohnung.trim().toLowerCase() : ''
+    const us = alle.length > 1 && gew ? alle.filter(u => String(u.unitNumber ?? '').trim().toLowerCase() === gew) : alle
+    if (us.length !== 1) return await notiere('uebersprungen', gew ? 'wohnung_fehlt' : 'mehrere_wohnungen', { quell_token: quellToken })
     const { data: u } = await sb.from('crm_project_units').select(UNIT_COLS).eq('id', us[0].unitId!).maybeSingle()
     unit = u as UnitRow | null
   } else if (typeof b.unit_id === 'string' && b.unit_id) {
@@ -324,13 +327,17 @@ async function start(sb: SupabaseClient, b: Record<string, unknown>): Promise<Re
   const { data: row, error: rErr } = await sb.from('anfrage_pakete').insert({
     quelle, lead_id: leadId, subscriber_id: p.kind === 'sub' ? p.id : null, empfaenger_email: p.email, empfaenger_name: p.name,
     project_id: projekt.id, unit_id: unit.id, quell_token: quellToken, nachricht: (text || frage).slice(0, 3000) || null,
-    status: 'deck', erkennung, task_id: taskId,
+    status: 'deck', erkennung, task_id: taskId, wuensche: wuensche.length ? wuensche : null,
   }).select('id').single()
   if (rErr || !row) return { ok: false, started: false, reason: 'db_fehler', error: rErr?.message }
   const id = (row as { id: string }).id
 
   const fpList = Array.isArray(a.floorplans) ? a.floorplans : []
-  const fpEtage = fpList.find(f => f.floor === unit!.floor && !/\.pdf($|\?)/i.test(f.url))?.url
+  // Grundriss: zuerst der aus dem Quell-Deck zu genau dieser Wohnung (dort liegt unser
+  // CI-Grundriss, z. B. Flora), sonst der Etagenplan aus den Projekt-Assets.
+  const fpQuelle = (quellDeck?.blocks ?? []).find(bl => bl.type === 'floorplan' && bl.image
+    && (bl.kicker ?? '').trim().toLowerCase().endsWith(`· ${unit!.unit_number.trim().toLowerCase()}`))?.image
+  const fpEtage = fpQuelle ?? fpList.find(f => f.floor === unit!.floor && !/\.pdf($|\?)/i.test(f.url))?.url
   const images = {
     renders: a.renders ?? [], gallery: a.gallery ?? [], floorplan: fpEtage, floorplans: fpEtage ? [fpEtage] : [],
     map: a.map ?? undefined, mapUrl: a.mapUrl ?? undefined, mapMarker: a.mapMarker ?? undefined,
@@ -399,6 +406,7 @@ async function start(sb: SupabaseClient, b: Record<string, unknown>): Promise<Re
 interface PaketRow {
   id: string; quelle: Quelle; lead_id: string | null; subscriber_id: string | null; empfaenger_email: string | null; empfaenger_name: string | null
   project_id: string; unit_id: string; nachricht: string | null; status: string; job_id: string | null; task_id: string | null
+  wuensche?: string[] | null
   versuche: number; abschluss_at: string | null; created_at: string
 }
 
@@ -483,7 +491,7 @@ async function baueEntwurf(sb: SupabaseClient, row: PaketRow, p: Person, unit: U
       for (const k of Object.keys(CALC_STANDARD) as (keyof CalcStandard)[]) if (o[k] !== undefined) (std as Record<string, unknown>)[k] = o[k]
     }
   } catch { /* Standard bleibt */ }
-  const markt: Markt = await marktAnnahmen(sb, projekt.name, nr, unit.bedrooms, std)
+  const markt: Markt = await marktAnnahmen(sb, projekt.name, nr, unit.bedrooms, std, projekt.id)
   const gross = Math.round(netJetzt * 1.19)
   const grossGesamt = Math.round((netJetzt + furnCost) * 1.19)
   const empfName = p.name || p.first || ''
@@ -533,7 +541,7 @@ async function baueEntwurf(sb: SupabaseClient, row: PaketRow, p: Person, unit: U
   const terminUrl = p.kind === 'lead' ? bookingUrl(p.bookingToken) : `${PORTAL_URL}/termin?f=none&src=infopaket`
   const html = mailHtml({
     first: p.first, objekt, lage, gross: grossGesamt, calcUrl, calcUrlCash, deckUrl, terminUrl, fotos, fotoStand,
-    quelle: row.quelle, guide: lang !== 'en', std, markt, pdfUrl, zahlung, zahlplanUrl, plan,
+    quelle: row.quelle, guide: lang !== 'en', std, markt, pdfUrl, zahlung, zahlplanUrl, plan, wuensche: row.wuensche ?? [],
   })
   const subject = `${p.first ? `${p.first}, d` : 'D'}eine Unterlagen zur ${objekt}`
   const waText = [
@@ -664,6 +672,7 @@ function mailHtml(m: {
   terminUrl: string; fotos: string[]; fotoStand: string; quelle: Quelle; guide: boolean; std: CalcStandard; markt: Markt
   pdfUrl: string | null; zahlung: ReturnType<typeof zahlungsUebersicht>; zahlplanUrl: string | null
   plan: ReturnType<typeof ratenplan>
+  wuensche: string[]
 }): string {
   const fotosHtml = m.fotos.length ? `<tr><td style="padding:0 0 14px;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${CI.white};border:1px solid ${CI.line};border-radius:12px;">
@@ -679,6 +688,17 @@ function mailHtml(m: {
   </table>
 </td></tr>` : ''
   const dank = m.quelle === 'whatsapp' || m.quelle === 'mail' ? 'danke für deine Nachricht und dein Interesse' : 'danke für dein Interesse'
+  // Was der Kunde im Formular angekreuzt hat (Sven 24.10.26: „Die Kunden haben ja auch
+  // angegeben, was sie gern haben wollen"): je Wunsch ein Satz, wo er es findet.
+  const w = (s: string) => m.wuensche.some(x => x.toLowerCase().includes(s))
+  const antworten = [
+    w('grundriss') ? `<b>Grundriss und Ausstattung</b> findest du auf der Wohnungsseite${m.pdfUrl ? ' und im Datenblatt' : ''}.` : '',
+    w('zahlungsplan') ? `<b>Den Zahlungsplan</b> mit jeder Rate siehst du unten${m.guide ? ', die <b>Kaufnebenkosten</b> stehen im Immobilienguide' : ''}.` : '',
+    w('mietrechnung') ? '<b>Deine Kosten- und Mietrechnung</b> gibt es zweimal: mit Finanzierung und ohne Kredit.' : '',
+    w('ablauf') ? `<b>Den Ablauf beim Kauf aus Deutschland</b> ${m.guide ? 'erklärt der Immobilienguide Schritt für Schritt, ' : ''}was nach dem Kauf passiert, steht unten.` : '',
+  ].filter(Boolean)
+  const wunschHtml = antworten.length ? `<p style="margin:0 0 8px;font-family:${SANS};font-size:15px;line-height:1.65;color:${CI.ink};">Du wolltest wissen:</p>
+    <ul style="margin:0 0 14px;padding-left:20px;font-family:${SANS};font-size:15px;line-height:1.65;color:${CI.ink};">${antworten.map(a => `<li style="margin:0 0 6px;">${a}</li>`).join('')}</ul>` : ''
   return `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>@media (max-width:620px){.px{padding-left:18px!important;padding-right:18px!important}.stack{display:block!important;width:100%!important;padding:0 0 10px!important}}</style></head>
 <body style="margin:0;padding:0;background:${CI.cream};">
@@ -688,6 +708,7 @@ function mailHtml(m: {
   <tr><td class="px" style="background:${CI.cream};padding:28px 26px 8px;">
     <p style="margin:0 0 14px;font-family:${SANS};font-size:15px;line-height:1.65;color:${CI.ink};">Hallo${m.first ? ` ${esc(m.first)}` : ''},</p>
     <p style="margin:0 0 14px;font-family:${SANS};font-size:15px;line-height:1.65;color:${CI.ink};">${dank} an der ${esc(m.objekt)} (${esc(m.lage)}). Hier sind alle Unterlagen, damit du dir alles in Ruhe ansehen kannst.</p>
+    ${wunschHtml}
   </td></tr>
   <tr><td class="px" style="padding:6px 26px 0;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
     ${karte('🏡', 'Deine Wohnung im Detail', 'Alle Bilder, der Grundriss, die Baubeschreibung, die Ausstattung, die Lage und der Zahlungsplan: alles zur Wohnung auf einer Seite.', 'Wohnung ansehen', m.deckUrl)}

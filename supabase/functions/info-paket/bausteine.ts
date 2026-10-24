@@ -7,6 +7,7 @@ import { CI } from '../_shared/brand.ts'
 import { callAnthropic, textOf } from '../_shared/anthropic.ts'
 import { zahlungsUebersicht } from './datenblatt.ts'
 import { normalizePaySchedule } from '../_shared/deckContext.ts'
+import { saisonPreisFuer } from '../_shared/saisonZiel.ts'
 
 // Über portal.happy-property.com (Vercel-Rewrite auf Supabase Storage, Sven 11.10.26).
 export const GUIDE_URL = 'https://portal.happy-property.com/immobilienguide-paphos-2026.pdf'
@@ -34,13 +35,29 @@ export type CalcStandard = typeof CALC_STANDARD
 // selbst zählen nicht, sonst bestätigt sich der Standard immer wieder selbst.
 export interface Markt {
   letType: 'short' | 'long'; yieldPct: number; season: Record<string, unknown> | null; hotelConcept: boolean
-  appreciationPct: number; rentGrowth: number; mgmtPct: number; quelle: 'wohnung' | 'projekt' | 'standard'; datum: string | null
+  appreciationPct: number; rentGrowth: number; mgmtPct: number; quelle: 'wohnung' | 'projekt' | 'vorgabe' | 'standard'; datum: string | null
+  /** Projekt-Vorgabe: Saisonmodell, Hochsaisonpreis je Wohnung so, dass die Bruttorendite >= yieldPct ist. */
+  seasonZiel?: { totalOcc: number; yieldPct: number } | null
 }
+
 export type CalcItemRow = { project?: string; unit?: string; bedrooms?: number | string | null; params?: Record<string, unknown> }
-export async function marktAnnahmen(sb: SupabaseClient, projekt: string, nr: string, bedrooms: number | null, std: CalcStandard): Promise<Markt> {
+export async function marktAnnahmen(sb: SupabaseClient, projekt: string, nr: string, bedrooms: number | null, std: CalcStandard, projectId?: string): Promise<Markt> {
   const standard: Markt = {
     letType: std.letType === 'long' ? 'long' : 'short', yieldPct: std.yieldPct, season: null, hotelConcept: false,
     appreciationPct: std.appreciationPct, rentGrowth: std.rentGrowth, mgmtPct: std.mgmtPct, quelle: 'standard', datum: null,
+  }
+  // Projekt-Vorgabe geht vor (crm_projects.calc_defaults.saison, z. B. Flora 24.10.26:
+  // „Rendite brutto 10,5 % ins Saisonmodell, Verwaltung 25 %").
+  if (projectId) {
+    const { data: pr } = await sb.from('crm_projects').select('calc_defaults').eq('id', projectId).maybeSingle()
+    const cd = ((pr as { calc_defaults?: Record<string, unknown> | null } | null)?.calc_defaults) ?? {}
+    const s = cd.saison as { ziel_brutto_pct?: number; auslastung_pct?: number } | undefined
+    const ziel = Number(s?.ziel_brutto_pct), occ = Number(s?.auslastung_pct ?? cd.occupancy_pct ?? 70)
+    if (s && ziel > 0 && occ > 0) {
+      const mg = Number(cd.mgmt_pct)
+      return { ...standard, letType: 'short', yieldPct: ziel, mgmtPct: mg > 0 ? mg : std.mgmtPct,
+        seasonZiel: { totalOcc: occ, yieldPct: ziel }, quelle: 'vorgabe' }
+    }
   }
   if (!projekt) return standard
   const seit = new Date(Date.now() - 180 * 86400e3).toISOString()
@@ -77,10 +94,14 @@ export function eigenkapital(s: CalcStandard, gross: number): number {
 }
 export function calcParams(s: CalcStandard, m: Markt, fin: 'yes' | 'no', priceNet: number, furnCost: number, furnFree: boolean, bedrooms: number | null) {
   const brutto = Math.round((priceNet + (furnFree ? 0 : furnCost)) * 1.19)
+  // Saison-Vorgabe: Basis wie applySeason (Kaufpreis brutto ohne Möbel)
+  const season = m.seasonZiel
+    ? { totalOcc: m.seasonZiel.totalOcc, adrHigh: saisonPreisFuer(m.seasonZiel.yieldPct, m.seasonZiel.totalOcc, priceNet * 1.19) }
+    : m.season
   return {
     fin, res: s.res, cyBI: 0, gesy: true, mode: 'ann', year: new Date().getFullYear(), month: 6,
     sdNum: 3, sdSqm: 250, years: 10, equity: fin === 'yes' ? eigenkapital(s, brutto) : brutto, holder: 'privat', ppVals: Array(10).fill(0), sdTerr: 60,
-    season: m.season, letType: m.letType, mgmtFix: 0, mgmtPct: m.mgmtPct, sdPrice: 1000000, sdUnits: [],
+    season, letType: m.letType, mgmtFix: 0, mgmtPct: m.mgmtPct, sdPrice: 1000000, sdUnits: [],
     vatMode: 'standard19', amortPct: s.amortPct, bedrooms: bedrooms ?? 2, deTaxPct: s.deTaxPct, dealType: 'single',
     furnCost, furnFree, maintPct: 0, mgmtMode: 'pct', priceNet, yieldPct: m.yieldPct, divTaxPct: 26.375,
     livingSqm: null, monthPlan: null, sdTaxRate: 15, socialIns: true, termYears: s.termYears, corpTaxPct: 15,
@@ -177,7 +198,8 @@ export function knopf(text: string, url: string, farbe: string): string {
 export function rechnungKarte(m: { gross: number; calcUrl: string; calcUrlCash: string; terminUrl: string; std: CalcStandard; markt: Markt }): string {
   const k = m.markt
   const vermietung = k.letType === 'long' ? 'Langzeitvermietung' : k.hotelConcept ? 'Kurzzeitvermietung mit Hotelkonzept' : 'Kurzzeitvermietung'
-  const rendite = k.season ? 'Mieteinnahmen nach Saisonmodell' : `${pct(k.yieldPct)} Bruttomietrendite`
+  const rendite = k.seasonZiel ? `Mieteinnahmen nach Saisonmodell (${pct(k.seasonZiel.totalOcc)} Auslastung, rund ${pct(k.yieldPct)} Bruttomietrendite)`
+    : k.season ? 'Mieteinnahmen nach Saisonmodell' : `${pct(k.yieldPct)} Bruttomietrendite`
   const annahmen = `Annahmen: ${vermietung}, ${rendite}, Verwaltung ${pct(k.mgmtPct)}, Wertsteigerung ${pct(k.appreciationPct)} pro Jahr. Variante mit Finanzierung: ${m.std.equityPct} % Eigenkapital, ${pct(m.std.interestPct)} Zins, ${m.std.termYears} Jahre.`
   return `<tr><td style="padding:0 0 14px;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${CI.white};border:1px solid ${CI.line};border-radius:12px;">
