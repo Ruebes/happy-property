@@ -57,11 +57,11 @@ async function socialPlanen(sb: SupabaseClient, a: Artikel, link: string): Promi
   const fb = (s.facebook ?? '').includes(link) ? s.facebook! : `${s.facebook ?? a.titel}\n\n${link}`
   const zeilen = [
     { platforms: ['linkedin'], content: s.linkedin, scheduled_for: amSelbenTag(a.geplant_fuer, '08:30'),
-      image_url: bild, image_urls: bild ? [bild] : null, news_source: link, label: 'LinkedIn' },
+      image_url: bild, image_urls: bild ? [bild] : [], news_source: link, label: 'LinkedIn' },
     { platforms: ['facebook'], content: fb, scheduled_for: amSelbenTag(a.geplant_fuer, '18:30'),
-      image_url: null, image_urls: null, news_source: null, label: 'Facebook' },
+      image_url: null, image_urls: [], news_source: null, label: 'Facebook' },
     { platforms: ['instagram'], content: s.instagram, scheduled_for: amSelbenTag(a.geplant_fuer, '18:30'),
-      image_url: bild, image_urls: bild ? [bild] : null, news_source: null, label: 'Instagram' },
+      image_url: bild, image_urls: bild ? [bild] : [], news_source: null, label: 'Instagram' },
   ].filter(z => (z.content ?? '').trim() && (z.platforms[0] !== 'instagram' || bild))
   const ids: string[] = []
   for (const z of zeilen) {
@@ -70,7 +70,11 @@ async function socialPlanen(sb: SupabaseClient, a: Artikel, link: string): Promi
       platforms: z.platforms, image_url: z.image_url, image_urls: z.image_urls, format: 'single',
       status: 'geplant', scheduled_for: z.scheduled_for, news_source: z.news_source,
     }).select('id').single()
-    if (error) throw new Error(`Social-Post ${z.label}: ${error.message}`)
+    if (error) {
+      // halbe Sachen vermeiden: schon angelegte Posts dieses Artikels wieder entfernen
+      if (ids.length) await sb.from('social_posts').delete().in('id', ids)
+      throw new Error(`Social-Post ${z.label}: ${error.message}`)
+    }
     ids.push((data as { id: string }).id)
   }
   return ids
