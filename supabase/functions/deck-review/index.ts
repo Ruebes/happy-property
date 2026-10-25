@@ -397,7 +397,7 @@ async function pruefeBilder(l: Lage, sicht: { abschnitte: Abschnitt[] }): Promis
 - Bild passt klar nicht zur Überschrift seines Abschnitts (Küche unter "Pool") = mittel
 - unscharf, verzerrt, dunkel, Baustellenchaos, hässlich oder offensichtlich KI-generierter Innenraum = mittel
 - dasselbe Motiv mehrfach fast identisch = niedrig
-Reine Stimmungsbilder (Meer, Sonnenuntergang, Paphos) sind in Ordnung. Im Abschnitt Lageplan/Masterplan ist ein Plan richtig, melde dort nur Unlesbarkeit (mittel). Gib als score die Gesamtnote der Bildauswahl 0-100 (100 = jedes Bild stimmt und wirkt hochwertig). Nenne im Feld where die BILD-Nummer und den Abschnitt.` })
+Reine Stimmungsbilder (Meer, Sonnenuntergang, Paphos) sind in Ordnung. Fehlende Innenbilder sind KEIN Befund (gibt es oft nicht, KI-Innenbilder sind verboten). Ein Außenrendering der Anlage bei einer Wohnung ist in Ordnung. Im Abschnitt Lageplan/Masterplan ist ein Plan richtig, melde dort nur Unlesbarkeit (mittel). Gib als score die Gesamtnote der Bildauswahl 0-100 (100 = jedes Bild stimmt und wirkt hochwertig). Nenne im Feld where die BILD-Nummer und den Abschnitt.` })
   const res = await callAnthropic(ANTHROPIC_API_KEY, {
     model: PRUEFER_MODELL, fallbackModels: FALLBACK, max_tokens: 2500,
     tools: [PRUEFER_TOOL('Ergebnis der Bildprüfung')], tool_choice: { type: 'tool', name: 'emit_pruefung' },
@@ -446,7 +446,15 @@ const SVENS_REGELN = `1. Keine Rendite im Deck: keine Mietrendite-Prozente, kein
 10. Meer-/Strandnähe nur, wenn belegt: "direkt am Meer", "Meer vor der Tür" nur bei wenigen hundert Metern laut Fakten.
 11. Ohne Möbel im Preis nie "schlüsselfertig", "voll möbliert", "im Kaufpreis enthalten".
 12. Kein Hinweis auf KI, keine Platzhalter wie [Name], XXX, TODO, lorem. (Texte in ⟪…⟫ sind Hinweise des Prüfsystems, kein Deckinhalt.)
-13. Wenn das Portfolio erwähnt wird: "gut 200 Objekte".`
+13. Wenn das Portfolio erwähnt wird: "gut 200 Objekte".
+
+BEWUSST ERLAUBT (von Sven freigegeben, kein Verstoß):
+- Hinweis auf beigefügte/verlinkte Berechnungen (ohne Kredit, mit Finanzierung, Saison, Verwaltungsgebühr in %, Steuersatz-Annahme). Die Zahlen stehen in der Berechnung, nicht im Deck.
+- Vergleich mit dem Listenpreis einer vergleichbaren Wohnung derselben Anlage ("Du sparst X €").
+- Anzahlung in % und als Betrag, "den Rest und die Fälligkeiten klären wir gemeinsam" (das ist keine Schutz-Story).
+- Einbauküche, Einbauschränke, Klimaanlage, KNX sind feste Ausstattung, kein Möbel-/Einrichtungspaket; dafür braucht es keinen Inventar-Abschnitt.
+- Bei Vorlagen (Empfänger "Vorlage ...") ist der allgemeine erste Absatz Platzhalter für den persönlichen Text.
+Im Zweifel ist es KEIN Verstoß. Melde nur, was im Wortlaut klar gegen eine Regel verstößt.`
 
 async function textPruefer(name: string, system: string, user: string, beschreibung: string): Promise<PrueferErgebnis> {
   const res = await callAnthropic(ANTHROPIC_API_KEY, {
@@ -461,7 +469,7 @@ async function textPruefer(name: string, system: string, user: string, beschreib
 
 function pruefeFakten(l: Lage, text: string): Promise<PrueferErgebnis> {
   return textPruefer('fakten',
-    'Du bist Faktenprüfer für Immobilien-Verkaufsdecks von Happy Property (Zypern). Du vergleichst jede überprüfbare Aussage im Deck mit den Fakten aus dem CRM. Melde nur echte Widersprüche oder Behauptungen ohne Beleg (Zahlen, Flächen, Zimmer, Bäder, Etage, Preise, Raten, Fertigstellung, Entfernungen, Ausstattung, Pool/Gym/Spa, Garantien). Stil und Ton sind nicht dein Thema. Allgemeine Paphos-/Zypern-Aussagen und der Marina-Abschnitt sind kein Fehler. Fehlende Info ist kein Widerspruch. Lieber wenige sichere Befunde als viele vage. Preise, MwSt und Bruttopreise im Deck rechnet das System aus den Wohnungsdaten, sie sind richtig, solange sie zu den Wohnungsdaten oben passen. Unterscheide streng: WIDERSPRUCH zu den Fakten (kritisch = falscher Preis, falsche Fläche/Zimmerzahl, erfundene Garantie; hoch = andere falsche Zahl, falsches Ausstattungsmerkmal) gegenüber NICHT BELEGT (steht nirgends in den Fakten, widerspricht aber nichts): höchstens mittel. Abschnitte mit [fester Systemtext] nicht prüfen.',
+    'Du bist Faktenprüfer für Immobilien-Verkaufsdecks von Happy Property (Zypern). Du vergleichst jede überprüfbare Aussage im Deck mit den Fakten aus dem CRM. Melde nur echte Widersprüche oder Behauptungen ohne Beleg (Zahlen, Flächen, Zimmer, Bäder, Etage, Preise, Raten, Fertigstellung, Entfernungen, Ausstattung, Pool/Gym/Spa, Garantien). Stil und Ton sind nicht dein Thema. Allgemeine Paphos-/Zypern-Aussagen und der Marina-Abschnitt sind kein Fehler. Fehlende Info ist kein Widerspruch. Lieber wenige sichere Befunde als viele vage. Preise, MwSt und Bruttopreise im Deck rechnet das System aus den Wohnungsdaten, sie sind richtig, solange sie zu den Wohnungsdaten oben passen. Unterscheide streng: WIDERSPRUCH zu den Fakten (kritisch = falscher Preis, falsche Fläche/Zimmerzahl, erfundene Garantie; hoch = andere falsche Zahl, falsches Ausstattungsmerkmal) gegenüber NICHT BELEGT (steht nirgends in den Fakten, widerspricht aber nichts): höchstens mittel. Abschnitte mit [fester Systemtext] nicht prüfen. Steht eine Zahl zu einer anderen Wohnung (Vergleichswohnung), prüfe sie gegen die Projektfakten nur, wenn dort genau diese Wohnung steht; sonst nicht melden.',
     `FAKTEN AUS DEM CRM:\n${faktenText(l)}\n\n=== DECK, WIE DER KUNDE ES SIEHT ===\n${text}`,
     'Ergebnis der Faktenprüfung. score: 100 = alles belegt und richtig.')
 }
@@ -477,7 +485,7 @@ function pruefeRegeln(l: Lage, text: string): Promise<PrueferErgebnis> {
 function pruefeKunde(l: Lage, text: string): Promise<PrueferErgebnis> {
   const kunde = l.lead ? `Kunde: ${l.deck.recipient_name || [l.lead.first_name, l.lead.last_name].filter(Boolean).join(' ')} (so hat Sven das Deck adressiert, der Name ist richtig, auch wenn das CRM anders schreibt). Notizen aus dem CRM: ${String(l.lead.notes ?? '').slice(0, 1500) || 'keine'}` : `Allgemeines Deck ohne bestimmten Kunden (Empfänger: ${l.deck.recipient_name ?? '-'})`
   return textPruefer('kunde',
-    'Du liest ein Verkaufsdeck mit den Augen eines deutschsprachigen Kapitalanlegers (45-65 Jahre), der überlegt, auf Zypern zu kaufen. Bewerte: Versteht man in 30 Sekunden, was angeboten wird und was es kostet? Gibt es einen roten Faden? Geht das Deck auf den Kunden und seine Wünsche ein? Wiederholt es sich? Wirkt es hochwertig und vertrauenswürdig oder nach Massenware? Ist der nächste Schritt klar? Sprache: korrektes, natürliches Deutsch ohne Floskeln. Bewusste Entscheidungen von Sven, NICHT bemängeln: keine Rendite- oder Mietzahlen im Deck (die kommen in einer eigenen Berechnung), Lage oder Bauträgername manchmal erst im Gespräch, Name des Empfängers auf der Titelseite (setzt Sven selbst), Systemtexte wie die Marina. Melde konkrete, behebbare Schwächen mit Zitat und einer Anweisung zur Verbesserung. hoch = Kunde versteht Angebot/Preis/nächsten Schritt nicht oder Deck passt nicht zum Kundenwunsch; mittel = deutliche Schwäche; niedrig = Feinschliff.',
+    'Du liest ein Verkaufsdeck mit den Augen eines deutschsprachigen Kapitalanlegers (45-65 Jahre), der überlegt, auf Zypern zu kaufen. Bewerte: Versteht man in 30 Sekunden, was angeboten wird und was es kostet? Gibt es einen roten Faden? Geht das Deck auf den Kunden und seine Wünsche ein? Wiederholt es sich? Wirkt es hochwertig und vertrauenswürdig oder nach Massenware? Ist der nächste Schritt klar? Sprache: korrektes, natürliches Deutsch ohne Floskeln. Bewusste Entscheidungen von Sven, NICHT bemängeln: bei Vorlagen (Empfänger "Vorlage ...") der allgemeine erste Absatz, Anzahlung bezogen auf den Bruttopreis, keine Rendite- oder Mietzahlen im Deck (die kommen in einer eigenen Berechnung), Lage oder Bauträgername manchmal erst im Gespräch, Name des Empfängers auf der Titelseite (setzt Sven selbst), Systemtexte wie die Marina. Melde konkrete, behebbare Schwächen mit Zitat und einer Anweisung zur Verbesserung. hoch = Kunde versteht Angebot/Preis/nächsten Schritt nicht oder Deck passt nicht zum Kundenwunsch; mittel = deutliche Schwäche; niedrig = Feinschliff.',
     `${kunde}\n\n=== DECK ===\n${text}`,
     'Ergebnis aus Kundensicht. score: 100 = überzeugt sofort.')
 }
