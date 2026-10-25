@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import DeckChat from '../../../components/crm/DeckChat'
+import DeckQualityPanel from '../../../components/crm/DeckQualityPanel'
+import { scoreFarbe } from '../../../components/crm/DeckReviewSection'
 import RechnerWizard from '../../../components/crm/RechnerWizard'
 import type { CalcItem } from '../../../lib/rechner'
 import { htmlToWhatsapp } from '../../../lib/htmlDerive'
@@ -33,7 +35,7 @@ interface OutboxRow {
   wa_text?: string | null
   lead?: { first_name: string; last_name: string; phone: string | null; whatsapp: string | null; email: string | null } | null
 }
-interface DeckMeta { revision: number; refining: boolean; refine_error: string | null; approved_at: string | null; quality_status: string | null; quality_findings: number }
+interface DeckMeta { revision: number; refining: boolean; refine_error: string | null; approved_at: string | null; quality_status: string | null; quality_findings: number; review_score?: number | null }
 interface CalcRow { id: string; token: string; title: string | null; lead_id: string | null; approved_at: string | null }
 // Investitions-Fahrplan. Anders als Deck und Berechnung ist er erst fuer den
 // Kunden erreichbar, wenn shared_at gesetzt ist - das passiert beim Versand.
@@ -59,7 +61,8 @@ export default function Postausgang() {
   const [editSubject, setEditSubject] = useState('')
   const [editEmailId, setEditEmailId] = useState<string | null>(null)
   const [emailDraft, setEmailDraft]   = useState('')
-  const [chat, setChat]       = useState<{ token: string; label: string } | null>(null)
+  const [chat, setChat]       = useState<{ token: string; label: string; initialInput?: string } | null>(null)
+  const [quality, setQuality] = useState<{ token: string; label: string } | null>(null)
   const [editCalc, setEditCalc] = useState<{ token: string; content: { items: CalcItem[]; recipient_name?: string }; lead: { id: string; first_name: string; last_name: string } } | null>(null)
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const origin = window.location.origin
@@ -69,7 +72,7 @@ export default function Postausgang() {
   const fetchDeckMeta = useCallback(async (tokens: string[]) => {
     if (!tokens.length) return
     const { data } = await supabase.from('sales_decks')
-      .select('token, revision, refining, refine_error, approved_at, quality_status, quality_report').in('token', tokens)
+      .select('token, revision, refining, refine_error, approved_at, quality_status, quality_report, review_score').in('token', tokens)
     setDeckMeta(prev => {
       const next = { ...prev }
       for (const r of (data ?? []) as Array<{ token: string; quality_report?: { findings?: unknown[] } | null } & DeckMeta>) {
@@ -77,6 +80,7 @@ export default function Postausgang() {
           revision: r.revision ?? 0, refining: !!r.refining, refine_error: r.refine_error ?? null, approved_at: r.approved_at ?? null,
           quality_status: r.quality_status ?? null,
           quality_findings: Array.isArray(r.quality_report?.findings) ? r.quality_report!.findings!.length : 0,
+          review_score: r.review_score ?? null,
         }
       }
       return next
@@ -513,6 +517,13 @@ export default function Postausgang() {
                             {err && !refining && (
                               <span className="px-1 py-1 bg-red-100 text-red-600 text-xs" title={t('postausgang.refineFailedTitle', 'Bearbeitung fehlgeschlagen: {{err}}', { err })}>⚠</span>
                             )}
+                            {m?.review_score != null && (
+                              <button onClick={() => setQuality({ token: tok, label: t('postausgang.deckLabel', 'Deck {{n}}', { n: i + 1 }) })}
+                                title={t('deckReview.badgeTitle', 'Prüfteam: {{n}} von 100 Punkten, versandbereit ab 85', { n: m.review_score })}
+                                className={`text-xs font-semibold px-1.5 py-1 ${scoreFarbe(m.review_score)}`}>
+                                {m.review_score}
+                              </button>
+                            )}
                             {m?.quality_status === 'red' && !refining && (
                               <span className="px-1.5 py-1 bg-red-600 text-white text-xs font-semibold" title={t('postausgang.qualityRedTitle', 'Nicht freigegeben: {{n}} Befund(e) aus der automatischen Prüfung. Versand nur mit Override.', { n: m.quality_findings })}>⛔ {m.quality_findings}</span>
                             )}
@@ -617,7 +628,12 @@ export default function Postausgang() {
           })}
         </div>
       </div>
-      {chat && <DeckChat token={chat.token} label={chat.label} onClose={() => setChat(null)} onStarted={onRefineStarted} />}
+      {chat && <DeckChat key={`${chat.token}|${chat.initialInput ?? ''}`} token={chat.token} label={chat.label} initialInput={chat.initialInput} onClose={() => setChat(null)} onStarted={onRefineStarted} />}
+      {quality && <DeckQualityPanel token={quality.token} label={quality.label} onClose={() => setQuality(null)}
+        onFixInChat={deckMeta[quality.token]?.refining ? undefined : instruction => {
+          const q = quality
+          setQuality(null); setChat({ token: q.token, label: q.label, initialInput: instruction })
+        }} />}
       {editCalc && (
         <RechnerWizard
           lead={editCalc.lead}

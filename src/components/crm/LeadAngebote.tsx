@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import DeckChat from './DeckChat'
 import DeckQualityPanel from './DeckQualityPanel'
+import { scoreFarbe } from './DeckReviewSection'
 
 // ── Gesendete Angebote ───────────────────────────────────────────────────────
 // Dauerhafte Historie pro Kunde: welche Decks, Berechnungen/Vergleiche und
@@ -17,7 +18,7 @@ interface OutboxRow { id: string; subject: string | null; status: string; create
 interface CalcRow { id: string; token: string; title: string | null; created_at: string | null; approved_at: string | null }
 const LEER = { revision: 0, refining: false, refine_error: null, approved_at: null, quality_status: null, quality_findings: 0 } as const
 
-interface DeckMeta { revision: number; refining: boolean; refine_error: string | null; approved_at: string | null; quality_status: string | null; quality_findings: number }
+interface DeckMeta { revision: number; refining: boolean; refine_error: string | null; approved_at: string | null; quality_status: string | null; quality_findings: number; review_score?: number | null }
 // Investitions-Fahrplan: erst nach dem Versand fuer den Kunden erreichbar.
 interface PlanRow { id: string; token: string; title: string | null; updated_at: string | null; shared_at: string | null }
 
@@ -64,7 +65,7 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
   const fetchDeckMeta = useCallback(async (tokens: string[]) => {
     if (!tokens.length) return
     const { data } = await supabase.from('sales_decks')
-      .select('token, revision, refining, refine_error, approved_at, quality_status, quality_report').in('token', tokens)
+      .select('token, revision, refining, refine_error, approved_at, quality_status, quality_report, review_score').in('token', tokens)
     setDeckMeta(prev => {
       const next = { ...prev }
       for (const r of (data ?? []) as Array<{ token: string; quality_report?: { findings?: unknown[] } | null } & DeckMeta>) {
@@ -73,6 +74,7 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
           approved_at: r.approved_at ?? null,
           quality_status: r.quality_status ?? null,
           quality_findings: Array.isArray(r.quality_report?.findings) ? r.quality_report!.findings!.length : 0,
+          review_score: r.review_score ?? null,
         }
       }
       return next
@@ -187,6 +189,13 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
                           : t('leadAngebote.qualityGreenTitle', 'Automatisch validiert — Bericht ansehen')}
                         className={`text-[11px] px-1.5 py-0.5 ${m.quality_status === 'red' ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-green-100 text-green-700 hover:bg-green-200'}`}>
                         {m.quality_status === 'red' ? `⚠ ${m.quality_findings}` : '✓'}
+                      </button>
+                    )}
+                    {m?.review_score != null && (
+                      <button onClick={() => setQuality({ token: tok, label: `Deck ${i + 1}` })}
+                        title={t('deckReview.badgeTitle', 'Prüfteam: {{n}} von 100 Punkten, versandbereit ab 85', { n: m.review_score })}
+                        className={`text-[11px] font-semibold px-1.5 py-0.5 ${scoreFarbe(m.review_score)}`}>
+                        {m.review_score}
                       </button>
                     )}
                     {err && !refining && (

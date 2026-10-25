@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import { baueChatAnweisung, chatBehebbar } from '../../lib/deckFixAnweisung'
+import DeckReviewSection from './DeckReviewSection'
 
 // ── Prüfpanel eines Decks ────────────────────────────────────────────────────
 // Zeigt, WARUM ein Deck rot ist: Problem, betroffener Wert, die beiden Quellen,
@@ -155,6 +156,8 @@ export default function DeckQualityPanel({ token, label, onClose, onFixInChat }:
 
         <div className="overflow-y-auto px-5 py-4 space-y-5">
           {loading && <p className="text-sm text-gray-400">{t('deckQuality.loading', 'Lade Bericht…')}</p>}
+
+          <DeckReviewSection token={token} onFixInChat={onFixInChat} />
 
           {!loading && onFixInChat && chatFixes.length > 0 && (
             <div className="flex items-center gap-3 flex-wrap">

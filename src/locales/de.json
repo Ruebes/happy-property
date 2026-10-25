@@ -11861,5 +11861,36 @@
       "files_one": "{{count}} Datei",
       "files_other": "{{count}} Dateien"
     }
+  },
+  "deckReview": {
+    "title": "Prüfteam",
+    "timeout": "Die Prüfung dauert ungewöhnlich lange. Schau in ein paar Minuten noch einmal rein.",
+    "running": "Prüft… (1-2 Min.)",
+    "recheck": "Neu prüfen",
+    "check": "Jetzt prüfen",
+    "none": "Noch nicht vom Prüfteam geprüft. Neue Decks mit Kunde prüft es automatisch innerhalb von 10 Minuten.",
+    "failed": "Prüfung fehlgeschlagen: {{e}}",
+    "partial": "Ausgefallen: {{list}}. Endscore höchstens 84.",
+    "todo": "Das musst du selbst erledigen",
+    "top": "Wichtigste Korrekturen",
+    "fixInChat": "Im Deck-Chat beheben ({{n}})",
+    "missing": "Fehlt",
+    "findings": "Befunde",
+    "onlyImportant": "nur wichtige",
+    "showAll": "alle zeigen",
+    "badgeTitle": "Prüfteam: {{n}} von 100 Punkten, versandbereit ab 85",
+    "cat": {
+      "vollstaendigkeit": "Vollständigkeit",
+      "bilder": "Bilder",
+      "fakten": "Fakten",
+      "regeln": "Regeln",
+      "kunde": "Kundensicht",
+      "gate": "Quality-Gate"
+    },
+    "verdict": {
+      "ok": "Versandbereit",
+      "stop": "Nicht senden",
+      "work": "Nacharbeit"
+    }
   }
 }

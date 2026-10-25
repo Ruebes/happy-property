@@ -12064,5 +12064,36 @@
       "files_one": "{{count}} file",
       "files_other": "{{count}} files"
     }
+  },
+  "deckReview": {
+    "title": "Review team",
+    "timeout": "The review is taking unusually long. Check back in a few minutes.",
+    "running": "Reviewing… (1-2 min)",
+    "recheck": "Review again",
+    "check": "Review now",
+    "none": "Not reviewed yet. New decks with a client are reviewed automatically within 10 minutes.",
+    "failed": "Review failed: {{e}}",
+    "partial": "Failed: {{list}}. Final score capped at 84.",
+    "todo": "Things you need to do yourself",
+    "top": "Most important fixes",
+    "fixInChat": "Fix in deck chat ({{n}})",
+    "missing": "Missing",
+    "findings": "Findings",
+    "onlyImportant": "important only",
+    "showAll": "show all",
+    "badgeTitle": "Review team: {{n}} of 100 points, ready to send from 85",
+    "cat": {
+      "vollstaendigkeit": "Completeness",
+      "bilder": "Images",
+      "fakten": "Facts",
+      "regeln": "Rules",
+      "kunde": "Client view",
+      "gate": "Quality gate"
+    },
+    "verdict": {
+      "ok": "Ready to send",
+      "stop": "Do not send",
+      "work": "Needs work"
+    }
   }
 }
