@@ -261,8 +261,10 @@ export default function Finance() {
 
         {/* Vorschlaege zuerst: eingegangene Rechnungen, die das System einer Zahlung
             zuordnen will. Sven bestaetigt oder verwirft - erst danach gilt der
-            Beleg als verbucht und die Mail verschwindet aus dem Posteingang. */}
-        {!loading && vorschlaege.length > 0 && (
+            Beleg als verbucht und die Mail verschwindet aus dem Posteingang.
+            Nur im Reiter Transaktionen: bei vielen Vorschlaegen schob der Kasten
+            sonst Ausgangskorb und Auswertung aus dem Bild (Sven 26.10.26). */}
+        {!loading && tab === 'tx' && vorschlaege.length > 0 && (
           <div className="bg-white rounded-2xl border-2 border-amber-200 shadow-sm overflow-hidden">
             <div className="px-4 py-3 bg-amber-50 border-b border-amber-100">
               <p className="font-semibold text-amber-900">🧾 {t('crm.fin.matchTitle', 'Belege zuordnen')} ({vorschlaege.length})</p>
