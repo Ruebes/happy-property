@@ -30,6 +30,7 @@ export interface SellerSignature {
   date: string             // vom System gesetzt, dd/mm/yyyy
   signedAtUtc: string      // für den Prüfvermerk
   seal?: Uint8Array | null // Firmenstempel (transparentes PNG), wenn der Bauträger „mit Stempel" wählt
+  second?: { png: Uint8Array; name: string } | null // zweite Unterschrift (Mito 26.10.: zwei Unterzeichner)
 }
 
 export interface AgreementFields {
@@ -208,7 +209,9 @@ async function renderOnce(t: TemplateRow, f: AgreementFields, seller: SellerSign
 
   // Stempel + Unterschriften
   {
-    const h = compact ? 112 : 125
+    // Zweite Unterschrift: Zelle wird eine Zeile höher, Unterschriften stehen untereinander
+    const ROW2 = 52
+    const h = (compact ? 112 : 125) + (seller?.second ? ROW2 : 0)
     rect(X0, y, MID - X0, h)
     rect(MID, y, X1 - MID, h)
     text('Seal:', X0 + PAD, y - PAD - LS + 1, LS)
@@ -220,17 +223,40 @@ async function renderOnce(t: TemplateRow, f: AgreementFields, seller: SellerSign
         const sc = Math.min(bw / img.width, bh / img.height)
         return { x: bx + (bw - img.width * sc) / 2, y: by + (bh - img.height * sc) / 2, width: img.width * sc, height: img.height * sc }
       }
-      const boxY = y - h + PAD + 44, boxH = 58
-      let sigX = X0 + PAD + 60
-      if (seller.seal) {
-        const sealImg = await pdf.embedPng(seller.seal)
-        page.drawImage(sealImg, fit(sealImg, X0 + PAD + 22, boxY, 70, boxH))
-        sigX = X0 + PAD + 100
-      }
-      const img = await pdf.embedPng(seller.png)
-      page.drawImage(img, fit(img, sigX, boxY, MID - PAD - sigX, 52))
       const cellW = MID - X0 - PAD * 2
-      text(`Sales Signed BY: ${seller.name}`, X0 + PAD, y - h + PAD + 30, LS, bold, DARK, cellW)
+      let sigX = X0 + PAD + 60
+      if (seller.second) {
+        // Zwei Unterzeichner: je Unterschrift + Name darunter untereinander, Stempel rechts
+        // neben beiden Zeilen (überdeckt so keinen Namen)
+        const yb = y - h
+        let rightX = MID - PAD
+        if (seller.seal) {
+          const sealImg = await pdf.embedPng(seller.seal)
+          page.drawImage(sealImg, fit(sealImg, MID - PAD - 72, yb + PAD + 34, 72, 40 + ROW2 + 18))
+          rightX = MID - PAD - 78
+        }
+        sigX = X0 + PAD + 30
+        const rows = [{ png: seller.png, name: seller.name, off: ROW2 }, { png: seller.second.png, name: seller.second.name, off: 0 }]
+        const labels = rows.map((r, i) => safe(bold, `Signed BY (${i + 1}): ${r.name}`))
+        // beide Namen in derselben Schriftgröße (der längere bestimmt sie)
+        let sz = LS
+        while (sz > 6.5 && labels.some(l => bold.widthOfTextAtSize(l, sz) > rightX - X0 - PAD)) sz -= 0.25
+        for (const [i, r] of rows.entries()) {
+          const img = await pdf.embedPng(r.png)
+          page.drawImage(img, fit(img, sigX, yb + PAD + 44 + r.off, rightX - sigX, 38))
+          page.drawText(labels[i], { x: X0 + PAD, y: yb + PAD + 30 + r.off, size: sz, font: bold, color: DARK })
+        }
+      } else {
+        const boxY = y - h + PAD + 44, boxH = 58
+        if (seller.seal) {
+          const sealImg = await pdf.embedPng(seller.seal)
+          page.drawImage(sealImg, fit(sealImg, X0 + PAD + 22, boxY, 70, boxH))
+          sigX = X0 + PAD + 100
+        }
+        const img = await pdf.embedPng(seller.png)
+        page.drawImage(img, fit(img, sigX, boxY, MID - PAD - sigX, 52))
+        text(`Sales Signed BY: ${seller.name}`, X0 + PAD, y - h + PAD + 30, LS, bold, DARK, cellW)
+      }
       text(`Place, date: ${seller.place}, ${seller.date}`, X0 + PAD, y - h + PAD + 17, 8.5, reg, DARK, cellW)
       text(`Signed electronically ${seller.signedAtUtc} via Happy Property`, X0 + PAD, y - h + PAD + 4, 6.5, reg, rgb(0.45, 0.45, 0.5), cellW)
     } else {

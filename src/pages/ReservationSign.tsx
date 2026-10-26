@@ -57,13 +57,19 @@ export default function ReservationSign({ mode = 'reservation' }: { mode?: Mode 
   const [err, setErr] = useState('')
   const [signedPdf, setSignedPdf] = useState<string | null>(null)
   const [values, setValues] = useState<Record<string, string>>({})
+  // Zweite Unterschrift (nur Reservierung, Mito 26.10.): optional per Knopf dazuholen
+  const [two, setTwo] = useState(false)
+  const [name2, setName2] = useState('')
+  const [hasInk2, setHasInk2] = useState(false)
   const pad = useRef<SignaturePadHandle | null>(null)
+  const pad2 = useRef<SignaturePadHandle | null>(null)
   const fileRef = useRef<HTMLInputElement | null>(null)
 
   // Texte in der Sprache des Empfängers (aus dem CRM), nicht in der Browsersprache;
   // solange sie unbekannt ist (Laden, ungültiger Link): Englisch
   const t = useMemo(() => i18n.getFixedT(view?.lang ?? 'en'), [view, i18n])
   const onInk = useCallback((v: boolean) => setHasInk(v), [])
+  const onInk2 = useCallback((v: boolean) => setHasInk2(v), [])
   const viewAction = mode === 'document' ? 'doc_view' : 'sign_view'
   const submitAction = mode === 'document' ? 'doc_submit' : 'sign_submit'
 
@@ -99,6 +105,7 @@ export default function ReservationSign({ mode = 'reservation' }: { mode?: Mode 
       const r = await call<{ pdf_base64: string }>({
         action: submitAction, token, name, signature: pad.current.toPng(), inputs: values,
         use_seal: useSeal && !!(newSeal || view.seal), seal: newSeal ?? undefined,
+        ...(two && pad2.current ? { second: { name: name2, signature: pad2.current.toPng() } } : {}),
       })
       setSignedPdf(r.pdf_base64)
       setPhase('done')
@@ -107,6 +114,8 @@ export default function ReservationSign({ mode = 'reservation' }: { mode?: Mode 
       if (m === 'not_found') { setPhase('not_found'); return }
       setErr(m === 'invalid_name' ? t('reservationSign.errName', 'Please type your full name in block letters.')
         : m === 'invalid_signature' ? t('reservationSign.errSignature', 'Please sign in the box with your finger.')
+        : m === 'invalid_name_2' ? t('reservationSign.errName2', 'Second signature: please type the full name in block letters.')
+        : m === 'invalid_signature_2' ? t('reservationSign.errSignature2', 'Second signature: please sign in the second box with your finger.')
         : m === 'invalid_seal' ? t('reservationSign.errSealImage', 'The photo could not be read. Please try another one.')
         : m === 'already_signed' ? t('reservationSign.errAlready', 'This document has already been signed.')
         : m === 'invalid_inputs' ? t('reservationSign.errInputs', 'Please fill in all required fields.')
@@ -116,10 +125,24 @@ export default function ReservationSign({ mode = 'reservation' }: { mode?: Mode 
   }
 
   // gleiche Regel wie der Server (cleanName): lateinische Großbuchstaben, mind. 2 am Stück
-  const nameOk = NAME_RE.test(name.trim()) && /[A-ZÀ-ÖØ-ÞĀ-ſ]{2,}/.test(name) && name.trim().length >= 3
+  const okName = (n: string) => NAME_RE.test(n.trim()) && /[A-ZÀ-ÖØ-ÞĀ-ſ]{2,}/.test(n) && n.trim().length >= 3
+  const nameOk = okName(name)
+  const name2Ok = okName(name2)
+  const secondOk = !two || (hasInk2 && name2Ok)
   const inputs = view?.inputs ?? []
   const inputsOk = inputs.every(i => !i.required || (values[i.key] ?? '').trim())
-  const canSubmit = phase === 'ready' && hasInk && nameOk && agree && inputsOk && !sealBusy
+  const canSubmit = phase === 'ready' && hasInk && nameOk && secondOk && agree && inputsOk && !sealBusy
+  // Was fehlt noch? Steht direkt über dem Knopf, damit niemand rätseln muss
+  const missing = [
+    !hasInk && t('reservationSign.missSig1', 'signature 1'),
+    !nameOk && t('reservationSign.missName1', 'name 1'),
+    two && !hasInk2 && t('reservationSign.missSig2', 'signature 2'),
+    two && !name2Ok && t('reservationSign.missName2', 'name 2'),
+    !inputsOk && t('reservationSign.missInputs', 'the fields above'),
+    !agree && t('reservationSign.missAgree', 'the tick box'),
+  ].filter(Boolean) as string[]
+  const removeSecond = () => { setTwo(false); setName2(''); setHasInk2(false) }
+  const isRes = mode === 'reservation'
   const sealShown = newSeal ?? view?.seal ?? null
 
   if (phase === 'loading') return (
@@ -203,23 +226,74 @@ export default function ReservationSign({ mode = 'reservation' }: { mode?: Mode 
                 <p className="text-[11px] text-gray-400">{t('reservationSign.inputsHint', 'Your entries are written into the document when you sign.')}</p>
               </div>
             )}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <p className="text-sm font-medium text-gray-800">{t('reservationSign.signHere', 'Your signature')}</p>
-                <button onClick={() => pad.current?.clear()} className="text-xs text-gray-500 hover:text-gray-800">{t('reservationSign.clear', 'Clear')}</button>
+            {isRes && (
+              <div className="text-sm text-hp-navy bg-orange-50 border border-orange-100 rounded-xl px-3 py-2.5">
+                <p className="font-semibold mb-1">{t('reservationSign.howTitle', 'How to sign')}</p>
+                <ol className="list-decimal list-inside space-y-0.5 text-[13px] text-gray-700">
+                  <li>{t('reservationSign.how1', 'Sign with your finger in the white box.')}</li>
+                  <li>{t('reservationSign.how2', 'Type your name in capital letters.')}</li>
+                  <li>{t('reservationSign.how3', 'A second person signs too? Tap "Add a second signature". If not, skip it.')}</li>
+                  <li>{t('reservationSign.how4', 'Tick the box and tap the orange button at the bottom.')}</li>
+                </ol>
               </div>
-              <SignaturePad ref={pad} onInk={onInk} />
-              <p className="text-[11px] text-gray-400 mt-1">{t('reservationSign.signHint', 'Sign with your finger in the box.')}</p>
+            )}
+
+            {/* Unterschrift 1 */}
+            <div className={isRes ? 'border border-gray-200 rounded-xl p-3 space-y-3' : 'space-y-4'}>
+              {isRes && <p className="text-sm font-semibold text-hp-navy">✍️ {t('reservationSign.sig1Title', 'Signature 1')}</p>}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <p className="text-sm font-medium text-gray-800">{t('reservationSign.signHere', 'Your signature')}</p>
+                  <button onClick={() => pad.current?.clear()} className="text-xs text-gray-500 hover:text-gray-800">{t('reservationSign.clear', 'Clear')}</button>
+                </div>
+                <SignaturePad ref={pad} onInk={onInk} />
+                <p className="text-[11px] text-gray-400 mt-1">{t('reservationSign.signHint', 'Sign with your finger in the box.')}</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-800 mb-1.5">{t('reservationSign.nameLabel', 'Your name in block letters')}</label>
+                <input value={name} onChange={e => setName(e.target.value.replace(/[’‘ʼ´`]/g, "'").toUpperCase())}
+                  autoCapitalize="characters" autoComplete="name" spellCheck={false} placeholder="JOHN SMITH"
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-base tracking-wide focus:outline-none focus:border-orange-400" />
+                {name.trim().length >= 3 && !nameOk && (
+                  <p className="text-[11px] text-red-600 mt-1">{t('reservationSign.errNameLatin', 'Please use Latin block letters (A-Z).')}</p>
+                )}
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-800 mb-1.5">{t('reservationSign.nameLabel', 'Your name in block letters')}</label>
-              <input value={name} onChange={e => setName(e.target.value.replace(/[’‘ʼ´`]/g, "'").toUpperCase())}
-                autoCapitalize="characters" autoComplete="name" spellCheck={false} placeholder="JOHN SMITH"
-                className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-base tracking-wide focus:outline-none focus:border-orange-400" />
-              {name.trim().length >= 3 && !nameOk && (
-                <p className="text-[11px] text-red-600 mt-1">{t('reservationSign.errNameLatin', 'Please use Latin block letters (A-Z).')}</p>
-              )}
-            </div>
+
+            {/* Unterschrift 2 (optional) */}
+            {isRes && (two ? (
+              <div className="border border-gray-200 rounded-xl p-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold text-hp-navy">✍️ {t('reservationSign.sig2Title', 'Signature 2')}</p>
+                  <button onClick={removeSecond} className="text-xs text-gray-500 hover:text-red-600">✕ {t('reservationSign.removeSecond', 'Remove second signature')}</button>
+                </div>
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <p className="text-sm font-medium text-gray-800">{t('reservationSign.signHere2', 'Second person: signature')}</p>
+                    <button onClick={() => pad2.current?.clear()} className="text-xs text-gray-500 hover:text-gray-800">{t('reservationSign.clear', 'Clear')}</button>
+                  </div>
+                  <SignaturePad ref={pad2} onInk={onInk2} />
+                  <p className="text-[11px] text-gray-400 mt-1">{t('reservationSign.signHint2', 'The second person signs with their finger in this box.')}</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-800 mb-1.5">{t('reservationSign.nameLabel2', 'Second person: name in block letters')}</label>
+                  <input value={name2} onChange={e => setName2(e.target.value.replace(/[’‘ʼ´`]/g, "'").toUpperCase())}
+                    autoCapitalize="characters" autoComplete="off" spellCheck={false} placeholder="JANE SMITH"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-base tracking-wide focus:outline-none focus:border-orange-400" />
+                  {name2.trim().length >= 3 && !name2Ok && (
+                    <p className="text-[11px] text-red-600 mt-1">{t('reservationSign.errNameLatin', 'Please use Latin block letters (A-Z).')}</p>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <button onClick={() => setTwo(true)}
+                className="w-full py-3 rounded-xl border-2 border-dashed border-orange-300 text-orange-700 font-medium hover:bg-orange-50">
+                ➕ {t('reservationSign.addSecond', 'Add a second signature (optional)')}
+                <span className="block text-[11px] font-normal text-gray-500 mt-0.5">
+                  {t('reservationSign.addSecondHint', 'Only if a second person from {{company}} signs as well. Otherwise just continue below.', { company: view.company_name })}
+                </span>
+              </button>
+            ))}
 
             {/* Firmenstempel: gespeicherten verwenden, neues Foto hochladen oder ohne Stempel */}
             <div className="border border-gray-100 rounded-xl p-3 space-y-2">
@@ -249,13 +323,20 @@ export default function ReservationSign({ mode = 'reservation' }: { mode?: Mode 
             <label className="flex items-start gap-2.5 text-sm text-gray-700 cursor-pointer">
               <input type="checkbox" checked={agree} onChange={e => setAgree(e.target.checked)} className="mt-0.5 w-4 h-4 rounded" />
               <span>{f
-                ? t('reservationSign.agree', 'I have checked the agreement and sign it on behalf of {{company}}.', { company: view.company_name })
+                ? (two
+                  ? t('reservationSign.agree2', 'We have checked the agreement and sign it on behalf of {{company}}.', { company: view.company_name })
+                  : t('reservationSign.agree', 'I have checked the agreement and sign it on behalf of {{company}}.', { company: view.company_name }))
                 : t('reservationSign.agreeDoc', 'I have checked the document and sign it on behalf of {{company}}.', { company: view.company_name })}</span>
             </label>
             {err && <p className="text-sm text-red-600">{err}</p>}
+            {isRes && phase === 'ready' && missing.length > 0 && (
+              <p className="text-xs text-gray-500 text-center">{t('reservationSign.stillMissing', 'Still missing: {{list}}', { list: missing.join(', ') })}</p>
+            )}
             <button onClick={submit} disabled={!canSubmit}
               className="w-full py-3 rounded-xl bg-hp-highlight text-white font-semibold disabled:opacity-40">
-              {phase === 'sending' ? '…' : f ? t('reservationSign.submit', 'Sign agreement') : t('reservationSign.submitDoc', 'Sign document')}
+              {phase === 'sending' ? '…' : f
+                ? (two ? t('reservationSign.submit2', 'Sign agreement (2 signatures)') : t('reservationSign.submit', 'Sign agreement'))
+                : t('reservationSign.submitDoc', 'Sign document')}
             </button>
           </div>
         )}

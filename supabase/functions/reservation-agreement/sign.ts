@@ -109,6 +109,18 @@ export async function signSubmit(sb: SupabaseClient, body: Record<string, unknow
   if (!name) return { status: 400, body: { error: 'invalid_name' } }
   const png = cleanSignature(body.signature)
   if (!png) return { status: 400, body: { error: 'invalid_signature' } }
+  // Optional zweiter Unterzeichner (Mito 26.10.: Reservierung mit zwei Unterschriften)
+  let second: { png: Uint8Array; name: string } | null = null
+  if (body.second && typeof body.second === 'object') {
+    const s2 = body.second as Record<string, unknown>
+    const name2 = cleanName(s2.name)
+    if (!name2) return { status: 400, body: { error: 'invalid_name_2' } }
+    const png2 = cleanSignature(s2.signature)
+    if (!png2) return { status: 400, body: { error: 'invalid_signature_2' } }
+    second = { png: png2, name: name2 }
+  }
+  // Für Mails, Ablage und Meldungen: beide Namen
+  const who = second ? `${name} & ${second.name}` : name
   // Stempel: neues Foto (bereits freigestellt im Browser) oder der gespeicherte
   const newSeal = body.seal ? pngFromInput(body.seal, MAX_SEAL_BYTES) : null
   if (body.seal && !newSeal) return { status: 400, body: { error: 'invalid_seal' } }
@@ -138,10 +150,10 @@ export async function signSubmit(sb: SupabaseClient, body: Record<string, unknow
     // Neuer Stempel gilt ab jetzt für alle Dokumente dieses Bauträgers (im Test nur für dieses PDF)
     if (newSeal && !test) await saveSeal(sb, p.template.developer_id, newSeal, `${name} (Unterschriftsseite)`)
     const seal = useSeal ? (newSeal ?? await loadSeal(sb, p.template.developer_id)) : null
-    const pdf = await renderAgreement(p.template, p.fields, { png, name, place, date, signedAtUtc, seal })
+    const pdf = await renderAgreement(p.template, p.fields, { png, name, place, date, signedAtUtc, seal, second })
     const hash = await sha256Hex(pdf)
     const meta = {
-      name, place, date, signed_at: now.toISOString(), pdf_sha256: hash, with_seal: !!seal, new_seal: !!newSeal,
+      name, second_name: second?.name ?? null, place, date, signed_at: now.toISOString(), pdf_sha256: hash, with_seal: !!seal, new_seal: !!newSeal,
       ip: clientIp(req),
       user_agent: (req.headers.get('user-agent') ?? '').slice(0, 300) || null,
     }
@@ -152,14 +164,14 @@ export async function signSubmit(sb: SupabaseClient, body: Record<string, unknow
     if (test) {
       const err = await invoke(sb, 'send-email', {
         to: SVEN_MAIL, subject: `TEST · Reservierungsvertrag digital unterschrieben: ${leadName(ctx.lead)} (${unitLabel})`,
-        html: `<p>Testlauf: So sieht der Vertrag nach der Unterschrift aus. Es wurde nichts abgelegt und nichts an Kunden oder Bauträger geschickt.</p><p>Unterschrieben von ${esc(name)}, ${esc(place)}, ${esc(date)}</p>`,
+        html: `<p>Testlauf: So sieht der Vertrag nach der Unterschrift aus. Es wurde nichts abgelegt und nichts an Kunden oder Bauträger geschickt.</p><p>Unterschrieben von ${esc(who)}, ${esc(place)}, ${esc(date)}</p>`,
         attachment, auto: true, lang: 'de', already_translated: true,
       })
       // Test wie im echten Ablauf: Bestätigung + PDF per WhatsApp, aber nur an Sven
-      await whatsappSven(sb, `TEST · ✅ ${name} hat den Reservierungsvertrag ${leadName(ctx.lead)} (${unitLabel}) digital unterschrieben.\n\nIm echten Ablauf läge er jetzt an der Wohnung unter Verträge und im Drive-Ordner. Das PDF ist in deinem Postfach.`)
+      await whatsappSven(sb, `TEST · ✅ ${who} hat den Reservierungsvertrag ${leadName(ctx.lead)} (${unitLabel}) digital unterschrieben.\n\nIm echten Ablauf läge er jetzt an der Wohnung unter Verträge und im Drive-Ordner. Das PDF ist in deinem Postfach.`)
       const tpath = `unit-documents/${ctx.unit.id}/${Date.now()}-test-signed.pdf`
       const { error: tErr } = await sb.storage.from('unit-documents').upload(tpath, pdf, { contentType: 'application/pdf', upsert: false })
-      if (!tErr) await whatsappPdf(sb, { name: 'Sven', phone: SVEN_PHONE }, `TEST · So bekommt der Bauträger das unterschriebene PDF per WhatsApp:\n\nThank you, ${name}! Here is your signed reservation agreement (${p.fields.property_name}, unit ${p.fields.unit_number}).`, tpath, fname, 'de')
+      if (!tErr) await whatsappPdf(sb, { name: 'Sven', phone: SVEN_PHONE }, `TEST · So bekommt der Bauträger das unterschriebene PDF per WhatsApp:\n\nThank you, ${who}! Here is your signed reservation agreement (${p.fields.property_name}, unit ${p.fields.unit_number}).`, tpath, fname, 'de')
       return { status: 200, body: { ok: true, test: true, mail_error: err ?? null, pdf_base64: b64(pdf) } }
     }
 
@@ -170,7 +182,7 @@ export async function signSubmit(sb: SupabaseClient, body: Record<string, unknow
     const { data: doc, error: docErr } = await sb.from('crm_unit_documents').insert({
       unit_id: ctx.unit.id, project_id: ctx.project.id, name: `Reservation ${ctx.project.name} ${ctx.unit.unit_number}`,
       file_path: path, file_name: fname, file_size: pdf.byteLength, doc_type: 'sonstiges',
-      notes: `Reservierungsvereinbarung, digital unterschrieben von ${name} (${p.template.company_name}) am ${date}`,
+      notes: `Reservierungsvereinbarung, digital unterschrieben von ${who} (${p.template.company_name}) am ${date}`,
     }).select('id').single()
     if (docErr) throw new Error(`Ablage an der Wohnung: ${docErr.message}`)
 
@@ -190,7 +202,7 @@ export async function signSubmit(sb: SupabaseClient, body: Record<string, unknow
     const checked = { ...(row.checked_files ?? {}) }
     if (driveId) checked[driveId] = { name: fname, at: new Date().toISOString(), created: new Date().toISOString(), skipped: 'eigene Datei' }
     await sb.from('reservation_agreements').update({
-      status: 'unterschrieben', seller_signer_name: name, seller_sign_meta: meta, signed_pdf_path: path,
+      status: 'unterschrieben', seller_signer_name: who, seller_sign_meta: meta, signed_pdf_path: path,
       unit_document_id: (doc as { id: string }).id, signed_file_id: driveId, checked_files: checked,
       own_file_ids: driveId ? [...(row.own_file_ids ?? []), driveId] : (row.own_file_ids ?? []),
       error: problems.length ? problems.join('; ') : null, review_reason: null, updated_at: new Date().toISOString(),
@@ -198,7 +210,7 @@ export async function signSubmit(sb: SupabaseClient, body: Record<string, unknow
     await sb.from('activities').insert({
       lead_id: ctx.lead.id, deal_id: ctx.deal.id, type: 'note', direction: 'inbound', auto: true,
       subject: 'Reservierungsvertrag unterschrieben',
-      content: `${name} (${p.template.company_name}) hat den Reservierungsvertrag ${unitLabel} digital unterschrieben (${place}, ${date}). Abgelegt an der Wohnung unter Verträge${driveId ? ' und im Drive-Ordner' : ''}.${problems.length ? ` Probleme: ${problems.join('; ')}` : ''}`,
+      content: `${who} (${p.template.company_name}) hat den Reservierungsvertrag ${unitLabel} digital unterschrieben (${place}, ${date}). Abgelegt an der Wohnung unter Verträge${driveId ? ' und im Drive-Ordner' : ''}.${problems.length ? ` Probleme: ${problems.join('; ')}` : ''}`,
       completed_at: new Date().toISOString(),
     })
 
@@ -212,8 +224,8 @@ export async function signSubmit(sb: SupabaseClient, body: Record<string, unknow
       const err = await invoke(sb, 'send-email', {
         to, subject: de ? `Unterschrieben: Reservierungsvertrag ${p.fields.property_name} ${p.fields.unit_number}` : `Signed: reservation agreement ${p.fields.property_name} ${p.fields.unit_number}`,
         html: de
-          ? `<p>Danke, ${esc(name)}! Anbei Ihre Kopie des unterschriebenen Reservierungsvertrags für <b>${unitTxt}</b> (${esc(p.fields.purchasers.join(', '))}).</p>${where}<p>Viele Grüße<br>Sven &middot; Happy Property</p>`
-          : `<p>Thank you, ${esc(name)}! Attached is your copy of the signed reservation agreement for <b>${unitTxt}</b> (${esc(p.fields.purchasers.join(', '))}).</p>${where}<p>Best regards<br>Sven &middot; Happy Property</p>`,
+          ? `<p>Danke, ${esc(who)}! Anbei Ihre Kopie des unterschriebenen Reservierungsvertrags für <b>${unitTxt}</b> (${esc(p.fields.purchasers.join(', '))}).</p>${where}<p>Viele Grüße<br>Sven &middot; Happy Property</p>`
+          : `<p>Thank you, ${esc(who)}! Attached is your copy of the signed reservation agreement for <b>${unitTxt}</b> (${esc(p.fields.purchasers.join(', '))}).</p>${where}<p>Best regards<br>Sven &middot; Happy Property</p>`,
         attachment, auto: true, lang: de ? 'de' : 'en', already_translated: true,
       })
       if (err) problems.push(`Kopie ${to}: ${err}`)
@@ -221,8 +233,8 @@ export async function signSubmit(sb: SupabaseClient, body: Record<string, unknow
     // Unterschriebenes PDF auch per WhatsApp an den Unterzeichner
     if (ctx.devPhone) {
       const waText = de
-        ? `Danke, ${name}! Hier ist Ihr unterschriebener Reservierungsvertrag (${p.fields.property_name}, Einheit ${p.fields.unit_number}).${driveId ? ' Er liegt auch im gemeinsamen Drive-Ordner für Kunde und Anwalt.' : ''}`
-        : `Thank you, ${name}! Here is your signed reservation agreement (${p.fields.property_name}, unit ${p.fields.unit_number}).${driveId ? ' It is also stored in the shared Drive folder for the client and the lawyer.' : ''}`
+        ? `Danke, ${who}! Hier ist Ihr unterschriebener Reservierungsvertrag (${p.fields.property_name}, Einheit ${p.fields.unit_number}).${driveId ? ' Er liegt auch im gemeinsamen Drive-Ordner für Kunde und Anwalt.' : ''}`
+        : `Thank you, ${who}! Here is your signed reservation agreement (${p.fields.property_name}, unit ${p.fields.unit_number}).${driveId ? ' It is also stored in the shared Drive folder for the client and the lawyer.' : ''}`
       const err = await whatsappPdf(sb, ctx.devPhone, waText, path, fname, de ? 'de' : 'en')
       if (err) problems.push(`WhatsApp-PDF: ${err}`)
     }
@@ -230,7 +242,7 @@ export async function signSubmit(sb: SupabaseClient, body: Record<string, unknow
       const err = await notifyCustomerSigned(sb, ctx.lead.id, { de: 'Der Reservierungsvertrag für deine Wohnung', en: 'The reservation agreement for your property' })
       if (err) problems.push(`Kunde WhatsApp: ${err}`)
     }
-    await whatsappSven(sb, `✅ ${name} (${p.template.company_name}) hat den Reservierungsvertrag ${leadName(ctx.lead)} (${unitLabel}) digital unterschrieben.\n\nLiegt an der Wohnung unter Verträge${driveId ? ' und im Drive-Ordner' : ''}.${problems.length ? `\n\nAchtung: ${problems.join('; ')}` : ''}\n\n${CRM_LEAD}${ctx.lead.id}`)
+    await whatsappSven(sb, `✅ ${who} (${p.template.company_name}) hat den Reservierungsvertrag ${leadName(ctx.lead)} (${unitLabel}) digital unterschrieben.\n\nLiegt an der Wohnung unter Verträge${driveId ? ' und im Drive-Ordner' : ''}.${problems.length ? `\n\nAchtung: ${problems.join('; ')}` : ''}\n\n${CRM_LEAD}${ctx.lead.id}`)
     return { status: 200, body: { ok: true, test: false, pdf_base64: b64(pdf) } }
   } catch (e) {
     // Sperre wieder lösen, damit erneut unterschrieben werden kann

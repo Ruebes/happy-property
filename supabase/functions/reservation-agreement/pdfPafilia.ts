@@ -155,7 +155,7 @@ export async function renderPafilia(t: TemplateRow, f: AgreementFields, seller?:
 
   // ── Unterschriften ──
   const buyers = f.purchasers.length ? f.purchasers : ['']
-  const leftH = 150
+  const leftH = seller?.second ? 210 : 150
   const rightH = 62 + buyers.length * 48
   if (y - 24 - Math.max(leftH, rightH) < BOTTOM) newPage()
   y -= 24
@@ -183,6 +183,15 @@ export async function renderPafilia(t: TemplateRow, f: AgreementFields, seller?:
     text(`Signed by: ${seller.name}`, LX, sigLineY - 32, 9, reg, DARK, lineW + 20)
     text(`Place, date: ${seller.place}, ${seller.date}`, LX, sigLineY - 45, 8.5, reg, DARK, lineW + 20)
     text(`Signed electronically ${seller.signedAtUtc} via Happy Property`, LX, sigLineY - 57, 6.5, reg, GREY, lineW + 20)
+    if (seller.second) {
+      // zweiter Unterzeichner des Bauträgers unter dem ersten
+      const ly = sigLineY - 62
+      const img2 = await pdf.embedPng(seller.second.png)
+      const sc = Math.min(140 / img2.width, 44 / img2.height)
+      page.drawImage(img2, { x: LX, y: ly - 58 + 3, width: img2.width * sc, height: img2.height * sc })
+      dotted(LX, ly - 58)
+      text(`Signed by: ${seller.second.name}`, LX, ly - 72, 9, reg, DARK, lineW + 20)
+    }
   }
   buyers.forEach((n, i) => {
     const ly = sigLineY - i * 48
