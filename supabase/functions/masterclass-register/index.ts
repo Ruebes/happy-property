@@ -230,7 +230,16 @@ Deno.serve(async (req) => {
   try { body = await req.json() } catch { return json({ error: 'bad json' }, 400) }
 
   // Honeypot: Bots füllen das unsichtbare Feld — stumm „ok" zurückgeben.
-  if (body.website) return json({ ok: true })
+  // Ausnahme Autofill: Android/Instagram-WebView trägt dort die eigenen Daten ein
+  // (26.10.: E-Mail im Feld, echte Anmeldung scheiterte 5×). Steht im Feld ein Wert
+  // aus den sichtbaren Feldern, ist es ein Mensch.
+  const hp = String(body.website ?? '').trim().toLowerCase()
+  if (hp) {
+    const digits = (s: unknown) => String(s ?? '').replace(/\D/g, '')
+    const own = [body.email, body.first_name, body.last_name, `${body.first_name ?? ''} ${body.last_name ?? ''}`].map((v) => String(v ?? '').trim().toLowerCase()).filter(Boolean)
+    const autofill = own.includes(hp) || (digits(hp).length >= 6 && digits(body.phone).endsWith(digits(hp).replace(/^0+/, '')))
+    if (!autofill) return json({ ok: true })
+  }
   const key = String(body.event ?? '').trim()
   const ev = EVENTS[key]
   if (!ev) return json({ error: 'unknown event' }, 400)
