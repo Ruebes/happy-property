@@ -1628,6 +1628,10 @@ export default function Deck() {
     }
   }
   const bookTitles = bookPages.map(g => bookTitle(view[g[0]]))
+  // Doppelseite (breite Bildschirme): nur ruhige Abschnitte stehen halb so breit nebeneinander.
+  // Titel, Videos, Karten, Lagepläne und Bilderstrecken brauchen die ganze Breite.
+  const BOOK_HALF: string[] = ['letter', 'unit', 'payment', 'w_day', 'w_home', 'w_amen', 'w_more', 'w_options', 'w_reasons', 'w_loc', 'w_spec', 'inventory', 'w_why', 'cta']
+  const bookPairable = bookPages.map(g => g.every(i => BOOK_HALF.includes(view[i].type)))
 
   return (
     <VatRefundCtx.Provider value={{ byUnit: vatRefund, units: deckUnits }}>
@@ -1665,7 +1669,7 @@ export default function Deck() {
         <InfoModal token={token} refId={ref} campaign={campaign} person={person} unitNr={deckUnits.length > 1 ? infoUnit : unitNr} units={deckUnits}
           internal={internal} terminUrl={terminUrl} onClose={() => setInfo(false)} />
       )}
-      {book && !isPrint && <DeckBook count={bookPages.length} renderPage={renderBookPage} titles={bookTitles} cover={bookCover} onClose={closeBook} />}
+      {book && !isPrint && <DeckBook count={bookPages.length} renderPage={renderBookPage} titles={bookTitles} pairable={bookPairable} cover={bookCover} onClose={closeBook} />}
     </div>
     </InfoOpenCtx.Provider>
     </VatRefundCtx.Provider>
