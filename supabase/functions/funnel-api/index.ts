@@ -339,6 +339,18 @@ async function unterlagenVersenden(admin: SupabaseClient, leadId: string, dealId
   return true
 }
 
+// Honeypot vs. Autofill: Android/Instagram-WebView traegt die eigenen Daten auch ins
+// versteckte Feld ein (26.10.2026, Masterclass-Anmeldungen scheiterten so still).
+// Steht dort ein Wert aus den sichtbaren Feldern, ist es ein Mensch, kein Bot.
+function istBot(hpRaw: unknown, felder: unknown[], tel: unknown): boolean {
+  const hp = String(hpRaw ?? '').trim().toLowerCase()
+  if (!hp) return false
+  const ziffern = (s: unknown) => String(s ?? '').replace(/\D/g, '')
+  const eigene = felder.map((v) => String(v ?? '').trim().toLowerCase()).filter(Boolean)
+  const hpZ = ziffern(hp).replace(/^0+/, '')
+  return !(eigene.includes(hp) || (hpZ.length >= 6 && ziffern(tel).endsWith(hpZ)))
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: CORS })
   try {
@@ -452,7 +464,7 @@ Deno.serve(async (req) => {
     // wird zusätzlich durch seinen Termin-Guard übersprungen.
     if (body.action === 'contact') {
       const c = body.contact ?? {}
-      if (c.website) return json({ ok: true, lead_id: null })   // Honeypot: still schlucken
+      if (istBot(c.website, [c.email, c.first_name, c.last_name, `${c.first_name ?? ''} ${c.last_name ?? ''}`], c.phone)) return json({ ok: true, lead_id: null })   // Honeypot: still schlucken
       if (!c.first_name || !c.email || !c.phone) return json({ error: 'Pflichtfelder fehlen' }, 400)
       const phone = (c.phone ?? '').replace(/[^\d+]/g, '')
       const email = (c.email ?? '').trim().toLowerCase()

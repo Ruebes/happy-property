@@ -346,9 +346,20 @@ const WUNSCH: Record<string, string> = {
   ablauf: 'Ablauf beim Kauf aus Deutschland',
 }
 const kurz = (v: unknown, n: number) => (typeof v === 'string' ? v : '').replace(/\s+/g, ' ').trim().slice(0, n)
+// Honeypot vs. Autofill: Android/Instagram-WebView traegt die eigenen Daten auch ins
+// versteckte Feld ein (26.10.2026, Masterclass-Anmeldungen scheiterten so still).
+// Steht dort ein Wert aus den sichtbaren Feldern, ist es ein Mensch, kein Bot.
+function istBot(hpRaw: unknown, felder: unknown[], tel: unknown): boolean {
+  const hp = String(hpRaw ?? '').trim().toLowerCase()
+  if (!hp) return false
+  const ziffern = (s: unknown) => String(s ?? '').replace(/\D/g, '')
+  const eigene = felder.map((v) => String(v ?? '').trim().toLowerCase()).filter(Boolean)
+  const hpZ = ziffern(hp).replace(/^0+/, '')
+  return !(eigene.includes(hp) || (hpZ.length >= 6 && ziffern(tel).endsWith(hpZ)))
+}
 async function infoRequest(body: Record<string, unknown>): Promise<{ status: number; body: Record<string, unknown> }> {
   // Honigtopf: Menschen sehen das Feld nicht, Bots fuellen es aus.
-  if (kurz(body.website, 200)) return { status: 200, body: { ok: true } }
+  if (istBot(kurz(body.website, 200), [body.email, body.name], body.phone)) return { status: 200, body: { ok: true } }
   const token = kurz(body.token, 64)
   if (!token) return { status: 400, body: { error: 'Deck fehlt.' } }
   const ref = kurz(body.ref, 80) || null
