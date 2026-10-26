@@ -19,7 +19,7 @@ const SERIF = "'Playfair Display',Georgia,serif"
 const SANS = "'Montserrat','Helvetica Neue',Arial,sans-serif"
 
 // Zahlen und Datum im Format der Seitensprache (englische Kunden: 165,000 €).
-const LOC = (): string => (i18n.language?.startsWith('en') ? 'en-GB' : LOC())
+const LOC = (): string => (i18n.language?.startsWith('en') ? 'en-GB' : 'de-DE')
 const eur = (n: number | null | undefined) => n == null || isNaN(n) ? '–'
   : new Intl.NumberFormat(LOC(), { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(Math.round(n))
 const pct = (n: number | null | undefined, d = 1) => n == null || isNaN(n) ? '–'
