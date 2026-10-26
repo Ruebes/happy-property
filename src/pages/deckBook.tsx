@@ -7,9 +7,10 @@ import { VideoAutoCtx, InBookCtx } from './deckWeb'
 // bewegen, mit Ton, vielleicht als Ringbuch." Ersetzt den alten Blättern-Modus.
 // Ein Ringbuch mit goldener Drahtbindung links: erst der geschlossene Umschlag,
 // dann eine Seite je Deck-Abschnitt. Die Seite dreht sich in 3D um die Ringe und
-// folgt beim Wischen dem Finger. Das Papiergeräusch wird im Browser berechnet
-// (Web Audio, keine Tondatei) und ist genau so lang wie die Bewegung: das Klatschen
-// kommt, wenn die Seite aufliegt. Lange Seiten scrollen in sich.
+// folgt beim Wischen dem Finger. Das Papiergeräusch ist eine echte Aufnahme (Mixkit,
+// public/sounds, abwechselnd zwei Blätter, von Conny 26.10. ausgesucht), abgespielt über
+// Web Audio, das Aufliegen fällt aufs Ende der Drehung. Lädt sie nicht, wird das Geräusch
+// wie bisher im Browser berechnet. Lange Seiten scrollen in sich.
 // Umgeschaltet wird oben über "Seite | Buch" (ViewToggle), Escape schließt.
 // Nachgebessert nach Leser-Feedback (22.10.): jede Seite hat oben denselben Kopf
 // (Kapitelnummer, genaue Überschrift, Logo), Videos stehen im Buch in einem
@@ -32,6 +33,48 @@ let audioCtx: AudioContext | null = null
 let noiseBuf: AudioBuffer | null = null
 let crackleBuf: AudioBuffer | null = null
 
+// Echte Aufnahme: zwei einzelne Blätter aus „Single book paging“ (Mixkit, Lizenz in public/sounds).
+// land = Sekunde, in der das Blatt aufliegt; darauf wird das Ende der Drehung gelegt.
+const PAPER_SAMPLES = [
+  { url: '/sounds/papier-blatt-1.m4a', land: 0.42 },
+  { url: '/sounds/papier-blatt-2.m4a', land: 0.35 },
+]
+let paperBufs: (AudioBuffer | null)[] = []
+let paperLoading = false
+let paperNext = 0
+
+function loadPaper(ctx: AudioContext) {
+  if (paperLoading) return
+  paperLoading = true
+  paperBufs = PAPER_SAMPLES.map(() => null)
+  PAPER_SAMPLES.forEach((smp, i) => {
+    fetch(smp.url)
+      .then(r => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
+      .then(b => new Promise<AudioBuffer>((res, rej) => ctx.decodeAudioData(b, res, rej)))
+      .then(buf => { paperBufs[i] = buf })
+      .catch(() => { /* bleibt null, dann klingt der berechnete Ton */ })
+  })
+}
+
+/** Spielt ein echtes Blatt; false, wenn die Aufnahme (noch) nicht da ist. */
+function playPaper(ctx: AudioContext, seconds: number, kind: 'page' | 'cover'): boolean {
+  const ready = paperBufs.map((b, i) => (b ? i : -1)).filter(i => i >= 0)
+  if (!ready.length) return false
+  const i = ready[paperNext++ % ready.length]
+  const buf = paperBufs[i]!
+  // Umschlag: etwas langsamer abgespielt, klingt schwerer
+  const rate = kind === 'cover' ? 0.86 : 0.96 + Math.random() * 0.08
+  const land = PAPER_SAMPLES[i].land / rate
+  const s = ctx.createBufferSource()
+  s.buffer = buf
+  s.playbackRate.value = rate
+  const g = ctx.createGain()
+  g.gain.value = kind === 'cover' ? 0.95 : 0.8
+  s.connect(g).connect(ctx.destination)
+  s.start(ctx.currentTime + 0.01 + Math.max(0, seconds - land))
+  return true
+}
+
 function getAudio(): AudioContext | null {
   try {
     if (!audioCtx) {
@@ -40,6 +83,7 @@ function getAudio(): AudioContext | null {
       audioCtx = new AC()
     }
     if (audioCtx.state === 'suspended') void audioCtx.resume().catch(() => {})
+    loadPaper(audioCtx)
     if (!noiseBuf || !crackleBuf) {
       const sr = audioCtx.sampleRate, len = Math.floor(sr * 2)
       noiseBuf = audioCtx.createBuffer(1, len, sr)
@@ -63,7 +107,9 @@ export function unlockBookAudio() { getAudio() }
 
 function playTurn(seconds: number, kind: 'page' | 'cover') {
   const ctx = getAudio()
-  if (!ctx || !noiseBuf || !crackleBuf) return
+  if (!ctx) return
+  try { if (playPaper(ctx, seconds, kind)) return } catch { /* weiter mit dem berechneten Ton */ }
+  if (!noiseBuf || !crackleBuf) return
   try {
     const d = Math.max(0.16, seconds)
     const t0 = ctx.currentTime + 0.01
