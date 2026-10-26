@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { VideoAutoCtx, InBookCtx } from './deckWeb'
 
@@ -14,9 +14,6 @@ import { VideoAutoCtx, InBookCtx } from './deckWeb'
 // Nachgebessert nach Leser-Feedback (22.10.): jede Seite hat oben denselben Kopf
 // (Kapitelnummer, genaue Überschrift, Logo), Videos stehen im Buch in einem
 // einheitlichen Rahmen, und auch auf einem Video lässt sich weiterblättern.
-// Doppelseite (26.10., nach Connys Praxis-CRM): auf breiten Bildschirmen stehen zwei
-// ruhige Seiten (Text, Wohnung, Zahlungsplan ...) nebeneinander auf einem Blatt, mit
-// Falz in der Mitte. Breite Abschnitte (Titel, Video, Karte, Bilder) bleiben allein.
 
 const CREAM = '#FAF6EC'
 const DARK = '#1b1b22'
@@ -236,29 +233,6 @@ export function TopViewToggle({ onBook }: { onBook: () => void }) {
 // ── Buch ───────────────────────────────────────────────────────────────────────
 export interface BookCover { image?: string; forLine?: string; logo: string }
 
-// Doppelseite: nur auf breiten Bildschirmen im Querformat, sonst eine Seite je Blatt.
-const SPREAD_MIN_W = 1200
-type Spread = { pages: number[]; first: number }
-function toSpreads(count: number, pairable: boolean[] | undefined, wide: boolean): Spread[] {
-  const out: Spread[] = []
-  for (let i = 0; i < count; i++) {
-    const last = out[out.length - 1]
-    if (wide && pairable?.[i] && last && last.pages.length === 1 && pairable[last.first]) last.pages.push(i)
-    else out.push({ pages: [i], first: i })
-  }
-  return out
-}
-function useWide() {
-  const check = () => typeof window !== 'undefined' && window.innerWidth >= SPREAD_MIN_W && window.innerWidth > window.innerHeight * 1.2
-  const [wide, setWide] = useState(check)
-  useEffect(() => {
-    const on = () => setWide(check())
-    window.addEventListener('resize', on)
-    return () => window.removeEventListener('resize', on)
-  }, [])
-  return wide
-}
-
 type Els = { root: HTMLDivElement; f: HTMLElement; b: HTMLElement; fs: HTMLElement; bs: HTMLElement; cast: HTMLElement }
 const q = (root: HTMLElement, sel: string) => root.querySelector(sel) as HTMLElement
 const els = (root: HTMLDivElement): Els => ({
@@ -384,20 +358,6 @@ function PageScroller({ active, n, title, logo, children }: { active: boolean; n
   )
 }
 
-// Halbe Seite der Doppelseite: ist sie kürzer als die Nachbarseite, füllt ihr letzter Hintergrund den Rest.
-function SpreadHalf({ children }: { children: ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const measure = () => { el.style.backgroundColor = bottomBg(el.firstElementChild) ?? '' }
-    measure()
-    const tm = setTimeout(measure, 1200) // Bilder laden nach
-    return () => clearTimeout(tm)
-  }, [])
-  return <div ref={ref} className="min-w-0">{children}</div>
-}
-
 function CoverFace({ cover, onOpen }: { cover: BookCover; onOpen: () => void }) {
   const { t } = useTranslation()
   return (
@@ -459,27 +419,18 @@ const IconBtn = ({ label, onClick, disabled, children, className = 'flex' }: { l
   </button>
 )
 
-export function DeckBook({ count: pageCount, renderPage, titles, pairable, cover, onClose }: {
+export function DeckBook({ count, renderPage, titles, cover, onClose }: {
   count: number
   renderPage: (i: number) => ReactNode
   /** Überschrift je Inhaltsseite für den Seitenkopf */
   titles: string[]
-  /** je Inhaltsseite: darf auf breiten Bildschirmen halb so breit neben einer anderen stehen */
-  pairable?: boolean[]
   cover: BookCover
   /** page = zuletzt offene Inhaltsseite (0-basiert), -1 = Umschlag */
   onClose: (page: number) => void
 }) {
   const { t } = useTranslation()
-  const wide = useWide()
-  const spreads = useMemo(() => toSpreads(pageCount, pairable, wide), [pageCount, pairable, wide])
-  const count = spreads.length
   const total = count + 1
-  // Inhaltsseite (0-basiert) zum Blatt, für die Rückkehr in die Scroll-Ansicht
-  const pageOf = (sheet: number) => (sheet <= 0 ? -1 : spreads[sheet - 1]?.first ?? -1)
   const [cur, setCur] = useState(0)
-  // Fenster gedreht oder verkleinert (Doppel- ↔ Einzelseite): auf dem Umschlag neu anfangen
-  useEffect(() => { setCur(0) }, [wide])
   const [sound, setSound] = useState(readSound)
   const [size, setSize] = useState({ w: 0, h: 0 })
   const [fs, setFs] = useState(false)
@@ -639,7 +590,7 @@ export function DeckBook({ count: pageCount, renderPage, titles, pairable, cover
       if (document.querySelector('[aria-modal="true"]')) return // Foto-Vollbild oder Formular offen
       if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); turnRef.current(1) }
       else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); turnRef.current(-1) }
-      else if (e.key === 'Escape' && !document.fullscreenElement) onClose(pageOf(curRef.current))
+      else if (e.key === 'Escape' && !document.fullscreenElement) onClose(curRef.current - 1)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -733,7 +684,7 @@ export function DeckBook({ count: pageCount, renderPage, titles, pairable, cover
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M9 6l6 6-6 6" /></svg>
           </IconBtn>
         </div>
-        <ViewToggle book onChange={b => { if (!b) onClose(pageOf(cur)) }} />
+        <ViewToggle book onChange={b => { if (!b) onClose(cur - 1) }} />
         <div className="sm:flex-1 sm:basis-0 flex items-center justify-end gap-1">
           <IconBtn label={sound ? t('deck.bookSoundOff', 'Ton aus') : t('deck.bookSoundOn', 'Ton an')} onClick={toggleSound}>
             {sound ? (
@@ -758,7 +709,7 @@ export function DeckBook({ count: pageCount, renderPage, titles, pairable, cover
       {/* Tisch mit dem Buch */}
       <div className="relative flex-1 min-h-0 pt-4 sm:pt-6 pl-[30px] pr-[18px] sm:px-20 pb-[calc(84px+env(safe-area-inset-bottom))] sm:pb-[100px]">
         <div ref={bookRef} className="relative h-full mx-auto select-none"
-          style={{ maxWidth: wide ? 1640 : 1180, touchAction: 'pan-y pinch-zoom', animation: 'hpBookArrive .6s cubic-bezier(.2,.8,.2,1)', ['--hp-book-h' as string]: `${size.h || 600}px` }}
+          style={{ maxWidth: 1180, touchAction: 'pan-y pinch-zoom', animation: 'hpBookArrive .6s cubic-bezier(.2,.8,.2,1)', ['--hp-book-h' as string]: `${size.h || 600}px` }}
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerEnd} onPointerCancel={onPointerEnd}
           onClickCapture={e => { if (noClick.current) { e.preventDefault(); e.stopPropagation() } }}
           onDragStart={e => e.preventDefault()}>
@@ -774,18 +725,12 @@ export function DeckBook({ count: pageCount, renderPage, titles, pairable, cover
 
           {idxs.map(s => (
             <div key={s} ref={el => { if (el) sheets.current.set(s, el); else sheets.current.delete(s) }}
-              className="absolute inset-0" style={{ transformOrigin: 'left center', isolation: 'isolate' }}>
+              className="absolute inset-0" style={{ transformOrigin: 'left center' }}>
               <div data-f className="absolute inset-0 overflow-hidden" style={{ borderRadius: SHEET_RADIUS, background: s === 0 ? DARK : CREAM, boxShadow: '0 1px 2px rgba(0,0,0,.25)' }}>
                 {s === 0 ? <CoverFace cover={cover} onOpen={() => turn(1)} /> : (
-                  <PageScroller active={s === cur} n={s} title={(spreads[s - 1]?.pages ?? []).map(p => titles[p]).filter(Boolean).join(' · ')} logo={cover.logo}>
+                  <PageScroller active={s === cur} n={s} title={titles[s - 1] ?? ''} logo={cover.logo}>
                     <InBookCtx.Provider value>
-                      <VideoAutoCtx.Provider value={s === cur}>
-                        {(spreads[s - 1]?.pages.length ?? 0) > 1 ? (
-                          <div className="hpbook-spread grid grid-cols-2 items-stretch">
-                            {spreads[s - 1].pages.map(p => <SpreadHalf key={p}>{renderPage(p)}</SpreadHalf>)}
-                          </div>
-                        ) : renderPage(spreads[s - 1]?.first ?? s - 1)}
-                      </VideoAutoCtx.Provider>
+                      <VideoAutoCtx.Provider value={s === cur}>{renderPage(s - 1)}</VideoAutoCtx.Provider>
                     </InBookCtx.Provider>
                   </PageScroller>
                 )}
@@ -826,8 +771,6 @@ export function DeckBook({ count: pageCount, renderPage, titles, pairable, cover
 @media (prefers-reduced-motion: reduce){[style*="hpBook"]{animation:none!important}}
 @media (pointer: fine){.hpbook-edge{display:none}}
 .hpbook-page .hpweb{background-color:transparent}
-.hpbook-spread{position:relative}
-.hpbook-spread::after{content:'';position:absolute;top:0;bottom:0;left:50%;width:36px;transform:translateX(-50%);pointer-events:none;background:linear-gradient(to right,rgba(0,0,0,0),rgba(60,55,47,.14) 50%,rgba(0,0,0,0))}
 .hpbook-page .hpweb > section:first-child{margin-top:0}
 `}</style>
     </div>
