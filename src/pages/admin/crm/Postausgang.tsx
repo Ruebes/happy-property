@@ -8,6 +8,8 @@ import { scoreFarbe } from '../../../components/crm/DeckReviewSection'
 import RechnerWizard from '../../../components/crm/RechnerWizard'
 import type { CalcItem } from '../../../lib/rechner'
 import { htmlToWhatsapp } from '../../../lib/htmlDerive'
+import { useAuth } from '../../../lib/auth'
+import { autoRegisterForDecks, pendingAutoRegistrations } from '../../../lib/autoRegistration'
 
 // ── Postausgang ──────────────────────────────────────────────────────────────
 // Erzeugte Begleit-Mails (mit Deck-Links) aus dem Deck-Wizard. Sven prüft und
@@ -49,6 +51,7 @@ const deckColor = (rev: number, approved: boolean) =>
 
 export default function Postausgang() {
   const { t } = useTranslation()
+  const { profile } = useAuth()
   const [rows, setRows]       = useState<OutboxRow[]>([])
   const [deckMeta, setDeckMeta] = useState<Record<string, DeckMeta>>({})
   const [calcs, setCalcs]     = useState<CalcRow[]>([])
@@ -185,9 +188,14 @@ export default function Postausgang() {
       if (!devs.length) return ''
       const { data: regs } = await supabase.from('lead_registrations').select('developer').eq('lead_id', row.lead_id)
       const regSet = new Set(((regs ?? []) as { developer: string }[]).map(r => r.developer.toLowerCase().trim()))
-      const missing = devs.filter(d => !regSet.has(d.toLowerCase().trim()))
-      if (!missing.length) return ''
-      return `🚨 ${t('crm.outbox.regWarn', 'ACHTUNG: Kunde ist bei folgenden Developern NICHT registriert')}: ${missing.join(' + ')}.\n${t('crm.outbox.regHint', 'Ohne Registrierung ist der Provisionsanspruch nicht gesichert — erst registrieren, dann senden!')}\n\n`
+      const auto = await pendingAutoRegistrations(row.lead_id, toks)
+      const autoSet = new Set(auto.developers.map(d => d.toLowerCase().trim()))
+      const autoNote = auto.developers.length
+        ? `📋 ${t('crm.outbox.autoRegNote', 'Wird beim Senden automatisch registriert (WhatsApp an Burkhard + Ioulia, Deal auf Registrierung)')}: ${auto.developers.join(' + ')}\n\n`
+        : ''
+      const missing = devs.filter(d => !regSet.has(d.toLowerCase().trim()) && !autoSet.has(d.toLowerCase().trim()))
+      if (!missing.length) return autoNote
+      return autoNote + `🚨 ${t('crm.outbox.regWarn', 'ACHTUNG: Kunde ist bei folgenden Developern NICHT registriert')}: ${missing.join(' + ')}.\n${t('crm.outbox.regHint', 'Ohne Registrierung ist der Provisionsanspruch nicht gesichert — erst registrieren, dann senden!')}\n\n`
     } catch { return '' }
   }
 
@@ -261,7 +269,8 @@ export default function Postausgang() {
       // Erst jetzt ist der Fahrplan fuer den Kunden erreichbar.
       await releasePlans(sendBody)
       await startFollowupChain(row)
-      flash(resend ? t('crm.outbox.resent', '✅ Erneut gesendet') : t('crm.outbox.sent', '✅ Gesendet'))
+      const reg = await runAutoRegistration(row)
+      flash((resend ? t('crm.outbox.resent', '✅ Erneut gesendet') : t('crm.outbox.sent', '✅ Gesendet')) + reg)
       void load()
     } catch (e) {
       await supabase.from('deck_outbox').update({ error_message: e instanceof Error ? e.message : 'Fehler' }).eq('id', row.id)
@@ -278,6 +287,20 @@ export default function Postausgang() {
     try {
       await supabase.functions.invoke('schedule-message', { body: { lead_id: row.lead_id, event_type: 'immobilienauswahl', trigger: 'deck_sent' } })
     } catch (e) { console.warn('[postausgang] Nachfass-Kette nicht gestartet:', e) }
+  }
+
+  // Nach der Nachfass-Kette (die verlangt den Deal noch in Immobilienauswahl):
+  // Kunde beim Bauträger registrieren, wenn ein Deck-Projekt das verlangt
+  // (crm_projects.auto_register, z. B. Flora Panorama). Fehler stoppen den
+  // Versand nicht - das Deck ist schon raus -, sie erscheinen in der Meldung.
+  const runAutoRegistration = async (row: OutboxRow): Promise<string> => {
+    try {
+      const devs = await autoRegisterForDecks(row.lead_id, row.deck_tokens ?? [], profile?.id ?? null)
+      return devs.length ? ` · 📋 ${t('crm.outbox.autoRegDone', 'Registrierung angestoßen')}: ${devs.join(' + ')}` : ''
+    } catch (e) {
+      console.warn('[postausgang] Auto-Registrierung fehlgeschlagen:', e)
+      return ` · ⚠️ ${t('crm.outbox.autoRegFail', 'Registrierung fehlgeschlagen, bitte in der Pipeline nachholen')}`
+    }
   }
 
   const sendWhatsApp = async (row: OutboxRow) => {
@@ -327,7 +350,8 @@ export default function Postausgang() {
       await supabase.from('deck_outbox').update({ status: 'sent', sent_at: row.sent_at ?? nowIso, whatsapp_sent_at: nowIso }).eq('id', row.id)
       await releasePlans(row.body)
       await startFollowupChain(row)
-      flash(t('crm.outbox.waSent', '✅ WhatsApp gesendet'))
+      const reg = await runAutoRegistration(row)
+      flash(t('crm.outbox.waSent', '✅ WhatsApp gesendet') + reg)
       void load()
     } catch (e) {
       flash(`${t('crm.outbox.waFail', 'WhatsApp fehlgeschlagen')}: ${e instanceof Error ? e.message : ''}`)

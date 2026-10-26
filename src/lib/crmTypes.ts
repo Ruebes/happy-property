@@ -291,6 +291,7 @@ export interface CrmProject {
   deck_assets:     DeckAssetsCache | null  // gecachte Drive-Assets (prepare-project-assets)
   deck_token:      string | null   // generisches Projekt-Deck (/deck/<token>) für Zoom
   deck_generated_at: string | null
+  auto_register?:  boolean         // Deck-Versand registriert den Kunden automatisch beim Bauträger
   created_at:      string
   updated_at:      string
   // joined
