@@ -927,6 +927,15 @@ export default function AppointmentModal({
         }
       }
 
+      // Bauträger-Briefing (Sven 27.10.26): Termin mit Kunde + Bauträger-Kontakt →
+      // der Bauträger bekommt zusätzlich per WhatsApp, wer kommt, und den Link auf
+      // das Kunden-Briefing. Läuft serverseitig im Hintergrund (KI, ca. 1-2 Min);
+      // bei einer Bearbeitung wird nur die Seite aktualisiert, nicht neu gesendet.
+      if (selectedLeadId && apptId && attendees.length && (sendEmailInvite || sendWhatsAppInvite)) {
+        void supabase.functions.invoke('developer-briefing', { body: { appointment_id: apptId } })
+          .catch(e => console.warn('[AppointmentModal] developer-briefing fehlgeschlagen:', e))
+      }
+
       // Nebenwirkungs-Warnungen sichtbar machen statt still zu schließen.
       // Termin selbst ist gespeichert — Button wird zu „Schließen" (kein Doppel-Anlegen).
       if (warnings.length > 0) {
