@@ -1577,9 +1577,10 @@ Deno.serve(async (req) => {
       }
       return json({ ok: true, swept: results.length, results })
     }
+    // engage_unknown kommt ohne lead_id: der Kontakt entsteht erst dort.
+    if (body.action === 'engage_unknown') return await handleEngageUnknown(admin, body.phone ?? '', body.push_name ?? null, body.text ?? '')
     if (!body.lead_id) return json({ error: 'lead_id fehlt' }, 400)
     if (body.action === 'start') return await handleStart(admin, body.lead_id, body.deal_id ?? null, body.source ?? 'unknown')
-    if (body.action === 'engage_unknown') return await handleEngageUnknown(admin, body.phone ?? '', body.push_name ?? null, body.text ?? '')
     if (body.action === 'engage') return await handleEngage(admin, body.lead_id, body.text ?? '', body.force === true)
     if (body.action === 'reply') return await handleReply(admin, body.lead_id, body.text ?? '')
     if (body.action === 'nudge') return await handleNudge(admin, body.lead_id, Number(body.stage) || 0, body.source ?? 'no_show', body.intro)
