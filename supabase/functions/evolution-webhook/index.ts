@@ -27,7 +27,7 @@ const EVO_STATE_KEY = 'wa_evo_state'          // 'open' | 'close' | 'connecting'
 const ok = (s: string) => new Response(s, { status: 200 })
 
 type EvoMessage = {
-  key?: { remoteJid?: string; fromMe?: boolean; id?: string; participant?: string }
+  key?: { remoteJid?: string; remoteJidAlt?: string; senderPn?: string; fromMe?: boolean; id?: string; participant?: string }
   pushName?: string
   messageType?: string
   message?: Record<string, { caption?: string; fileName?: string; text?: string } | string | undefined>
@@ -93,7 +93,13 @@ Deno.serve(async (req) => {
     if (event !== 'messages.upsert') return ok(`OK (ignored ${event || 'unknown'})`)
 
     const m = payload.data as EvoMessage | undefined
-    const jid = m?.key?.remoteJid ?? ''
+    // WhatsApp adressiert viele Chats inzwischen ueber eine interne Kennung
+    // (…@lid) statt der Nummer. Die echte Nummer steht dann in remoteJidAlt bzw.
+    // senderPn. Ohne diesen Ersatz gingen solche Nachrichten verloren (29.10.2026).
+    const rawJid = m?.key?.remoteJid ?? ''
+    const jid = rawJid.endsWith('@lid')
+      ? ([m?.key?.remoteJidAlt, m?.key?.senderPn].find(j => j && j.includes('@s.whatsapp.net')) ?? rawJid)
+      : rawJid
     const uid = m?.key?.id ? String(m.key.id) : null
     const fromMe = m?.key?.fromMe === true
 

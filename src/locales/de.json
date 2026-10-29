@@ -4235,6 +4235,7 @@
       "empty": "Keine Konversationen.",
       "pick": "Konversation auswählen",
       "openLead": "Kontakt öffnen",
+      "unknownNumber": "Nummer ohne Kontakt",
       "unknown": "Unbekannt",
       "replyPlaceholder": "Antwort schreiben … (Enter sendet, ⌘/Strg+Enter = Zeilenumbruch)",
       "send": "Senden",

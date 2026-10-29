@@ -36,6 +36,7 @@ interface Convo {
   lastDir: 'inbound' | 'outbound'
   channels: Set<'email' | 'whatsapp'>
   unread: number
+  unknown?: boolean   // Nummer ohne Kontakt (wa_unknown_messages), lead_id = 'wa:+49…'
 }
 
 type ChannelFilter = 'all' | 'whatsapp' | 'email'
@@ -121,7 +122,33 @@ export default function Inbox() {
         if (unread) c.unread++
         c.channels.add(r.type)
       }
+      // WhatsApps von Nummern ohne Kontakt (nur für Admins sichtbar, RLS). Sven will
+      // ALLE Nachrichten der Geschäftsnummer sehen, nicht nur die von Kunden.
+      const { data: unk, error: unkErr } = await supabase
+        .from('wa_unknown_messages')
+        .select('id, phone, push_name, direction, content, created_at, read_at')
+        .order('created_at', { ascending: false })
+        .limit(2000)
+      if (unkErr) console.warn('[Inbox] unbekannte Nummern:', unkErr.message)
+      // deno-lint-ignore no-explicit-any
+      for (const r of (unk ?? []) as any[]) {
+        const key = `wa:${r.phone}`
+        const unread = r.direction === 'inbound' && !r.read_at
+        let c = byLead.get(key)
+        if (!c) {
+          c = {
+            lead_id: key, name: r.phone, email: null, phone: r.phone, whatsapp: r.phone,
+            msgs: [], lastAt: r.created_at, lastDir: r.direction, channels: new Set(), unread: 0, unknown: true,
+          }
+          byLead.set(key, c)
+        }
+        if (r.push_name && c.name === r.phone) c.name = `${r.push_name} (${r.phone})`
+        c.msgs.push({ id: `wa-${r.id}`, type: 'whatsapp', direction: r.direction, subject: null, content: r.content, at: r.created_at, unread })
+        if (unread) c.unread++
+        c.channels.add('whatsapp')
+      }
       const list = Array.from(byLead.values()).map(c => {
+        if (c.unknown) c.msgs.sort((a, b) => (a.at < b.at ? 1 : -1))
         c.lastAt = c.msgs[0]?.at ?? c.lastAt
         c.lastDir = c.msgs[0]?.direction ?? c.lastDir
         c.msgs.reverse()
@@ -144,8 +171,11 @@ export default function Inbox() {
     setConvos(cs => cs.map(x => x.lead_id === leadId
       ? { ...x, unread: 0, msgs: x.msgs.map(m => m.unread ? { ...m, unread: false } : m) }
       : x))
-    const { error } = await supabase.from('activities').update({ read_at: new Date().toISOString() })
-      .eq('lead_id', leadId).eq('direction', 'inbound').is('read_at', null)
+    const { error } = c.unknown
+      ? await supabase.from('wa_unknown_messages').update({ read_at: new Date().toISOString() })
+        .eq('phone', c.phone ?? '').eq('direction', 'inbound').is('read_at', null)
+      : await supabase.from('activities').update({ read_at: new Date().toISOString() })
+        .eq('lead_id', leadId).eq('direction', 'inbound').is('read_at', null)
     if (error) console.warn('[Inbox] markRead:', error.message)
   }, [convos])
 
@@ -280,7 +310,12 @@ export default function Inbox() {
         if (!anySent) throw new Error(t('crm.inbox.allFailed', 'Versand fehlgeschlagen: {{f}}', { f: failed.join(', ') }))
         if (failed.length) showToast(t('crm.inbox.partFailed', 'Teilweise gesendet - nicht angekommen: {{f}}', { f: failed.join(', ') }))
         if (anyAttachFailed) showToast(t('crm.inbox.attachFailed', 'Text gesendet, Anhang leider nicht: {{e}}', { e: '' }))
-        await supabase.from('activities').insert({
+        if (current.unknown) {
+          await supabase.from('wa_unknown_messages').insert({
+            phone, direction: 'outbound',
+            content: `${text}${files.length ? '\n' + files.map(f => `📎 ${f.name}`).join('\n') : ''}`.slice(0, 20000),
+          })
+        } else await supabase.from('activities').insert({
           lead_id: current.lead_id, type: 'whatsapp', direction: 'outbound',
           subject: `WhatsApp → ${current.name}`,
           content: `${text}${files.length ? '\n' + files.map(f => `📎 ${f.name}`).join('\n') : ''}`.slice(0, 20000),
@@ -397,10 +432,16 @@ export default function Inbox() {
                       <div className="font-semibold text-gray-900 truncate">{current.name}</div>
                       <div className="text-xs text-gray-400 truncate">{[current.email, current.whatsapp || current.phone].filter(Boolean).join(' · ')}</div>
                     </div>
-                    <button onClick={() => navigate(`/admin/crm/leads/${current.lead_id}`)}
-                      className="shrink-0 text-xs font-medium text-gray-600 border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50">
-                      {t('crm.inbox.openLead', 'Kontakt öffnen')} →
-                    </button>
+                    {current.unknown ? (
+                      <span className="shrink-0 text-xs font-medium text-gray-500 bg-gray-100 rounded-lg px-3 py-1.5">
+                        {t('crm.inbox.unknownNumber', 'Nummer ohne Kontakt')}
+                      </span>
+                    ) : (
+                      <button onClick={() => navigate(`/admin/crm/leads/${current.lead_id}`)}
+                        className="shrink-0 text-xs font-medium text-gray-600 border border-gray-200 rounded-lg px-3 py-1.5 hover:bg-gray-50">
+                        {t('crm.inbox.openLead', 'Kontakt öffnen')} →
+                      </button>
+                    )}
                   </div>
 
                   <div ref={threadRef} className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50/50">

@@ -51,13 +51,13 @@ export function detectsStopIntent(text: string): boolean {
 
 // Günstiger Vorfilter: könnte die Nachricht überhaupt um einen Termin gehen? Nur
 // dann fragt der Bot die KI (spart KI-Aufrufe bei „danke"/„ok"/Produktfragen).
-const APPT_HINT = /termin|telefon|anruf|\bruf|\bcall\b|zoom|video|sprechen|besprech|treffen|meeting|\bzeit\b|\bwann\b|uhrzeit|quatschen/i
+const APPT_HINT = /termin|telefon|anruf|\bruf|\bcall\b|zoom|video|sprechen|besprech|treffen|meeting|\bzeit\b|\bwann\b|uhrzeit|quatschen|kennenlern|kennen lern|persönlich|vorbei|\bmeet\b/i
 
-async function callBot(action: 'engage' | 'reply', lead_id: string, text: string, tag: string): Promise<void> {
+async function callBot(action: 'engage' | 'reply' | 'engage_unknown', lead_id: string | null, text: string, tag: string, extra: Record<string, unknown> = {}): Promise<void> {
   const p = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
     method:  'POST',
     headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ action, lead_id, text }),
+    body:    JSON.stringify({ action, lead_id, text, ...extra }),
   }).then(r => r.text()).catch(e => console.error(`[${tag}] booking-bot ${action} Fehler:`, e))
   const er = (globalThis as { EdgeRuntime?: { waitUntil: (p: Promise<unknown>) => void } }).EdgeRuntime
   if (er) er.waitUntil(p); else await p
@@ -68,6 +68,18 @@ export async function markProcessed(sb: SupabaseClient, uid: string | null): Pro
   if (!uid) return true
   const { error } = await sb.from('wa_processed').insert({ message_uid: String(uid) })
   return !error
+}
+
+/** Nachricht einer Nummer ohne Kontakt fuer den Posteingang festhalten. */
+async function logUnknown(sb: SupabaseClient, ev: WaEvent, direction: 'inbound' | 'outbound', tag: string): Promise<void> {
+  const digits = String(ev.phone).replace(/\D/g, '')
+  if (digits.length < 7 || !ev.text) return
+  const { error } = await sb.from('wa_unknown_messages').insert({
+    phone: '+' + digits, push_name: direction === 'inbound' ? (ev.pushName ?? null) : null,
+    direction, content: ev.text.slice(0, 20000),
+    whatsapp_message_id: ev.uid ? String(ev.uid) : null,
+  })
+  if (error && error.code !== '23505') console.warn(`[${tag}] unbekannte Nummer:`, error.message)
 }
 
 export type WaOutcome = 'dupe' | 'outbound' | 'ignored' | 'no-lead' | 'processed' | 'error'
@@ -87,7 +99,10 @@ export async function processWaEvent(sb: SupabaseClient, ev: WaEvent, tag: strin
         try {
           const { data: rows } = await sb.rpc('find_leads_by_phone_suffix', { suffix: digits.slice(-8) })
           const lead = ((rows ?? []) as { id: string }[])[0]
-          if (lead) {
+          if (!lead) {
+            // Sven schreibt einer Nummer ohne Kontakt: in den Posteingang (unbekannte Nummern).
+            await logUnknown(sb, ev, 'outbound', tag)
+          } else {
             const { error: le } = await sb.from('activities').insert({
               lead_id: lead.id, type: 'whatsapp', direction: 'outbound', auto: false,
               subject: 'WhatsApp gesendet', content: ev.text,
@@ -177,6 +192,14 @@ export async function processWaEvent(sb: SupabaseClient, ev: WaEvent, tag: strin
         .ilike('phone', `%${digits.slice(-8)}`).order('created_at').limit(1)
       const sub = (subs as { id: string }[] | null)?.[0]
       if (sub) await maybeUpdateEmailFromWa(sb, { subscriber_id: sub.id }, ev.phone, text, tag)
+    }
+    // Trotzdem in den Posteingang: Sven will ALLE WhatsApps der Geschaeftsnummer sehen,
+    // nicht nur die von bekannten Kunden. Kein Bot, keine Automatik fuer diese Nummern.
+    await logUnknown(sb, ev, 'inbound', tag)
+    // Will die Person Sven einfach kennenlernen? Dann bietet Lotte das Café an und
+    // legt erst dabei den Kontakt an (booking-bot entscheidet, im Hintergrund).
+    if (!ev.mediaOnly && !detectsStopIntent(text) && APPT_HINT.test(text)) {
+      await callBot('engage_unknown', null, text, tag, { phone: ev.phone, push_name: ev.pushName ?? null })
     }
     return { outcome: 'no-lead' }
   }

@@ -404,7 +404,7 @@ Fülle nur passende Felder, sonst null.`
 // Erkennt in einer FREIEN (nicht-Dialog) WhatsApp, ob der Kunde einen Termin/Anruf/
 // ein Gespräch ausmachen möchte. Konservativ (nur klare Terminwünsche), damit der
 // Bot nicht bei Produktfragen/Smalltalk reingrätscht. Optional Zeit-Hinweise.
-interface ApptReq { wants: boolean; onsite: boolean; day_hint: string | null; daypart: string | null; time_hint: string | null; on_date: string | null; after_date: string | null }
+interface ApptReq { wants: boolean; onsite: boolean; casual?: boolean; day_hint: string | null; daypart: string | null; time_hint: string | null; on_date: string | null; after_date: string | null }
 async function detectApptRequest(text: string): Promise<ApptReq> {
   const off: ApptReq = { wants: false, onsite: false, day_hint: null, daypart: null, time_hint: null, on_date: null, after_date: null }
   const key = Deno.env.get('ANTHROPIC_API_KEY'); if (!key) return off
@@ -416,6 +416,7 @@ Frage 1 (wants): Wird gerade eine Zeit für einen TERMIN/Anruf/Videocall/Gesprä
 wants=true: "können wir telefonieren?", "hast du morgen Zeit?", "lass uns einen Termin machen", "wann passt es dir?", "sollen wir kurz sprechen?", "wollen wir einen Call machen?".
 wants=false bei: reinen Produkt-/Sachfragen, Smalltalk, Dank, "schick mir den Plan", Meinungen, Objektwünschen; reiner BESTÄTIGUNG eines schon vereinbarten Termins ("Freitag 12 passt", "ok bis dann"); Verweis auf VERGANGENES ("hatten ja telefoniert"); und EINSEITIGER Sofort-/Ankündigung OHNE Abstimmungsbedarf ("ich ruf dich gleich/jetzt/später an", "ich melde mich gleich"). Nur wenn eine Zeit erst noch gemeinsam gefunden werden muss → true. Im Zweifel false.
 Frage 2 (onsite): Geht es klar um einen VOR-ORT-Termin? onsite=true bei Besichtigung/Viewing, Objektbesichtigung, persönliches Treffen vor Ort, "vorbeikommen", "die Wohnung/Objekt anschauen", "vor Ort treffen". onsite=false bei Telefonat/Call/Videocall/Zoom/WhatsApp-Anruf ODER wenn die Art offen/unklar ist (Default false).
+Frage 3 (casual): Nur bei onsite=true. casual=true, wenn die Person Sven einfach persönlich KENNENLERNEN oder sich locker mit ihm treffen will (z. B. "wir sind gerade in Paphos, können wir uns kurz treffen?"), OHNE eine bestimmte Wohnung/ein Objekt besichtigen zu wollen. casual=false bei Besichtigung/Viewing/Objekt anschauen. Im Zweifel false.
 Wenn wants=true UND eine Zeitangabe genannt ist, fülle die Hint-Felder (day_hint; daypart vormittags|nachmittags|abends; time_hint "HH:MM"; on_date für GENAU EIN Datum bzw. after_date für frühestes Datum, je "YYYY-MM-DD"). Sonst null. Gib NUR das Tool emit zurück.`
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -426,6 +427,7 @@ Wenn wants=true UND eine Zeitangabe genannt ist, fülle die Hint-Felder (day_hin
         tool_choice: { type: 'tool', name: 'emit' },
         tools: [{ name: 'emit', description: 'Terminwunsch?', input_schema: { type: 'object', properties: {
           wants: { type: 'boolean' }, onsite: { type: 'boolean', description: 'true = Vor-Ort-Termin/Viewing' },
+          casual: { type: 'boolean', description: 'true = lockeres Kennenlernen vor Ort, keine Besichtigung' },
           day_hint: { type: ['string', 'null'] },
           daypart: { type: ['string', 'null'], enum: ['vormittags', 'nachmittags', 'abends', null] },
           time_hint: { type: ['string', 'null'] }, on_date: { type: ['string', 'null'] }, after_date: { type: ['string', 'null'] },
@@ -903,6 +905,7 @@ async function replyRunde(admin: SupabaseClient, c: ReplyConv, leadId: string, t
   const { data: lead } = await admin.from('leads').select('first_name, whatsapp, phone, email').eq('id', leadId).maybeSingle()
   const l = lead as { first_name: string | null; whatsapp: string | null; phone: string | null; email: string | null }
   const phone = l.whatsapp || l.phone || ''
+  if (c.state === 'awaiting_cafe') return await cafeReply(admin, c, l, leadId, text)
   // KEIN logWa fuer inbound: der timelines-webhook hat die Nachricht bereits
   // geschrieben, und zwar mit whatsapp_message_id. Der zweite Schreiber hier liess
   // im Kundenverlauf jede eingehende Nachricht doppelt erscheinen und verfaelschte
@@ -1053,7 +1056,7 @@ async function replyRunde(admin: SupabaseClient, c: ReplyConv, leadId: string, t
   // REIN inhaltliche Nachricht (Budget, Objekte, Situation, Einwand) OHNE Terminbezug:
   // gehört zu Sven, nicht in den Termin-Dialog → sofort übergeben, KEIN Slot-Push.
   if (it.intent === 'content' && !hasApptSignal) {
-    const m = `Danke dir${l.first_name ? `, ${l.first_name}` : ''}! Das gebe ich direkt an Sven weiter — er meldet sich gleich persönlich bei dir. 🙂`
+    const m = `Danke dir${l.first_name ? `, ${l.first_name}` : ''}! Das gebe ich direkt an Sven weiter, er meldet sich gleich persönlich bei dir. 🙂`
     if (!await say(m)) return json({ ok: true, handled: 'wiederholung_uebergeben' })
     await setConv(admin, c.id, { state: 'handoff', last_message: m })
     return json({ ok: true, handled: 'content_handoff' })
@@ -1063,7 +1066,7 @@ async function replyRunde(admin: SupabaseClient, c: ReplyConv, leadId: string, t
   // am 22.7. abends"): die fachlichen Themen an Sven verweisen (Kunde + Notiz für Sven),
   // den Terminwunsch aber ganz normal weiterverarbeiten — statt alles zu blockieren.
   if ((it.intent === 'content' || it.defer_to_sven) && hasApptSignal) {
-    const m = `Deine inhaltlichen Fragen gebe ich direkt an Sven weiter — er meldet sich dazu zeitnah persönlich. 🙂`
+    const m = `Deine inhaltlichen Fragen gebe ich direkt an Sven weiter, er meldet sich dazu zeitnah persönlich. 🙂`
     if (!await say(m)) return json({ ok: true, handled: 'wiederholung_uebergeben' })
     try { await admin.from('activities').insert({ lead_id: leadId, type: 'note', direction: 'inbound', subject: '⚠️ Termin-Bot: fachliche Frage — bitte persönlich melden', content: `Der Kunde hat neben dem Termin fachliche Fragen gestellt:\n\n${text}`, completed_at: new Date().toISOString() }) } catch { /* egal */ }
     if (it.intent === 'content') it.intent = 'give_preference'   // ab hier übernimmt der Terminfluss
@@ -1253,6 +1256,7 @@ async function handleEngage(admin: SupabaseClient, leadId: string, text: string,
   // macht Sven selbst — da klinkt sich der Bot NICHT ein. Fachliches bleibt bei Sven.
   const det = await detectApptRequest(text)
   if (!det.wants && !force) return json({ ok: true, skipped: 'no_appt_intent' })
+  if (det.onsite && det.casual && !force) return await cafeStart(admin, leadId, det, text)
   if (det.onsite && !force) return json({ ok: true, skipped: 'onsite_termin' })
   const { data: lead } = await admin.from('leads').select('first_name, whatsapp, phone').eq('id', leadId).maybeSingle()
   const l = lead as { first_name: string | null; whatsapp: string | null; phone: string | null } | null
@@ -1272,6 +1276,239 @@ async function handleEngage(admin: SupabaseClient, leadId: string, text: string,
   return json({ ok: true, engaged: true, slots: slots.length })
 }
 
+// ── Café-Treffen ─────────────────────────────────────────────────────────────
+// Sven (29.10.2026): Wer ihn einfach kennenlernen will, ohne ein bestimmtes Objekt
+// zu besichtigen, kann sich montags bis freitags von 10 bis 12 Uhr im Café Cultivos
+// in der Innenstadt von Paphos zu ihm setzen. Lotte bietet das an und trägt auf ein
+// Ja direkt ein. Bestandskunden und Leute mitten im Kauf führt Sven selbst (Micha).
+const CAFE_NAME = 'Café Cultivos'
+const CAFE_LOCATION = 'Café Cultivos, Paphos'   // Kennung der Café-Termine in crm_appointments.location
+const CAFE_LINK = 'maps.app.goo.gl/w6ab7dsqMx5WvZwb7'
+const CAFE_MIN = 60
+const CAFE_NICHT_PHASEN = ['kontakt_uebergeben', 'registrierung', 'reservierung', 'anzahlung', 'kaufvertrag', 'provision_erhalten']
+const CY = 'Asia/Nicosia'
+
+// Zypern liegt das ganze Jahr eine Stunde vor Berlin (gleiche EU-Sommerzeit-Regel),
+// 10:00 Zypern ist also 09:00 Berlin.
+function cafeSlotFor(y: number, mo: number, d: number): Slot {
+  const start = berlinToUtc(y, mo, d, 9, 0)
+  const label = new Intl.DateTimeFormat('de-DE', { timeZone: CY, weekday: 'long', day: 'numeric', month: 'numeric' }).format(start)
+  return { startIso: start.toISOString(), endIso: new Date(start.getTime() + CAFE_MIN * 60000).toISOString(), label }
+}
+
+// Sitzt Sven an diesem Tag im Café? Belegt ist das Fenster 10-12 nur durch ANDERE
+// Termine. Café-Termine blockieren nicht, an Svens Tisch passen mehrere.
+async function cafeFrei(admin: SupabaseClient, slot: Slot): Promise<boolean> {
+  const st = new Date(slot.startIso).getTime(), en = st + 2 * 3600e3
+  if (st <= Date.now()) return false
+  const busy = await getBusy(admin, new Date(st), new Date(en))
+  const { data: cafe } = await admin.from('crm_appointments').select('start_time, end_time')
+    .eq('location', CAFE_LOCATION).lt('start_time', new Date(en).toISOString()).gt('end_time', new Date(st).toISOString())
+  const eigene = ((cafe ?? []) as { start_time: string; end_time: string }[])
+    .map(a => ({ s: new Date(a.start_time).getTime(), e: new Date(a.end_time).getTime() }))
+  return !busy.some(b => st < b.end && en > b.start && !eigene.some(x => b.start >= x.s && b.end <= x.e))
+}
+
+// Nächster Werktag ab morgen, an dem Sven im Café sitzt, optional nach Kundenwunsch.
+async function naechsterCafeTag(admin: SupabaseClient, wunsch: { onDate?: string | null; dayHint?: string | null; afterDate?: string | null }): Promise<Slot | null> {
+  for (let off = 1; off <= 21; off++) {
+    const [y, mo, d] = new Date(Date.now() + off * 86400e3).toLocaleDateString('en-CA', { timeZone: CY }).split('-').map(Number)
+    const iso = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    const wd = new Date(Date.UTC(y, mo - 1, d)).getUTCDay()
+    if (wd === 0 || wd === 6) continue
+    if (wunsch.onDate && iso !== wunsch.onDate) continue
+    if (wunsch.afterDate && iso < wunsch.afterDate) continue
+    if (wunsch.dayHint && !matchesDayHint(wd, off, wunsch.dayHint)) continue
+    const slot = cafeSlotFor(y, mo, d)
+    if (await cafeFrei(admin, slot)) return slot
+  }
+  return null
+}
+
+const mehrere = (t: string) => /\b(wir|uns|unser|unsere)\b/i.test(t)
+
+async function cafeStart(admin: SupabaseClient, leadId: string, det: ApptReq, text: string): Promise<Response> {
+  const { data: lead } = await admin.from('leads').select('first_name, whatsapp, phone, profile_id').eq('id', leadId).maybeSingle()
+  const l = lead as { first_name: string | null; whatsapp: string | null; phone: string | null; profile_id: string | null } | null
+  const phone = l?.whatsapp || l?.phone
+  if (!l || !phone) return json({ ok: true, skipped: 'no_phone' })
+  if (l.profile_id) return json({ ok: true, skipped: 'cafe_bestandskunde' })
+  const { data: laufend } = await admin.from('deals').select('id').eq('lead_id', leadId).in('phase', CAFE_NICHT_PHASEN).limit(1)
+  if (laufend && laufend.length) return json({ ok: true, skipped: 'cafe_laufender_kauf' })
+
+  const hatWunsch = !!(det.on_date || det.day_hint || det.after_date)
+  let slot = await naechsterCafeTag(admin, { onDate: det.on_date, dayHint: det.day_hint, afterDate: det.after_date })
+  const ausweich = !slot && hatWunsch
+  if (!slot && hatWunsch) slot = await naechsterCafeTag(admin, {})
+  if (!slot) return json({ ok: true, skipped: 'cafe_kein_tag' })   // bleibt im Posteingang bei Sven
+
+  const ihr = mehrere(text)
+  const name = first(l.first_name)
+  const msg = `Hallo${name ? ` ${name}` : ''} 🐾 Ich bin Lotte, Svens persönliche Assistentin. Schön, dass ${ihr ? 'ihr' : 'du'} Sven kennenlernen ${ihr ? 'wollt' : 'willst'}!\n\n`
+    + `Sven sitzt montags bis freitags von 10 bis 12 Uhr im ${CAFE_NAME} in der Innenstadt von Paphos. Da ${ihr ? 'könnt ihr euch' : 'kannst du dich'} einfach zu ihm setzen:\n${CAFE_LINK}\n\n`
+    + (ausweich ? 'Am gewünschten Tag ist Sven leider nicht dort. ' : '')
+    + `Soll ich ${ihr ? 'euch' : 'dich'} für ${slot.label}, um 10 Uhr eintragen?`
+  await admin.from('booking_conversations').insert({
+    lead_id: leadId, source: 'cafe', state: 'awaiting_cafe', proposed_slots: [slot], last_message: msg,
+    meeting_type: ihr ? 'cafe_ihr' : 'cafe_du',
+    expires_at: new Date(Date.now() + 4 * 24 * 3600e3).toISOString(),
+  })
+  await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound')
+  return json({ ok: true, cafe: slot.label })
+}
+
+// Antwort auf das Café-Angebot verstehen. Bewusst schmal: Ja, anderer Tag, Nein,
+// alles andere geht an Sven.
+async function cafeIntent(text: string, angebot: string, verlauf: Turn[]): Promise<{ intent: 'ja' | 'anderer_tag' | 'nein' | 'sonst'; on_date: string | null; day_hint: string | null }> {
+  const off = { intent: 'sonst' as const, on_date: null, day_hint: null }
+  const key = Deno.env.get('ANTHROPIC_API_KEY'); if (!key) return off
+  const heute = new Date().toLocaleDateString('en-CA', { timeZone: CY })
+  const wdHeute = new Intl.DateTimeFormat('de-DE', { timeZone: CY, weekday: 'long' }).format(new Date())
+  const sys = `Lotte (Svens Assistentin) hat angeboten, den Kunden für ${angebot}, 10 Uhr, im Café in Paphos einzutragen, wo Sven montags bis freitags 10-12 Uhr sitzt. HEUTE: ${wdHeute}, ${heute}.
+Ordne die Antwort des Kunden ein:
+- ja: Zusage zu genau diesem Tag ("ja", "klingt gut", "machen wir", "perfekt", "bis dann").
+- anderer_tag: will kommen, aber an einem anderen Tag. Fülle on_date (YYYY-MM-DD) bei einem klaren Datum, sonst day_hint (z. B. "dienstag").
+- nein: will nicht / kein Treffen.
+- sonst: Fragen, andere Uhrzeit, Unklares, alles andere. Im Zweifel sonst.
+Gib NUR das Tool emit zurück.`
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6', max_tokens: 150, system: sys,
+        messages: [...verlauf, { role: 'user', content: text }],
+        tool_choice: { type: 'tool', name: 'emit' },
+        tools: [{ name: 'emit', description: 'Antwort einordnen', input_schema: { type: 'object', properties: {
+          intent: { type: 'string', enum: ['ja', 'anderer_tag', 'nein', 'sonst'] },
+          on_date: { type: ['string', 'null'] }, day_hint: { type: ['string', 'null'] },
+        }, required: ['intent'] } }],
+      }),
+    })
+    const d = await res.json() as { content?: { type: string; input?: { intent: 'ja' | 'anderer_tag' | 'nein' | 'sonst'; on_date?: string | null; day_hint?: string | null } }[] }
+    const t = d.content?.find(c => c.type === 'tool_use')?.input
+    return t ? { intent: t.intent, on_date: t.on_date ?? null, day_hint: t.day_hint ?? null } : off
+  } catch (e) { console.warn('[booking-bot] cafeIntent:', e); return off }
+}
+
+async function cafeAnSven(admin: SupabaseClient, convId: string, phone: string, leadId: string, name: string | null, grund: string): Promise<Response> {
+  const msg = `Danke dir${first(name) ? `, ${first(name)}` : ''}! Das gebe ich direkt an Sven weiter, er meldet sich persönlich bei dir. 🙂`
+  await setConv(admin, convId, { state: 'handoff', last_message: msg })
+  await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound')
+  try { await admin.from('activities').insert({ lead_id: leadId, type: 'note', direction: 'inbound', subject: '⚠️ Lotte: Café-Treffen an Sven', content: grund, completed_at: new Date().toISOString() }) } catch { /* egal */ }
+  return json({ ok: true, handled: 'cafe_handoff' })
+}
+
+async function cafeReply(admin: SupabaseClient, c: ReplyConv, l: { first_name: string | null; whatsapp: string | null; phone: string | null }, leadId: string, text: string): Promise<Response> {
+  const phone = l.whatsapp || l.phone || ''
+  const slot = (c.proposed_slots ?? [])[0]
+  const { data: mt } = await admin.from('booking_conversations').select('meeting_type').eq('id', c.id).maybeSingle()
+  const ihr = (mt as { meeting_type?: string } | null)?.meeting_type === 'cafe_ihr'
+  if (!slot) return await cafeAnSven(admin, c.id, phone, leadId, l.first_name, 'Café-Gespräch ohne Tag. Bitte selbst klären.')
+  const { data: hist } = await admin.from('activities').select('direction, content')
+    .eq('lead_id', leadId).eq('type', 'whatsapp').order('created_at', { ascending: false }).limit(4)
+  const verlauf: Turn[] = ((hist ?? []) as { direction: string; content: string | null }[])
+    .filter(h => (h.content ?? '').trim()).reverse()
+    .map(h => ({ role: h.direction === 'outbound' ? 'assistant' as const : 'user' as const, content: (h.content ?? '').slice(0, 700) }))
+  while (verlauf.length && verlauf[verlauf.length - 1].role === 'user') verlauf.pop()
+  while (verlauf.length && verlauf[0].role === 'assistant') verlauf.shift()
+  const it = await cafeIntent(text, slot.label, verlauf)
+
+  if (it.intent === 'ja') {
+    if (!(await cafeFrei(admin, slot))) {
+      const neu = await naechsterCafeTag(admin, { afterDate: null })
+      if (!neu) return await cafeAnSven(admin, c.id, phone, leadId, l.first_name, `Kunde hat zu ${slot.label} zugesagt, der Tag ist inzwischen belegt. Bitte selbst einen Tag ausmachen.`)
+      return await cafeNeuerTag(admin, c, phone, leadId, neu, ihr, `Oh, ${slot.label} ist leider inzwischen belegt. `)
+    }
+    return await cafeBuchen(admin, c, l, leadId, slot, ihr)
+  }
+  if (it.intent === 'anderer_tag' && (c.attempts ?? 0) < 2) {
+    const neu = await naechsterCafeTag(admin, { onDate: it.on_date, dayHint: it.day_hint })
+    if (!neu) return await cafeAnSven(admin, c.id, phone, leadId, l.first_name, `Kunde möchte an einem anderen Tag ins Café (${it.on_date ?? it.day_hint ?? text.slice(0, 80)}), da sitzt Sven nicht dort oder ist belegt. Bitte selbst klären.`)
+    return await cafeNeuerTag(admin, c, phone, leadId, neu, ihr, '')
+  }
+  if (it.intent === 'nein') {
+    const msg = `Alles klar, kein Problem! Wenn ${ihr ? 'ihr' : 'du'} doch noch Lust ${ihr ? 'habt' : 'hast'}: Sven sitzt montags bis freitags von 10 bis 12 Uhr im ${CAFE_NAME}. 🙂`
+    await setConv(admin, c.id, { state: 'handoff', last_message: msg })
+    await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound')
+    return json({ ok: true, handled: 'cafe_nein' })
+  }
+  return await cafeAnSven(admin, c.id, phone, leadId, l.first_name, `Antwort auf das Café-Angebot (${slot.label}): „${text.slice(0, 300)}". Bitte persönlich antworten.`)
+}
+
+async function cafeNeuerTag(admin: SupabaseClient, c: ReplyConv, phone: string, leadId: string, slot: Slot, ihr: boolean, vorweg: string): Promise<Response> {
+  const msg = `${vorweg}Dann trage ich ${ihr ? 'euch' : 'dich'} gern für ${slot.label}, um 10 Uhr im ${CAFE_NAME} ein. Passt das?`
+  await setConv(admin, c.id, { proposed_slots: [slot], attempts: (c.attempts ?? 0) + 1, last_message: msg })
+  await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound')
+  return json({ ok: true, handled: 'cafe_neuer_tag', slot: slot.label })
+}
+
+async function cafeBuchen(admin: SupabaseClient, c: ReplyConv, l: { first_name: string | null; whatsapp: string | null; phone: string | null }, leadId: string, slot: Slot, ihr: boolean): Promise<Response> {
+  const phone = l.whatsapp || l.phone || ''
+  const name = first(l.first_name)
+  const title = await nextApptTitle(admin, leadId, name || 'Lead', slot.startIso)
+  const cal = await createCalendarEvent(admin, {
+    title: `${title} (${CAFE_NAME})`, startIso: slot.startIso, endIso: slot.endIso,
+    description: `Lockeres Kennenlernen im ${CAFE_NAME}, Innenstadt Paphos.\nVon Lotte per WhatsApp vereinbart.\nKunde: ${name}${phone ? `\nTelefon: ${phone}` : ''}\nMaps: https://${CAFE_LINK}`,
+  })
+  const { error } = await admin.from('crm_appointments').insert({
+    title, type: 'inperson', start_time: slot.startIso, end_time: slot.endIso,
+    lead_id: leadId, deal_id: c.deal_id, location: CAFE_LOCATION, timezone: CY,
+    phone_number: phone || null,
+    google_event_id: cal?.id ?? null, google_calendar_id: cal?.calId ?? null,
+    description: 'Café-Treffen, von Lotte per WhatsApp gebucht',
+  })
+  if (error) {
+    console.error('[booking-bot] Café-Termin fehlgeschlagen:', error.message)
+    return await cafeAnSven(admin, c.id, phone, leadId, l.first_name, `Café-Termin ${slot.label} 10 Uhr konnte nicht gespeichert werden (${error.message}). Kunde hat zugesagt, bitte manuell eintragen und bestätigen.`)
+  }
+  void notifyIfToday(admin, [slot.startIso], `📅 Café-Treffen HEUTE um 10:00\n\n${name || 'Kunde'}${phone ? `\n${phone}` : ''}\n${CAFE_NAME}\n\n(von Lotte gebucht)`)
+  const msg = `Super, ist eingetragen ✅\n\n${slot.label}, 10 Uhr (Zypern-Zeit)\n${CAFE_NAME}, Innenstadt Paphos\n${CAFE_LINK}\n\nSven freut sich auf ${ihr ? 'euch' : 'dich'}!`
+  await setConv(admin, c.id, { state: 'booked', meeting_type: 'inperson', chosen_slot: slot, last_message: msg })
+  await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound')
+  return json({ ok: true, handled: 'cafe_gebucht', slot: slot.label })
+}
+
+// Nachricht von einer Nummer ohne Kontakt (Sabine und Oliver, 29.10.2026). Nur bei
+// einem klaren Café-Wunsch legt Lotte den Kontakt an, sonst bleibt die Nachricht
+// im Posteingang bei Sven.
+async function handleEngageUnknown(admin: SupabaseClient, rawPhone: string, pushName: string | null, text: string): Promise<Response> {
+  const { data: sset } = await admin.from('crm_settings').select('key, value').in('key', ['booking_bot_enabled', 'booking_bot_auto_engage'])
+  const sv = new Map(((sset ?? []) as { key: string; value: string }[]).map(s => [s.key, s.value]))
+  if (sv.get('booking_bot_enabled') !== 'true' || sv.get('booking_bot_auto_engage') !== 'true') return json({ ok: true, skipped: 'disabled' })
+  const digits = String(rawPhone).replace(/\D/g, '')
+  if (digits.length < 8) return json({ ok: true, skipped: 'no_phone' })
+  const det = await detectApptRequest(text)
+  if (!(det.wants && det.onsite && det.casual)) return json({ ok: true, skipped: 'unknown_kein_cafe' })
+  // Inzwischen doch ein Kontakt (zweite Nachricht, Sven hat angelegt)? Dann normaler Weg.
+  const { data: rows } = await admin.rpc('find_leads_by_phone_suffix', { suffix: digits.slice(-8) })
+  const vorhanden = ((rows ?? []) as { id: string }[])[0]
+  if (vorhanden) return await handleEngage(admin, vorhanden.id, text)
+
+  const teile = (pushName ?? '').trim().split(/\s+/).filter(Boolean)
+  const { data: nl, error } = await admin.from('leads').insert({
+    first_name: teile[0] ?? 'WhatsApp', last_name: teile.slice(1).join(' '), email: '',
+    phone: '+' + digits, whatsapp: '+' + digits, source: 'whatsapp', language: 'de',
+  }).select('id').single()
+  if (error || !nl) { console.error('[booking-bot] Kontakt anlegen fehlgeschlagen:', error?.message); return json({ ok: false, error: error?.message }, 500) }
+  const leadId = (nl as { id: string }).id
+
+  // Bisherige Nachrichten dieser Nummer in den Kundenverlauf übernehmen.
+  const { data: alt } = await admin.from('wa_unknown_messages').select('direction, content, created_at, whatsapp_message_id, read_at')
+    .eq('phone', '+' + digits).order('created_at').limit(200)
+  const altRows = (alt ?? []) as { direction: string; content: string; created_at: string; whatsapp_message_id: string | null; read_at: string | null }[]
+  if (altRows.length) {
+    const { error: mvErr } = await admin.from('activities').insert(altRows.map(m => ({
+      lead_id: leadId, type: 'whatsapp', direction: m.direction, auto: false,
+      subject: m.direction === 'inbound' ? 'WhatsApp erhalten' : 'WhatsApp gesendet', content: m.content,
+      created_at: m.created_at, completed_at: m.created_at, whatsapp_message_id: m.whatsapp_message_id, read_at: m.read_at,
+    })))
+    if (!mvErr) await admin.from('wa_unknown_messages').delete().eq('phone', '+' + digits)
+    else console.warn('[booking-bot] Verlauf übernehmen:', mvErr.message)
+  }
+  try { await admin.from('activities').insert({ lead_id: leadId, type: 'note', direction: 'inbound', subject: 'Kontakt von Lotte angelegt', content: `Neue Nummer per WhatsApp (${pushName ?? 'ohne Namen'}), möchte Sven persönlich kennenlernen. Lotte bietet das Café an.`, completed_at: new Date().toISOString() }) } catch { /* egal */ }
+  return await cafeStart(admin, leadId, det, text)
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
@@ -1282,7 +1519,7 @@ Deno.serve(async (req) => {
   if (denied) return denied
   try {
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-    const body = await req.json() as { action?: string; lead_id?: string; deal_id?: string | null; source?: string; text?: string; stage?: number; intro?: string; state?: string; slots?: Slot[]; meeting_type?: string; force?: boolean }
+    const body = await req.json() as { action?: string; lead_id?: string; deal_id?: string | null; source?: string; text?: string; stage?: number; intro?: string; state?: string; slots?: Slot[]; meeting_type?: string; force?: boolean; phone?: string; push_name?: string | null }
     // classify: seiteneffektfreier Test des Intent-Parsers (kein Senden, kein DB-Write).
     if (body.action === 'classify') return json({ ok: true, intent: await classify(body.state ?? 'awaiting_choice', body.slots ?? [], body.text ?? '') })
     // detect: seiteneffektfreier Test des Terminwunsch-Erkenners (kein Senden).
@@ -1342,6 +1579,7 @@ Deno.serve(async (req) => {
     }
     if (!body.lead_id) return json({ error: 'lead_id fehlt' }, 400)
     if (body.action === 'start') return await handleStart(admin, body.lead_id, body.deal_id ?? null, body.source ?? 'unknown')
+    if (body.action === 'engage_unknown') return await handleEngageUnknown(admin, body.phone ?? '', body.push_name ?? null, body.text ?? '')
     if (body.action === 'engage') return await handleEngage(admin, body.lead_id, body.text ?? '', body.force === true)
     if (body.action === 'reply') return await handleReply(admin, body.lead_id, body.text ?? '')
     if (body.action === 'nudge') return await handleNudge(admin, body.lead_id, Number(body.stage) || 0, body.source ?? 'no_show', body.intro)
