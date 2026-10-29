@@ -1056,6 +1056,14 @@ async function replyRunde(admin: SupabaseClient, c: ReplyConv, leadId: string, t
   // REIN inhaltliche Nachricht (Budget, Objekte, Situation, Einwand) OHNE Terminbezug:
   // gehört zu Sven, nicht in den Termin-Dialog → sofort übergeben, KEIN Slot-Push.
   if (it.intent === 'content' && !hasApptSignal) {
+    // Erst versuchen, die Sachfrage aus den CRM-Fakten zu beantworten (Sven 29.10.).
+    const fa = await faktenAntwort(admin, leadId, first(l.first_name) || null, text, verlauf)
+    if (fa.ok) {
+      if (!await say(fa.antwort)) return json({ ok: true, handled: 'wiederholung_uebergeben' })
+      await faktenNotiz(admin, leadId, text, fa.antwort, fa.alles ? '' : fa.offen)
+      await setConv(admin, c.id, fa.alles ? { attempts: 0 } : { state: 'handoff', last_message: fa.antwort })
+      return json({ ok: true, handled: fa.alles ? 'fakten_beantwortet' : 'fakten_teilweise' })
+    }
     const m = `Danke dir${l.first_name ? `, ${l.first_name}` : ''}! Das gebe ich direkt an Sven weiter, er meldet sich gleich persönlich bei dir. 🙂`
     if (!await say(m)) return json({ ok: true, handled: 'wiederholung_uebergeben' })
     await setConv(admin, c.id, { state: 'handoff', last_message: m })
@@ -1255,7 +1263,7 @@ async function handleEngage(admin: SupabaseClient, leadId: string, text: string,
   // Ist es überhaupt ein (Remote-)Terminwunsch? Vor-Ort-Termine (Viewing/Besichtigung)
   // macht Sven selbst — da klinkt sich der Bot NICHT ein. Fachliches bleibt bei Sven.
   const det = await detectApptRequest(text)
-  if (!det.wants && !force) return json({ ok: true, skipped: 'no_appt_intent' })
+  if (!det.wants && !force) return await handleAnswer(admin, leadId, text)   // vielleicht eine Sachfrage
   if (det.onsite && det.casual && !force) return await cafeStart(admin, leadId, det, text)
   if (det.onsite && !force) return json({ ok: true, skipped: 'onsite_termin' })
   const { data: lead } = await admin.from('leads').select('first_name, whatsapp, phone').eq('id', leadId).maybeSingle()
@@ -1509,6 +1517,158 @@ async function handleEngageUnknown(admin: SupabaseClient, rawPhone: string, push
   return await cafeStart(admin, leadId, det, text)
 }
 
+// ── Fakten-Antworten ──────────────────────────────────────────────────────────
+// Sven (29.10.2026): Lotte darf Sachfragen selbst beantworten, aber NUR, wenn der
+// Fakt klar im CRM steht. Und nicht nüchtern: „sehr wohlwollend, wir wollen
+// verkaufen". Grundlage sind die Projektdaten und das Angebot, das der Kunde
+// bekommen hat (sales_decks.content), also genau das, was er schon kennt.
+// Preise, Verfügbarkeit, Rendite, Steuer, Finanzierung und Recht beantwortet
+// Lotte nicht selbst (Preise rechnet das Angebot live, der Rest ist Svens Sache).
+const FAKT_NICHT_PHASEN = CAFE_NICHT_PHASEN
+
+// Nur die lesbaren Texte aus dem Angebot, ohne Bild-URLs und technische Felder.
+function deckTexte(content: unknown, max = 7000): string {
+  const out: string[] = []
+  const skip = /^(image|images|img|src|url|mapUrl|video|videoUrl|poster|imageIntent|type|id|token|mapLat|mapLng)$/i
+  const walk = (v: unknown, k = '') => {
+    if (out.join('\n').length > max) return
+    if (typeof v === 'string') {
+      const s = v.trim()
+      if (s && !skip.test(k) && !/^https?:\/\//.test(s) && s.length > 2) out.push(k ? `${k}: ${s}` : s)
+    } else if (Array.isArray(v)) v.forEach(x => walk(x, k))
+    else if (v && typeof v === 'object') for (const [kk, vv] of Object.entries(v)) if (!skip.test(kk)) walk(vv, kk)
+  }
+  walk(content)
+  return [...new Set(out)].join('\n').slice(0, max)
+}
+
+async function faktenBlock(admin: SupabaseClient, leadId: string): Promise<{ text: string; deckLink: string | null } | null> {
+  const { data: decks } = await admin.from('sales_decks').select('token, project_id, content, created_at')
+    .eq('lead_id', leadId).order('created_at', { ascending: false }).limit(3)
+  const ds = (decks ?? []) as { token: string; project_id: string | null; content: unknown }[]
+  const pids = [...new Set(ds.map(d => d.project_id).filter((x): x is string => !!x))].slice(0, 2)
+  if (!pids.length) return null
+  const { data: projs } = await admin.from('crm_projects')
+    .select('id, name, location, location_district, maps_url, google_maps_url, description_de, completion_date, completion_months, payment_schedule, equipment_list, poi_distances, furniture_included')
+    .in('id', pids)
+  const teile: string[] = []
+  for (const p of (projs ?? []) as Record<string, unknown>[]) {
+    const deck = ds.find(d => d.project_id === p.id)
+    const zeilen = [
+      `PROJEKT: ${p.name}`,
+      p.location ? `Ort: ${p.location}${p.location_district ? `, ${p.location_district}` : ''}` : '',
+      (p.maps_url || p.google_maps_url) ? `Google-Maps-Link (Lage): ${p.google_maps_url || p.maps_url}` : '',
+      p.description_de ? `Beschreibung: ${p.description_de}` : '',
+      p.completion_date ? `Fertigstellung: ${p.completion_date}` : (p.completion_months ? `Bauzeit: ca. ${p.completion_months} Monate` : ''),
+      Array.isArray(p.payment_schedule) && p.payment_schedule.length ? `Zahlungsplan: ${JSON.stringify(p.payment_schedule)}` : '',
+      Array.isArray(p.poi_distances) && p.poi_distances.length ? `Entfernungen: ${JSON.stringify(p.poi_distances)}` : '',
+      p.equipment_list ? `Ausstattung: ${p.equipment_list}` : '',
+      p.furniture_included === true ? 'Möbel: inklusive' : '',
+      deck ? `ANGEBOT DES KUNDEN (Link: portal.happy-property.com/deck/${deck.token}):\n${deckTexte(deck.content)}` : '',
+    ].filter(Boolean)
+    teile.push(zeilen.join('\n'))
+  }
+  const link = ds[0]?.token ? `https://portal.happy-property.com/deck/${ds[0].token}` : null
+  return teile.length ? { text: teile.join('\n\n---\n\n'), deckLink: link } : null
+}
+
+type FaktAntwort = { ok: boolean; antwort: string; alles: boolean; offen: string }
+
+async function faktenAntwort(admin: SupabaseClient, leadId: string, vorname: string | null, text: string, verlauf: Turn[]): Promise<FaktAntwort> {
+  const nein: FaktAntwort = { ok: false, antwort: '', alles: false, offen: '' }
+  const key = Deno.env.get('ANTHROPIC_API_KEY'); if (!key) return nein
+  const fb = await faktenBlock(admin, leadId)
+  if (!fb) return nein
+  const sys = `Du bist Lotte, die persönliche Assistentin von Sven (Happy Property, Immobilien auf Zypern). Ein Interessent hat eine Frage per WhatsApp gestellt.
+
+Beantworte NUR, was sich klar aus den FAKTEN unten ergibt. Erfinde nichts: keine Zahl, keine Entfernung, keine Ausstattung, kein Meerblick, nichts, was dort nicht steht. Zahlen exakt so wie in den Fakten ("rund 1 km" bleibt "rund 1 km").
+
+Ton: herzlich, begeistert, verkaufend. Hebe die Vorteile hervor und beschreibe die Fakten so positiv wie möglich ("nur rund 1 km bis zum Meer", "in wenigen Minuten am Strand", "ruhig und trotzdem nah an allem"). Positive Umschreibungen ohne neue Zahlen sind erwünscht, neue Zahlen nicht. Keine Rangfolgen oder Superlative, die nicht in den Fakten stehen ("eine der begehrtesten Lagen", "die beste Anlage", "einmalig"): begeistert ja, aber nichts behaupten, was man nachprüfen könnte und was dort nicht steht.
+
+Wenn nach der Lage gefragt wird: Google-Maps-Link aus den Fakten mitschicken und die Lage mit den schönsten Fakten beschreiben (Meer, Strand, Einkaufen, Hafen, Flughafen).
+
+NICHT selbst beantworten, sondern in "offen" an Sven geben: Preise, Rabatte, Verfügbarkeit einzelner Wohnungen, Rendite, Wertsteigerung, Mieteinnahmen, Steuern, Finanzierung, Recht/Verträge, Zahlungstermine eines Bestandskunden, Grundrisse/Lagepläne als Datei, persönliche Lage/Einwände, alles, was nicht in den Fakten steht. Bei Preisfragen darfst du auf das Angebot verweisen (Link in den Fakten), Zahlen nennst du nicht.
+
+Form: Du-Form, deutsch mit echten Umlauten, kein Gedankenstrich (weder — noch –), höchstens 5 kurze Sätze, gern 1-2 Emojis, keine Grußformel (wird angehängt), keine Vorstellung. Beginne mit "${vorname ? `Gern, ${vorname}!` : 'Gern!'}" oder ähnlich. Bleibt etwas offen, schließe mit einem Satz wie "Zu ... meldet sich Sven persönlich bei dir."
+
+ok=false, wenn du KEINEN Teil der Frage sicher aus den Fakten beantworten kannst. alles=true nur, wenn wirklich nichts offen bleibt.
+
+FAKTEN:
+${fb.text}`
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6', max_tokens: 700, system: sys,
+        messages: [...verlauf, { role: 'user', content: text }],
+        tool_choice: { type: 'tool', name: 'emit' },
+        tools: [{ name: 'emit', description: 'Antwort an den Interessenten', input_schema: { type: 'object', properties: {
+          ok: { type: 'boolean', description: 'mindestens ein Teil sicher aus den Fakten beantwortet' },
+          antwort: { type: 'string', description: 'WhatsApp-Text an den Kunden' },
+          alles: { type: 'boolean', description: 'nichts bleibt offen' },
+          offen: { type: 'string', description: 'was Sven noch beantworten muss (leer wenn nichts)' },
+        }, required: ['ok', 'antwort', 'alles', 'offen'] } }],
+      }),
+    })
+    const d = await res.json() as { content?: { type: string; input?: FaktAntwort }[] }
+    const t = d.content?.find(c => c.type === 'tool_use')?.input
+    if (!t || !t.ok || !t.antwort?.trim()) return nein
+    // Harte Sperren nach der KI: keine Gedankenstriche, keine Rendite-/Steuerzahlen.
+    const antwort = t.antwort.replace(/\s*[—–]\s*/g, ', ').trim()
+    if (/rendite|wertsteigerung|\+\s?\d+\s?%|steuer.{0,20}\d/i.test(antwort)) return { ...nein, offen: text }
+    return { ok: true, antwort, alles: !!t.alles, offen: (t.offen ?? '').trim() }
+  } catch (e) { console.warn('[booking-bot] faktenAntwort:', e); return nein }
+}
+
+async function faktenNotiz(admin: SupabaseClient, leadId: string, frage: string, antwort: string, offen: string): Promise<void> {
+  try {
+    await admin.from('activities').insert({
+      lead_id: leadId, type: 'note', direction: 'inbound',
+      subject: offen ? '⚠️ Lotte hat teilweise geantwortet, Rest an Sven' : 'Lotte hat eine Sachfrage beantwortet',
+      content: `Frage: ${frage.slice(0, 600)}\n\nLotte: ${antwort.slice(0, 1200)}${offen ? `\n\nOffen für Sven: ${offen.slice(0, 600)}` : ''}`,
+      completed_at: new Date().toISOString(),
+    })
+  } catch { /* egal */ }
+}
+
+// Sachfrage OHNE laufendes Termin-Gespräch (Dirk, 29.10.: "Lass mir gern mal einen
+// Google-Maps-Link zukommen"). Aufruf aus waInbound für jede Kundennachricht ohne
+// Terminbezug; Lotte antwortet nur, wenn die Fakten reichen.
+async function handleAnswer(admin: SupabaseClient, leadId: string, text: string): Promise<Response> {
+  const { data: sset } = await admin.from('crm_settings').select('key, value').in('key', ['booking_bot_enabled', 'lotte_fakten_antworten'])
+  const sv = new Map(((sset ?? []) as { key: string; value: string }[]).map(s => [s.key, s.value]))
+  if (sv.get('booking_bot_enabled') !== 'true' || sv.get('lotte_fakten_antworten') === 'false') return json({ ok: true, skipped: 'disabled' })
+  if (text.trim().length < 12 || !/\?|link|standort|lage|wo (genau|liegt|befind)|schick|zukommen|wie weit|entfernung|ausstattung|pool|fertig|baubeginn|übergabe|zahlungsplan|wann/i.test(text)) return json({ ok: true, skipped: 'keine_frage' })
+  const { data: opt } = await admin.from('communication_optouts').select('id').eq('lead_id', leadId).limit(1)
+  if (opt && opt.length) return json({ ok: true, skipped: 'optout' })
+  const { data: lead } = await admin.from('leads').select('first_name, whatsapp, phone, profile_id').eq('id', leadId).maybeSingle()
+  const l = lead as { first_name: string | null; whatsapp: string | null; phone: string | null; profile_id: string | null } | null
+  const phone = l?.whatsapp || l?.phone
+  if (!l || !phone) return json({ ok: true, skipped: 'no_phone' })
+  if (l.profile_id) return json({ ok: true, skipped: 'bestandskunde' })
+  const { data: laufend } = await admin.from('deals').select('id').eq('lead_id', leadId).in('phase', FAKT_NICHT_PHASEN).limit(1)
+  if (laufend && laufend.length) return json({ ok: true, skipped: 'laufender_kauf' })
+  // Schreibt Sven gerade selbst mit dem Kunden? Dann nicht dazwischenfunken.
+  const seit = new Date(Date.now() - 3 * 3600e3).toISOString()
+  const { data: svenAktiv } = await admin.from('activities').select('id').eq('lead_id', leadId).eq('type', 'whatsapp')
+    .eq('direction', 'outbound').eq('auto', false).gt('created_at', seit).limit(1)
+  if (svenAktiv && svenAktiv.length) return json({ ok: true, skipped: 'sven_im_gespraech' })
+
+  const { data: hist } = await admin.from('activities').select('direction, content, auto')
+    .eq('lead_id', leadId).eq('type', 'whatsapp').order('created_at', { ascending: false }).limit(6)
+  const verlauf: Turn[] = ((hist ?? []) as { direction: string; content: string | null; auto: boolean | null }[])
+    .filter(h => (h.content ?? '').trim()).reverse()
+    .map(h => ({ role: h.direction === 'outbound' ? 'assistant' as const : 'user' as const, content: (h.direction === 'outbound' && h.auto === false ? '[Sven persönlich] ' : '') + (h.content ?? '').slice(0, 700) }))
+  while (verlauf.length && verlauf[verlauf.length - 1].role === 'user') verlauf.pop()
+  while (verlauf.length && verlauf[0].role === 'assistant') verlauf.shift()
+
+  const fa = await faktenAntwort(admin, leadId, first(l.first_name) || null, text, verlauf)
+  if (!fa.ok) return json({ ok: true, skipped: 'fakten_reichen_nicht' })
+  await sendWa(phone, fa.antwort); await logWa(admin, leadId, fa.antwort, 'outbound')
+  await faktenNotiz(admin, leadId, text, fa.antwort, fa.alles ? '' : fa.offen)
+  return json({ ok: true, answered: true, alles: fa.alles })
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
@@ -1581,6 +1741,9 @@ Deno.serve(async (req) => {
     if (body.action === 'engage_unknown') return await handleEngageUnknown(admin, body.phone ?? '', body.push_name ?? null, body.text ?? '')
     if (!body.lead_id) return json({ error: 'lead_id fehlt' }, 400)
     if (body.action === 'start') return await handleStart(admin, body.lead_id, body.deal_id ?? null, body.source ?? 'unknown')
+    // fakten: seiteneffektfreier Test der Fakten-Antwort (kein Senden, kein DB-Write).
+    if (body.action === 'fakten') return json({ ok: true, fakten: await faktenAntwort(admin, body.lead_id, null, body.text ?? '', []) })
+    if (body.action === 'answer') return await handleAnswer(admin, body.lead_id, body.text ?? '')
     if (body.action === 'engage') return await handleEngage(admin, body.lead_id, body.text ?? '', body.force === true)
     if (body.action === 'reply') return await handleReply(admin, body.lead_id, body.text ?? '')
     if (body.action === 'nudge') return await handleNudge(admin, body.lead_id, Number(body.stage) || 0, body.source ?? 'no_show', body.intro)

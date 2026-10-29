@@ -53,7 +53,7 @@ export function detectsStopIntent(text: string): boolean {
 // dann fragt der Bot die KI (spart KI-Aufrufe bei „danke"/„ok"/Produktfragen).
 const APPT_HINT = /termin|telefon|anruf|\bruf|\bcall\b|zoom|video|sprechen|besprech|treffen|meeting|\bzeit\b|\bwann\b|uhrzeit|quatschen|kennenlern|kennen lern|persönlich|vorbei|\bmeet\b/i
 
-async function callBot(action: 'engage' | 'reply' | 'engage_unknown', lead_id: string | null, text: string, tag: string, extra: Record<string, unknown> = {}): Promise<void> {
+async function callBot(action: 'engage' | 'reply' | 'engage_unknown' | 'answer', lead_id: string | null, text: string, tag: string, extra: Record<string, unknown> = {}): Promise<void> {
   const p = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
     method:  'POST',
     headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
@@ -266,7 +266,8 @@ export async function processWaEvent(sb: SupabaseClient, ev: WaEvent, tag: strin
     // plausiblem Termin-Bezug prüft der Bot, ob der Kunde einen (Remote-)Termin will
     // und klinkt sich ein (engage). Beides im Hintergrund.
     const hasConv = !!(conv && conv.length)
-    if (hasConv || APPT_HINT.test(text)) await callBot(hasConv ? 'reply' : 'engage', lead.id, text, tag)
+    // Sonst eine Sachfrage? Lotte antwortet nur, wenn die CRM-Fakten reichen (answer).
+    await callBot(hasConv ? 'reply' : APPT_HINT.test(text) ? 'engage' : 'answer', lead.id, text, tag)
     // Infos zu einer Wohnung angefragt? Dann Paket im Postausgang vorbereiten
     // (anfrage-paket entscheidet selbst, im Hintergrund).
     await anfragePaketAnstossen(lead.id, text, 'whatsapp', tag)
