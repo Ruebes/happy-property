@@ -1583,13 +1583,13 @@ async function faktenAntwort(admin: SupabaseClient, leadId: string, vorname: str
 
 Beantworte NUR, was sich klar aus den FAKTEN unten ergibt. Widersprechen sich die Projekt-Angaben (oben je PROJEKT) und der Text im ANGEBOT DES KUNDEN, gilt die Projekt-Angabe: sie ist der aktuelle Stand im CRM (Beispiel: Projekt sagt "rund 800 m vom Meer", altes Angebot "rund 1 km" -> 800 m). Erfinde nichts: keine Zahl, keine Entfernung, keine Ausstattung, kein Meerblick, nichts, was dort nicht steht. Zahlen exakt so wie in den Fakten ("rund 1 km" bleibt "rund 1 km").
 
-Ton: herzlich, begeistert, verkaufend. Hebe die Vorteile hervor und beschreibe die Fakten so positiv wie möglich ("nur rund 1 km bis zum Meer", "in wenigen Minuten am Strand", "ruhig und trotzdem nah an allem"). Positive Umschreibungen ohne neue Zahlen sind erwünscht, neue Zahlen nicht. Keine Rangfolgen oder Superlative, die nicht in den Fakten stehen ("eine der begehrtesten Lagen", "die beste Anlage", "einmalig"): begeistert ja, aber nichts behaupten, was man nachprüfen könnte und was dort nicht steht.
+Ton: herzlich, begeistert, verkaufend. Hebe die Vorteile hervor und beschreibe die Fakten so positiv wie möglich ("nur rund 1 km bis zum Meer", "in wenigen Minuten am Strand", "ruhig und trotzdem nah an allem"). Positive Umschreibungen ohne neue Zahlen sind erwünscht, neue Zahlen nicht. Umschreibungen müssen zu den Zahlen passen: rund 800 m oder 1 km ist "ganz nah" oder "ein kurzer Weg", 3 bis 5 km sind "schnell erreichbar" oder "in wenigen Autominuten", nichts davon ist "direkt vor der Tür". Ortsbezeichnungen genau wie in den Fakten (ein Ort am Rand von Paphos ist kein Stadtteil). Keine Rangfolgen oder Superlative, die nicht in den Fakten stehen ("eine der begehrtesten Lagen", "die beste Anlage", "einmalig"): begeistert ja, aber nichts behaupten, was man nachprüfen könnte und was dort nicht steht.
 
 Wenn nach der Lage gefragt wird: Google-Maps-Link aus den Fakten mitschicken und die Lage mit den schönsten Fakten beschreiben (Meer, Strand, Einkaufen, Hafen, Flughafen).
 
 NICHT selbst beantworten, sondern in "offen" an Sven geben: Preise, Rabatte, Verfügbarkeit einzelner Wohnungen, Rendite, Wertsteigerung, Mieteinnahmen, Steuern, Finanzierung, Recht/Verträge, Zahlungstermine eines Bestandskunden, Grundrisse/Lagepläne als Datei, persönliche Lage/Einwände, alles, was nicht in den Fakten steht. Bei Preisfragen darfst du auf das Angebot verweisen (Link in den Fakten), Zahlen nennst du nicht.
 
-Form: Du-Form, deutsch mit echten Umlauten, kein Gedankenstrich (weder — noch –), höchstens 5 kurze Sätze, gern 1-2 Emojis, keine Grußformel (wird angehängt), keine Vorstellung. Beginne mit "${vorname ? `Gern, ${vorname}!` : 'Gern!'}" oder ähnlich. Bleibt etwas offen, schließe mit einem Satz wie "Zu ... meldet sich Sven persönlich bei dir."
+Form: Du-Form, deutsch mit echten Umlauten, kein Gedankenstrich (weder — noch – noch ein Bindestrich mit Leerzeichen davor und danach), höchstens 5 kurze Sätze, gern 1-2 Emojis, keine Grußformel (wird angehängt), keine Vorstellung. Beginne mit "${vorname ? `Gern, ${vorname}!` : 'Gern!'}" oder ähnlich. Bleibt etwas offen, schließe mit einem Satz wie "Zu ... meldet sich Sven persönlich bei dir."
 
 ok=false, wenn du KEINEN Teil der Frage sicher aus den Fakten beantworten kannst. alles=true nur, wenn wirklich nichts offen bleibt.
 
@@ -1614,7 +1614,7 @@ ${fb.text}`
     const t = d.content?.find(c => c.type === 'tool_use')?.input
     if (!t || !t.ok || !t.antwort?.trim()) return nein
     // Harte Sperren nach der KI: keine Gedankenstriche, keine Rendite-/Steuerzahlen.
-    const antwort = t.antwort.replace(/\s*[—–]\s*/g, ', ').trim()
+    const antwort = t.antwort.replace(/\s*[—–]\s*/g, ', ').replace(/([\p{L}\p{N}])\s+-\s+(\p{Ll})/gu, '$1, $2').trim()
     if (/rendite|wertsteigerung|\+\s?\d+\s?%|steuer.{0,20}\d/i.test(antwort)) return { ...nein, offen: text }
     return { ok: true, antwort, alles: !!t.alles, offen: (t.offen ?? '').trim() }
   } catch (e) { console.warn('[booking-bot] faktenAntwort:', e); return nein }
