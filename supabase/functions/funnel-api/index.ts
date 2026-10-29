@@ -366,7 +366,36 @@ async function unterlagenVersenden(admin: SupabaseClient, leadId: string, dealId
       completed_at: new Date().toISOString(),
     })
   } catch { /* egal */ }
+  await autoRegistrieren(admin, leadId, master.project_id)
   return true
+}
+
+// Sven 29.10.26: Wer ein Deck zu einem Projekt mit crm_projects.auto_register bekommt,
+// wird sofort beim Bauträger registriert (wie src/lib/autoRegistration.ts im Postausgang).
+// Bewusst OHNE Phasenwechsel: der Trigger hp_cancel_stale_scheduled_messages würde sonst
+// die eben geplante Unterlagen-Nachricht, die Deck-Erinnerung und die Erstkontakt-Kette
+// des Deals stornieren. schedule-message liest Bauträger + Bemerkung aus der Aktivität.
+async function autoRegistrieren(admin: SupabaseClient, leadId: string, projectId: string): Promise<void> {
+  try {
+    const { data: p } = await admin.from('crm_projects').select('name, developer, auto_register').eq('id', projectId).maybeSingle()
+    const proj = p as { name: string; developer: string | null; auto_register: boolean | null } | null
+    const dev = proj?.developer?.trim()
+    if (!proj?.auto_register || !dev) return
+    const { data: regs } = await admin.from('lead_registrations').select('developer').eq('lead_id', leadId)
+    if (((regs ?? []) as { developer: string }[]).some(r => r.developer.toLowerCase().trim() === dev.toLowerCase())) return
+    const notes = `${proj.name}, automatisch beim Deck-Versand (Unterlagen-Anfrage)`
+    const { error: re } = await admin.from('lead_registrations').upsert({ lead_id: leadId, developer: dev, note: notes }, { onConflict: 'lead_id,developer' })
+    if (re) { console.warn('[funnel-api] Registrierung:', re.message); return }
+    await admin.from('activities').insert({
+      lead_id: leadId, type: 'note', direction: 'outbound', auto: true,
+      content: `Registrierung gesendet an: ${dev}. Bemerkung: ${notes}`,
+      completed_at: new Date().toISOString(),
+    })
+    const { error: se } = await admin.functions.invoke('schedule-message', { body: { lead_id: leadId, event_type: 'registrierung' } })
+    if (se) console.warn('[funnel-api] Registrierung-Nachricht:', se.message)
+  } catch (e) {
+    console.warn('[funnel-api] Auto-Registrierung:', e)
+  }
 }
 
 // Honeypot vs. Autofill: Android/Instagram-WebView traegt die eigenen Daten auch ins
