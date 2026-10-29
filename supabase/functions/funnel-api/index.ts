@@ -255,6 +255,19 @@ interface InfoPaket {
   wa_text?: string
   mail_subject?: string
   mail_html?: string
+  // Erinnerung, wenn das Deck nach X Stunden noch nicht geöffnet wurde (Sven 29.10.26:
+  // Flora, 12 von 28 Kontakten hatten ihr Deck nie geöffnet). Ohne Text keine Erinnerung.
+  reminder_wa_text?: string
+  reminder_hours?: number
+}
+
+// Sendezeit in Bürozeiten (8–21 Uhr Asia/Nicosia) schieben, nie nachts (wie track-engagement).
+function toBusinessHours(d: Date): Date {
+  const hourIn = (dt: Date) =>
+    Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Nicosia', hour: '2-digit', hour12: false }).format(dt)) % 24
+  let out = new Date(d)
+  for (let i = 0; i < 48 && !(hourIn(out) >= 8 && hourIn(out) < 21); i++) out = new Date(out.getTime() + 60 * 60 * 1000)
+  return out
 }
 const fill = (t: string, v: Record<string, string>) => t.replace(/\{\{(\w+)\}\}/g, (m, k) => (k in v ? v[k] : m))
 const escHtml = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -328,6 +341,23 @@ async function unterlagenVersenden(admin: SupabaseClient, leadId: string, dealId
     email_body: mailHtml, whatsapp_text: waText,
   })
   if (se) { console.error('[funnel-api] Unterlagen: Versand-Planung fehlgeschlagen:', se.message); return false }
+  // Erinnerung vorausplanen; process-scheduled-messages prüft beim Versand, ob das Deck
+  // inzwischen geöffnet wurde, der Kunde geantwortet oder einen Termin hat (dann skipped).
+  if (ip.reminder_wa_text) {
+    const { data: dup } = await admin.from('scheduled_messages').select('id')
+      .eq('lead_id', leadId).eq('event_type', 'deck_reminder').in('status', ['pending', 'sent']).limit(1)
+    if (!dup?.length) {
+      const h = ip.reminder_hours && ip.reminder_hours > 0 ? ip.reminder_hours : 24
+      const { error: re } = await admin.from('scheduled_messages').insert({
+        lead_id: leadId, deal_id: dealId, type: 'whatsapp', event_type: 'deck_reminder', status: 'pending',
+        scheduled_at: toBusinessHours(new Date(Date.now() + h * 3600000)).toISOString(),
+        whatsapp_text: fill(ip.reminder_wa_text, v).replace(/^Hallo du,/, 'Hallo,'),
+        recipient: 'client', appointment_condition: 'no_appointment',
+        seq_condition: { kind: 'deck_not_viewed', token },
+      })
+      if (re) console.warn('[funnel-api] Deck-Erinnerung nicht geplant:', re.message)
+    }
+  }
   try {
     await admin.from('activities').insert({
       lead_id: leadId, type: 'note', direction: 'inbound', auto: true,
@@ -658,7 +688,7 @@ Deno.serve(async (req) => {
       const email = ((leadRow as { email?: string }).email ?? '').trim().toLowerCase()
 
       // Erstkontakt-Fallback stornieren — der Kunde HAT ja jetzt einen Termin
-      try { await admin.from('scheduled_messages').update({ status: 'cancelled' }).eq('lead_id', leadId).eq('status', 'pending').in('event_type', ['erstkontakt', 'no_show', 'immobilienauswahl', 'newsletter', 'bot_nudge', 'deck_viewed_followup']) } catch { /* egal */ }
+      try { await admin.from('scheduled_messages').update({ status: 'cancelled' }).eq('lead_id', leadId).eq('status', 'pending').in('event_type', ['erstkontakt', 'no_show', 'immobilienauswahl', 'newsletter', 'bot_nudge', 'deck_viewed_followup', 'deck_reminder']) } catch { /* egal */ }
 
       // Bucht hier jemand Internes (Mitarbeitende, Verwaltung), darf daraus KEIN
       // Kundenvorgang werden: kein Deal in der Pipeline, keine Bestaetigungsautomatik,

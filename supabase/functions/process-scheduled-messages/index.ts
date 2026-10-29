@@ -869,7 +869,23 @@ Deno.serve(async (req: Request) => {
         }
 
         // ── Flow-Builder: Wenn/Dann-Bedingung (E-Mail geöffnet?) zur SENDEZEIT ──
-        const seqCond = (msg as { seq_condition?: { kind?: string; negate?: boolean } | null }).seq_condition
+        const seqCond = (msg as { seq_condition?: { kind?: string; negate?: boolean; token?: string } | null }).seq_condition
+        // Deck-Erinnerung (funnel-api, event_type deck_reminder): nur, wenn das Deck seit der
+        // Planung nicht geöffnet wurde und der Kunde nicht schon selbst geschrieben hat.
+        if (seqCond?.kind === 'deck_not_viewed' && msg.lead_id) {
+          const since = (msg as { created_at?: string }).created_at ?? '1970-01-01'
+          let q = supabase.from('engagement_events').select('id').eq('lead_id', msg.lead_id).eq('type', 'deck_view')
+          if (seqCond.token) q = q.eq('token', seqCond.token)
+          const { data: dv } = await q.limit(1)
+          const { data: inb } = await supabase.from('activities').select('id').eq('lead_id', msg.lead_id)
+            .eq('direction', 'inbound').eq('type', 'whatsapp').gte('created_at', since).limit(1)
+          const grund = dv?.length ? 'Deck schon geöffnet' : inb?.length ? 'Kunde hat geantwortet' : ''
+          if (grund) {
+            await supabase.from('scheduled_messages').update({ status: 'skipped', sent_at: new Date().toISOString(), error_message: `Deck-Erinnerung entfällt: ${grund}` }).eq('id', msg.id)
+            processed.push({ id: msg.id, result: 'skipped:deck_viewed' })
+            continue
+          }
+        }
         if (seqCond?.kind === 'email_opened') {
           let opened = false
           if (msg.subscriber_id) {
