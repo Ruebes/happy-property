@@ -4,11 +4,12 @@ import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { CustomSelect } from '../../../components/CustomSelect'
 import { FIN_CATS, FIN_CAT_LABEL } from '../../../lib/crmTypes'
+import FinanzAuswertung from '../../../components/crm/FinanzAuswertung'
 
 // ── Buchhaltung ───────────────────────────────────────────────────────────────
 // Revolut-Kontobewegungen (täglicher Sync + Backfill), Kategorien (Regeln + KI),
 // Beleg-Zuordnung, Ausgangskorb (Rechnungen, die Sven zahlen muss) und
-// Monats-Auswertung mit CSV-Export für den Steuerberater.
+// Auswertung mit Zeitraumfilter (FinanzAuswertung) und CSV-Export für den Steuerberater.
 
 interface FinTx {
   id: string; booked_at: string; amount: number; currency: string
@@ -209,19 +210,6 @@ export default function Finance() {
     setPayables(arr => arr.map(x => x.id === p.id ? { ...x, status } : x))
   }
 
-  // Auswertung: Monat × Kategorie
-  const report = useMemo(() => {
-    const map = new Map<string, Map<string, number>>()
-    for (const x of txs) {
-      const mo = x.booked_at.slice(0, 7)
-      const cat = x.category ?? 'offen'
-      if (!map.has(mo)) map.set(mo, new Map())
-      const inner = map.get(mo)!
-      inner.set(cat, (inner.get(cat) ?? 0) + x.amount)
-    }
-    return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]))
-  }, [txs])
-
   const exportCsv = () => {
     const rows = [['Datum', 'Gegenpartei', 'Verwendungszweck', 'Betrag', 'Währung', 'Kategorie', 'Beleg']]
     for (const x of filtered) rows.push([x.booked_at.slice(0, 10), x.counterparty, x.reference, String(x.amount).replace('.', ','), x.currency, x.category ?? '', x.doc_url ?? ''])
@@ -390,34 +378,7 @@ export default function Finance() {
             ))}
           </div>
         ) : (
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead><tr className="text-left text-xs text-gray-400 border-b border-gray-100">
-                <th className="px-3 py-2">{t('crm.fin.month', 'Monat')}</th>
-                <th className="px-3 py-2 text-right text-green-600">{t('crm.fin.in', 'Einnahmen')}</th>
-                <th className="px-3 py-2 text-right">{t('crm.fin.out', 'Ausgaben')}</th>
-                <th className="px-3 py-2 text-right">{t('crm.fin.net', 'Saldo')}</th>
-                <th className="px-3 py-2">{t('crm.fin.topCats', 'Größte Ausgaben-Kategorien')}</th>
-              </tr></thead>
-              <tbody>
-                {report.map(([mo, cats]) => {
-                  const entries = Array.from(cats.entries())
-                  const inSum = entries.filter(([, v]) => v > 0).reduce((s, [, v]) => s + v, 0)
-                  const outSum = entries.filter(([, v]) => v < 0).reduce((s, [, v]) => s + v, 0)
-                  const top = entries.filter(([, v]) => v < 0).sort((a, b) => a[1] - b[1]).slice(0, 3)
-                  return (
-                    <tr key={mo} className="border-b border-gray-50">
-                      <td className="px-3 py-2 font-medium text-gray-900">{mo}</td>
-                      <td className="px-3 py-2 text-right text-green-600 font-semibold">{eur(inSum)}</td>
-                      <td className="px-3 py-2 text-right text-gray-900 font-semibold">{eur(outSum)}</td>
-                      <td className={`px-3 py-2 text-right font-bold ${inSum + outSum >= 0 ? 'text-green-600' : 'text-red-600'}`}>{eur(inSum + outSum)}</td>
-                      <td className="px-3 py-2 text-xs text-gray-500">{top.map(([c, v]) => `${CAT_LABEL[c] ?? c} ${eur(v)}`).join(' · ')}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+          <FinanzAuswertung txs={txs} onCategorize={() => void runSync('categorize_ai')} categorizing={busy === 'categorize_ai'} />
         )}
       </div>
       {payFor && (
