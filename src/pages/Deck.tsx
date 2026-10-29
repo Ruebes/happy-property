@@ -111,6 +111,9 @@ type VatRefund = { letMonths: number }
 // der das Formular mit genau dieser Wohnung öffnet (Sven 24.10.26, vorher bekam jede
 // Anfrage die erste Wohnung des Decks). null = Deck mit nur einer Wohnung.
 const InfoOpenCtx = createContext<((nr: string) => void) | null>(null)
+// Terminlink (persönlich oder allgemein) für die Termin-Knöpfe in Wohnung und Abschluss.
+// Auswertung Flora 28.10.26: 70 Besuche, 2 Termin-Klicks, weil der Knopf fast nur oben stand.
+const TerminCtx = createContext<string | null>(null)
 const VatRefundCtx = createContext<{ byUnit: Record<string, VatRefund>; units: string[] }>({ byUnit: {}, units: [] })
 const unitNorm = (s?: string) => (s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')
 function vatRefundMap(rows: unknown): Record<string, VatRefund> {
@@ -146,24 +149,36 @@ function VatRefundRow({ unit }: { unit?: string }) {
 function UnitInfoButton({ nr }: { nr?: string }) {
   const { t } = useTranslation()
   const open = useContext(InfoOpenCtx)
+  const termin = useContext(TerminCtx)
   const n = nr?.trim()
   if (!open || !n) return null
   return (
-    <button onClick={() => open(n)} className="mt-5 px-5 py-2.5 rounded-full font-semibold text-sm shadow print:hidden transition hover:brightness-105" style={{ background: GOLD, color: DARK }}>
-      {t('deck.unitInfo', 'Mehr Infos zu {{nr}} anfordern', { nr: n })} <span aria-hidden>→</span>
-    </button>
+    <div className="mt-5 flex flex-wrap gap-2.5 print:hidden">
+      {termin && (
+        <a href={termin} className="px-5 py-2.5 rounded-full font-semibold text-sm shadow transition hover:brightness-105" style={{ background: GOLD, color: DARK }}>
+          📅 {t('deck.unitTermin', 'Termin zu {{nr}} buchen', { nr: n })}
+        </a>
+      )}
+      <button onClick={() => open(n)} className="px-5 py-2.5 rounded-full font-semibold text-sm border transition hover:bg-black/5" style={{ borderColor: GOLD, color: INK }}>
+        {t('deck.unitInfo', 'Mehr Infos zu {{nr}} anfordern', { nr: n })} <span aria-hidden>→</span>
+      </button>
+    </div>
   )
 }
 
 function UnitBlock(b: Extract<DeckBlock, { type: 'unit' }>) {
   return (
-    <section className="px-5 md:px-20 py-16 grid grid-cols-1 md:grid-cols-2 gap-10 items-center" style={{ background: CREAM }}>
-      <Img src={b.image} className="w-full h-[420px] object-cover rounded-xl" />
+    <section className={`px-5 md:px-20 grid grid-cols-1 md:grid-cols-2 items-center ${b.compact ? 'py-10 gap-6 md:gap-10' : 'py-16 gap-10'}`} style={{ background: CREAM }}>
+      <Img src={b.image} className={`w-full object-cover rounded-xl ${b.compact ? 'h-[200px] md:h-[360px]' : 'h-[420px]'}`} />
       <div>
         <Kicker>{b.kicker}</Kicker>
-        <h2 className="font-heading font-bold text-6xl md:text-7xl mt-2" style={{ color: INK }}>{b.number}</h2>
+        <h2 className={`font-heading font-bold mt-2 ${b.compact ? 'text-5xl md:text-6xl' : 'text-6xl md:text-7xl'}`} style={{ color: INK }}>{b.number}</h2>
         {b.nickname && <p className="font-heading italic text-xl md:text-2xl mt-1" style={{ color: GOLD }}>{b.nickname}</p>}
-        {b.specs && (
+        {b.specs && b.compact ? (
+          <p className="mt-4 text-[14px] leading-relaxed text-gray-700">
+            <strong className="text-gray-900">{b.specs[0]}</strong>{b.specs.length > 1 && ` · ${b.specs.slice(1).join(' · ')}`}
+          </p>
+        ) : b.specs && (
           <div className="mt-5 space-y-1 text-[15px] text-gray-700">
             {b.specs.map((s, i) => <p key={i} className={i === 0 ? 'font-semibold text-gray-900' : ''}>{s}</p>)}
           </div>
@@ -825,6 +840,20 @@ function FloorplanSchematic({ rooms, note }: { rooms: FloorplanRoom[]; note?: st
 }
 
 function FloorplanBlock(b: Extract<DeckBlock, { type: 'floorplan' }>) {
+  const { t } = useTranslation()
+  // Eingeklappt unter der eigenen Wohnung (Sammel-Decks, siehe webBlocks).
+  if (b.collapsed) {
+    const { collapsed: _c, ...open } = b
+    return (
+      <details className="px-5 md:px-20 pb-8 -mt-4 group" style={{ background: CREAM }}>
+        <summary className="cursor-pointer list-none inline-flex items-center gap-2 text-sm font-semibold py-2" style={{ color: INK }}>
+          <span className="transition-transform group-open:rotate-90" style={{ color: GOLD }}>▸</span>
+          {t('deck.floorplanToggle', 'Grundriss und Flächen ansehen')}
+        </summary>
+        <div className="-mx-5 md:-mx-20"><FloorplanBlock {...open} /></div>
+      </details>
+    )
+  }
   return (
     <section className="px-5 md:px-20 py-16" style={{ background: CREAM }}>
       <Accent /><Kicker>{b.kicker}</Kicker>
@@ -932,6 +961,7 @@ function PaymentBlock(b: Extract<DeckBlock, { type: 'payment' }>) {
 
 function CtaBlock(b: Extract<DeckBlock, { type: 'cta' }>) {
   const { t } = useTranslation()
+  const termin = useContext(TerminCtx)
   return (
     <section className="px-5 md:px-20 py-20" style={{ background: DARK }}>
       <Accent /><Kicker>{b.kicker}</Kicker>
@@ -947,6 +977,11 @@ function CtaBlock(b: Extract<DeckBlock, { type: 'cta' }>) {
             </div>
           ))}
         </div>
+      )}
+      {termin && (
+        <a href={termin} className="inline-block mt-10 px-7 py-3.5 rounded-full font-semibold text-[15px] shadow-lg transition-transform hover:scale-[1.03] print:hidden" style={{ background: GOLD, color: DARK }}>
+          📅 {t('deck.ctaTermin', 'Strategiegespräch mit Sven buchen')} <span aria-hidden>→</span>
+        </a>
       )}
       {/* Kontakt + Foto */}
       <div className="mt-12 grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-6 items-center rounded-2xl px-6 py-6" style={{ background: 'rgba(194,161,94,0.1)' }}>
@@ -1571,8 +1606,10 @@ export default function Deck() {
     : t('deck.waText', 'Hallo Sven, ich habe mir die Wohnung angesehen und hätte eine Frage.'))}`
   // Zwischen-Aufruf nach dem Grundriss (sonst nach dem Wohnungs-Block), nicht
   // direkt vor dem Abschluss-Block, sonst stünde dasselbe zweimal untereinander.
+  // Sammel-Decks: erst nach der letzten Wohnung, nicht schon nach der ersten.
   const fpIdx = view.findIndex(b => b.type === 'floorplan')
-  const ctaAfter = fpIdx >= 0 ? fpIdx : view.findIndex(b => b.type === 'unit')
+  const lastUnitIdx = view.reduce((m, b, i) => (b.type === 'unit' || b.type === 'floorplan') ? i : m, -1)
+  const ctaAfter = deckUnits.length > 3 ? lastUnitIdx : fpIdx >= 0 ? fpIdx : view.findIndex(b => b.type === 'unit')
   const showInline = ctaAfter >= 0 && view[ctaAfter + 1]?.type !== 'cta'
   // Buchseiten: ein Abschnitt je Seite, das schmale Kennzahlen-Band steht mit auf der Titelseite.
   const bookPages: number[][] = []
@@ -1632,6 +1669,7 @@ export default function Deck() {
   return (
     <VatRefundCtx.Provider value={{ byUnit: vatRefund, units: deckUnits }}>
     <InfoOpenCtx.Provider value={!isPrint && deckUnits.length > 1 ? openInfo : null}>
+    <TerminCtx.Provider value={isPrint ? null : terminUrl}>
     <div className={web ? 'font-body hpweb-deck' : 'font-body'} style={{ background: CREAM, color: INK }}>
       {isPrint && (
         <div className="print:hidden sticky top-0 z-50 flex justify-center p-3" style={{ background: DARK }}>
@@ -1647,8 +1685,9 @@ export default function Deck() {
       {view.map((b, i) => (
         <div key={i} className="relative" data-deck-block>
           <Block block={b} />
-          {/* Logo-Wasserzeichen auf jeder Seite — Diebstahlschutz (nicht auf dem schmalen Kennzahlen-Band) */}
-          {b.type !== 'w_facts' && <img src={DECK_LOGO} alt="" aria-hidden="true"
+          {/* Logo-Wasserzeichen auf jeder Seite — Diebstahlschutz (nicht auf dem schmalen Kennzahlen-Band
+              und nicht auf der eingeklappten Grundriss-Zeile, dort läge es über dem Text) */}
+          {b.type !== 'w_facts' && !(b.type === 'floorplan' && b.collapsed) && <img src={DECK_LOGO} alt="" aria-hidden="true"
             className="absolute top-3 right-3 md:top-4 md:right-6 h-7 md:h-9 w-auto rounded-md opacity-80 pointer-events-none select-none ring-1 ring-white/10"
             onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />}
           {!isPrint && showInline && i === ctaAfter && <InlineCta onInfo={() => openInfo(null)} terminUrl={terminUrl} />}
@@ -1667,6 +1706,7 @@ export default function Deck() {
       )}
       {book && !isPrint && <DeckBook count={bookPages.length} renderPage={renderBookPage} titles={bookTitles} cover={bookCover} onClose={closeBook} />}
     </div>
+    </TerminCtx.Provider>
     </InfoOpenCtx.Provider>
     </VatRefundCtx.Provider>
   )

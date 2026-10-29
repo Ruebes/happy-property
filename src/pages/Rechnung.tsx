@@ -160,6 +160,14 @@ export default function Rechnung() {
 
         {!withCalc && <SpecsCard rows={rows} />}
 
+        {/* Termin-Absprung: die Berechnung ist der meistgeklickte Knopf im Deck (Flora 28.10.26),
+            einen Weg zum Gespräch gab es hier bisher nicht. */}
+        <div style={{ marginTop: isMobile ? 32 : 44, background: DARK, borderRadius: 14, padding: isMobile ? '20px 18px' : '26px 30px', color: '#fff' }}>
+          <div style={{ fontFamily: SERIF, fontSize: isMobile ? 20 : 24, fontWeight: 800, lineHeight: 1.25 }}>{t('rechnung.terminTitle', 'Passt die Rechnung zu deinen Zahlen?')}</div>
+          <p style={{ fontSize: 14, lineHeight: 1.6, color: '#d6dbe0', margin: '8px 0 16px', maxWidth: 640 }}>{t('rechnung.terminText', 'Im Strategiegespräch rechnen wir sie mit deinem Steuersatz, deinem Eigenkapital und deiner Finanzierung durch. 30 Minuten per Video, kostenlos.')}</p>
+          <a href="/termin?src=rechnung" style={{ display: 'inline-block', background: CORAL, color: '#fff', fontWeight: 700, fontSize: 15, padding: '12px 22px', borderRadius: 999, textDecoration: 'none' }}>📅 {t('rechnung.terminButton', 'Termin mit Sven buchen')} →</a>
+        </div>
+
         <p style={{ fontSize: 10.5, color: '#aaa', marginTop: 36, lineHeight: 1.6 }}>
           <b>{t('rechnung.disclaimerLabel', 'Haftungsausschluss')}:</b> {t('rechnung.disclaimerText', 'Unverbindliche Information, keine steuerliche/rechtliche/finanzielle Beratung. Alle Angaben ohne Gewähr. IRR = interne Kapitalrendite auf das eingesetzte Eigenkapital (jährlich). Stand: {{date}}.', { date: today })}
         </p>

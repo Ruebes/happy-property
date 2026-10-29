@@ -21,7 +21,7 @@ export type DeckWhyPreis = { h2?: string; title: string; text: string }
 export type DeckBlock =
   | { type: 'cover';   kicker?: string; title: string; tagline?: string; forLine?: string; image?: string; video?: string; why?: DeckWhyPreis }
   | { type: 'letter';  kicker?: string; headline?: string; paragraphs: string[]; signoff?: string; signName?: string }
-  | { type: 'unit';    kicker?: string; number?: string; nickname?: string; specs?: string[]; priceMain?: string; priceSub?: string; priceLines?: { label: string; value: string; strong?: boolean; strike?: boolean }[]; note?: string; image?: string }
+  | { type: 'unit';    compact?: boolean; kicker?: string; number?: string; nickname?: string; specs?: string[]; priceMain?: string; priceSub?: string; priceLines?: { label: string; value: string; strong?: boolean; strike?: boolean }[]; note?: string; image?: string }
   | { type: 'facts';   kicker?: string; headline?: string; items?: { min: string; label: string }[]; image?: string; mapUrl?: string; mapLabel?: string; mapMarker?: { x: number; y: number }; mapLat?: number; mapLng?: number; mapQuery?: string; mapEmbed?: string }
   | { type: 'marina';  kicker?: string; headline?: string; fromLabel?: string; fromSub?: string; toLabel?: string; toSub?: string; distance?: string; drive?: string; valuePct?: string; valueText?: string; note?: string }
   | { type: 'columns'; kicker?: string; headline?: string; image?: string; cols?: { title: string; sub?: string; text: string }[] }
@@ -41,7 +41,7 @@ export type DeckBlock =
   | { type: 'amenity'; kicker?: string; headline?: string; intro?: string; items?: { title: string; text?: string; image?: string; plan?: string; planLabel?: string; stats?: { value: string; unit?: string; label: string }[] }[]; note?: string }
   | { type: 'benefits';kicker?: string; headline?: string; cards?: { icon?: string; title: string; text: string }[] }
   | { type: 'inventory';kicker?: string; headline?: string; intro?: string; image?: string; groups?: { title: string; icon?: string; items: string[] }[]; note?: string }
-  | { type: 'floorplan';kicker?: string; headline?: string; image?: string; stats?: { value: string; unit?: string; label: string }[]; bullets?: { strong?: string; text: string }[]; rooms?: FloorplanRoom[]; planNote?: string }
+  | { type: 'floorplan';collapsed?: boolean; kicker?: string; headline?: string; image?: string; stats?: { value: string; unit?: string; label: string }[]; bullets?: { strong?: string; text: string }[]; rooms?: FloorplanRoom[]; planNote?: string }
   | { type: 'payment'; kicker?: string; headline?: string; intro?: string; phase1?: DeckPaymentPhase; phase2?: DeckPaymentPhase; note?: string; priceSummary?: { net: string; vatRate?: string; vat: string; gross: string } }
   | { type: 'cta';     kicker?: string; headline?: string; text?: string; steps?: { n: string; title: string; text: string }[] }
 

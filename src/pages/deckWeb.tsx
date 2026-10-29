@@ -86,7 +86,21 @@ export function webBlocks(blocks: DeckBlock[], page: ProjectPage): AnyBlock[] {
   if (page.facts?.length) out.push({ type: 'w_facts', page })
   // Ältere Decks nennen in den Wohnungsdaten den Bauträger, im Kundenmaterial verboten.
   const units = of('unit').map(u => ({ ...u, specs: u.specs?.filter(x => !/^\s*Bauträger\b/i.test(x)) }))
-  out.push(...of('letter'), ...units, ...of('floorplan'), ...of('masterplan'))
+  // Sammel-Decks mit vielen Wohnungen (Flora: 10 Karten + 10 Grundrisse, am Handy gut
+  // 50 Bildschirme lang, die Hälfte brach vorher ab): kleinere Karten, Grundriss
+  // eingeklappt direkt unter der eigenen Wohnung. Zuordnung über die Nummer im Kicker.
+  if (units.length > 3) {
+    const plans = of('floorplan')
+    const used = new Set<number>()
+    out.push(...of('letter'))
+    units.forEach(u => {
+      out.push({ ...u, compact: true })
+      const nr = u.number?.trim()
+      const j = nr ? plans.findIndex((p, k) => !used.has(k) && (p.kicker ?? '').split(/[^\p{L}\p{N}]+/u).includes(nr)) : -1
+      if (j >= 0) { used.add(j); out.push({ ...plans[j], collapsed: true }) }
+    })
+    out.push(...plans.filter((_, k) => !used.has(k)), ...of('masterplan'))
+  } else out.push(...of('letter'), ...units, ...of('floorplan'), ...of('masterplan'))
   // Deck-eigene Videos (Baustelle heute) direkt nach dem Grundriss, Projektvideos
   // und Lebensfilm zeigt die Seite selbst.
   out.push(...of('video').filter(v => v.web))
