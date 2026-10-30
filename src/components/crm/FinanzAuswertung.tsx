@@ -10,7 +10,7 @@ import { FIN_NEUTRAL_CATS, FIN_CAT_LABEL } from '../../lib/crmTypes'
 
 export interface FinAuswertungTx {
   booked_at: string; amount: number; currency: string
-  counterparty: string; category: string | null
+  counterparty: string; reference: string; category: string | null
 }
 
 type Period = 'month' | 'lastmonth' | 'quarter' | 'lastquarter' | 'year' | 'lastyear' | 'all' | 'custom'
@@ -100,12 +100,14 @@ export default function FinanzAuswertung({ txs, onCategorize, categorizing }: {
     }
   }, [eurTxs, period, from, to])
 
-  // Gesellschafterdarlehen über die ganze Zeit, unabhängig vom Zeitraum
+  // Gesellschafterdarlehen über die ganze Zeit, unabhängig vom Zeitraum. Als
+  // Rückzahlung zählt nur „Pay back Loan“: die 12 × 10.000 € „Transfer“ von 2024
+  // waren Weiterleitungen der Sveru-Sport-Zahlungen, keine Tilgung (Sven 30.10.26).
   const loan = useMemo(() => {
     let inSum = 0, outSum = 0
     for (const x of eurTxs) {
       if (x.category === 'einlage') inSum += Number(x.amount)
-      if (x.category === 'entnahme') outSum += Math.abs(Number(x.amount))
+      if (x.category === 'entnahme' && /loan/i.test(x.reference ?? '')) outSum += Math.abs(Number(x.amount))
     }
     return { inSum, outSum, balance: inSum - outSum }
   }, [eurTxs])
@@ -260,7 +262,7 @@ export default function FinanzAuswertung({ txs, onCategorize, categorizing }: {
         {(data.deposits > 0 || data.withdrawals > 0 || data.transfers > 0) && (
           <ul className="space-y-0.5">
             {data.deposits > 0 && <li>{t('crm.fin.nDeposits', 'Deine Einlagen im Zeitraum: {{sum}} (Darlehen an die Firma, kein Umsatz)', { sum: fmtEur(data.deposits) })}</li>}
-            {data.withdrawals > 0 && <li>{t('crm.fin.nWithdrawals', 'Rückzahlungen an dich im Zeitraum: {{sum}} (keine Betriebsausgabe)', { sum: fmtEur(data.withdrawals) })}</li>}
+            {data.withdrawals > 0 && <li>{t('crm.fin.nWithdrawals', 'Überweisungen an dich im Zeitraum: {{sum}} (keine Betriebsausgabe)', { sum: fmtEur(data.withdrawals) })}</li>}
             {data.transfers > 0 && <li>{t('crm.fin.nTransfers', 'Umbuchungen im Zeitraum: {{sum}} (Devisentausch zwischen eigenen Konten)', { sum: fmtEur(data.transfers) })}</li>}
           </ul>
         )}
@@ -269,7 +271,7 @@ export default function FinanzAuswertung({ txs, onCategorize, categorizing }: {
           <span className="font-semibold text-gray-900">
             {loan.balance >= 0
               ? t('crm.fin.loanOpen', 'Die Firma schuldet dir noch {{sum}}.', { sum: fmtEur(loan.balance) })
-              : t('crm.fin.loanOver', 'Du hast {{sum}} mehr entnommen als eingelegt.', { sum: fmtEur(-loan.balance) })}
+              : t('crm.fin.loanOver', 'Mehr zurückgezahlt als eingelegt: {{sum}}.', { sum: fmtEur(-loan.balance) })}
           </span>
         </p>
       </div>
