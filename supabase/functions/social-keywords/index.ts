@@ -29,6 +29,10 @@
 //     (RPC social_keywords_claim, 10 Min. Sperre je Zeile über last_attempt_at).
 //   - Meta-Zugangsdaten gehen nur im Authorization-Header raus und werden aus
 //     allem, was gespeichert oder zurückgegeben wird, entfernt.
+//   - Wächter für verschluckte Kommentare: Instagram zählt manche Kommentare mit
+//     (comments_count), liefert sie aber nicht aus (z. B. privates Profil). Steigt bei
+//     einem IG-Beitrag mit „Kommentier…"-Aufruf die Zahl der unsichtbaren Kommentare,
+//     gibt es eine Aufgabe für Sven (Stand in crm_settings social_keywords_hidden).
 //
 // Einstellungen: crm_settings social_keywords (JSON-Text), letzter Lauf in
 // crm_settings social_keywords_last_run (auch sichtbar, wenn der Cron-Aufruf nach
@@ -378,11 +382,15 @@ async function checkReportLink(): Promise<LinkCheck> {
 
 const FB_C = 'comments.order(reverse_chronological).limit(50){id,created_time,from,message,can_reply_privately}'
 const IG_C = 'comments.limit(50){id,timestamp,from,username,text}'
+// Organische IG-Medien zusätzlich mit Zähler und Antwort-IDs (für den Wächter)
+const IG_C_COUNT = 'comments_count,timestamp,permalink,comments.limit(50){id,timestamp,from,username,text,replies.limit(50){id}}'
 type FbComment = { id: string; created_time?: string; from?: { id?: string; name?: string }; message?: string; can_reply_privately?: boolean }
-type IgComment = { id: string; timestamp?: string; from?: { id?: string; username?: string }; username?: string; text?: string }
+type IgComment = { id: string; timestamp?: string; from?: { id?: string; username?: string }; username?: string; text?: string; replies?: { data?: Array<{ id: string }> } }
+// comments_count zählt Antworten mit, daher Kommentare + Antworten vergleichen
+export interface IgCount { id: string; caption: string; at: number; permalink: string | null; count: number; seen: number; complete: boolean }
 
-async function collect(m: Meta, prevAds: Summary['ads'] | undefined, errors: string[], ruleIds: string[] = []): Promise<{ cands: Cand[]; ads: Summary['ads'] }> {
-  const cands: Cand[] = []
+async function collect(m: Meta, prevAds: Summary['ads'] | undefined, errors: string[], ruleIds: string[] = []): Promise<{ cands: Cand[]; ads: Summary['ads']; igCounts: IgCount[] }> {
+  const cands: Cand[] = [], igCounts: IgCount[] = []
   const fbPost = (postId: string, cs: FbComment[] | undefined, caption = '') => {
     for (const c of cs ?? []) cands.push({
       comment_id: c.id, platform: 'facebook', post_id: postId, caption, author_id: c.from?.id ?? null, author_name: c.from?.name ?? null,
@@ -404,9 +412,17 @@ async function collect(m: Meta, prevAds: Summary['ads'] | undefined, errors: str
 
   // 2) Instagram organisch: letzte 25 Medien (1 Aufruf)
   if (m.igId) {
-    const ig = await gGet<{ data?: Array<{ id: string; caption?: string; comments?: { data?: IgComment[] } }> }>(`${m.igId}/media`, m.pageToken, { fields: `id,caption,${IG_C}`, limit: '25' })
+    const ig = await gGet<{ data?: Array<{ id: string; caption?: string; comments_count?: number; timestamp?: string; permalink?: string; comments?: { data?: IgComment[] } }> }>(`${m.igId}/media`, m.pageToken, { fields: `id,caption,${IG_C_COUNT}`, limit: '25' })
     if (ig.error) errors.push(redact(`Instagram-Beiträge: ${ig.error.message ?? 'Fehler'}${ig.error.code ? ` (#${ig.error.code})` : ''}`))
-    for (const p of ig.data ?? []) { seenIg.add(p.id); igMedia(p.id, p.comments?.data, p.caption ?? '') }
+    for (const p of ig.data ?? []) {
+      seenIg.add(p.id); igMedia(p.id, p.comments?.data, p.caption ?? '')
+      const cs = p.comments?.data ?? []
+      if (typeof p.comments_count === 'number') igCounts.push({
+        id: p.id, caption: p.caption ?? '', at: Date.parse(p.timestamp ?? '') || 0, permalink: p.permalink ?? null, count: p.comments_count,
+        seen: cs.length + cs.reduce((n, c) => n + (c.replies?.data?.length ?? 0), 0),
+        complete: cs.length < 50 && cs.every(c => (c.replies?.data?.length ?? 0) < 50),   // volle Seite = nicht vergleichbar
+      })
+    }
   }
 
   // 2b) Beiträge aus Regeln mit post_ids, die nicht mehr unter den letzten 25 sind
@@ -453,7 +469,40 @@ async function collect(m: Meta, prevAds: Summary['ads'] | undefined, errors: str
   // Doppelte (Beitrag organisch UND als Anzeige) entfernen
   const uniq = new Map<string, Cand>()
   for (const c of cands) if (!uniq.has(c.comment_id)) uniq.set(c.comment_id, c)
-  return { cands: [...uniq.values()], ads }
+  return { cands: [...uniq.values()], ads, igCounts }
+}
+
+// ── Wächter: Kommentare, die Instagram zählt, aber nicht ausliefert ─────────────
+const HIDDEN_WINDOW_MS = 14 * 86400000          // nur Beiträge der letzten 14 Tage
+const HIDDEN_CTA_RE = /kommentier/i             // nur Beiträge mit Stichwort-Aufruf
+export function hiddenAlerts(counts: IgCount[], prev: Record<string, number>, seeded: boolean, now = Date.now()): { next: Record<string, number>; alerts: Array<IgCount & { hidden: number; added: number }> } {
+  const next: Record<string, number> = {}, alerts: Array<IgCount & { hidden: number; added: number }> = []
+  for (const c of counts) {
+    if (!c.complete || !c.at || now - c.at > HIDDEN_WINDOW_MS || !HIDDEN_CTA_RE.test(c.caption)) continue
+    const hidden = Math.max(0, c.count - c.seen)
+    const before = prev[c.id] ?? 0
+    next[c.id] = hidden
+    if (seeded && hidden > before) alerts.push({ ...c, hidden, added: hidden - before })
+  }
+  return { next, alerts }
+}
+async function watchHidden(sb: SupabaseClient, counts: IgCount[]): Promise<void> {
+  const state = await setting(sb, 'social_keywords_hidden') as { seeded?: boolean; media?: Record<string, number> }
+  const { next, alerts } = hiddenAlerts(counts, state.media ?? {}, state.seeded === true)
+  for (const a of alerts) {
+    const day = new Date(a.at).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', timeZone: 'Europe/Nicosia' })
+    const title = `💬 Instagram zeigt Kommentar nicht: Beitrag vom ${day}`
+    const desc = `Unter dem Instagram-Beitrag vom ${day} ist ${a.added === 1 ? 'ein neuer Kommentar' : `${a.added} neue Kommentare`} dazugekommen, den Instagram der Stichwort-Automatik nicht zeigt (meist privates Profil). Die Person hat also vermutlich nichts bekommen.
+
+Beitrag: ${a.permalink ?? '(Link fehlt)'}
+Anfang: ${a.caption.replace(/\s+/g, ' ').slice(0, 120)}
+
+So beantworten: Meta Business Suite > Postfach > Instagram-Kommentare > Beitrag öffnen. Unter dem Kommentar „Nachricht senden" klicken und den Text der passenden Regel schicken.
+
+Bitte NUR „Nachricht senden" nutzen, keine öffentliche Antwort darunter. Eine öffentliche Antwort zählt Instagram ebenfalls unsichtbar mit, dann meldet sich dieser Wächter erneut.`
+    await taskForSven(sb, title, desc)
+  }
+  await saveSetting(sb, 'social_keywords_hidden', { seeded: true, at: new Date().toISOString(), media: next })
 }
 
 // ── Senden: private Antwort, dann (optional) öffentliche Antwort ──────────────
@@ -569,8 +618,9 @@ async function scanRun(sb: SupabaseClient, cfg: KwCfg, dryRun: boolean, test: { 
       sum.ads = prev.ads
       await persist(); return sum
     }
-    const { cands, ads } = await collect(m, prev.ads, sum.errors, rulePostIds(cfg))
+    const { cands, ads, igCounts } = await collect(m, prev.ads, sum.errors, rulePostIds(cfg))
     sum.ads = ads
+    if (!dryRun) await watchHidden(sb, igCounts).catch(e => console.error('[social-keywords] Wächter:', redact(e instanceof Error ? e.message : String(e))))
     if (sum.errors.some(e => /#190\)/.test(e)) && !dryRun) await taskForSven(sb, TASK_TOKEN, TOKEN_TEXT)
     sum.scanned = cands.length
 
