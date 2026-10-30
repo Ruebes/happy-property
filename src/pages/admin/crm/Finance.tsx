@@ -99,7 +99,7 @@ export default function Finance() {
   const rejectMatch = async (tx: FinTx) => {
     setBusy(tx.id)
     const { error } = await supabase.from('fin_transactions')
-      .update({ doc_match_status: 'verworfen', doc_url: null, doc_name: null, partner_mail_id: null }).eq('id', tx.id)
+      .update({ doc_match_status: 'verworfen', doc_url: null, doc_name: null, partner_mail_id: null, vat_amount: null, vat_source: null }).eq('id', tx.id)
     setBusy('')
     if (error) { showToast(`❌ ${error.message}`); return }
     setTxs(arr => arr.map(x => x.id === tx.id ? { ...x, doc_match_status: 'verworfen', doc_url: null, doc_name: null } : x))
@@ -114,7 +114,7 @@ export default function Finance() {
     const { error } = await supabase.storage.from('fin-receipts').upload(path, file, { contentType: file.type || 'application/octet-stream', upsert: true })
     if (error) { showToast(`❌ ${error.message}`); return }
     const url = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/fin-receipts/${path}`
-    const { error: e2 } = await supabase.from('fin_transactions').update({ doc_url: url, doc_name: file.name, doc_status: null }).eq('id', tx.id)
+    const { error: e2 } = await supabase.from('fin_transactions').update({ doc_url: url, doc_name: file.name, doc_status: null, vat_amount: null, vat_source: null }).eq('id', tx.id)
     if (e2) { showToast(`❌ ${e2.message}`); return }
     setTxs(arr => arr.map(x => x.id === tx.id ? { ...x, doc_url: url, doc_name: file.name, doc_status: null } : x))
     showToast(`📎 ${t('crm.fin.docAdded', 'Beleg angehängt')}`)

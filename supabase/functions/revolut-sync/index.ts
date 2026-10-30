@@ -167,6 +167,83 @@ async function attachPayableDocs(supabase: SupabaseClient): Promise<number> {
   return attached
 }
 
+// MwSt je Buchung für die Netto-Auswertung (Sven 30.10.26). Gezählt wird nur MwSt,
+// die auf der Rechnung AUSGEWIESEN ist, Ein- und Ausgang:
+//   Eingang: aus der eigenen Rechnung (crm_invoices.vat_amount), Betrag ±0,03.
+//   Ausgang: aus dem Beleg gelesen. Nur zypriotische MwSt ist Vorsteuer; deutsche
+//            MwSt, Reverse Charge oder „nicht berechnet" = 0. Fremdwährung über das
+//            Verhältnis MwSt/Brutto auf dem Beleg.
+// vat_amount bleibt NULL, wenn noch nichts ermittelt ist (nächster Lauf versucht es
+// erneut). Vorschläge (doc_match_status 'vorschlag') warten auf Svens Bestätigung.
+const NEUTRAL_CATS = ['einlage', 'entnahme', 'umbuchung', 'altfirma']
+const VAT_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  required: ['readable', 'currency', 'total_gross', 'vat_amount_shown', 'vat_country', 'reverse_charge'],
+  properties: {
+    readable: { type: 'boolean', description: 'Document is an invoice or receipt with readable totals' },
+    currency: { type: 'string', description: 'ISO code of the totals, e.g. EUR, USD' },
+    total_gross: { type: 'number', description: 'Total payable including VAT' },
+    vat_amount_shown: { type: 'number', description: 'VAT amount explicitly printed on the document as CHARGED. 0 if no VAT is charged, if reverse charge applies, or if VAT is only mentioned as exempted or not charged.' },
+    vat_country: { type: 'string', description: 'Country whose VAT is charged (ISO 2-letter, e.g. CY, DE), empty if none' },
+    reverse_charge: { type: 'boolean' },
+  },
+}
+async function fillVat(supabase: SupabaseClient, limit: number): Promise<{ invoices: number; receipts: number }> {
+  let invoices = 0, receipts = 0
+  const { data: invRaw } = await supabase.from('crm_invoices')
+    .select('invoice_number, total_gross, vat_amount').in('status', ['sent', 'paid'])
+  for (const inv of ((invRaw ?? []) as Array<{ invoice_number: string; total_gross: number; vat_amount: number | null }>)) {
+    const { data: cand } = await supabase.from('fin_transactions').select('id').is('vat_amount', null)
+      .not('category', 'in', `(${NEUTRAL_CATS.join(',')})`)
+      .gte('amount', Number(inv.total_gross) - 0.03).lte('amount', Number(inv.total_gross) + 0.03).limit(1)
+    const tx = cand?.[0] as { id: string } | undefined
+    if (!tx) continue
+    await supabase.from('fin_transactions').update({ vat_amount: Number(inv.vat_amount ?? 0), vat_source: 'rechnung' }).eq('id', tx.id)
+    invoices++
+  }
+  const { data: txRaw } = await supabase.from('fin_transactions')
+    .select('id, amount, counterparty, booked_at, doc_url, category, doc_match_status')
+    .lt('amount', 0).is('vat_amount', null).not('doc_url', 'is', null)
+    .order('booked_at', { ascending: false }).limit(limit * 3)
+  const todo = ((txRaw ?? []) as Array<{ id: string; amount: number; counterparty: string; booked_at: string; doc_url: string; category: string | null; doc_match_status: string | null }>)
+    .filter(x => !NEUTRAL_CATS.includes(x.category ?? '') && x.doc_match_status !== 'vorschlag').slice(0, limit)
+  for (const tx of todo) {
+    try {
+      const res = await fetch(tx.doc_url)
+      if (!res.ok) continue
+      const type = (res.headers.get('content-type') ?? '').split(';')[0]
+      const fb = await res.arrayBuffer()
+      if (fb.byteLength > 4_500_000) continue
+      let bin = ''; const u8 = new Uint8Array(fb)
+      for (let i = 0; i < u8.length; i += 8192) bin += String.fromCharCode(...u8.subarray(i, i + 8192))
+      const isPdf = type === 'application/pdf' || /\.pdf$/i.test(tx.doc_url)
+      const img = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(type) ? type : null
+      if (!isPdf && !img) continue
+      const doc = isPdf
+        ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: btoa(bin) } }
+        : { type: 'image', source: { type: 'base64', media_type: img, data: btoa(bin) } }
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST', headers: { 'x-api-key': Deno.env.get('ANTHROPIC_API_KEY') ?? '', 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'claude-opus-5-5', max_tokens: 4000,
+          output_config: { effort: 'low', format: { type: 'json_schema', schema: VAT_SCHEMA } },
+          messages: [{ role: 'user', content: [doc, { type: 'text', text:
+            `Invoice or receipt for a bank payment of ${Math.abs(Number(tx.amount))} EUR to "${tx.counterparty}" on ${tx.booked_at.slice(0, 10)}. The buyer is sveru ltd (Cyprus, VAT CY10357170V). Read the totals and the VAT that is actually printed as charged on this document.` }] }] }),
+      })
+      if (!resp.ok) { console.warn('[revolut-sync] vat KI:', resp.status, (await resp.text()).slice(0, 200)); continue }
+      const d = await resp.json() as { stop_reason?: string; content?: Array<{ type: string; text?: string }> }
+      if (d.stop_reason === 'refusal') continue
+      const r = JSON.parse(d.content?.find(b => b.type === 'text')?.text ?? '{}') as { readable?: boolean; total_gross?: number; vat_amount_shown?: number; vat_country?: string; reverse_charge?: boolean }
+      const ratio = r.readable && !r.reverse_charge && (r.vat_country ?? '').toUpperCase() === 'CY' && (r.total_gross ?? 0) > 0 && (r.vat_amount_shown ?? 0) > 0
+        ? Number(r.vat_amount_shown) / Number(r.total_gross) : 0
+      // Plausibilität: mehr als 19/119 (zypr. Normalsatz) kann nicht stimmen
+      const vat = ratio > 0 && ratio <= 0.16 ? Math.round(Math.abs(Number(tx.amount)) * ratio * 100) / 100 : 0
+      await supabase.from('fin_transactions').update({ vat_amount: vat, vat_source: 'beleg' }).eq('id', tx.id)
+      receipts++
+    } catch (e) { console.warn('[revolut-sync] vat beleg:', tx.id, e) }
+  }
+  return { invoices, receipts }
+}
+
 async function syncTransactions(supabase: SupabaseClient, accessToken: string, days: number, fromOverride?: string) {
   const from = fromOverride ?? new Date(Date.now() - days * 86400e3).toISOString().slice(0, 10)
   // Pagination: liefert die API 1000 Stück, rückwärts weiterblättern (to=ältestes Datum)
@@ -227,7 +304,7 @@ const FIN_CATS = ['kundenzahlung', 'developer', 'werbung', 'software', 'gebuehre
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: CORS })
   try {
-    const body = await req.json().catch(() => ({})) as { action?: string; code?: string; days?: number; partner_mail_id?: string }
+    const body = await req.json().catch(() => ({})) as { action?: string; code?: string; days?: number; limit?: number; partner_mail_id?: string }
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
     if (!Deno.env.get('REVOLUT_CLIENT_ID') || !Deno.env.get('REVOLUT_PRIVATE_KEY')) {
@@ -256,6 +333,11 @@ Deno.serve(async (req: Request) => {
     // zeitlich begrenzte Beobachtungsmodus CALLER_GUARD_OBSERVE=revolut-sync@<Ende>.
     const denied = await gateCaller(req, 'revolut-sync', { cron: true, service: true, roles: ['admin', 'verwalter'] }, CORS)
     if (denied) return denied
+
+    // ── MwSt nachtragen (Netto-Auswertung) ────────────────────────────────────
+    if (body.action === 'vat_fill') {
+      return json({ success: true, ...(await fillVat(supabase, Math.min(60, Number(body.limit) || 25))) })
+    }
 
     // ── KI-Kategorisierung offener Transaktionen ─────────────────────────────
     if (body.action === 'categorize_ai') {
@@ -653,7 +735,8 @@ Deno.serve(async (req: Request) => {
       const fromOverride = body.action === 'tx_backfill' && typeof body.from === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.from) ? body.from : undefined
       const r = await syncTransactions(supabase, accessToken, days, fromOverride)
       const docs = await attachPayableDocs(supabase)
-      return json({ success: true, days, from: fromOverride ?? null, payable_docs_attached: docs, ...r })
+      const vat = await fillVat(supabase, 10).catch(e => { console.warn('[revolut-sync] vat:', e); return null })
+      return json({ success: true, days, from: fromOverride ?? null, payable_docs_attached: docs, vat, ...r })
     }
 
     // ── Revolut-Belege (Expenses-App) den Buchungen zuordnen ─────────────────
@@ -804,6 +887,8 @@ Deno.serve(async (req: Request) => {
     catch (e) { console.warn('[revolut-sync] tx-sync:', e) }
     try { console.log('[revolut-sync] payable-docs:', await attachPayableDocs(supabase)) }
     catch (e) { console.warn('[revolut-sync] payable-docs:', e) }
+    try { console.log('[revolut-sync] vat:', JSON.stringify(await fillVat(supabase, 25))) }
+    catch (e) { console.warn('[revolut-sync] vat:', e) }
 
     // Offene Rechnungen
     const { data: openInv, error: invErr } = await supabase
