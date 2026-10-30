@@ -114,6 +114,13 @@ const InfoOpenCtx = createContext<((nr: string) => void) | null>(null)
 // Terminlink (persönlich oder allgemein) für die Termin-Knöpfe in Wohnung und Abschluss.
 // Auswertung Flora 28.10.26: 70 Besuche, 2 Termin-Klicks, weil der Knopf fast nur oben stand.
 const TerminCtx = createContext<string | null>(null)
+
+// „Passt nicht ganz?" (Sven 30.10.26): derselbe Buchungslink, aber erst der Fragebogen
+// passt-nicht (Nutzung, Eigenkapital, Immobilie in DE, Wohnung/Haus). Der Kontakt ist
+// über den Token bekannt, danach geht es ohne Kontaktformular zur Terminwahl.
+function altUrl(termin: string): string {
+  return `${termin}${termin.includes('?') ? '&' : '?'}f=passt-nicht`
+}
 const VatRefundCtx = createContext<{ byUnit: Record<string, VatRefund>; units: string[] }>({ byUnit: {}, units: [] })
 const unitNorm = (s?: string) => (s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')
 function vatRefundMap(rows: unknown): Record<string, VatRefund> {
@@ -983,6 +990,15 @@ function CtaBlock(b: Extract<DeckBlock, { type: 'cta' }>) {
           📅 {t('deck.ctaTermin', 'Strategiegespräch mit Sven buchen')} <span aria-hidden>→</span>
         </a>
       )}
+      {termin && (
+        <div className="mt-8 rounded-2xl px-6 py-5 border max-w-3xl print:hidden" style={{ borderColor: 'rgba(194,161,94,0.4)' }}>
+          <p className="font-heading font-bold text-white text-xl">{t('deck.altTitle', 'Passt das Projekt nicht ganz?')}</p>
+          <p className="text-[14px] text-gray-300 mt-1.5">{t('deck.altText', 'Beantworte vier kurze Fragen. Dann zeigt dir Sven Alternativen, die zu dir passen.')}</p>
+          <a href={altUrl(termin)} className="inline-block mt-4 px-6 py-2.5 rounded-full font-semibold text-[14px] text-white border hover:bg-white/10 transition" style={{ borderColor: 'rgba(194,161,94,0.6)' }}>
+            {t('deck.altButton', 'Passende Alternativen finden')} <span aria-hidden>→</span>
+          </a>
+        </div>
+      )}
       {/* Kontakt + Foto */}
       <div className="mt-12 grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-6 items-center rounded-2xl px-6 py-6" style={{ background: 'rgba(194,161,94,0.1)' }}>
         <img src={sizedImg(DECK_PHOTO, 400)} alt={DECK_CONTACT.name} className="h-28 w-28 md:h-32 md:w-32 object-cover rounded-2xl shadow-lg shrink-0" onError={e => { const el = e.currentTarget as HTMLImageElement; if (el.src !== DECK_PHOTO) el.src = DECK_PHOTO; else el.style.display = 'none' }} />
@@ -1327,6 +1343,9 @@ function InlineCta({ onInfo, terminUrl }: { onInfo: () => void; terminUrl: strin
             {t('deck.inlineTermin', 'Lieber gleich Termin mit Sven')}
           </a>
         </div>
+        <a href={altUrl(terminUrl)} className="inline-block mt-4 text-[14px] text-gray-300 underline underline-offset-4 hover:text-white">
+          {t('deck.altLink', 'Passt nicht ganz? Vier Fragen, dann zeigt dir Sven Alternativen')} →
+        </a>
       </div>
     </section>
   )

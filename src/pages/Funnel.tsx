@@ -164,7 +164,8 @@ export default function Funnel() {
   const directEntry = useEntryParams()
   const rebook = directEntry.rebook
   const [cfg, setCfg] = useState(DEFAULT_FUNNEL_CONFIG)
-  useEffect(() => { void loadFunnelConfig().then(setCfg) }, [])
+  const [cfgReady, setCfgReady] = useState(false)
+  useEffect(() => { void loadFunnelConfig().then(c => { setCfg(c); setCfgReady(true) }) }, [])
   // Welcher Fragebogen gilt? Reihenfolge: ausdrückliches ?f= gewinnt (Ad-hoc/Test),
   // sonst wird der Kampagnen-Link über seinen Code (utm_campaign) in der Konfiguration
   // nachgeschlagen. Dadurch bleibt ein veröffentlichter Link stabil, während sein
@@ -229,7 +230,10 @@ export default function Funnel() {
   const hostFirstName = cfg.host.name.trim().split(/\s+/)[0] ?? ''
   // Schon auf der Startseite vorladen, sonst steht bei Frage 1 kurz ein leerer Rahmen
   useEffect(() => { for (const src of [hostSide, hostSq]) new Image().src = src }, [hostSide, hostSq])
-  const [phase, setPhase] = useState<Phase>(directEntry.wanted || directEntry.rebook ? 'meeting_type' : 'welcome')
+  // Bekannter Kontakt MIT ausdrücklichem Fragebogen (?b=…&f=<slug>, z. B. „Passt Flora
+  // nicht?" im Deck): erst die Fragen, dann ohne Kontaktformular weiter zur Terminart.
+  const directQuestions = directEntry.wanted && !!directEntry.variant && directEntry.variant !== 'none'
+  const [phase, setPhase] = useState<Phase>(directQuestions ? 'questions' : directEntry.wanted || directEntry.rebook ? 'meeting_type' : 'welcome')
   const [direct, setDirect] = useState(directEntry.wanted)
   const [directName, setDirectName] = useState('')
   const [qIdx, setQIdx] = useState(0)
@@ -301,10 +305,25 @@ export default function Funnel() {
   }, [directEntry, track])
 
   const answerQuestion = (q: FunnelQuestion, opt: FunnelOption) => {
-    setAnswers(prev => ({ ...prev, [q.key]: opt.label }))
+    const next = { ...answers, [q.key]: opt.label }
+    setAnswers(next)
     void track(qIdx + 1, q.key, opt.label)
     if (qIdx + 1 < QUESTIONS.length) setQIdx(qIdx + 1)
+    else if (direct && leadRef.current) void finishDirectQuestions(next)
     else { setPhase('contact'); void track(QUESTIONS.length + 1, 'contact_view') }
+  }
+
+  // Bekannter Kontakt: Antworten am Lead speichern, Kontaktformular überspringen.
+  const finishDirectQuestions = async (all: Record<string, string>) => {
+    try {
+      await supabase.functions.invoke('funnel-api', { body: {
+        action: 'direct_answers', variant,
+        ...(directEntry.leadToken ? { lead_token: directEntry.leadToken } : { deck_token: directEntry.deckToken }),
+        answers: Object.entries(all).map(([k, v]) => ({ question: QUESTION_TEXT[k] ?? k, answer: v })),
+      } })
+    } catch { /* Antworten sind nett, der Termin ist wichtiger */ }
+    setPhase('meeting_type')
+    void track(QUESTIONS.length + 2, 'meeting_type_view')
   }
 
   const submitContact = async () => {
@@ -383,7 +402,7 @@ export default function Funnel() {
       if (e) throw new Error(e.message)
       const d = data as { ok?: boolean; error?: string; appointment_id?: string | null } | null
       if (d?.error === 'slot_taken' || d?.error === 'slot_invalid') {
-        setError(t('funnel.err_slot_taken', 'Dieser Termin wurde gerade vergeben — bitte wähle einen anderen.'))
+        setError(t('funnel.err_slot_taken', 'Dieser Termin wurde gerade vergeben. Bitte wähle einen anderen.'))
         setSlot(''); setPhase('slot'); void loadSlots(); return
       }
       if (!d?.ok) throw new Error(d?.error || 'Buchung fehlgeschlagen')
@@ -409,6 +428,7 @@ export default function Funnel() {
   // beantwortet ist (also nach einem „Zurück" zum Korrigieren).
   const forward = () => {
     if (qIdx + 1 < QUESTIONS.length) setQIdx(qIdx + 1)
+    else if (direct && leadRef.current) void finishDirectQuestions(answers)
     else { setPhase('contact'); void track(QUESTIONS.length + 1, 'contact_view') }
   }
 
@@ -530,7 +550,7 @@ export default function Funnel() {
             </div>
           )}
 
-          {phase === 'questions' && q && (
+          {phase === 'questions' && q && (cfgReady || !directQuestions) && (
             <div>
               <p className="text-xs font-bold tracking-widest uppercase mb-2" style={{ color: CORAL }}>{t('funnel.question_counter', 'Frage {{n}} von {{total}}', { n: qIdx + 1, total: QUESTIONS.length })}</p>
               <h2 className="font-heading font-bold text-2xl md:text-3xl leading-snug" style={{ color: NAVY }}>{q.title}</h2>
@@ -647,18 +667,18 @@ export default function Funnel() {
               </div>
               <p className="text-xs font-bold tracking-widest uppercase mb-2 text-center" style={{ color: CORAL }}>{t('funnel.your_appointment', 'Dein Wunschtermin')}</p>
               <h2 className="font-heading font-bold text-2xl md:text-3xl text-center" style={{ color: NAVY }}>
-                {direct && directName ? t('funnel.how_to_talk_named', 'Hallo {{name}} — wie möchtest du mit Sven sprechen?', { name: directName }) : t('funnel.how_to_talk', 'Wie möchtest du mit Sven sprechen?')}
+                {direct && directName ? t('funnel.how_to_talk_named', 'Hallo {{name}}, wie möchtest du mit Sven sprechen?', { name: directName }) : t('funnel.how_to_talk', 'Wie möchtest du mit Sven sprechen?')}
               </h2>
               <div className="grid md:grid-cols-2 gap-4 mt-6">
                 <button onClick={() => chooseType('zoom')} className="rounded-2xl bg-white border-2 border-[#e6dfd0] hover:border-[#ff795d] p-6 text-left shadow-sm hover:shadow-lg transition">
                   <div className="text-3xl">📹</div>
                   <div className="font-heading font-bold text-xl mt-2" style={{ color: NAVY }}>{t('funnel.zoom_title', 'Zoom-Call')}</div>
-                  <p className="text-sm text-gray-500 mt-1">{t('funnel.zoom_desc', 'Mit Bildschirm — ideal, um Objekte und Zahlen gemeinsam anzusehen.')}</p>
+                  <p className="text-sm text-gray-500 mt-1">{t('funnel.zoom_desc', 'Mit Bildschirm, ideal, um Objekte und Zahlen gemeinsam anzusehen.')}</p>
                 </button>
                 <button onClick={() => chooseType('whatsapp')} className="rounded-2xl bg-white border-2 border-[#e6dfd0] hover:border-[#ff795d] p-6 text-left shadow-sm hover:shadow-lg transition">
                   <div className="text-3xl">💬</div>
                   <div className="font-heading font-bold text-xl mt-2" style={{ color: NAVY }}>{t('funnel.whatsapp_title', 'WhatsApp-Call')}</div>
-                  <p className="text-sm text-gray-500 mt-1">{t('funnel.whatsapp_desc', 'Unkompliziert übers Handy — Sven ruft dich per WhatsApp an.')}</p>
+                  <p className="text-sm text-gray-500 mt-1">{t('funnel.whatsapp_desc', 'Unkompliziert übers Handy: Sven ruft dich per WhatsApp an.')}</p>
                 </button>
               </div>
             </div>
@@ -692,7 +712,7 @@ export default function Funnel() {
                       </button>
                     ))}
                   </div>
-                  {!slots.length && <p className="mt-6 text-sm text-gray-500">{t('funnel.no_slots', 'Gerade sind keine freien Termine verfügbar — Sven meldet sich in Kürze persönlich bei dir!')}</p>}
+                  {!slots.length && <p className="mt-6 text-sm text-gray-500">{t('funnel.no_slots', 'Gerade sind keine freien Termine verfügbar. Sven meldet sich in Kürze persönlich bei dir!')}</p>}
                 </>
               )}
             </div>

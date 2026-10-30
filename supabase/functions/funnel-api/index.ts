@@ -418,7 +418,8 @@ Deno.serve(async (req) => {
   try {
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
     const body = await req.json() as {
-      action: 'track' | 'slots' | 'contact' | 'book' | 'manage_get' | 'manage_cancel' | 'manage_reschedule' | 'lead_prefill' | 'rsvp'
+      action: 'track' | 'slots' | 'contact' | 'book' | 'manage_get' | 'manage_cancel' | 'manage_reschedule' | 'lead_prefill' | 'rsvp' | 'direct_answers'
+      variant?: string
       p?: string
       session_id?: string
       lead_id?: string
@@ -491,6 +492,37 @@ Deno.serve(async (req) => {
       if (!leadId) return json({ error: 'not_found' }, 404)
       const { data: lead } = await admin.from('leads').select('first_name').eq('id', leadId).maybeSingle()
       return json({ ok: true, lead_id: leadId, first_name: ((lead as { first_name?: string | null } | null)?.first_name ?? '').trim() })
+    }
+
+    // ── direct_answers ───────────────────────────────────────────────────────
+    // Bekannter Kontakt (?b= / ?d=) beantwortet einen Fragebogen, z. B. „Passt Flora
+    // nicht?" aus dem Deck. Kein Kontaktformular: der Lead kommt aus dem Token, die
+    // Antworten landen wie beim normalen Funnel in leads.notes und als Aktivität.
+    if (body.action === 'direct_answers') {
+      const leadTok = (body.lead_token ?? '').trim()
+      const deckTok = (body.deck_token ?? '').trim()
+      const answers = (body.answers ?? []).filter(a => a?.question && a?.answer).slice(0, 12)
+      if ((!leadTok && !deckTok) || !answers.length) return json({ error: 'Pflichtfelder fehlen' }, 400)
+      let leadId: string | null = null
+      if (leadTok) {
+        const { data: l } = await admin.from('leads').select('id').eq('booking_token', leadTok).maybeSingle()
+        leadId = (l as { id?: string } | null)?.id ?? null
+      } else {
+        const { data: deck } = await admin.from('sales_decks').select('lead_id').eq('token', deckTok).maybeSingle()
+        leadId = (deck as { lead_id?: string | null } | null)?.lead_id ?? null
+      }
+      if (!leadId) return json({ error: 'not_found' }, 404)
+      const variant = String(body.variant ?? '').replace(/[^a-z0-9-]/gi, '').slice(0, 60)
+      const answersText = answers.map(a => `• ${String(a.question).slice(0, 200)}: ${String(a.answer).slice(0, 200)}`).join('\n')
+      const { data: ld } = await admin.from('leads').select('notes').eq('id', leadId).maybeSingle()
+      const prev = ((ld as { notes?: string | null } | null)?.notes ?? '').trim()
+      await admin.from('leads').update({ notes: `${prev ? prev + '\n\n' : ''}Fragebogen ${variant || 'Deck'} (${new Date().toLocaleDateString('de-DE')}):\n${answersText}` }).eq('id', leadId)
+      await admin.from('activities').insert({
+        lead_id: leadId, type: 'note', direction: 'inbound',
+        subject: `📋 Fragebogen beantwortet${variant ? ` (${variant})` : ''}`, content: answersText,
+        completed_at: new Date().toISOString(),
+      })
+      return json({ ok: true })
     }
 
     // ── track ────────────────────────────────────────────────────────────────
