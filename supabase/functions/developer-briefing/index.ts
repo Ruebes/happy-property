@@ -11,7 +11,8 @@
 //     EdgeRuntime.waitUntil weiter. dry_run: Seite bauen, nichts senden.
 // Je Termin + Bauträger-Kontakt genau EINE Seite (shared_pages.note =
 // "developer_briefing:<appt>:<kontakt>"). Erneuter Aufruf (Termin bearbeitet)
-// aktualisiert die Seite, schickt aber keine zweite WhatsApp.
+// aktualisiert die Seite, schickt aber keine zweite WhatsApp. Termine mit gemeldeter
+// Absage (crm_appointments.cancel_reported_at, booking-bot) bekommen kein Briefing.
 //
 // Secrets: ANTHROPIC_API_KEY
 // Deployment: supabase functions deploy developer-briefing --no-verify-jwt
@@ -514,10 +515,13 @@ async function bautraeger(sb: SupabaseClient, attendees: Row[]): Promise<DevTarg
 async function verarbeiten(apptId: string, dryRun: boolean): Promise<Row> {
   const sb = createClient(SUPABASE_URL, SERVICE_ROLE)
   const key = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
-  const { data: appt } = await sb.from('crm_appointments').select('id, title, start_time, timezone, type, location, lead_id, attendees').eq('id', apptId).maybeSingle()
+  const { data: appt } = await sb.from('crm_appointments').select('id, title, start_time, timezone, type, location, lead_id, attendees, cancel_reported_at').eq('id', apptId).maybeSingle()
   if (!appt) return { ok: false, error: 'Termin nicht gefunden' }
   const a = appt as Row
   if (!a.lead_id) return { ok: true, skipped: 'kein Kunde am Termin' }
+  // Kunde hat abgesagt oder will verschieben (booking-bot markiert, Eva Hahn 29.10.):
+  // kein Briefing, sonst fährt der Bauträger umsonst hin.
+  if (a.cancel_reported_at) return { ok: true, skipped: 'Kunde hat abgesagt (Absage gemeldet)' }
   const targets = await bautraeger(sb, Array.isArray(a.attendees) ? a.attendees as Row[] : [])
   if (!targets.length) return { ok: true, skipped: 'kein Bauträger-Kontakt am Termin' }
 
@@ -546,6 +550,13 @@ async function verarbeiten(apptId: string, dryRun: boolean): Promise<Row> {
         token = String((ex as Row).token)
         await sb.from('shared_pages').update({ html, title: `${L[tg.lang].title} · ${kunde}` }).eq('id', (ex as Row).id)
       } else {
+        // Die KI braucht 1-2 Minuten. Hat der Kunde inzwischen abgesagt oder Sven den
+        // Termin gelöscht, keine Seite und keine WhatsApp. Erst ohne Seite kann ein
+        // späterer Aufruf (Absage zurückgenommen) das Briefing noch schicken.
+        if (!dryRun && !(await nochAktiv(sb, apptId))) {
+          results.push({ contact: tg.name, skipped: 'Termin abgesagt oder gelöscht' })
+          continue
+        }
         token = Array.from(crypto.getRandomValues(new Uint8Array(16)), x => x.toString(16).padStart(2, '0')).join('')
         const expires = new Date(Date.now() + 92 * 864e5).toISOString()
         const { error } = await sb.from('shared_pages').insert({ token, title: `${L[tg.lang].title} · ${kunde}`, html, note, expires_at: expires })
@@ -563,6 +574,12 @@ async function verarbeiten(apptId: string, dryRun: boolean): Promise<Row> {
     }
   }
   return { ok: true, results }
+}
+
+/** Steht der Termin noch (nicht gelöscht, keine gemeldete Absage)? */
+async function nochAktiv(sb: SupabaseClient, apptId: string): Promise<boolean> {
+  const { data } = await sb.from('crm_appointments').select('id').eq('id', apptId).is('cancel_reported_at', null).maybeSingle()
+  return !!data
 }
 
 /** WhatsApp an den Bauträger: wer kommt + Link. Ohne Nummer per Mail. */

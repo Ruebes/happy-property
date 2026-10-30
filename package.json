@@ -15,7 +15,8 @@
     "verify:nav": "node scripts/verify-nav.mjs",
     "verify:links": "node scripts/verify-entity-links.mjs",
     "verify:meta": "node scripts/verify-meta-spec.mjs",
-    "verify:werbe": "node scripts/verify-werbe-mathe.mjs && node scripts/verify-werbe-regeln.mjs"
+    "verify:werbe": "node scripts/verify-werbe-mathe.mjs && node scripts/verify-werbe-regeln.mjs",
+    "verify:absage": "node scripts/verify-absage.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.43.4",

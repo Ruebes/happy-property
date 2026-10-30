@@ -5,6 +5,8 @@
 // Actions (POST, JSON):
 //   { action:'start', lead_id, deal_id?, source }   → Gespräch eröffnen (2 Slots)
 //   { action:'reply', lead_id, text }               → eingehende WhatsApp verarbeiten
+//   { action:'absage', lead_id, text, fallback?, still? } → Absage/Verschiebung eines
+//                                                     anstehenden Termins (handleAbsage)
 //
 // SICHERHEIT: läuft nur, wenn crm_settings 'booking_bot_enabled'='true'.
 // Verfügbarkeit: Mo–Fr 11–19, Sa+So 17–20 (Europe/Berlin), frühestens ab morgen.
@@ -26,8 +28,10 @@
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { nextApptTitle } from '../_shared/apptTitle.ts'
-import { notifyIfToday, cyTime } from '../_shared/notifyToday.ts'
+import { notifyIfToday, cyTime, cyDate } from '../_shared/notifyToday.ts'
 import { gateCaller } from '../_shared/callerGate.ts'
+import { callAnthropic, toolInput } from '../_shared/anthropic.ts'
+import { koennteAbsageSein, terminZone, terminLabel, lotteAbsageText, lotteVerschiebenIntro, lotteVerschiebenSven, bautraegerAbsageText, waMeLink, type AbsageArt } from '../_shared/terminAbsage.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -725,7 +729,8 @@ async function handleNudge(admin: SupabaseClient, leadId: string, stage: number,
   if ((st as { value?: string } | null)?.value !== 'true') return json({ ok: true, skipped: 'disabled' })
   const { data: opt } = await admin.from('communication_optouts').select('id').eq('lead_id', leadId).limit(1)
   if (opt && opt.length) return json({ ok: true, skipped: 'optout' })
-  const { data: appt } = await admin.from('crm_appointments').select('id').eq('lead_id', leadId).gte('start_time', new Date().toISOString()).limit(1)
+  // Ein Termin mit gemeldeter Absage zählt nicht: der Kunde braucht einen neuen.
+  const { data: appt } = await admin.from('crm_appointments').select('id').eq('lead_id', leadId).gte('start_time', new Date().toISOString()).is('cancel_reported_at', null).limit(1)
   if (appt && appt.length) return json({ ok: true, skipped: 'has_appointment' })
   if (await recentlyAcqMessaged(admin, leadId)) return json({ ok: true, skipped: 'recent_acquisition_wa' })
   // Irgendein aktives Gespräch des Leads (egal welche Quelle) → kein Doppel-Messaging.
@@ -795,8 +800,8 @@ async function handleStart(admin: SupabaseClient, leadId: string, dealId: string
   const { data: inb } = await admin.from('activities').select('id')
     .eq('lead_id', leadId).eq('type', 'whatsapp').eq('direction', 'inbound').gt('created_at', since48h).limit(1)
   if (inb && inb.length) return json({ ok: true, skipped: 'customer_recently_replied' })
-  // Schon ein anstehender Termin?
-  const { data: appt } = await admin.from('crm_appointments').select('id').eq('lead_id', leadId).gte('start_time', new Date().toISOString()).limit(1)
+  // Schon ein anstehender Termin? (gemeldete Absagen zählen nicht)
+  const { data: appt } = await admin.from('crm_appointments').select('id').eq('lead_id', leadId).gte('start_time', new Date().toISOString()).is('cancel_reported_at', null).limit(1)
   if (appt && appt.length) return json({ ok: true, skipped: 'has_appointment' })
   // Lead + Nummer
   const { data: lead } = await admin.from('leads').select('first_name, whatsapp, phone').eq('id', leadId).maybeSingle()
@@ -1669,6 +1674,257 @@ async function handleAnswer(admin: SupabaseClient, leadId: string, text: string)
   return json({ ok: true, answered: true, alles: fa.alles })
 }
 
+// ── ABSAGE ── Kunde sagt einen anstehenden Termin ab oder will verschieben ─────
+// Eva Hahn (29.10.2026): "Ich möchte den Termin absagen" lief ins Leere. Der Termin
+// blieb aktiv, die 1-h-Erinnerung ging raus, und Aaron (Bauträger) wusste von nichts.
+// waInbound ruft diese Action, wenn der Vorfilter (_shared/terminAbsage.ts) anschlägt
+// und ein Termin ansteht. Der Termin wird NICHT gelöscht, sondern markiert
+// (cancel_reported_*): Erinnerungen und Bauträger-Briefing lassen ihn aus, Sven bekommt
+// eine Aufgabe und entscheidet. Ist es keine Absage, geht die Nachricht ihren normalen
+// Weg weiter (fallback = reply | engage | answer). still = Abmeldung im selben Text:
+// markieren und Sven Bescheid geben, aber Lotte schreibt nichts mehr.
+type AbsageTermin = { id: string; title: string | null; type: string | null; start_time: string; end_time: string; timezone: string | null; location: string | null; zoom_link: string | null; attendees: unknown; deal_id: string | null }
+type AbsageWunsch = { art: AbsageArt | 'keine'; on_date: string | null; after_date: string | null; day_hint: string | null; daypart: string | null; time_hint: string | null }
+type AbsageLead = { first_name: string | null; last_name: string | null; whatsapp: string | null; phone: string | null; profile_id: string | null }
+type AbsageKontakt = { name: string; firma: string; phone: string; lang: 'de' | 'en' }
+
+/** KI-Einordnung der Nachricht. null = KI nicht erreichbar. */
+async function absageErkennen(text: string, termin: string, verlauf: Turn[]): Promise<AbsageWunsch | null> {
+  const tp = berlinParts(new Date())
+  const WDN = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag']
+  const todayStr = `${tp.y}-${String(tp.mo).padStart(2, '0')}-${String(tp.d).padStart(2, '0')}`
+  const sys = `Ein Kunde von Happy Property (Immobilien auf Zypern) hat einen festen Termin mit Sven: ${termin}. HEUTE ist ${WDN[tp.wd]}, der ${todayStr} (Europe/Berlin).
+Ordne seine NEUE WhatsApp ein. Du siehst auch den Verlauf davor; Nachrichten mit dem Präfix "[Sven persönlich]" hat Sven selbst geschrieben.
+- absage: Er sagt DIESEN Termin ab oder kann nicht kommen, ohne einen neuen Termin zu wollen ("ich möchte den Termin absagen", "ich schaffe es morgen leider nicht", "mir ist etwas dazwischengekommen, ich kann nicht", "wir haben uns anders entschieden").
+- verschieben: Er kann zu diesem Zeitpunkt nicht oder fragt, ob man den Termin verlegen kann, und will einen ANDEREN Termin ("kann ich den Termin verschieben?", "können wir das auf nächste Woche legen?", "geht auch Donnerstag statt Mittwoch?", "passt mir doch nicht, lieber nachmittags", "geht es auch eine Stunde früher?").
+- keine: alles andere. Vor allem: Er kommt nur etwas später oder früher und der Termin bleibt ("ich komme etwas später", "bin 10 Minuten zu spät", "stehe im Stau"); er bestätigt ("passt, bis morgen"); er fragt etwas zum Termin (Adresse, Link, Dauer, wer dabei ist); er will zur selben Zeit eine andere Terminart (Zoom statt Telefon); er spricht über einen vergangenen oder einen anderen Termin; er ist nur unsicher, ohne abzusagen ("ich weiß noch nicht, ob ich es schaffe").
+Zwischen absage und verschieben: verschieben, sobald er einen neuen Zeitpunkt nennt oder danach fragt. Zwischen keine und den anderen im Zweifel keine: eine falsch erkannte Absage stoppt die Erinnerungen eines Termins, der stattfinden soll.
+Nur bei verschieben und nur, wenn er einen Wunsch für den NEUEN Termin nennt: on_date (GENAU EIN Datum, YYYY-MM-DD), after_date (frühestes Datum, YYYY-MM-DD, z. B. bei "ab nächster Woche"), day_hint (z. B. "dienstag", "morgen", "nächste woche"), daypart (vormittags | nachmittags | abends), time_hint (24h "HH:MM"). Sonst null.
+Gib NUR das Tool emit zurück.`
+  const res = await callAnthropic(Deno.env.get('ANTHROPIC_API_KEY') ?? '', {
+    model: 'claude-sonnet-5-5', fallbackModels: ['claude-opus-5-5', 'claude-sonnet-4-6'], max_tokens: 300, attempts: 2, label: 'absage',
+    system: sys, messages: [...verlauf, { role: 'user', content: text }],
+    tool_choice: { type: 'tool', name: 'emit' },
+    tools: [{ name: 'emit', description: 'Absage, Verschiebung oder keins von beidem', input_schema: { type: 'object', properties: {
+      art: { type: 'string', enum: ['absage', 'verschieben', 'keine'] },
+      on_date: { type: ['string', 'null'] }, after_date: { type: ['string', 'null'] }, day_hint: { type: ['string', 'null'] },
+      daypart: { type: ['string', 'null'], enum: ['vormittags', 'nachmittags', 'abends', null] },
+      time_hint: { type: ['string', 'null'], description: 'konkrete Uhrzeit 24h HH:MM' },
+    }, required: ['art'] } }],
+  })
+  const t = res.ok ? toolInput<Partial<AbsageWunsch>>(res) : null
+  if (!t || !['absage', 'verschieben', 'keine'].includes(String(t.art))) return null
+  return { art: t.art as AbsageWunsch['art'], on_date: t.on_date ?? null, after_date: t.after_date ?? null, day_hint: t.day_hint ?? null, daypart: t.daypart ?? null, time_hint: t.time_hint ?? null }
+}
+
+/** Die letzten WhatsApps als Dialog (wie handleAnswer), ohne die gerade eingegangene. */
+async function absageVerlauf(admin: SupabaseClient, leadId: string): Promise<Turn[]> {
+  try {
+    const { data: hist } = await admin.from('activities').select('direction, content, auto')
+      .eq('lead_id', leadId).eq('type', 'whatsapp').order('created_at', { ascending: false }).limit(6)
+    const verlauf: Turn[] = ((hist ?? []) as { direction: string; content: string | null; auto: boolean | null }[])
+      .filter(h => (h.content ?? '').trim()).reverse()
+      .map(h => ({ role: h.direction === 'outbound' ? 'assistant' as const : 'user' as const, content: (h.direction === 'outbound' && h.auto === false ? '[Sven persönlich] ' : '') + (h.content ?? '').slice(0, 700) }))
+    while (verlauf.length && verlauf[verlauf.length - 1].role === 'user') verlauf.pop()
+    while (verlauf.length && verlauf[0].role === 'assistant') verlauf.shift()
+    return verlauf
+  } catch { return [] }
+}
+
+/** Bauträger-Kontakte am Termin (gleicher Abgleich wie developer-briefing). */
+async function absageBautraeger(admin: SupabaseClient, attendees: unknown): Promise<AbsageKontakt[]> {
+  const liste = Array.isArray(attendees) ? attendees as Record<string, unknown>[] : []
+  if (!liste.length) return []
+  const { data } = await admin.from('crm_developer_contacts').select('name, email, phone, whatsapp, language, developer:crm_developers(name)')
+  const kontakte = (data ?? []) as Record<string, unknown>[]
+  const ziffern = (v: unknown) => String(v ?? '').replace(/\D/g, '')
+  const out: AbsageKontakt[] = []
+  for (const a of liste) {
+    const ph = ziffern(a.phone), em = String(a.email ?? '').trim().toLowerCase()
+    const c = kontakte.find(k => (ph.length >= 8 && (ziffern(k.phone) === ph || ziffern(k.whatsapp) === ph)) || (!!em && String(k.email ?? '').trim().toLowerCase() === em))
+    if (!c && !/\(Developer\)/i.test(String(a.company ?? ''))) continue
+    const dev = c ? (Array.isArray(c.developer) ? (c.developer as Record<string, unknown>[])[0] : c.developer as Record<string, unknown> | null) : null
+    out.push({
+      name: String(c?.name ?? a.name ?? '').trim(),
+      firma: String(dev?.name ?? String(a.company ?? '').replace(/\s*\(Developer\)\s*/i, '')).trim(),
+      phone: String(c?.whatsapp || c?.phone || a.phone || ''),
+      lang: (c?.language ?? a.language) === 'en' ? 'en' : 'de',
+    })
+  }
+  return out
+}
+
+/** Darf Lotte antworten? '' = ja, sonst der Grund (steht in Svens Aufgabe). */
+async function absageStumm(admin: SupabaseClient, leadId: string, l: AbsageLead | null): Promise<string> {
+  const { data: sset } = await admin.from('crm_settings').select('key, value').in('key', ['booking_bot_enabled', 'lotte_absage_antworten'])
+  const sv = new Map(((sset ?? []) as { key: string; value: string }[]).map(s => [s.key, s.value]))
+  if (sv.get('booking_bot_enabled') !== 'true' || sv.get('lotte_absage_antworten') === 'false') return 'Lotte ist ausgeschaltet'
+  if (!l || !(l.whatsapp || l.phone)) return 'keine Nummer am Kontakt'
+  const { data: opt } = await admin.from('communication_optouts').select('id').eq('lead_id', leadId).limit(1)
+  if (opt && opt.length) return 'der Kunde hat sich abgemeldet'
+  if (l.profile_id) return 'Bestandskunde, den führst du selbst'
+  const { data: laufend } = await admin.from('deals').select('id').eq('lead_id', leadId).in('phase', CAFE_NICHT_PHASEN).limit(1)
+  if (laufend && laufend.length) return 'laufender Kauf, den führst du selbst'
+  const seit = new Date(Date.now() - 3 * 3600e3).toISOString()
+  const { data: svenAktiv } = await admin.from('activities').select('id').eq('lead_id', leadId).eq('type', 'whatsapp')
+    .eq('direction', 'outbound').eq('auto', false).gt('created_at', seit).limit(1)
+  if (svenAktiv && svenAktiv.length) return 'du schreibst gerade selbst mit dem Kunden'
+  return ''
+}
+
+/** Termin-Gespräch für die Verschiebung eröffnen (ein offenes wird weitergeführt). */
+async function absageGespraech(admin: SupabaseClient, row: Record<string, unknown> & { lead_id: string }): Promise<void> {
+  const { data: offen } = await admin.from('booking_conversations').select('id').eq('lead_id', row.lead_id)
+    .not('state', 'in', '(booked,handoff,expired)').order('created_at', { ascending: false }).limit(1).maybeSingle()
+  const voll = { ...row, attempts: 0, chosen_slot: null, expires_at: new Date(Date.now() + 4 * 24 * 3600e3).toISOString() }
+  if (offen) await setConv(admin, (offen as { id: string }).id, voll)
+  else await admin.from('booking_conversations').insert(voll)
+}
+
+/** Lottes Antwort auf einen Verschiebe-Wunsch. Gibt zurück, was sie getan hat (für Sven). */
+async function absageVerschieben(admin: SupabaseClient, t: AbsageTermin, leadId: string, phone: string, vorname: string, wann: string, w: AbsageWunsch, mitBautraeger: boolean, text: string): Promise<string> {
+  const senden = async (m: string) => { await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound') }
+  if (t.location === CAFE_LOCATION) {
+    // Café: nächster Tag, an dem Sven dort sitzt (Wunsch zuerst). Die Zusage bucht cafeReply.
+    const slot = await naechsterCafeTag(admin, { onDate: w.on_date, dayHint: w.day_hint, afterDate: w.after_date }) ?? await naechsterCafeTag(admin, {})
+    if (slot) {
+      const ihr = mehrere(text)
+      const m = `Kein Problem${vorname ? `, ${vorname}` : ''}! Dann verschieben wir das Treffen im ${CAFE_NAME}. Soll ich ${ihr ? 'euch' : 'dich'} für ${slot.label}, um 10 Uhr eintragen?`
+      await absageGespraech(admin, { lead_id: leadId, deal_id: t.deal_id, source: 'cafe', state: 'awaiting_cafe', proposed_slots: [slot], last_message: m, meeting_type: ihr ? 'cafe_ihr' : 'cafe_du' })
+      await senden(m)
+      return `Lotte hat das nächste Café-Treffen angeboten: ${slot.label}, 10 Uhr.`
+    }
+  } else if (t.type !== 'inperson' && !mitBautraeger) {
+    // Telefon/Zoom: wie im normalen Termin-Dialog freie Zeiten anbieten. Die Auswahl
+    // läuft dann über replyRunde und bucht einen NEUEN Termin.
+    const hatWunsch = !!(w.on_date || w.after_date || w.day_hint || w.daypart || w.time_hint)
+    let slots = hatWunsch ? await computeSlots(admin, 2, { dayHint: w.day_hint ?? undefined, daypart: w.daypart ?? undefined, timeHint: w.time_hint ?? undefined, onDate: w.on_date ?? undefined, afterDate: w.after_date ?? undefined }) : []
+    if (!slots.length) slots = await computeSlotsAmPm(admin)
+    if (slots.length) {
+      const m = buildProposal(lotteVerschiebenIntro(vorname, wann), slots, false)
+      await absageGespraech(admin, { lead_id: leadId, deal_id: t.deal_id, source: 'verschieben', state: 'awaiting_choice', proposed_slots: slots, last_message: m })
+      await senden(m)
+      return `Lotte hat neue Zeiten angeboten: ${slots.map(s => `${s.label} Uhr`).join(' oder ')} (deutsche Zeit). Wählt der Kunde eine, bucht Lotte einen NEUEN Termin, den alten bitte löschen.`
+    }
+  }
+  // Besichtigung (der Bauträger muss mitziehen) oder nichts frei: Sven stimmt ab.
+  await senden(lotteVerschiebenSven(vorname, wann))
+  return 'Lotte hat dem Kunden gesagt, dass du einen neuen Termin abstimmst und dich meldest.'
+}
+
+/** Aufgabe für Sven (Muster anfrage-paket): Mail + WhatsApp über task-notify. */
+async function absageAufgabe(admin: SupabaseClient, leadId: string, titel: string, beschreibung: string): Promise<string | null> {
+  try {
+    const { data: adm } = await admin.from('profiles').select('id').eq('role', 'admin').order('created_at').limit(1).maybeSingle()
+    const adminId = (adm as { id: string } | null)?.id ?? null
+    const { data: task, error } = await admin.from('crm_tasks').insert({
+      title: titel.slice(0, 200), description: beschreibung, created_by: adminId, assigned_to: adminId,
+      status: 'offen', due_date: cyDate(new Date()), assigned_notified_at: new Date().toISOString(),
+    }).select('id').single()
+    if (error || !task) { console.error('[booking-bot] Absage-Aufgabe:', error?.message); return null }
+    const taskId = (task as { id: string }).id
+    if (adminId) await admin.from('crm_task_assignees').insert({ task_id: taskId, profile_id: adminId, channel: 'system' })
+    await admin.from('crm_task_leads').insert({ task_id: taskId, lead_id: leadId })
+    await admin.functions.invoke('task-notify', { body: { mode: 'dispatch', task_id: taskId }, headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` } })
+      .catch((e: unknown) => console.warn('[booking-bot] Absage-Aufgabe dispatch:', e))
+    return taskId
+  } catch (e) { console.error('[booking-bot] Absage-Aufgabe:', e); return null }
+}
+
+async function handleAbsage(admin: SupabaseClient, leadId: string, text: string, fallback: string | undefined, still: boolean): Promise<Response> {
+  // Keine Absage (oder kein Termin mehr): die Nachricht nimmt ihren normalen Weg.
+  const weiter = async (): Promise<Response> => {
+    if (still) return json({ ok: true, skipped: 'keine_absage' })
+    if (fallback === 'reply') return await handleReply(admin, leadId, text)
+    if (fallback === 'engage') return await handleEngage(admin, leadId, text)
+    return await handleAnswer(admin, leadId, text)
+  }
+  // Der Termin, um den es geht: der nächste, der noch nicht vorbei ist (auch ein
+  // gerade laufender: "ich schaffe es heute doch nicht" zehn Minuten nach Beginn).
+  const { data: ta } = await admin.from('crm_appointments')
+    .select('id, title, type, start_time, end_time, timezone, location, zoom_link, attendees, deal_id')
+    .eq('lead_id', leadId).eq('internal', false).is('cancel_reported_at', null).gt('end_time', new Date().toISOString())
+    .order('start_time', { ascending: true }).limit(1).maybeSingle()
+  const t = ta as AbsageTermin | null
+  if (!t) return await weiter()
+
+  const { data: lead } = await admin.from('leads').select('first_name, last_name, whatsapp, phone, profile_id').eq('id', leadId).maybeSingle()
+  const l = lead as AbsageLead | null
+  const vorname = first(l?.first_name ?? null)
+  const kunde = `${vorname} ${(l?.last_name ?? '').trim()}`.trim() || 'Kunde'
+  const wann = terminLabel(t.start_time, terminZone(t.timezone, t.type))
+  const cafe = t.location === CAFE_LOCATION
+  const artLabel = cafe ? `Café-Treffen im ${CAFE_NAME}` : t.type === 'inperson' ? 'Vor-Ort-Termin' : (t.type === 'zoom' || t.zoom_link) ? 'Zoom-Call' : 'Telefonat'
+
+  const erk = await absageErkennen(text, `${wann}, ${artLabel}${t.title ? ` („${t.title}“)` : ''}`, await absageVerlauf(admin, leadId))
+  if (!erk) {
+    // KI nicht erreichbar: nichts markieren, aber Sven soll die Nachricht nicht übersehen.
+    await absageAufgabe(admin, leadId, `⚠️ Bitte prüfen: sagt ${kunde} den Termin ab?`, [
+      `${kunde} hat zum Termin am ${wann} (${artLabel}) geschrieben:`, `„${text.replace(/\s+/g, ' ').slice(0, 600)}“`, '',
+      'Lotte konnte die Nachricht nicht einordnen (KI nicht erreichbar). Der Termin ist unverändert, die Erinnerungen laufen weiter.',
+    ].join('\n'))
+    return await weiter()
+  }
+  if (erk.art === 'keine') return await weiter()
+  const art: AbsageArt = erk.art
+
+  // Markieren statt löschen. Bedingt, damit zwei Nachrichten kurz hintereinander
+  // ("Muss leider absagen" + "Sorry!") nur EINE Aufgabe und EINE Antwort auslösen.
+  const { data: mark, error: markErr } = await admin.from('crm_appointments')
+    .update({ cancel_reported_at: new Date().toISOString(), cancel_reported_kind: art, cancel_reported_text: text.slice(0, 2000) })
+    .eq('id', t.id).is('cancel_reported_at', null).select('id').maybeSingle()
+  if (markErr) { console.error('[booking-bot] Absage markieren:', markErr.message); return await weiter() }
+  if (!mark) return json({ ok: true, skipped: 'schon_gemeldet' })
+
+  // Erinnerungen zu diesem Termin stoppen. Das Sicherheitsnetz in
+  // process-scheduled-messages plant für markierte Termine nichts nach.
+  const { data: gestoppt } = await admin.from('scheduled_messages')
+    .update({ status: 'cancelled', error_message: art === 'absage' ? 'Kunde hat abgesagt, Erinnerung gestoppt' : 'Kunde will verschieben, Erinnerung gestoppt' })
+    .eq('lead_id', leadId).eq('status', 'pending').eq('event_type', 'termin_gebucht').lte('scheduled_at', t.start_time).select('id')
+  const nGestoppt = (gestoppt ?? []).length
+
+  const kontakte = await absageBautraeger(admin, t.attendees)
+  const stumm = still ? 'der Kunde hat sich im selben Text abgemeldet' : await absageStumm(admin, leadId, l)
+  const phone = l?.whatsapp || l?.phone || ''
+  let lotte: string
+  try {
+    if (stumm) lotte = `Lotte hat NICHT geantwortet (${stumm}). Bitte selbst antworten.`
+    else if (art === 'absage') {
+      const m = lotteAbsageText(vorname, wann)
+      await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound')
+      lotte = 'Lotte hat sich bedankt und gesagt, dass du Bescheid weißt.'
+    } else lotte = await absageVerschieben(admin, t, leadId, phone, vorname, wann, erk, kontakte.length > 0, text)
+  } catch (e) {
+    console.error('[booking-bot] Absage-Antwort:', e)
+    lotte = 'Lottes Antwort ist fehlgeschlagen. Bitte selbst antworten.'
+  }
+
+  const zeilen = [
+    `${kunde} ${art === 'absage' ? 'sagt den Termin ab' : 'möchte den Termin verschieben'}:`,
+    `„${text.replace(/\s+/g, ' ').slice(0, 600)}“`,
+    '',
+    `Termin: ${t.title || artLabel}, ${wann}${t.location && !cafe ? `, ${t.location}` : ''}`,
+    `Der Termin ist NICHT gelöscht, nur markiert („${art === 'absage' ? 'Absage gemeldet' : 'Verschiebung gewünscht'}“). ${nGestoppt ? `${nGestoppt} Erinnerung${nGestoppt === 1 ? '' : 'en'} an den Kunden gestoppt.` : 'Es war keine Erinnerung mehr offen.'}`,
+    lotte,
+  ]
+  for (const k of kontakte) {
+    const link = waMeLink(k.phone, bautraegerAbsageText({ lang: k.lang, vorname: k.name.split(' ')[0] || k.name, kunde, wann: terminLabel(t.start_time, 'Asia/Nicosia', k.lang), art }))
+    zeilen.push('', `Bauträger am Termin: ${k.name || 'ohne Namen'}${k.firma ? ` (${k.firma})` : ''}. Automatisch hat er nichts bekommen.`,
+      link ? `Ihm Bescheid geben (WhatsApp mit fertigem Text, 1 Klick): ${link}` : 'Keine Nummer hinterlegt, bitte anrufen oder mailen.')
+  }
+  zeilen.push('', 'Bitte: Termin im Kalender löschen oder auf die neue Zeit legen. Findet er doch statt, im Termin „Absage zurücknehmen“ klicken.')
+  const taskId = await absageAufgabe(admin, leadId, `${art === 'absage' ? '🚫 Absage' : '🔁 Verschieben'}: ${kunde}, Termin ${wann}`, zeilen.join('\n'))
+
+  try {
+    await admin.from('activities').insert({
+      lead_id: leadId, type: 'note', direction: 'inbound',
+      subject: art === 'absage' ? '🚫 Termin-Absage gemeldet' : '🔁 Termin soll verschoben werden',
+      content: zeilen.join('\n').slice(0, 20000), completed_at: new Date().toISOString(),
+    })
+  } catch { /* egal */ }
+  return json({ ok: true, handled: art, appointment_id: t.id, erinnerungen_gestoppt: nGestoppt, task_id: taskId, bautraeger: kontakte.length, lotte })
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
@@ -1679,11 +1935,13 @@ Deno.serve(async (req) => {
   if (denied) return denied
   try {
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-    const body = await req.json() as { action?: string; lead_id?: string; deal_id?: string | null; source?: string; text?: string; stage?: number; intro?: string; state?: string; slots?: Slot[]; meeting_type?: string; force?: boolean; phone?: string; push_name?: string | null }
+    const body = await req.json() as { action?: string; lead_id?: string; deal_id?: string | null; source?: string; text?: string; stage?: number; intro?: string; state?: string; slots?: Slot[]; meeting_type?: string; force?: boolean; phone?: string; push_name?: string | null; fallback?: string; still?: boolean; termin?: string }
     // classify: seiteneffektfreier Test des Intent-Parsers (kein Senden, kein DB-Write).
     if (body.action === 'classify') return json({ ok: true, intent: await classify(body.state ?? 'awaiting_choice', body.slots ?? [], body.text ?? '') })
     // detect: seiteneffektfreier Test des Terminwunsch-Erkenners (kein Senden).
     if (body.action === 'detect') return json({ ok: true, detect: await detectApptRequest(body.text ?? '') })
+    // absage_test: seiteneffektfreier Test der Absage-Erkennung (kein Senden, kein DB-Write).
+    if (body.action === 'absage_test') return json({ ok: true, vorfilter: koennteAbsageSein(body.text ?? ''), erkennung: await absageErkennen(body.text ?? '', body.termin ?? 'Donnerstag, 5.11., 15:00 Uhr, Zoom-Call', []) })
     // book_now: den in der aktiven Konversation vorgeschlagenen/bestätigten Slot direkt
     // buchen (Kalender + CRM-Termin + Bestätigung) — für den Fall, dass eine Bestätigung
     // den Bot nie erreicht hat (z.B. verworfene Inbound-Nachricht). meeting_type default whatsapp.
@@ -1746,6 +2004,7 @@ Deno.serve(async (req) => {
     if (body.action === 'answer') return await handleAnswer(admin, body.lead_id, body.text ?? '')
     if (body.action === 'engage') return await handleEngage(admin, body.lead_id, body.text ?? '', body.force === true)
     if (body.action === 'reply') return await handleReply(admin, body.lead_id, body.text ?? '')
+    if (body.action === 'absage') return await handleAbsage(admin, body.lead_id, body.text ?? '', body.fallback, body.still === true)
     if (body.action === 'nudge') return await handleNudge(admin, body.lead_id, Number(body.stage) || 0, body.source ?? 'no_show', body.intro)
     return json({ error: `Unbekannte action: ${body.action}` }, 400)
   } catch (err) {

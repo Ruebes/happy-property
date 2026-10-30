@@ -582,10 +582,13 @@ Deno.serve(async (req: Request) => {
     // internal ausgeschlossen: interne Termine (Mitarbeitende buchen bei Sven ueber
     // den persoenlichen Link) sind keine Kundentermine und duerfen keine
     // Termin-Erinnerung an einen Lead ausloesen.
+    // Termine mit gemeldeter Absage (booking-bot, cancel_reported_at) bekommen keine
+    // Erinnerung mehr; sonst plante dieses Netz die eben gestoppten sofort wieder ein.
     const { data: upcoming } = await supabase.from('crm_appointments')
       .select('lead_id, start_time')
       .not('lead_id', 'is', null)
       .eq('internal', false)
+      .is('cancel_reported_at', null)
       .gte('start_time', horizonIso)
       .order('start_time', { ascending: true })
       .limit(300)
@@ -807,6 +810,7 @@ Deno.serve(async (req: Request) => {
         if (beforeRule && retryCount === 0) {
           const { data: nx } = await supabase.from('crm_appointments')
             .select('start_time').eq('lead_id', msg.lead_id).gte('start_time', new Date().toISOString())
+            .is('cancel_reported_at', null)
             .order('start_time', { ascending: true }).limit(1).maybeSingle()
           const nxStart = (nx as { start_time?: string } | null)?.start_time
           const expected = nxStart ? new Date(nxStart).getTime() - beforeRule.delay_minutes * 60000 : null
@@ -876,8 +880,11 @@ Deno.serve(async (req: Request) => {
 
         const cond = msg.appointment_condition
         if (cond && cond !== 'none') {
+          // Gemeldete Absage zählt als kein Termin: die Erinnerung fällt dann hier weg,
+          // auch wenn booking-bot sie beim Markieren nicht erwischt hat.
           const { data: appt } = await supabase.from('crm_appointments')
             .select('zoom_link, type').eq('lead_id', msg.lead_id).gte('start_time', new Date().toISOString())
+            .is('cancel_reported_at', null)
             .order('start_time', { ascending: true }).limit(1).maybeSingle()
           const hasAppt = !!appt
           const hasZoom = !!(appt as { zoom_link?: string } | null)?.zoom_link
@@ -985,6 +992,7 @@ Deno.serve(async (req: Request) => {
                   const { data: ap } = await supabase.from('crm_appointments')
                     .select('id, title, start_time, end_time, zoom_link, type, location, location_url')
                     .eq('lead_id', msg.lead_id).gte('start_time', new Date().toISOString())
+                    .is('cancel_reported_at', null)
                     .order('start_time', { ascending: true }).limit(1).maybeSingle()
                   const a = ap as { id: string; title: string | null; start_time: string; end_time: string; zoom_link: string | null; type: string | null; location: string | null; location_url: string | null } | null
                   if (a) {

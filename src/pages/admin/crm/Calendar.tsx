@@ -214,6 +214,19 @@ function CampaignBadge({ appt }: { appt: CrmAppointment }) {
   )
 }
 
+// Kunde hat per WhatsApp abgesagt oder will verschieben (von Lotte markiert, der
+// Termin selbst bleibt stehen, bis Sven ihn löscht oder verlegt).
+function AbsageBadge({ appt, t }: { appt: CrmAppointment; t: TFunction }) {
+  if (!appt.cancel_reported_at) return null
+  return (
+    <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700">
+      {appt.cancel_reported_kind === 'verschieben'
+        ? `🔁 ${t('crm.calendar.rescheduleWanted', 'Verschiebung gewünscht')}`
+        : `🚫 ${t('crm.calendar.cancelReported', 'Absage gemeldet')}`}
+    </span>
+  )
+}
+
 function SourceBadge({ source }: { source: string }) {
   const ch = channelBadgeFor(source)
   if (!ch) return null
@@ -422,6 +435,17 @@ export default function CrmCalendar() {
     void reloadAll()
   }
 
+  // ── Gemeldete Absage zurücknehmen (Termin findet doch statt) ─────────────────
+  // Die Erinnerungen plant das Sicherheitsnetz in process-scheduled-messages
+  // von selbst neu, sobald die Markierung weg ist.
+  async function handleUndoCancel(appt: CrmAppointment) {
+    const { error } = await supabase.from('crm_appointments')
+      .update({ cancel_reported_at: null, cancel_reported_kind: null, cancel_reported_text: null }).eq('id', appt.id)
+    if (error) { console.error('[Calendar] handleUndoCancel:', error.message); return }
+    setSelectedAppt({ ...appt, cancel_reported_at: null, cancel_reported_kind: null, cancel_reported_text: null })
+    void reloadAll()
+  }
+
   // ── Google-Event löschen (Termin, der nur in Google/iPhone existiert) ───────
   async function handleDeleteGoogleEvent(gEvt: GoogleCalendarEvent) {
     try {
@@ -586,7 +610,7 @@ export default function CrmCalendar() {
                         }}
                         onClick={e => { e.stopPropagation(); setSelectedAppt(appt) }}
                       >
-                        ● {time ? `${time} ` : ''}{appt.title}
+                        {appt.cancel_reported_at ? '🚫' : '●'} {time ? `${time} ` : ''}{appt.title}
                       </div>
                     )
                   })() : (() => {
@@ -686,7 +710,7 @@ export default function CrmCalendar() {
                       </p>
                       <p className="text-xs font-semibold text-gray-800 truncate">{appt.title}</p>
                       <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-                        <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <SourceBadge source={appt.source!} />}<CampaignBadge appt={appt} />
+                        <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <SourceBadge source={appt.source!} />}<CampaignBadge appt={appt} /><AbsageBadge appt={appt} t={t} />
                       </div>
                     </div>
                   )
@@ -789,7 +813,7 @@ export default function CrmCalendar() {
                     </p>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <SourceBadge source={appt.source!} />}<CampaignBadge appt={appt} />
+                    <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <SourceBadge source={appt.source!} />}<CampaignBadge appt={appt} /><AbsageBadge appt={appt} t={t} />
                   </div>
                 </div>
                 {appt.zoom_link && (
@@ -888,7 +912,7 @@ export default function CrmCalendar() {
               <p className="text-base font-bold text-gray-900 font-body pr-6">{appt.title}</p>
               <div className="mt-1">
                 <div className="inline-flex items-center gap-1.5">
-                  <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <SourceBadge source={appt.source!} />}<CampaignBadge appt={appt} />
+                  <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <SourceBadge source={appt.source!} />}<CampaignBadge appt={appt} /><AbsageBadge appt={appt} t={t} />
                 </div>
                 {appt.rsvps && Object.keys(appt.rsvps).length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1.5">
@@ -902,6 +926,29 @@ export default function CrmCalendar() {
               </div>
             </div>
           </div>
+
+          {/* Absage/Verschiebung per WhatsApp gemeldet (Lotte), Termin steht noch */}
+          {appt.cancel_reported_at && (
+            <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+              <p className="font-semibold">
+                {appt.cancel_reported_kind === 'verschieben'
+                  ? t('crm.calendar.rescheduleWantedHint', 'Der Kunde möchte den Termin verschieben. Erinnerungen und Bauträger-Briefing sind gestoppt.')
+                  : t('crm.calendar.cancelReportedHint', 'Der Kunde hat per WhatsApp abgesagt. Erinnerungen und Bauträger-Briefing sind gestoppt.')}
+              </p>
+              {appt.cancel_reported_text && <p className="mt-1 italic whitespace-pre-wrap">„{appt.cancel_reported_text}“</p>}
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm(t('crm.calendar.undoCancelConfirm', 'Findet der Termin doch statt? Dann laufen die Erinnerungen wieder.'))) {
+                    void handleUndoCancel(appt)
+                  }
+                }}
+                className="mt-2 text-xs font-medium text-red-700 underline"
+              >
+                {t('crm.calendar.undoCancel', 'Absage zurücknehmen')}
+              </button>
+            </div>
+          )}
 
           <div className="space-y-2 text-sm text-gray-600">
             {/* Date + time */}

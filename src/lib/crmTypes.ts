@@ -753,6 +753,11 @@ export interface CrmAppointment {
   attendees?:      Array<{ name: string; email: string | null; phone: string | null; company?: string | null; language?: string | null }> | null
   manage_token?:   string | null
   rsvps?:          Record<string, { name?: string; status?: 'pending' | 'yes' | 'no'; at?: string }> | null
+  // Kunde hat per WhatsApp abgesagt oder will verschieben (Lotte/booking-bot). Der
+  // Termin bleibt stehen, Erinnerungen und Bauträger-Briefing sind gestoppt.
+  cancel_reported_at?:   string | null
+  cancel_reported_kind?: 'absage' | 'verschieben' | null
+  cancel_reported_text?: string | null
   created_by:      string | null
   created_at:      string
   updated_at:      string

@@ -12,6 +12,7 @@ import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { maybeUpdateEmailFromWa } from './waMailUpdate.ts'
 import { anfragePaketAnstossen } from './anfragePaket.ts'
 import { maybeTippgeberAdresse } from './waTippgeberAdresse.ts'
+import { koennteAbsageSein } from './terminAbsage.ts'
 
 export type WaEvent = {
   uid:    string | null      // Message-ID des Anbieters (Dedupe)
@@ -53,7 +54,7 @@ export function detectsStopIntent(text: string): boolean {
 // dann fragt der Bot die KI (spart KI-Aufrufe bei „danke"/„ok"/Produktfragen).
 const APPT_HINT = /termin|telefon|anruf|\bruf|\bcall\b|zoom|video|sprechen|besprech|treffen|meeting|\bzeit\b|\bwann\b|uhrzeit|quatschen|kennenlern|kennen lern|persönlich|vorbei|\bmeet\b/i
 
-async function callBot(action: 'engage' | 'reply' | 'engage_unknown' | 'answer', lead_id: string | null, text: string, tag: string, extra: Record<string, unknown> = {}): Promise<void> {
+async function callBot(action: 'engage' | 'reply' | 'engage_unknown' | 'answer' | 'absage', lead_id: string | null, text: string, tag: string, extra: Record<string, unknown> = {}): Promise<void> {
   const p = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
     method:  'POST',
     headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
@@ -250,6 +251,20 @@ export async function processWaEvent(sb: SupabaseClient, ev: WaEvent, tag: strin
   // und Danke-WhatsApp (waMailUpdate.ts, greift nur in diesem engen Fall).
   if (!stop) await maybeUpdateEmailFromWa(sb, { lead_id: lead.id }, ev.phone, text, tag)
 
+  // ── Absage/Verschiebung eines anstehenden Termins (Eva Hahn, 29.10.2026) ──
+  // Nur wenn der Vorfilter anschlägt UND ein Termin ansteht, entscheidet booking-bot
+  // per KI. Ist es keine Absage, verarbeitet der Bot die Nachricht auf dem normalen
+  // Weg weiter (fallback). Bei einer Abmeldung im selben Text (still) wird nur
+  // markiert und Sven informiert, Lotte schreibt nichts.
+  let terminOffen = false
+  if (koennteAbsageSein(text)) {
+    const { data: ta } = await sb.from('crm_appointments').select('id')
+      .eq('lead_id', lead.id).eq('internal', false).is('cancel_reported_at', null)
+      .gt('end_time', new Date().toISOString()).limit(1)
+    terminOffen = !!(ta && ta.length)
+  }
+  if (stop && terminOffen) await callBot('absage', lead.id, text, tag, { still: true })
+
   // ── Termin-Bot: eingehende Antwort in ein laufendes Bot-Gespräch geben ──
   // Nur wenn KEINE Abmeldung (die schließt das Gespräch bereits) und ein aktives
   // Gespräch existiert. Läuft im Hintergrund (KI + WhatsApp dauert Sekunden), damit
@@ -267,7 +282,9 @@ export async function processWaEvent(sb: SupabaseClient, ev: WaEvent, tag: strin
     // und klinkt sich ein (engage). Beides im Hintergrund.
     const hasConv = !!(conv && conv.length)
     // Sonst eine Sachfrage? Lotte antwortet nur, wenn die CRM-Fakten reichen (answer).
-    await callBot(hasConv ? 'reply' : APPT_HINT.test(text) ? 'engage' : 'answer', lead.id, text, tag)
+    const normal = hasConv ? 'reply' : APPT_HINT.test(text) ? 'engage' : 'answer'
+    if (terminOffen) await callBot('absage', lead.id, text, tag, { fallback: normal })
+    else await callBot(normal, lead.id, text, tag)
     // Infos zu einer Wohnung angefragt? Dann Paket im Postausgang vorbereiten
     // (anfrage-paket entscheidet selbst, im Hintergrund).
     await anfragePaketAnstossen(lead.id, text, 'whatsapp', tag)

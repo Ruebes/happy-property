@@ -13,6 +13,7 @@
     "_shared/werbeRegeln.ts",
     "_shared/metaSpec.ts",
     "_shared/metaLint.ts",
+    "_shared/terminAbsage.ts",
     "google-drive/index.ts",
     "create-client-drive-folder/index.ts",
     "subscriber-optin/index.ts",

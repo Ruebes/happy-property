@@ -224,9 +224,10 @@ Deno.serve(async (req: Request) => {
     const nowIso = new Date().toISOString()
     // internal ausgeschlossen: sonst kann ein interner Termin, der zeitlich vor dem
     // echten Beratungstermin liegt, {{termin_datum}}/{{zoom_link}}/{{termin_link}} in
-    // einer Kundennachricht ueberschreiben.
+    // einer Kundennachricht ueberschreiben. Gemeldete Absagen (cancel_reported_at)
+    // ebenso: fuer sie wird keine Erinnerung mehr geplant.
     const { data: nextAppt } = await supabase.from('crm_appointments')
-      .select('start_time, zoom_link, manage_token, type, timezone, location, location_url').eq('lead_id', lead_id).eq('internal', false).gte('start_time', nowIso).order('start_time', { ascending: true }).limit(1).maybeSingle()
+      .select('start_time, zoom_link, manage_token, type, timezone, location, location_url').eq('lead_id', lead_id).eq('internal', false).is('cancel_reported_at', null).gte('start_time', nowIso).order('start_time', { ascending: true }).limit(1).maybeSingle()
     const { data: lastAppt } = await supabase.from('crm_appointments')
       .select('zoom_link, start_time, manage_token, type, timezone, location, location_url').eq('lead_id', lead_id).eq('internal', false).order('start_time', { ascending: false }).limit(1).maybeSingle()
     const apptStart = (nextAppt as { start_time?: string } | null)?.start_time ?? null
