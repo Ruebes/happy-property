@@ -68,7 +68,7 @@ async function scheduleDeckFollowup(
     const greet = first ? `Hey ${first}` : 'Hallo'
     const msg =
       `${greet}, hier ist Lotte, Svens persönliche Assistentin 🐾 Ich wollte kurz nachhören: Konntest du schon in Ruhe über die Objekte schauen? Welches spricht dich am meisten an?\n\n` +
-      `Wenn du magst, nehmt ihr euch 15 Minuten und Sven beantwortet dir alle offenen Fragen — hier kannst du dir direkt einen Termin aussuchen: ${bookingUrl(l.booking_token)}\n\n` +
+      `Wenn du magst, nehmt ihr euch 15 Minuten und Sven beantwortet dir alle offenen Fragen. Hier kannst du dir direkt einen Termin aussuchen: ${bookingUrl(l.booking_token)}\n\n` +
       // Lotte, nicht Sven: diese Nachricht tippt niemand, sie geht automatisch nach
       // einer Deck-Ansicht raus. Als "Sven" signiert wäre sie eine Verwechslung —
       // und ein Hundefoto unter Svens Namen erst recht.

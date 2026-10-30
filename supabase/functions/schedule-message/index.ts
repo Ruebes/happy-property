@@ -12,6 +12,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { unitGross, unitNet, DEFAULT_VAT_RATE } from '../_shared/price.ts'
 import { bookingUrl } from '../_shared/bookingLink.ts'
 import { gateCaller } from '../_shared/callerGate.ts'
+import { ruhezeitZiel, zeitzoneFuer } from '../_shared/ruhezeit.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -376,6 +377,11 @@ Deno.serve(async (req: Request) => {
         if (scheduledAt.getTime() < Date.now() + 30 * 60 * 1000) { skipped++; continue }
       } else {
         scheduledAt = new Date(Date.now() + rule.delay_minutes * 60 * 1000)
+        // Ruhezeit: verzögerter Nachfass an Kunden landet nie zwischen 21 und 8 Uhr
+        // (Empfängerzeit), sondern gegen 9 Uhr. Sofort-Nachrichten bleiben sofort.
+        if (rule.delay_minutes > 0 && (!rule.recipient || rule.recipient === 'client')) {
+          scheduledAt = ruhezeitZiel(scheduledAt, scheduledAt, zeitzoneFuer(lead.whatsapp || lead.phone)) ?? scheduledAt
+        }
       }
 
       // F) Drive-Trigger: Kundenordner sicherstellen + teilen, drive_link für DIESE Regel füllen
@@ -482,10 +488,11 @@ Deno.serve(async (req: Request) => {
           }))
           await supabase.from('scheduled_messages').insert(rows)
         } else {
+          const start = new Date(Date.now() + 20 * 60000)
           await supabase.from('scheduled_messages').insert({
             lead_id, deal_id: deal_id ?? null, type: 'whatsapp', event_type: 'bot_nudge',
             bot_nudge_stage: 0, bot_nudge_source: event_type, status: 'pending',
-            scheduled_at: new Date(Date.now() + 20 * 60000).toISOString(),
+            scheduled_at: (ruhezeitZiel(start, start, zeitzoneFuer(lead.whatsapp || lead.phone)) ?? start).toISOString(),
           })
         }
       }

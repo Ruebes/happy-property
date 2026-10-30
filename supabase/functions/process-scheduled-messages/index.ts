@@ -31,6 +31,7 @@ import { bookingUrl } from '../_shared/bookingLink.ts'
 import { isHardSmtpBounce, recordBounce } from '../_shared/emailBounce.ts'
 import { isOptedOut, loadNewsletterOptoutKeys, type OptoutKeys } from '../_shared/newsletterOptout.ts'
 import { NO_WHATSAPP_RE, markWaUnreachable, clearWaUnreachable } from '../_shared/phonePlausible.ts'
+import { inRuhezeit, ruhezeitZiel, uhrzeit, zeitzoneFuer } from '../_shared/ruhezeit.ts'
 
 // Wiederholung bei TimelinesAI-Kontingent (403 quota_exceeded): 8 x 10 Min = 80 Min,
 // länger als das beobachtete Sperrfenster (~50 Min am 11.9.2026). 10 Min bleibt
@@ -490,6 +491,8 @@ Deno.serve(async (req: Request) => {
     for (const dd of ((cand ?? []) as Array<{ lead: { id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; language: string | null; portal_invited_at: string | null } | null }>)) {
       const l = dd.lead
       if (!l?.email || l.portal_invited_at) continue
+      // Ruhezeit: Lottes Einladung erst ab 8 Uhr Kundenzeit, der 5-Minuten-Lauf holt sie dann nach.
+      if (inRuhezeit(new Date(), zeitzoneFuer(l.phone))) continue
       const { data: claimed } = await supabase.from('leads').update({ portal_invited_at: new Date().toISOString() })
         .eq('id', l.id).is('portal_invited_at', null).select('id')
       if (!claimed || !claimed.length) continue
@@ -519,7 +522,7 @@ Deno.serve(async (req: Request) => {
           <p style="font-size:12px;color:#6b7280;margin:6px 0 0;">Lotte · ${de_ ? 'persönliche Assistentin von Sven' : "Sven's personal assistant"} 🐾</p>
         </div>
         <p>${de_ ? `Hallo ${first},` : `Hi ${first},`}</p>
-        <p>${de_ ? 'schön, dass es bei dir losgeht! 🎉 Hier ist dein persönlicher Zugang zum <b>Happy Property Portal</b> — deinem Zuhause für alles rund um deine Immobilie auf Zypern:' : 'great that things are moving! 🎉 Here is your personal access to the <b>Happy Property Portal</b> — your home for everything around your property in Cyprus:'}</p>
+        <p>${de_ ? 'schön, dass es bei dir losgeht! 🎉 Hier ist dein persönlicher Zugang zum <b>Happy Property Portal</b>, deinem Zuhause für alles rund um deine Immobilie auf Zypern:' : 'great that things are moving! 🎉 Here is your personal access to the <b>Happy Property Portal</b>, your home for everything around your property in Cyprus:'}</p>
         <ul style="line-height:1.9;padding-left:18px;">${feats}</ul>
         <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;margin:16px 0;">
           <p style="margin:0;font-size:14px;"><b>${de_ ? 'Deine Zugangsdaten' : 'Your login'}</b><br/>E-Mail: ${l.email}<br/>${de_ ? 'Passwort' : 'Password'}: <b>${a.password}</b></p>
@@ -677,6 +680,34 @@ Deno.serve(async (req: Request) => {
         let waSent = false
         let mailLimitHit = false
         const retryCount = msg.retry_count ?? 0
+
+        // ── Ruhezeit (Sven 30.10.26): Kunden bekommen zwischen 21 und 8 Uhr ihrer
+        // Zeit nichts Automatisches, die Nachricht rückt auf etwa 9 Uhr. Ausgenommen
+        // sind Sofort-Nachrichten als direkte Antwort auf eine Aktion (Terminbestätigung
+        // nach der Buchung, angeforderte Unterlagen, Anmeldebestätigung) und
+        // Terminerinnerungen, die sonst hinter dem Termin landen könnten.
+        // Partner und Bauträger (bc:/dc:/vw:/unit_developer) bleiben unverändert.
+        const anKundeAuto = !!msg.subscriber_id || !msg.recipient || msg.recipient === 'client'
+        const erstellt = Date.parse((msg as { created_at?: string }).created_at ?? '')
+        const sofort = retryCount === 0 && Number.isFinite(erstellt) && Date.parse(msg.scheduled_at) - erstellt <= 2 * 60_000
+        const erinnerung = !!msg.rule_id && beforeRules.has(msg.rule_id)
+        if (anKundeAuto && !sofort && !erinnerung && msg.type !== 'list_update') {
+          // Zeitzone aus der Kundennummer (Abonnent bzw. Lead).
+          const { data: kt } = msg.subscriber_id
+            ? await supabase.from('newsletter_subscribers').select('phone').eq('id', msg.subscriber_id).maybeSingle()
+            : await supabase.from('leads').select('phone, whatsapp').eq('id', msg.lead_id).maybeSingle()
+          const k = kt as { phone?: string | null; whatsapp?: string | null } | null
+          const zone = zeitzoneFuer(k?.whatsapp || k?.phone)
+          const ziel = ruhezeitZiel(new Date(), new Date(msg.scheduled_at), zone)
+          if (ziel) {
+            await supabase.from('scheduled_messages')
+              .update({ status: 'pending', scheduled_at: ziel.toISOString() })
+              .eq('id', msg.id)
+            console.log(`[process-scheduled] Ruhezeit (${zone}): ${msg.id} von ${uhrzeit(new Date(msg.scheduled_at), zone)} auf ${uhrzeit(ziel, zone)} Uhr verschoben`)
+            processed.push({ id: msg.id, result: 'ruhezeit' })
+            continue
+          }
+        }
 
         // ── Termin-Bot: an booking-bot delegieren (dynamische AM/PM-Slots statt statischem
         // Text). Stage 0 = Gespräch ERÖFFNEN (+20 Min nach No-Show/Erstkontakt), Stage ≥1 =
@@ -961,7 +992,7 @@ Deno.serve(async (req: Request) => {
                     const isVorOrt = a.type === 'inperson'
                     const ics = buildIcs({
                       uid:         a.id,
-                      title:       a.title || 'Beratungsgespräch mit Sven – Happy Property',
+                      title:       a.title || 'Beratungsgespräch mit Sven · Happy Property',
                       startIso:    new Date(a.start_time).toISOString(),
                       endIso:      new Date(a.end_time).toISOString(),
                       description: `Beratungsgespräch mit Sven · Happy Property${isVorOrt ? `\nWir treffen uns vor Ort${a.location ? `: ${a.location}` : ''}${a.location_url ? `\n${a.location_url}` : ''}` : isZoom ? `\nZoom: ${a.zoom_link}` : '\nWir sprechen per WhatsApp / Telefon.'}`,

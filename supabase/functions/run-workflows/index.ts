@@ -22,6 +22,7 @@
 // Deploy:  supabase functions deploy run-workflows --no-verify-jwt
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { bookingUrl } from '../_shared/bookingLink.ts'
+import { ruhezeitZiel, zeitzoneFuer } from '../_shared/ruhezeit.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -132,7 +133,15 @@ Deno.serve(async (req) => {
           }
 
           if (node.type === 'email' || node.type === 'whatsapp') {
-            const okSend = await sendNode(sb, run, node, ctx)
+            // Ruhezeit: zwischen 21 und 8 Uhr Empfängerzeit wartet der Lauf an diesem
+            // Knoten bis etwa 9 Uhr und sendet dann.
+            const p = await loadPerson(sb, run)
+            const ziel = p ? ruhezeitZiel(new Date(), new Date(), zeitzoneFuer(p.phone)) : null
+            if (ziel) {
+              await sb.from('funnel_workflow_runs').update({ current_node_id: node.id, next_due_at: ziel.toISOString(), context: ctx, updated_at: new Date().toISOString() }).eq('id', run.id)
+              waited = true; break
+            }
+            const okSend = await sendNode(sb, run, node, ctx, p)
             if (node.type === 'email' && okSend) out.sent_email++
             if (node.type === 'whatsapp' && okSend) out.sent_wa++
             curId = nextId(graph, node.id)
@@ -194,8 +203,7 @@ async function loadPerson(sb: SupabaseClient, run: Run): Promise<Person | null> 
 }
 
 // ── Sende-Knoten (E-Mail / WhatsApp) ────────────────────────────────────────
-async function sendNode(sb: SupabaseClient, run: Run, node: GNode, _ctx: Record<string, unknown>): Promise<boolean> {
-  const p = await loadPerson(sb, run)
+async function sendNode(sb: SupabaseClient, _run: Run, node: GNode, _ctx: Record<string, unknown>, p: Person | null): Promise<boolean> {
   if (!p) return false
   if (p.optout) return false   // Opt-out respektieren
   const vars = { vorname: p.first, nachname: p.last, name: `${p.first} ${p.last}`.trim(), termin_buchen: bookingUrl(p.bookingToken), buchungs_link: bookingUrl(p.bookingToken) }
