@@ -1904,7 +1904,7 @@ async function handleAbsage(admin: SupabaseClient, leadId: string, text: string,
     `„${text.replace(/\s+/g, ' ').slice(0, 600)}“`,
     '',
     `Termin: ${t.title || artLabel}, ${wann}${t.location && !cafe ? `, ${t.location}` : ''}`,
-    `Der Termin ist NICHT gelöscht, nur markiert („${art === 'absage' ? 'Absage gemeldet' : 'Verschiebung gewünscht'}“). ${nGestoppt ? `${nGestoppt} Erinnerung${nGestoppt === 1 ? '' : 'en'} an den Kunden gestoppt.` : 'Es war keine Erinnerung mehr offen.'}`,
+    `Der Termin ist NICHT gelöscht, nur markiert („${art === 'absage' ? 'Absage gemeldet' : 'Verschiebung gewünscht'}“). ${nGestoppt ? 'Die Erinnerungen an den Kunden sind gestoppt.' : 'Es war keine Erinnerung mehr offen.'}`,
     lotte,
   ]
   for (const k of kontakte) {
