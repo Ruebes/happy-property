@@ -13,7 +13,8 @@ import { autoRegisterForDecks, pendingAutoRegistrations } from '../../../lib/aut
 
 // ── Postausgang ──────────────────────────────────────────────────────────────
 // Erzeugte Begleit-Mails (mit Deck-Links) aus dem Deck-Wizard. Sven prüft und
-// sendet manuell — KEIN automatischer Versand.
+// sendet manuell. Ausnahme seit 30.10.26: fertige Infopakete zu Projekten mit
+// automatischem Versand (anfrage-paket, Flora Panorama) gehen per Mail von selbst raus.
 //
 // Abend-Workflow (minimale Klicks): Decks/Berechnungen tagsüber im Hintergrund
 // erstellen lassen → abends hier alles an EINEM Ort prüfen: Deck per Chat anpassen
@@ -115,6 +116,14 @@ export default function Postausgang() {
       .update({ shared_at: new Date().toISOString() })
       .in('token', toks).is('shared_at', null)
     if (error) console.warn('[Postausgang] Fahrplan freischalten:', error.message)
+  }
+
+  // Frischer Stand des Eintrags vor dem Senden: Infopakete mit automatischem Versand
+  // (anfrage-paket) können inzwischen raus sein, die geladene Liste ist dann veraltet.
+  const frisch = async (row: OutboxRow): Promise<OutboxRow | null> => {
+    const { data } = await supabase.from('deck_outbox').select('status, sent_at, email_sent_at, whatsapp_sent_at').eq('id', row.id).maybeSingle()
+    const f = data as Pick<OutboxRow, 'status' | 'sent_at' | 'email_sent_at' | 'whatsapp_sent_at'> | null
+    return f && f.status !== 'cancelled' ? { ...row, ...f } : null
   }
 
   const load = useCallback(async () => {
@@ -220,7 +229,10 @@ export default function Postausgang() {
     return ok
   }
 
-  const send = async (row: OutboxRow, resend = false) => {
+  const send = async (row0: OutboxRow, resend0 = false) => {
+    const row = await frisch(row0)
+    if (!row) { flash(t('crm.outbox.gone', 'Dieser Eintrag ist nicht mehr offen.')); void load(); return }
+    const resend = resend0 || !!row.email_sent_at
     // Immer die AKTUELLE Mailadresse aus dem Lead ziehen — Sven korrigiert sie im
     // Kunden; recipient_email auf dem Postausgang-Eintrag kann veraltet sein.
     let to = row.recipient_email
@@ -255,6 +267,13 @@ export default function Postausgang() {
     if (!(await redDeckOverride(row))) return
     const regWarn = await registrationWarning(row)
     if (!window.confirm(regWarn + autoNote + (resend ? t('crm.outbox.confirmResend', 'Mail ERNEUT senden an:') : t('crm.outbox.confirmSend', 'Mail jetzt an den Kunden senden?')) + `\n\n${to}`)) return
+    // Erster Versand: email_sent_at sofort setzen (wie anfrage-paket beim automatischen
+    // Versand). Ging die Mail inzwischen automatisch raus, greift der Claim nicht.
+    const claim = new Date().toISOString()
+    if (!resend) {
+      const { data: c } = await supabase.from('deck_outbox').update({ email_sent_at: claim }).eq('id', row.id).is('email_sent_at', null).select('id')
+      if (!c?.length) { flash(t('crm.outbox.gone', 'Dieser Eintrag ist nicht mehr offen.')); void load(); return }
+    }
     setBusyId(row.id)
     try {
       // Korrigierte Adresse auf dem Eintrag festhalten (Anzeige + nächster Versand)
@@ -274,6 +293,7 @@ export default function Postausgang() {
       void load()
     } catch (e) {
       await supabase.from('deck_outbox').update({ error_message: e instanceof Error ? e.message : 'Fehler' }).eq('id', row.id)
+      if (!resend) await supabase.from('deck_outbox').update({ email_sent_at: null }).eq('id', row.id).eq('email_sent_at', claim)
       flash(`${t('crm.outbox.sendFail', 'Senden fehlgeschlagen')}: ${e instanceof Error ? e.message : ''}`)
       void load()
     } finally { setBusyId(null) }
@@ -303,7 +323,9 @@ export default function Postausgang() {
     }
   }
 
-  const sendWhatsApp = async (row: OutboxRow) => {
+  const sendWhatsApp = async (row0: OutboxRow) => {
+    const row = await frisch(row0)
+    if (!row) { flash(t('crm.outbox.gone', 'Dieser Eintrag ist nicht mehr offen.')); void load(); return }
     const phone = row.lead?.whatsapp || row.lead?.phone
     if (!phone) { flash(t('crm.outbox.noPhone', 'Keine Telefonnummer am Lead.')); return }
     const fn = row.lead?.first_name ?? ''
@@ -407,7 +429,9 @@ export default function Postausgang() {
     if (!window.confirm(t('crm.outbox.confirmDiscard', 'Entwurf verwerfen? Der Eintrag wird entfernt.'))) return
     // Verwerfen = Eintrag löschen (nicht nur als „verworfen" markieren). Die zugrunde-
     // liegenden Decks bleiben — die löscht Sven bei Bedarf beim Kunden („Gesendete Angebote").
-    await supabase.from('deck_outbox').delete().eq('id', row.id)
+    // Nur wirklich offene Entwürfe: ein Infopaket kann inzwischen automatisch raus sein.
+    const { data: weg } = await supabase.from('deck_outbox').delete().eq('id', row.id).eq('status', 'draft').is('email_sent_at', null).select('id')
+    if (!weg?.length) { flash(t('crm.outbox.gone', 'Dieser Eintrag ist nicht mehr offen.')); void load(); return }
     setRows(prev => prev.filter(r => r.id !== row.id))
   }
 
@@ -421,7 +445,7 @@ export default function Postausgang() {
           <h1 className="text-2xl font-bold text-gray-900">📤 {t('crm.outbox.title', 'Postausgang')}</h1>
           <button onClick={() => void load()} className="text-sm text-gray-500 hover:text-orange-600">↻ {t('common.refresh', 'Aktualisieren')}</button>
         </div>
-        <p className="text-sm text-gray-500 mb-5">{t('crm.outbox.intro2', 'Hier prüfst du alles an einem Ort: Deck per Chat anpassen (läuft im Hintergrund), Berechnung ansehen, je als fertig bestätigen, Mailtext bearbeiten, senden. Es wird nichts automatisch verschickt.')}</p>
+        <p className="text-sm text-gray-500 mb-5">{t('crm.outbox.intro2', 'Hier prüfst du alles an einem Ort: Deck per Chat anpassen (läuft im Hintergrund), Berechnung ansehen, je als fertig bestätigen, Mailtext bearbeiten, senden. Von selbst geht nur die Mail fertiger Infopakete zu Projekten mit automatischem Versand raus (Flora Panorama).')}</p>
 
         {toast && <div className="mb-4 text-sm rounded-lg px-3 py-2 bg-gray-900 text-white">{toast}</div>}
         {loading && <p className="text-gray-400">{t('common.loading', 'Lädt…')}</p>}

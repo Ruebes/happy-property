@@ -4,7 +4,8 @@
 //
 // Fragt ein Kunde Infos zu einer bestimmten Wohnung an, bereitet das System alles
 // vor und legt es als ENTWURF in den Postausgang. Verschickt wird NICHTS - Sven
-// prüft und sendet per Mail oder WhatsApp.
+// prüft und sendet per Mail oder WhatsApp. Ausnahme seit 30.10.26: Projekte mit
+// automatischem Versand (siehe „Automatischer Versand“ unten, Flora Panorama).
 //   1. ein eigenes, vollständiges Deck zur Wohnung (alle freigegebenen Bilder,
 //      Grundriss, Baubeschreibung, Ausstattung, Lage, Zahlungsplan), ohne Projekt-
 //      und Bauträgernamen (Kunde vor dem Erstgespräch)
@@ -26,8 +27,10 @@
 // alle 2 Min) baut Rechnungen, PDFs und Postausgang-Entwurf, sobald das Deck steht.
 //
 // Schalter crm_settings.anfrage_paket_mode: on | off (fehlende Zeile = off).
+// Automatischer Versand: crm_settings.anfrage_paket_auto_senden off | test | on.
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { gateCaller } from '../_shared/callerGate.ts'
+import { ruhezeitZiel, uhrzeit, zeitzoneFuer } from '../_shared/ruhezeit.ts'
 import { bookingUrl, PORTAL_URL } from '../_shared/bookingLink.ts'
 import { resolveLang } from '../_shared/recipientLang.ts'
 import { CI } from '../_shared/brand.ts'
@@ -522,6 +525,8 @@ interface PaketRow {
   project_id: string; unit_id: string; nachricht: string | null; status: string; job_id: string | null; task_id: string | null
   wuensche?: string[] | null; deck_token?: string | null; quell_token?: string | null
   versuche: number; abschluss_at: string | null; created_at: string
+  calc_tokens?: string[] | null; outbox_id?: string | null; fertig_at?: string | null
+  versand?: string | null; versand_ab?: string | null; versendet_at?: string | null; pruefung_at?: string | null
 }
 
 // Person aus der Paket-Zeile, wenn Lead oder Abonnent inzwischen fehlt (nur für die Meldung).
@@ -565,12 +570,21 @@ async function abschliessen(sb: SupabaseClient, id: string): Promise<{ fertig: b
   if (!claim?.length) return { fertig: false }
   try {
     const out = await baueEntwurf(sb, row, p, unit, projekt, job.deck_token)
+    // Automatischer Versand: hier nur planen, gesendet wird erst nach der Deck-Prüfung.
+    let auto = await autoVersand(sb, projekt.id, p)
+    // Quality-Gate schon rot: gar nicht erst planen, Sven bekommt die Aufgabe sofort.
+    if (auto && 'ab' in auto && out.ampel === 'red') auto = { grund: 'Deck-Prüfung (Quality-Gate) rot', aktion: AKTION_ROT }
     await sb.from('anfrage_pakete').update({
       status: 'fertig', deck_token: job.deck_token, calc_tokens: out.calcTokens, outbox_id: out.outboxId, fertig_at: new Date().toISOString(),
       grund: out.hinweis,
+      ...(auto && 'ab' in auto ? { versand: 'geplant', versand_ab: auto.ab.toISOString() } : {}),
+      ...(auto && 'grund' in auto ? { versand: 'blockiert', versand_info: auto.grund } : {}),
     }).eq('id', id)
     await svenAufgabe(sb, { id, p, unitNr: unit.unit_number, projektName: projekt.name, quelle: row.quelle, text: row.nachricht ?? '', frage: '',
-      taskId: row.task_id, projectId: projekt.id, fertig: { deckUrl: `${PORTAL_URL}/deck/${job.deck_token}?preview=1`, ampel: out.ampel, befunde: out.befunde, calcUrls: out.calcUrls } })
+      taskId: row.task_id, projectId: projekt.id, fertig: { deckUrl: `${PORTAL_URL}/deck/${job.deck_token}?preview=1`, ampel: out.ampel, befunde: out.befunde, calcUrls: out.calcUrls,
+        ...(auto && 'ab' in auto ? { auto: { ab: auto.ab, zone: zeitzoneFuer(p.phone) } } : {}),
+        ...(auto && 'grund' in auto ? { nichtAuto: auto.grund, aktion: auto.aktion } : {}) } })
+    if (auto && 'ab' in auto) await versenden(sb, id).catch((e: unknown) => console.error('[anfrage-paket] Versand:', e))
     return { fertig: true, status: 'fertig' }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -720,30 +734,54 @@ async function baueEntwurf(sb: SupabaseClient, row: PaketRow, p: Person, unit: U
 // ── Aufgabe/Notiz für Sven ──────────────────────────────────────────────────
 async function svenAufgabe(sb: SupabaseClient, o: {
   id: string; p: Person; unitNr: string; projektName: string; quelle: Quelle; text: string; frage: string; taskId: string | null
-  fertig?: { deckUrl: string; ampel: string; befunde: string[]; calcUrls: string[] }; fehler?: string; projectId?: string
+  fertig?: {
+    deckUrl: string; ampel: string; befunde: string[]; calcUrls: string[]
+    auto?: { ab: Date; zone: string }   // geht automatisch raus (nach Prüfung und Ruhezeit)
+    nichtAuto?: string                   // sollte automatisch raus, geht aber nicht: Grund
+    aktion?: string                      // was Sven dann tun soll (Standard: prüfen und senden)
+  }
+  fehler?: string; projectId?: string
   wuensche?: string[] | null; quellToken?: string | null
 }): Promise<string | null> {
   const objekt = o.projektName ? `Wohnung ${o.unitNr} (${o.projektName})` : `Wohnung ${o.unitNr}`
   const wo = o.quelle === 'whatsapp' ? 'per WhatsApp' : o.quelle === 'mail' ? 'per Mail' : o.quelle === 'formular' ? 'über „Mehr Infos"' : ''
-  const zeilen = o.fertig ? [
-    `📦 Infopaket liegt im Postausgang (Mail + WhatsApp), bitte prüfen und senden.`,
-    `Deck: ${o.fertig.deckUrl} · Prüfung: ${o.fertig.ampel === 'green' ? 'grün' : o.fertig.ampel === 'red' ? 'ROT, bitte Befunde ansehen' : o.fertig.ampel}`,
-    ...(o.fertig.befunde.length ? [`Befunde: ${o.fertig.befunde.join(' | ').slice(0, 600)}`] : []),
-    `Rechnungen: ${o.fertig.calcUrls.join(' · ')}`,
+  const f = o.fertig
+  const automatisch = !!f?.auto && !f.nichtAuto
+  const kopf = !f ? '' : f.nichtAuto
+    ? `📦 Infopaket liegt im Postausgang, geht aber nicht automatisch raus: ${f.nichtAuto}. ${f.aktion ?? AKTION_SENDEN}`
+    : f.auto
+      ? `📦 Infopaket liegt im Postausgang und geht automatisch per Mail raus, sobald die Deck-Prüfung durch ist${f.auto.ab.getTime() > Date.now() + 60_000 ? ` (Ruhezeit, frühestens ${uhrzeit(f.auto.ab, f.auto.zone)} Uhr beim Kunden)` : ''}.`
+      : `📦 Infopaket liegt im Postausgang (Mail + WhatsApp), bitte prüfen und senden.`
+  const zeilen = f ? [
+    kopf,
+    `Deck: ${f.deckUrl} · Prüfung: ${f.ampel === 'green' ? 'grün' : f.ampel === 'red' ? 'ROT, bitte Befunde ansehen' : f.ampel}`,
+    ...(f.befunde.length ? [`Befunde: ${f.befunde.join(' | ').slice(0, 600)}`] : []),
+    `Rechnungen: ${f.calcUrls.join(' · ')}`,
     `Postausgang: ${PORTAL_URL}/admin/crm/postausgang`,
   ] : [`⚠️ Infopaket konnte nicht vorbereitet werden: ${String(o.fehler ?? '').slice(0, 300)}. Bitte selbst über den Deck-Wizard erstellen.`]
   // Fertiges Paket ohne Aufgabe: bei Projekten aus anfrage_paket_ohne_aufgabe reicht der
-  // Postausgang, nur die Notiz am Lead (Sven 30.10.26).
-  const ohne = !!o.fertig && !o.taskId && !!o.projectId && await ohneAufgabe(sb, o.projectId)
+  // Postausgang, nur die Notiz am Lead (Sven 30.10.26). Doch eine Aufgabe, wenn das Paket
+  // nicht automatisch rausgehen kann oder der Kunde im Formular etwas gefragt hat: Die
+  // Frage beantwortet das Paket nicht, und sie steht nirgends sonst (WhatsApp und Mail
+  // sieht Sven im Posteingang).
+  const frageOffen = o.quelle === 'formular' && !!o.text.trim()
+  const ohne = !!f && !o.taskId && !!o.projectId && !f.nichtAuto && !frageOffen && await ohneAufgabe(sb, o.projectId)
+  const titelFertig = automatisch
+    ? `📩 ${o.p.name || o.p.first} hat eine Frage zu ${objekt}, das Infopaket geht automatisch raus`
+    : f?.nichtAuto
+      ? `⚠️ ${o.p.name || o.p.first}: Infopaket zu ${objekt} ging nicht automatisch raus`
+      : `📩 ${o.p.name || o.p.first}: Infopaket zu ${objekt} liegt im Postausgang, prüfen und senden`
   let neueAufgabe: string | null = null
 
   // Formular: die Aufgabe aus track-engagement gibt es schon, sie bekommt den Stand.
-  if (o.taskId) {
+  // Eine Blockade bekommt immer eine eigene Aufgabe: Die Frage-Aufgabe kann Sven bis
+  // dahin abgehakt oder gelöscht haben, dann sähe er die Blockade nicht.
+  if (o.taskId && !f?.nichtAuto) {
     const { data: t } = await sb.from('crm_tasks').select('title, description').eq('id', o.taskId).maybeSingle()
     const tt = t as { title: string; description: string | null } | null
     if (tt) {
       await sb.from('crm_tasks').update({
-        title: o.fertig ? `📩 ${o.p.name || o.p.first}: Infopaket zu ${objekt} liegt im Postausgang, prüfen und senden`.slice(0, 200) : tt.title,
+        title: f && !f.auto ? titelFertig.slice(0, 200) : tt.title,
         description: `${tt.description ?? ''}\n\n${zeilen.join('\n')}`.trim(),
       }).eq('id', o.taskId)
     }
@@ -760,7 +798,7 @@ async function svenAufgabe(sb: SupabaseClient, o: {
       ...zeilen,
     ].join('\n')
     const { data: task, error } = await sb.from('crm_tasks').insert({
-      title: (o.fertig ? `📩 ${o.p.name || o.p.first}: Infopaket zu ${objekt} liegt im Postausgang, prüfen und senden` : `📩 ${o.p.name || o.p.first} möchte Infos zu ${objekt}`).slice(0, 200),
+      title: (f ? titelFertig : `📩 ${o.p.name || o.p.first} möchte Infos zu ${objekt}`).slice(0, 200),
       description: beschreibung, created_by: adminId, assigned_to: adminId, status: 'offen', due_date: cyDate(new Date()),
       assigned_notified_at: new Date().toISOString(),
     }).select('id').single()
@@ -776,7 +814,7 @@ async function svenAufgabe(sb: SupabaseClient, o: {
   if (o.p.kind === 'lead' && o.p.id) {
     await sb.from('activities').insert({
       lead_id: o.p.id, type: 'note', direction: 'outbound', auto: true,
-      subject: o.fertig ? `📦 Infopaket vorbereitet: ${objekt}` : `⚠️ Infopaket nicht vorbereitet: ${objekt}`,
+      subject: f?.nichtAuto ? `⚠️ Infopaket nicht automatisch verschickt: ${objekt}` : f ? `📦 Infopaket vorbereitet: ${objekt}` : `⚠️ Infopaket nicht vorbereitet: ${objekt}`,
       content: zeilen.join('\n'), completed_at: new Date().toISOString(),
     }).then(({ error }) => { if (error) console.warn('[anfrage-paket] Notiz:', error.message) })
   }
@@ -817,6 +855,374 @@ async function ersatzAufgabe(sb: SupabaseClient, b: Record<string, unknown>, e: 
       subject: '⚠️ Infopaket nicht vorbereitet', content: zeile, completed_at: new Date().toISOString(),
     }).then(({ error: nErr }) => { if (nErr) console.warn('[anfrage-paket] Ersatz-Notiz:', nErr.message) })
   }
+}
+
+// ── Automatischer Versand ───────────────────────────────────────────────────
+// Sven 30.10.26 („Ja, automatisch“): Fertige Pakete zu Projekten ohne Aufgabe
+// (anfrage_paket_ohne_aufgabe, Flora Panorama) gehen ohne Klick per Mail raus, wie
+// „Mail senden“ im Postausgang. Die WhatsApp bleibt im Postausgang liegen.
+// Schalter crm_settings.anfrage_paket_auto_senden:
+//   off   nichts automatisch (fehlende Zeile = off), Sven sendet im Postausgang
+//   test  nur an INTERN_ADRESSEN, ohne Ruhezeit, ohne Registrierung und Nachfass
+//   on    an alle Leads
+// Gesendet wird nur, wenn
+//   - das Deck nicht rot ist: Quality-Gate nicht 'red' und Prüfteam mindestens 70
+//     (im CRM ist das Badge darunter rot), mit allen KI-Prüfern. Die Prüfung stößt
+//     anfrage-paket selbst an.
+//   - beim Kunden keine Ruhezeit ist (21 bis 8 Uhr, dann ab etwa 9 Uhr, _shared/ruhezeit.ts)
+//   - der Entwurf noch offen ist, keine Kontaktsperre besteht, die Wohnung frei ist und
+//     der Preis noch stimmt (wie info-paket, die Mail nennt den Preis).
+// Geht es nicht, bekommt Sven eine Aufgabe (svenAufgabe mit nichtAuto). Hat Sven den
+// Entwurf schon selbst gesendet oder verworfen, passiert nichts.
+// Ablauf: abschliessen plant (versand 'geplant', versand_ab), versenden sendet oder
+// wartet, sweep (Cron alle 2 Min) versucht fällige Pakete erneut. Bricht ein Lauf
+// zwischen Claim und Ende ab ('sendet' länger als HAENGT_MS) oder ging die Antwort von
+// send-email verloren, entscheidet dessen Mail-Aktivität, ob die Mail raus ist.
+// Nach dem Versand wie im Postausgang: Fahrplan-Links freischalten, Nachfass-Kette
+// (nur beim ersten Versand), Registrierung beim Bauträger (crm_projects.auto_register).
+// Die Registrierung wie funnel-api OHNE Phasenwechsel: der Trigger
+// trg_hp_cancel_stale_msgs würde sonst die eben gestartete Nachfass-Kette und andere
+// geplante Nachrichten des Deals stornieren. Ohne laufenden Deal entsteht wie im
+// Postausgang einer in 'registrierung' (ein Insert löst den Trigger nicht aus).
+const INTERN_ADRESSEN = ['sven@happy-property.com']   // wie info-paket
+const PRUEF_ROT = 70                    // Prüfteam: unter 70 rot (DeckReviewSection.scoreFarbe)
+const PRUEF_WARTEN_MS = 45 * 60_000     // so lange auf das Prüfteam warten, dann Aufgabe
+const PRUEF_NEU_MS = 12 * 60_000        // Prüfung erneut anstoßen, wenn bis dahin keine kam
+const HAENGT_MS = 10 * 60_000           // 'sendet' länger als das = Lauf abgebrochen
+const DEAL_ZU = ['archiviert', 'deal_verloren']   // wie src/lib/autoRegistration.ts
+// Was Sven bei einer Blockade tun soll (steht in der Aufgabe hinter dem Grund).
+const AKTION_SENDEN = 'Bitte prüfen und selbst senden.'
+const AKTION_ROT = 'Bitte die Befunde ansehen, das Deck korrigieren und dann selbst senden.'
+const AKTION_VERGEBEN = 'So nicht senden: andere Wohnung anbieten oder den Entwurf verwerfen.'
+
+async function autoModus(sb: SupabaseClient): Promise<'off' | 'test' | 'on'> {
+  const { data } = await sb.from('crm_settings').select('value').eq('key', 'anfrage_paket_auto_senden').maybeSingle()
+  const v = String((data as { value?: string } | null)?.value ?? 'off').trim()
+  return v === 'on' || v === 'test' ? v : 'off'
+}
+const istIntern = (email: string | null | undefined) => !!email && INTERN_ADRESSEN.includes(email.trim().toLowerCase())
+
+// Beim Abschluss: null = nicht automatisch (Sven sendet wie bisher), { ab } = automatisch,
+// frühestens ab, { grund } = sollte automatisch raus, kann aber nicht (Aufgabe an Sven).
+async function autoVersand(sb: SupabaseClient, projectId: string, p: Person): Promise<null | { ab: Date } | { grund: string; aktion?: string }> {
+  if (!await ohneAufgabe(sb, projectId)) return null
+  const m = await autoModus(sb)
+  if (m === 'off' || (m === 'test' && !istIntern(p.email))) return null
+  // Ohne Lead keine Registrierung beim Bauträger, das soll Sven entscheiden.
+  if (p.kind !== 'lead' || !p.id) return { grund: 'kein Lead im CRM, daher keine Registrierung beim Bauträger' }
+  if (!p.email?.trim()) return { grund: 'keine Mail-Adresse am Lead', aktion: 'Bitte die WhatsApp im Postausgang senden.' }
+  const jetzt = new Date()
+  return { ab: istIntern(p.email) ? jetzt : (ruhezeitZiel(jetzt, jetzt, zeitzoneFuer(p.phone)) ?? jetzt) }
+}
+
+// Andere Function mit Service-Rechten aufrufen. ok nur bei 2xx ohne error und ohne
+// success:false. klar = die Function hat selbst geantwortet; sonst (Netz, Timeout,
+// Gateway) ist offen, ob sie ihre Arbeit getan hat.
+async function rufe(fn: string, body: Record<string, unknown>): Promise<{ ok: boolean; klar: boolean; fehler: string }> {
+  try {
+    const r = await fetch(`${SB_URL}/functions/v1/${fn}`, {
+      method: 'POST', headers: { Authorization: `Bearer ${SERVICE}`, apikey: SERVICE, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const d = await r.json().catch(() => ({})) as { error?: unknown; success?: boolean }
+    if (r.ok && !d.error && d.success !== false) return { ok: true, klar: true, fehler: '' }
+    return { ok: false, klar: r.status < 500 || typeof d.error === 'string', fehler: `${fn} ${r.status}: ${String(d.error ?? 'kein Erfolg').slice(0, 200)}` }
+  } catch (e) { return { ok: false, klar: false, fehler: `${fn}: ${e instanceof Error ? e.message : String(e)}` } }
+}
+
+// Ging die Mail raus? send-email schreibt die Aktivität erst nach dem SMTP-Erfolg.
+// null = Abfrage fehlgeschlagen.
+async function mailRaus(sb: SupabaseClient, leadId: string, seit: string): Promise<boolean | null> {
+  const bis = new Date(new Date(seit).getTime() + HAENGT_MS).toISOString()
+  const { data, error } = await sb.from('activities').select('id').eq('lead_id', leadId).eq('type', 'email').eq('direction', 'outbound')
+    .gte('created_at', seit).lte('created_at', bis).limit(1)
+  return error ? null : !!data?.length
+}
+
+// Wie deck-review (sha256 über den Deck-Inhalt, 24 Zeichen): gleicher Hash = die Prüfung
+// gehört zum aktuellen Deck (baueEntwurf ändert den Inhalt noch, Rechnungslinks).
+async function inhaltHash(content: unknown): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(content ?? null)))
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 24)
+}
+
+// Prüfteam anstoßen, höchstens alle PRUEF_NEU_MS (Cron und waitUntil können sich treffen).
+async function pruefungAnstossen(sb: SupabaseClient, row: PaketRow): Promise<void> {
+  const grenze = new Date(Date.now() - PRUEF_NEU_MS).toISOString()
+  const { data: c } = await sb.from('anfrage_pakete').update({ pruefung_at: new Date().toISOString() })
+    .eq('id', row.id).or(`pruefung_at.is.null,pruefung_at.lt."${grenze}"`).select('id')
+  if (!c?.length) return
+  const r = await rufe('deck-review', { token: row.deck_token })
+  if (!r.ok) console.warn('[anfrage-paket] deck-review:', r.fehler)
+}
+
+type DeckStand = {
+  content: unknown; deck_context: DeckCtx | null; quality_status: string | null; review_score: number | null; refining: boolean | null
+  review: { content_hash?: string; fehler?: string; ausgefallen?: string[]; top?: Array<{ text?: string }> } | null
+}
+type Pruefung = { ok: true; score: number } | { warten: true } | { grund: string; top: string[]; ampel: string; aktion?: string }
+async function pruefung(sb: SupabaseClient, row: PaketRow, deck: DeckStand): Promise<Pruefung> {
+  if (deck.quality_status === 'red') return { grund: 'Deck-Prüfung (Quality-Gate) rot', top: [], ampel: 'red', aktion: AKTION_ROT }
+  const r = deck.review
+  // Ausgefallene KI-Prüfer: der Score kommt dann nur aus den Code-Prüfungen, das reicht
+  // nicht (der Chef allein ist egal, ohne ihn wird eher strenger gewertet).
+  const fehlt = (r?.ausgefallen ?? []).filter(k => k !== 'chef')
+  // Während des Feinschliffs ändert sich das Deck noch: warten.
+  const aktuell = !deck.refining && !!r && r.content_hash === await inhaltHash(deck.content)
+  if (aktuell && r) {
+    const top = (r.top ?? []).map(x => String(x.text ?? '').trim()).filter(Boolean).slice(0, 3)
+    if (deck.review_score != null && deck.review_score < PRUEF_ROT) {
+      return { grund: `Prüfteam ${deck.review_score} von 100 (rot)`, top, ampel: `Prüfteam ${deck.review_score} von 100`, aktion: AKTION_ROT }
+    }
+    if (deck.review_score != null && !fehlt.length) return { ok: true, score: deck.review_score }
+    if (deck.review_score == null && r.fehler) return { grund: `Deck-Prüfung fehlgeschlagen (${r.fehler.slice(0, 120)})`, top: [], ampel: 'Prüfteam fehlgeschlagen' }
+  }
+  // Gewartet wird ab Fertigstellung bzw. ab Ende der Ruhezeit.
+  const seit = Math.max(new Date(row.fertig_at ?? row.created_at).getTime(), row.versand_ab ? new Date(row.versand_ab).getTime() : 0)
+  if (Date.now() - seit > PRUEF_WARTEN_MS) {
+    const grund = deck.refining ? 'Deck wird seit über 45 Minuten bearbeitet'
+      : aktuell && fehlt.length ? `Deck-Prüfung unvollständig (ausgefallen: ${fehlt.join(', ')})`
+      : 'Deck-Prüfung nach 45 Minuten nicht fertig'
+    return { grund, top: [], ampel: 'Prüfteam nicht fertig' }
+  }
+  if (!deck.refining) await pruefungAnstossen(sb, row)
+  return { warten: true }
+}
+
+// Registrierung beim Bauträger wie funnel-api autoRegistrieren (ohne Phasenwechsel, siehe
+// oben). Gibt den Bauträger zurück, wenn jetzt registriert wurde, sonst null.
+async function registrieren(sb: SupabaseClient, leadId: string, projectId: string): Promise<string | null> {
+  const { data: pr } = await sb.from('crm_projects').select('name, developer, auto_register').eq('id', projectId).maybeSingle()
+  const proj = pr as { name: string; developer: string | null; auto_register: boolean | null } | null
+  const dev = proj?.developer?.trim()
+  if (!proj?.auto_register || !dev) return null
+  const { data: regs } = await sb.from('lead_registrations').select('developer').eq('lead_id', leadId)
+  if (((regs ?? []) as { developer: string }[]).some(r => r.developer.toLowerCase().trim() === dev.toLowerCase())) return null
+  const notes = `${proj.name}, automatisch beim Versand des Infopakets`
+  const { error: re } = await sb.from('lead_registrations').upsert({ lead_id: leadId, developer: dev, note: notes }, { onConflict: 'lead_id,developer' })
+  if (re) throw new Error(`lead_registrations: ${re.message}`)
+  // Ohne laufenden Deal fehlte der Kunde sonst in der Pipeline.
+  const { data: deals, error: de } = await sb.from('deals').select('id, phase').eq('lead_id', leadId).order('created_at', { ascending: false })
+  if (de) throw new Error(`deals: ${de.message}`)
+  const offen = ((deals ?? []) as { id: string; phase: string }[]).find(d => !DEAL_ZU.includes(d.phase))
+  let dealId = offen?.id ?? null
+  if (!offen) {
+    const { data: nd, error: ne } = await sb.from('deals').insert({ lead_id: leadId, phase: 'registrierung', registration_notes: notes }).select('id').single()
+    if (ne || !nd) throw new Error(`Deal: ${ne?.message ?? 'nicht angelegt'}`)
+    dealId = (nd as { id: string }).id
+  }
+  // Aus dieser Aktivität liest schedule-message Bauträger und Bemerkung.
+  await sb.from('activities').insert({
+    lead_id: leadId, deal_id: dealId, type: 'note', direction: 'outbound', auto: true,
+    content: `${offen ? '' : 'Phase geändert: – → registrierung. '}Registrierung gesendet an: ${dev}. Bemerkung: ${notes}`, completed_at: new Date().toISOString(),
+  })
+  const r = await rufe('schedule-message', { lead_id: leadId, event_type: 'registrierung' })
+  if (!r.ok) throw new Error(`Nachricht an den Bauträger: ${r.fehler}`)
+  return dev
+}
+
+// Kurze Aufgabe für Sven nach dem Versand (z. B. Registrierung fehlgeschlagen).
+async function hinweisAufgabe(sb: SupabaseClient, leadId: string, title: string, description: string): Promise<void> {
+  const { data: admin } = await sb.from('profiles').select('id').eq('role', 'admin').order('created_at').limit(1).maybeSingle()
+  const adminId = (admin as { id: string } | null)?.id ?? null
+  const { data: task, error } = await sb.from('crm_tasks').insert({
+    title: title.slice(0, 200), description, created_by: adminId, assigned_to: adminId, status: 'offen', due_date: cyDate(new Date()),
+    assigned_notified_at: new Date().toISOString(),
+  }).select('id').single()
+  if (error || !task) { console.error('[anfrage-paket] Hinweis-Aufgabe:', error?.message); return }
+  const taskId = (task as { id: string }).id
+  if (adminId) await sb.from('crm_task_assignees').insert({ task_id: taskId, profile_id: adminId, channel: 'system' })
+  await sb.from('crm_task_leads').insert({ task_id: taskId, lead_id: leadId })
+  await sb.functions.invoke('task-notify', { body: { mode: 'dispatch', task_id: taskId }, headers: { Authorization: `Bearer ${SERVICE}` } })
+    .catch((x: unknown) => console.warn('[anfrage-paket] Hinweis dispatch:', x))
+}
+
+// Geplantes Paket senden, sobald alles passt. Rückgabe = Stand fürs Cron-Protokoll.
+// db_fehler lässt den Stand unverändert, der nächste Lauf versucht es erneut.
+async function versenden(sb: SupabaseClient, id: string): Promise<string> {
+  const { data: r0, error: rErr } = await sb.from('anfrage_pakete').select('*').eq('id', id).maybeSingle()
+  if (rErr) return `db_fehler: ${rErr.message}`
+  const row = r0 as PaketRow | null
+  if (!row || row.status !== 'fertig' || !row.outbox_id || !row.deck_token) return 'nicht_geplant'
+  const haengt = row.versand === 'sendet' && Date.now() - new Date(row.versendet_at ?? 0).getTime() > HAENGT_MS
+  if (row.versand !== 'geplant' && !haengt) return row.versand ?? 'nicht_geplant'
+  if (!haengt && row.versand_ab && new Date(row.versand_ab).getTime() > Date.now()) {
+    // Ruhezeit: Prüfung schon jetzt anstoßen, damit sie morgens fertig ist.
+    if (!row.pruefung_at) await pruefungAnstossen(sb, row)
+    return 'wartet_ruhezeit'
+  }
+
+  const p = await person(sb, { lead_id: row.lead_id, subscriber_id: row.subscriber_id, email: row.empfaenger_email, name: row.empfaenger_name })
+  const { data: u, error: uErr } = await sb.from('crm_project_units').select(`${UNIT_COLS}, vat_rate`).eq('id', row.unit_id).maybeSingle()
+  if (uErr) return `db_fehler: ${uErr.message}`
+  const unit = u as (UnitRow & { vat_rate: number | null }) | null
+  const { data: pr } = await sb.from('crm_projects').select('name').eq('id', row.project_id).maybeSingle()
+  const projektName = (pr as { name?: string } | null)?.name ?? ''
+  const objekt = projektName ? `Wohnung ${unit?.unit_number ?? '?'} (${projektName})` : `Wohnung ${unit?.unit_number ?? '?'}`
+  const deckUrl = `${PORTAL_URL}/deck/${row.deck_token}?preview=1`
+  const calcUrls = (row.calc_tokens ?? []).map(t => `${PORTAL_URL}/rechnung/${t}`)
+  let ampel = 'offen'
+
+  // Nicht automatisch: Stand an der Zeile, Aufgabe und Notiz für Sven.
+  const nicht = async (grund: string, aktion: string, top: string[] = [], von = 'geplant', als = 'blockiert'): Promise<string> => {
+    const { data: c } = await sb.from('anfrage_pakete').update({ versand: als, versand_info: grund.slice(0, 300) }).eq('id', id).eq('versand', von).select('id')
+    if (c?.length) {
+      await svenAufgabe(sb, { id, p: p ?? zeilenPerson(row), unitNr: unit?.unit_number ?? '?', projektName, quelle: row.quelle, text: row.nachricht ?? '', frage: '',
+        taskId: row.task_id, projectId: row.project_id, wuensche: row.wuensche, quellToken: row.quell_token,
+        fertig: { deckUrl, ampel, befunde: top, calcUrls, nichtAuto: grund, aktion } })
+    }
+    return `${als}: ${grund}`
+  }
+  // Sven war schneller (gesendet) oder hat den Entwurf verworfen: still beenden.
+  const still = async (als: string, info: string, von = 'geplant'): Promise<string> => {
+    await sb.from('anfrage_pakete').update({ versand: als, versand_info: info }).eq('id', id).eq('versand', von)
+    return als
+  }
+
+  const { data: o0, error: oErr } = await sb.from('deck_outbox').select('id, recipient_email, subject, body, status, sent_at, email_sent_at').eq('id', row.outbox_id).maybeSingle()
+  if (oErr) return `db_fehler: ${oErr.message}`
+  const o = o0 as { id: string; recipient_email: string | null; subject: string | null; body: string | null; status: string; sent_at: string | null; email_sent_at: string | null } | null
+
+  // Mail ist raus: Folgeschritte wie im Postausgang, beim internen Test nicht (sonst
+  // Registrierung von Svens eigenem Lead und Nachricht an den Bauträger). 'gesendet'
+  // erst am Ende: bricht der Lauf vorher ab, holt der Hänger-Zweig die Schritte nach,
+  // sie vertragen eine Wiederholung.
+  const fertigstellen = async (to: string, claimAt: string): Promise<string> => {
+    const jetzt = new Date().toISOString()
+    const intern = istIntern(p?.email)
+    if (o) await sb.from('deck_outbox').update({ status: 'sent', sent_at: o.sent_at ?? jetzt, email_sent_at: jetzt, error_message: null }).eq('id', o.id)
+    let registriert: string | null = null
+    if (!intern && p?.kind === 'lead' && p.id) {
+      const plaene = [...new Set([...(o?.body ?? '').matchAll(/\/strategie\/([a-f0-9]+)/g)].map(x => x[1]))]
+      if (plaene.length) {
+        const { error } = await sb.from('crm_strategy_scenarios').update({ shared_at: jetzt }).in('token', plaene).is('shared_at', null)
+        if (error) console.warn('[anfrage-paket] Fahrplan freischalten:', error.message)
+      }
+      // Erster Versand des Eintrags (sent_at aus diesem Lauf zählt mit). schedule-message
+      // verwirft eine laufende Kette und plant neu, doppelt schadet also nicht.
+      if (!o?.sent_at || new Date(o.sent_at).getTime() >= new Date(claimAt).getTime()) {
+        const k = await rufe('schedule-message', { lead_id: p.id, event_type: 'immobilienauswahl', trigger: 'deck_sent' })
+        if (!k.ok) console.warn('[anfrage-paket] Nachfass-Kette:', k.fehler)
+      }
+      try { registriert = await registrieren(sb, p.id, row.project_id) } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        console.error('[anfrage-paket] Registrierung:', msg)
+        await hinweisAufgabe(sb, p.id, `📋 ${p.name || p.first}: Registrierung beim Bauträger fehlgeschlagen (${objekt})`,
+          `Das Infopaket ging automatisch raus, die Registrierung beim Bauträger hat aber nicht geklappt: ${msg.slice(0, 300)}\nBitte in der Pipeline selbst registrieren.`)
+      }
+    }
+    if (p?.kind === 'lead' && p.id) {
+      await sb.from('activities').insert({
+        lead_id: p.id, type: 'note', direction: 'outbound', auto: true,
+        subject: `📨 Infopaket automatisch verschickt: ${objekt}`,
+        content: [
+          `Per Mail an ${to}${intern ? ' (interner Test: ohne Registrierung und Nachfass)' : ''}.`,
+          `Deck: ${deckUrl} · ${ampel}`,
+          `Rechnungen: ${calcUrls.join(' · ')}`,
+          ...(registriert ? [`Registriert bei: ${registriert}`] : []),
+          'Die WhatsApp-Version liegt weiter im Postausgang.',
+        ].join('\n'),
+        completed_at: jetzt,
+      }).then(({ error }) => { if (error) console.warn('[anfrage-paket] Versand-Notiz:', error.message) })
+    }
+    // Offene Aufgabe (Kunde hat im Formular etwas gefragt): Paket ist raus, Frage bleibt.
+    if (row.task_id) {
+      const { data: t } = await sb.from('crm_tasks').select('description').eq('id', row.task_id).maybeSingle()
+      if (t) await sb.from('crm_tasks').update({
+        description: `${(t as { description: string | null }).description ?? ''}\n\n✅ Infopaket automatisch per Mail verschickt. Offen ist nur noch die Frage des Kunden.`.trim(),
+      }).eq('id', row.task_id)
+    }
+    await sb.from('anfrage_pakete').update({ versand: 'gesendet', versendet_at: jetzt, versand_info: null }).eq('id', id).eq('versand', 'sendet')
+    return 'gesendet'
+  }
+
+  // Lauf zwischen Claim und Ende abgebrochen oder Antwort verloren: Die Mail-Aktivität
+  // von send-email zeigt, ob die Mail raus ist (der Postausgang zeigt bis dahin „Mail“).
+  if (haengt) {
+    const seit = row.versendet_at ?? new Date(0).toISOString()
+    const raus = p?.kind === 'lead' && p.id ? await mailRaus(sb, p.id, seit) : false
+    if (raus === null) return 'db_fehler: activities'
+    if (raus) return await fertigstellen(o?.recipient_email ?? '', seit)
+    if (o?.status === 'sent') return await still('manuell', 'im Postausgang selbst gesendet', 'sendet')
+    if (o) await sb.from('deck_outbox').update({ email_sent_at: null }).eq('id', o.id).eq('email_sent_at', seit)
+    return await nicht('automatischer Versand brach ab, die Mail ging nicht raus', AKTION_SENDEN, [], 'sendet', 'fehler')
+  }
+
+  if (!o || o.status === 'cancelled') return await still('abgebrochen', 'Entwurf im Postausgang verworfen')
+  if (o.status === 'sent' || o.email_sent_at) return await still('manuell', 'im Postausgang selbst gesendet')
+  const m = await autoModus(sb)
+  if (m === 'off' || (m === 'test' && !istIntern(p?.email))) return await nicht('automatischer Versand inzwischen ausgeschaltet', AKTION_SENDEN)
+  if (!await ohneAufgabe(sb, row.project_id)) return await nicht('Projekt nicht mehr für den automatischen Versand freigegeben', AKTION_SENDEN)
+  if (!p || p.kind !== 'lead' || !p.id) return await nicht('Lead nicht mehr im CRM', AKTION_SENDEN)
+  const { data: sperre, error: sErr } = await sb.from('communication_optouts').select('id').eq('lead_id', p.id).limit(1)
+  if (sErr) return `db_fehler: ${sErr.message}`
+  if (sperre?.length) return await nicht('Kontaktsperre am Lead', 'Nicht senden, der Kunde möchte keine Nachrichten. Bitte den Entwurf verwerfen.')
+
+  const intern = istIntern(p.email)
+  if (!intern) {
+    const ziel = ruhezeitZiel(new Date(), new Date(), zeitzoneFuer(p.phone))
+    if (ziel) {
+      await sb.from('anfrage_pakete').update({ versand_ab: ziel.toISOString() }).eq('id', id).eq('versand', 'geplant')
+      return 'wartet_ruhezeit'
+    }
+  }
+  const { data: d, error: dErr } = await sb.from('sales_decks').select('content, deck_context, quality_status, review, review_score, refining').eq('token', row.deck_token).maybeSingle()
+  if (dErr) return `db_fehler: ${dErr.message}`
+  if (!d) return await nicht('Deck nicht gefunden', AKTION_SENDEN)
+  const deck = d as DeckStand
+  const pruef = await pruefung(sb, row, deck)
+  if ('warten' in pruef) return 'wartet_pruefung'
+  if ('grund' in pruef) { ampel = pruef.ampel; return await nicht(pruef.grund, pruef.aktion ?? AKTION_SENDEN, pruef.top) }
+  ampel = `Prüfteam ${pruef.score} von 100`
+  if (!unit) return await nicht('Wohnung nicht mehr im CRM', AKTION_VERGEBEN)
+  const vergeben = await anbietbar(sb, unit, p.id)
+  if (vergeben) return await nicht(vergeben === 'teil_einheit' ? 'Wohnung ist Teil eines Doppelapartments' : 'Wohnung nicht mehr frei', AKTION_VERGEBEN)
+  // Preis wie im Deck (Regel wie info-paket): die Mail nennt den Bruttopreis mit 19 %.
+  const ctx = deck.deck_context ?? {}
+  if (String(ctx.vatMode ?? 'standard19') !== 'standard19' || Number(unit.vat_rate ?? 19) !== 19) return await nicht('MwSt-Sonderfall, die Mail rechnet mit 19 %', AKTION_SENDEN)
+  const netCrm = ctx.furnitureMode === 'included' ? Number(unit.price_net_furnished ?? unit.price_net ?? 0) : Number(unit.price_net ?? 0)
+  const netDeck = Number((ctx.units ?? [])[0]?.netProperty ?? 0)
+  if (!netCrm || Math.abs(netCrm - netDeck) > 1) {
+    return await nicht(`Preis geändert (Deck ${netDeck.toLocaleString('de-DE')} €, CRM ${netCrm.toLocaleString('de-DE')} € netto)`,
+      'So nicht senden: Infopaket neu erzeugen, damit Deck, Rechnungen und Mail den aktuellen Preis haben.')
+  }
+  const to = (p.email ?? '').trim() || (o.recipient_email ?? '').trim()
+  if (!to) return await nicht('keine Mail-Adresse am Lead', 'Bitte die WhatsApp im Postausgang senden.')
+  const body = o.body ?? ''
+  if (!o.subject?.trim() || !body.includes(`/deck/${row.deck_token}`) || (row.calc_tokens ?? []).some(t => !body.includes(`/rechnung/${t}`))) {
+    return await nicht('Mail im Postausgang ohne Betreff oder ohne Deck- und Rechnungslinks', AKTION_SENDEN)
+  }
+  // Zwei Pakete zur selben Wohnung (z. B. zwei WhatsApps kurz hintereinander, der
+  // Doppel-Schutz in start() ist nicht atomar): nur das ältere geht raus.
+  const { data: aelter, error: aErr } = await sb.from('anfrage_pakete').select('id')
+    .eq('lead_id', p.id).eq('unit_id', row.unit_id).neq('id', id).in('status', ['deck', 'fertig'])
+    .lt('created_at', row.created_at).gte('created_at', new Date(Date.now() - 14 * 864e5).toISOString())
+    .or('versand.is.null,versand.in.(geplant,sendet,gesendet,manuell)').limit(1)
+  if (aErr) return `db_fehler: ${aErr.message}`
+  if (aelter?.length) {
+    await sb.from('deck_outbox').update({ status: 'cancelled' }).eq('id', o.id).eq('status', 'draft').is('email_sent_at', null)
+    return await still('abgebrochen', 'zweites Paket zur selben Wohnung, das ältere geht raus')
+  }
+
+  // Claim an der Paket-Zeile (ein Lauf) und am Postausgang-Eintrag: email_sent_at
+  // sofort, wie der Postausgang beim Klick. Wer zuerst claimt, sendet.
+  const claimAt = new Date().toISOString()
+  const { data: c1 } = await sb.from('anfrage_pakete').update({ versand: 'sendet', versendet_at: claimAt }).eq('id', id).eq('versand', 'geplant').select('id')
+  if (!c1?.length) return 'schon_dran'
+  const { data: c2 } = await sb.from('deck_outbox').update({ email_sent_at: claimAt }).eq('id', o.id).eq('status', 'draft').is('email_sent_at', null).select('id')
+  if (!c2?.length) return await still('manuell', 'im Postausgang selbst gesendet', 'sendet')
+  if (to !== o.recipient_email) await sb.from('deck_outbox').update({ recipient_email: to }).eq('id', o.id)
+  const r = await rufe('send-email', { to, subject: o.subject, html: body, lead_id: p.id, open_token: row.deck_token, auto: true })
+  if (!r.ok && !r.klar) {
+    // Antwort verloren: Claim bleibt, nach HAENGT_MS entscheidet der Hänger-Zweig.
+    console.warn('[anfrage-paket] Versand unklar:', r.fehler)
+    return 'unklar'
+  }
+  if (!r.ok) {
+    await sb.from('deck_outbox').update({ email_sent_at: null, error_message: r.fehler.slice(0, 300) }).eq('id', o.id).eq('email_sent_at', claimAt)
+    return await nicht(`Mailversand fehlgeschlagen (${r.fehler.slice(0, 150)})`, 'Bitte die Adresse prüfen und im Postausgang selbst senden.', [], 'sendet', 'fehler')
+  }
+  return await fertigstellen(to, claimAt)
 }
 
 // ── Mail ────────────────────────────────────────────────────────────────────
@@ -944,7 +1350,17 @@ async function sweep(sb: SupabaseClient): Promise<Record<string, unknown>> {
       }
     }
   }
-  return { ok: true, offen: Object.keys(out).length, out }
+  // Automatischer Versand: fällige Pakete (Ruhezeit vorbei, Prüfung abwarten) und Läufe,
+  // die zwischen Claim und Ergebnis abgebrochen sind (bekommen eine Aufgabe).
+  const { data: geplant } = await sb.from('anfrage_pakete').select('id').eq('versand', 'geplant')
+    .lte('versand_ab', new Date().toISOString()).order('versand_ab').limit(10)
+  const { data: haengt } = await sb.from('anfrage_pakete').select('id').eq('versand', 'sendet')
+    .lt('versendet_at', new Date(Date.now() - HAENGT_MS).toISOString()).limit(5)
+  const versand: Record<string, string> = {}
+  for (const r of [...(geplant ?? []), ...(haengt ?? [])] as { id: string }[]) {
+    versand[r.id] = await versenden(sb, r.id).catch(e => `fehler: ${e instanceof Error ? e.message : String(e)}`)
+  }
+  return { ok: true, offen: Object.keys(out).length, out, versand }
 }
 
 Deno.serve(async (req) => {
