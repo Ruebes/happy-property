@@ -7,10 +7,14 @@ import { FIN_NEUTRAL_CATS, FIN_CAT_LABEL } from '../../lib/crmTypes'
 // Monatsverlauf und größte Empfänger. Einlagen, Entnahmen und Umbuchungen sind
 // kein Geschäftsvorfall (Svens Gesellschafterdarlehen) und zählen weder als
 // Einnahme noch als Ausgabe, sie stehen nur nachrichtlich darunter (Sven 29.10.26).
+// Netto (Standard) zieht die MwSt auf beiden Seiten ab: Umsatzsteuer aus den eigenen
+// Rechnungen, abziehbare zypriotische Vorsteuer aus den Belegen (vat_amount). Brutto
+// zeigt die Kontobewegungen, wie sie sind (Sven 30.10.26: netto-netto oder brutto-brutto).
 
 export interface FinAuswertungTx {
   booked_at: string; amount: number; currency: string
   counterparty: string; reference: string; category: string | null
+  vat_amount?: number | null
 }
 
 type Period = 'month' | 'lastmonth' | 'quarter' | 'lastquarter' | 'year' | 'lastyear' | 'all' | 'custom'
@@ -55,6 +59,7 @@ export default function FinanzAuswertung({ txs, onCategorize, categorizing }: {
   const [period, setPeriod] = useState<Period>('year')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
+  const [net, setNet] = useState(true)
 
   // Nur EUR (Fremdwährung läuft immer über eine Umbuchung) und keine 0,00-Reservierungen
   const eurTxs = useMemo(() => txs.filter(x => x.currency === 'EUR' && Number(x.amount) !== 0), [txs])
@@ -65,6 +70,7 @@ export default function FinanzAuswertung({ txs, onCategorize, categorizing }: {
     const income = new Map<string, Row>(), expense = new Map<string, Row>(), payees = new Map<string, Row>()
     const months = new Map<string, { inc: number; exp: number }>()
     let deposits = 0, withdrawals = 0, transfers = 0, oldIn = 0, oldOut = 0, uncategorized = 0
+    let vatOut = 0, vatIn = 0, vatUnknown = 0
     const bump = (m: Map<string, Row>, key: string, amount: number) => {
       const cur = m.get(key) ?? { key, sum: 0, count: 0 }
       cur.sum += amount; cur.count += 1; m.set(key, cur)
@@ -82,9 +88,13 @@ export default function FinanzAuswertung({ txs, onCategorize, categorizing }: {
         continue
       }
       if (!cat) uncategorized++
+      const vat = Number(x.vat_amount ?? 0)
+      if (x.vat_amount == null && amount < 0) vatUnknown++
+      if (amount > 0) vatOut += vat; else vatIn += vat
+      const value = net ? (amount > 0 ? amount - vat : amount + vat) : amount
       const mo = months.get(day.slice(0, 7)) ?? { inc: 0, exp: 0 }
-      if (amount > 0) { bump(income, cat || '__none__', amount); mo.inc += amount }
-      else { bump(expense, cat || '__none__', -amount); bump(payees, payee(x.counterparty), -amount); mo.exp += -amount }
+      if (amount > 0) { bump(income, cat || '__none__', value); mo.inc += value }
+      else { bump(expense, cat || '__none__', -value); bump(payees, payee(x.counterparty), -value); mo.exp += -value }
       months.set(day.slice(0, 7), mo)
     }
     const sorted = (m: Map<string, Row>) => Array.from(m.values()).sort((a, b) => b.sum - a.sum)
@@ -95,11 +105,11 @@ export default function FinanzAuswertung({ txs, onCategorize, categorizing }: {
     return {
       incomeRows, expenseRows, incomeSum, expenseSum, result: incomeSum - expenseSum,
       monthRows, topPayees: sorted(payees).slice(0, 10),
-      deposits, withdrawals, transfers, oldIn, oldOut, uncategorized,
+      deposits, withdrawals, transfers, oldIn, oldOut, uncategorized, vatOut, vatIn, vatUnknown,
       avgExpense: monthRows.length ? expenseSum / monthRows.length : 0,
       empty: incomeRows.length + expenseRows.length === 0 && deposits + withdrawals + transfers + oldIn + oldOut === 0,
     }
-  }, [eurTxs, period, from, to])
+  }, [eurTxs, period, from, to, net])
 
   // Gesellschafterdarlehen über die ganze Zeit, unabhängig vom Zeitraum. Als
   // Rückzahlung zählt nur „Pay back Loan“: die 12 × 10.000 € „Transfer“ von 2024
@@ -166,6 +176,12 @@ export default function FinanzAuswertung({ txs, onCategorize, categorizing }: {
             className={`px-3 py-1.5 rounded-lg text-sm font-medium border ${period === id ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'}`}>
             {label}
           </button>
+        ))}
+      </div>
+      <div className="flex gap-1 bg-gray-100 rounded-xl p-1 w-fit">
+        {([[true, t('crm.fin.viewNet', 'Netto (ohne MwSt)')], [false, t('crm.fin.viewGross', 'Brutto (wie auf dem Konto)')]] as const).map(([v, label]) => (
+          <button key={String(v)} onClick={() => setNet(v)}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium ${net === v ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>{label}</button>
         ))}
       </div>
       {period === 'custom' && (
@@ -257,6 +273,16 @@ export default function FinanzAuswertung({ txs, onCategorize, categorizing }: {
           </div>
         </div>
       </>)}
+
+      {!data.empty && (data.vatOut > 0 || data.vatIn > 0) && (
+        <div className="bg-white border border-gray-100 shadow-sm rounded-2xl p-4 text-sm text-gray-600 space-y-1">
+          <p className="font-semibold text-gray-900">{t('crm.fin.vatTitle', 'Mehrwertsteuer im Zeitraum')}</p>
+          <p>{t('crm.fin.vatOut', 'Umsatzsteuer auf deine Rechnungen: {{sum}}', { sum: fmtEur(data.vatOut) })}</p>
+          <p>{t('crm.fin.vatIn', 'Abziehbare Vorsteuer aus Belegen (zypriotische MwSt): {{sum}}', { sum: fmtEur(data.vatIn) })}</p>
+          <p className="font-semibold text-gray-900">{t('crm.fin.vatDue', 'Ans Finanzamt abzuführen: {{sum}}', { sum: fmtSigned(data.vatOut - data.vatIn) })}</p>
+          {data.vatUnknown > 0 && <p className="text-xs text-gray-400">{t('crm.fin.vatUnknown', '{{n}} Ausgaben ohne Beleg, dort ist keine Vorsteuer angesetzt.', { n: data.vatUnknown })}</p>}
+        </div>
+      )}
 
       <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 text-sm text-gray-600 space-y-2">
         <p className="font-semibold text-gray-900">{t('crm.fin.neutralTitle', 'Nicht als Einnahme oder Ausgabe gezählt')}</p>

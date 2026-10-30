@@ -20,6 +20,7 @@ interface FinTx {
   // (Sven 25.8.). doc_match_status: vorschlag | bestaetigt | verworfen
   doc_match_status: string | null; doc_match_score: number | null; doc_match_reason: string | null
   partner_mail_id: string | null
+  vat_amount: number | null
 }
 interface Payable {
   id: string; vendor: string; title: string; amount: number | null; currency: string
