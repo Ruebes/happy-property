@@ -32,6 +32,13 @@ import { notifyIfToday, cyTime, cyDate } from '../_shared/notifyToday.ts'
 import { gateCaller } from '../_shared/callerGate.ts'
 import { callAnthropic, toolInput } from '../_shared/anthropic.ts'
 import { koennteAbsageSein, terminZone, terminLabel, lotteAbsageText, lotteVerschiebenIntro, lotteVerschiebenSven, bautraegerAbsageText, waMeLink, type AbsageArt } from '../_shared/terminAbsage.ts'
+import {
+  regelVorfilter, sendungenBauen, lotteAngebotText, angebotNotiz, kandidatenWaehlen, lotteBautraegerText, bautraegerBetreff, bautraegerNotiz,
+  regionFaktenLesen, lotteRegionText, regionNotiz, geldNotiz, geldMitZahl, istRegistriert, namensTeile, bautraegerTeile, bautraegerAnzeige,
+  namenErsetzen, enthaeltNamen, lageLabel, objektTyp, preisListe, betraegeIn, zahlenIn, fremdeBetraege,
+  type LotteRegel, type EinheitFrei, type DeckZeile, type OutboxZeile, type SichtZeile, type VersandZeile, type ProjektFrei, type BautraegerProjekt,
+} from '../_shared/lotteRegeln.ts'
+import { antwortSprache, dauerhaftEnglisch, spracheErkennen, sprachNotiz, SPRACH_BETREFF, type Sprache } from '../_shared/kundenSprache.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -302,6 +309,16 @@ function withSignoff(text: string, asSven = false): string {
 let sbSend: SupabaseClient | null = null
 const sendClient = () => (sbSend ??= createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!))
 
+// Antwortsprache je Kunde für die laufende Anfrage (Sven 30.10.: Lotte antwortet in
+// der Sprache, in der der Kunde schreibt). Aus demselben Grund wie sbSend modulweit:
+// mitSprache setzt sie für die Eingangs-Actions, sendWa gibt sie an send-whatsapp
+// weiter (das bei 'en' übersetzt), logWa vermerkt die Übersetzung. Ohne Eintrag
+// bleibt es wie bisher: send-whatsapp nimmt die Sprache aus dem Kontakt.
+const sprachePerNummer = new Map<string, Sprache>()
+const sprachePerLead = new Map<string, Sprache>()
+const nummer9 = (p: string) => p.replace(/\D/g, '').slice(-9)
+const UEBERSETZT = '(für den Kunden ins Englische übersetzt)'
+
 /** Nachricht auf ihren Kern reduzieren, um Wiederholungen zu erkennen. */
 function normText(t: string): string {
   return t.toLowerCase()
@@ -318,6 +335,7 @@ async function sendWa(phone: string, text: string, asSven = false): Promise<void
     body: {
       event_type: 'booking_bot', override_text: full,
       lead_data: { lead_name: 'Kunde', lead_phone: phone },
+      lang: sprachePerNummer.get(nummer9(phone)),
       // persona_image statt file_url: ein Deck-Titelbild oder eine YouTube-Vorschau
       // im Text hat Vorrang. Sonst schickt der Bot ein Hundefoto, wo der Kunde die
       // Immobilie sehen soll.
@@ -332,7 +350,7 @@ async function sendWa(phone: string, text: string, asSven = false): Promise<void
   if (!r.attached) console.warn('[booking-bot] Lotte-Bild fehlte bei', phone)
 }
 async function logWa(admin: SupabaseClient, leadId: string, text: string, dir: 'inbound' | 'outbound'): Promise<void> {
-  const content = (dir === 'outbound' ? withSignoff(text) : text).slice(0, 20000)
+  const content = (dir === 'outbound' ? withSignoff(text) + (sprachePerLead.get(leadId) === 'en' ? `\n\n${UEBERSETZT}` : '') : text).slice(0, 20000)
   try { await admin.from('activities').insert({ lead_id: leadId, type: 'whatsapp', direction: dir, subject: dir === 'outbound' ? 'WhatsApp: Termin-Bot' : 'WhatsApp erhalten', content, completed_at: new Date().toISOString(), auto: dir === 'outbound' }) } catch { /* egal */ }
 }
 
@@ -1061,6 +1079,18 @@ async function replyRunde(admin: SupabaseClient, c: ReplyConv, leadId: string, t
   // REIN inhaltliche Nachricht (Budget, Objekte, Situation, Einwand) OHNE Terminbezug:
   // gehört zu Sven, nicht in den Termin-Dialog → sofort übergeben, KEIN Slot-Push.
   if (it.intent === 'content' && !hasApptSignal) {
+    // Feste Antwortregeln zuerst (Sven 30.10.2026): Angebotsanfrage, Bauträger, andere
+    // Region, Geld. Danach übernimmt Sven, das Gespräch geht auf handoff.
+    if (await regelnAn(admin)) {
+      const r = await lotteRegel(admin, leadId, first(l.first_name) || null, text, verlauf, true)
+      if (r) {
+        const m = r.antwort ?? `Danke dir${l.first_name ? `, ${l.first_name}` : ''}! Das gebe ich direkt an Sven weiter, er meldet sich gleich persönlich bei dir. 🙂`
+        if (!await say(m)) return json({ ok: true, handled: 'wiederholung_uebergeben' })
+        await regelNotiz(admin, leadId, r, m)
+        await setConv(admin, c.id, { state: 'handoff', last_message: m })
+        return json({ ok: true, handled: `regel_${r.regel}` })
+      }
+    }
     // Erst versuchen, die Sachfrage aus den CRM-Fakten zu beantworten (Sven 29.10.).
     const fa = await faktenAntwort(admin, leadId, first(l.first_name) || null, text, verlauf)
     if (fa.ok) {
@@ -1527,8 +1557,9 @@ async function handleEngageUnknown(admin: SupabaseClient, rawPhone: string, push
 // Fakt klar im CRM steht. Und nicht nüchtern: „sehr wohlwollend, wir wollen
 // verkaufen". Grundlage sind die Projektdaten und das Angebot, das der Kunde
 // bekommen hat (sales_decks.content), also genau das, was er schon kennt.
-// Preise, Verfügbarkeit, Rendite, Steuer, Finanzierung und Recht beantwortet
-// Lotte nicht selbst (Preise rechnet das Angebot live, der Rest ist Svens Sache).
+// Preise und freie Wohnungen nennt Lotte nur live aus dem CRM (Sven 30.10.: „Alles,
+// was sicher aus dem CRM kommt, darf geschrieben werden"). Rendite, Steuer,
+// Finanzierung und Recht beantwortet sie nicht selbst, das ist Svens Sache.
 const FAKT_NICHT_PHASEN = CAFE_NICHT_PHASEN
 
 // Nur die lesbaren Texte aus dem Angebot, ohne Bild-URLs und technische Felder.
@@ -1547,34 +1578,59 @@ function deckTexte(content: unknown, max = 7000): string {
   return [...new Set(out)].join('\n').slice(0, max)
 }
 
-async function faktenBlock(admin: SupabaseClient, leadId: string): Promise<{ text: string; deckLink: string | null } | null> {
+// namen = Projekt- und Bauträgernamen, die Lotte nennen darf; verboten = alles, woran
+// man ein Projekt ohne Registrierung erkennt (Sven 30.10.2026: Namen erst, wenn die
+// Registrierung beim Bauträger raus ist). Verbotene Namen stehen gar nicht erst in den
+// Fakten, und eine Antwort, die trotzdem einen nennt, geht nicht raus.
+async function faktenBlock(admin: SupabaseClient, leadId: string): Promise<{ text: string; deckLink: string | null; namen: string[]; verboten: string[]; betraege: string[] } | null> {
   const { data: decks } = await admin.from('sales_decks').select('token, project_id, content, created_at')
     .eq('lead_id', leadId).order('created_at', { ascending: false }).limit(3)
   const ds = (decks ?? []) as { token: string; project_id: string | null; content: unknown }[]
   const pids = [...new Set(ds.map(d => d.project_id).filter((x): x is string => !!x))].slice(0, 2)
   if (!pids.length) return null
   const { data: projs } = await admin.from('crm_projects')
-    .select('id, name, location, location_district, maps_url, google_maps_url, description_de, completion_date, completion_months, payment_schedule, equipment_list, poi_distances, furniture_included')
+    .select('id, name, developer, location, location_district, maps_url, google_maps_url, description_de, completion_date, completion_months, payment_schedule, equipment_list, poi_distances, furniture_included')
     .in('id', pids)
+  const registrierte = await registrierteBautraeger(admin, leadId)
+  const { data: units } = await admin.from('crm_project_units').select('project_id, type').in('project_id', pids).limit(1000)
+  const frei = await freieWohnungen(admin, pids)
   const teile: string[] = []
+  const namen: string[] = [], verboten: string[] = [], betraege: string[] = []
   for (const p of (projs ?? []) as Record<string, unknown>[]) {
     const deck = ds.find(d => d.project_id === p.id)
+    const dev = (p.developer as string | null) ?? null
+    const offen = istRegistriert(dev, registrierte)
+    const geheim = offen ? [] : [...namensTeile(p.name as string), ...bautraegerTeile(dev)]
+    const typ = objektTyp(((units ?? []) as { project_id: string; type: string | null }[]).filter(u => u.project_id === p.id).map(u => u.type))
+    const ersatz = `${typ} ${lageLabel(p.location as string | null, p.location_district as string | null)}`
+    const neutral = (s: string) => geheim.length ? namenErsetzen(s, geheim, ersatz) : s
+    const karte = (p.google_maps_url || p.maps_url || '') as string
+    const liste = preisListe(frei.filter(u => u.project_id === p.id).map((u): EinheitFrei => ({
+      nummer: u.unit_number, typ: u.type, schlafzimmer: u.bedrooms, flaeche: u.size_sqm == null ? null : Number(u.size_sqm), preis: Number(u.price_net),
+    })))
+    const plan = Array.isArray(p.payment_schedule) && p.payment_schedule.length ? JSON.stringify(p.payment_schedule) : ''
+    // Nur diese Beträge darf Lotte nennen: Live-Preise und Zahlungsplan, nie der
+    // Angebotstext. Aus dem Plan nur Zahlen ab 1.000, sonst ginge "1 Mio. €" als 1 durch.
+    betraege.push(...betraegeIn(liste), ...zahlenIn(plan).filter(z => z.length >= 4))
     const zeilen = [
-      `PROJEKT: ${p.name}`,
-      p.location ? `Ort: ${p.location}${p.location_district ? `, ${p.location_district}` : ''}` : '',
-      (p.maps_url || p.google_maps_url) ? `Google-Maps-Link (Lage): ${p.google_maps_url || p.maps_url}` : '',
-      p.description_de ? `Beschreibung: ${p.description_de}` : '',
+      offen ? `PROJEKT: ${p.name}${dev ? ` (Bauträger: ${bautraegerAnzeige(dev)})` : ''}` : `PROJEKT: ${ersatz} (Projekt- und Bauträgername vertraulich)`,
+      p.location ? `Ort: ${neutral(`${p.location}${p.location_district ? `, ${p.location_district}` : ''}`)}` : '',
+      karte && !enthaeltNamen(karte, geheim) ? `Google-Maps-Link (Lage): ${karte}` : '',
+      p.description_de ? `Beschreibung: ${neutral(String(p.description_de))}` : '',
       p.completion_date ? `Fertigstellung: ${p.completion_date}` : (p.completion_months ? `Bauzeit: ca. ${p.completion_months} Monate` : ''),
-      Array.isArray(p.payment_schedule) && p.payment_schedule.length ? `Zahlungsplan: ${JSON.stringify(p.payment_schedule)}` : '',
-      Array.isArray(p.poi_distances) && p.poi_distances.length ? `Entfernungen: ${JSON.stringify(p.poi_distances)}` : '',
-      p.equipment_list ? `Ausstattung: ${p.equipment_list}` : '',
+      plan ? `Zahlungsplan: ${neutral(plan)}` : '',
+      Array.isArray(p.poi_distances) && p.poi_distances.length ? `Entfernungen: ${neutral(JSON.stringify(p.poi_distances))}` : '',
+      p.equipment_list ? `Ausstattung: ${neutral(String(p.equipment_list))}` : '',
       p.furniture_included === true ? 'Möbel: inklusive' : '',
-      deck ? `ANGEBOT DES KUNDEN (Link: portal.happy-property.com/deck/${deck.token}):\n${deckTexte(deck.content)}` : '',
+      neutral(liste),
+      deck ? `ANGEBOT DES KUNDEN (Link: portal.happy-property.com/deck/${deck.token}):\n${neutral(deckTexte(deck.content))}` : '',
     ].filter(Boolean)
     teile.push(zeilen.join('\n'))
+    if (offen) namen.push(String(p.name), ...(dev ? [bautraegerAnzeige(dev)] : []))
+    verboten.push(...geheim)
   }
   const link = ds[0]?.token ? `https://portal.happy-property.com/deck/${ds[0].token}` : null
-  return teile.length ? { text: teile.join('\n\n---\n\n'), deckLink: link } : null
+  return teile.length ? { text: teile.join('\n\n---\n\n'), deckLink: link, namen, verboten, betraege } : null
 }
 
 type FaktAntwort = { ok: boolean; antwort: string; alles: boolean; offen: string }
@@ -1592,7 +1648,11 @@ Ton: herzlich, begeistert, verkaufend. Hebe die Vorteile hervor und beschreibe d
 
 Wenn nach der Lage gefragt wird: Google-Maps-Link aus den Fakten mitschicken und die Lage mit den schönsten Fakten beschreiben (Meer, Strand, Einkaufen, Hafen, Flughafen).
 
-NICHT selbst beantworten, sondern in "offen" an Sven geben: Preise, Rabatte, Verfügbarkeit einzelner Wohnungen, Rendite, Wertsteigerung, Mieteinnahmen, Steuern, Finanzierung, Recht/Verträge, Zahlungstermine eines Bestandskunden, Grundrisse/Lagepläne als Datei, persönliche Lage/Einwände, alles, was nicht in den Fakten steht. Bei Preisfragen darfst du auf das Angebot verweisen (Link in den Fakten), Zahlen nennst du nicht.
+Projekt- und Bauträgernamen: ${fb.namen.length ? `Nennen darfst du nur ${[...new Set(fb.namen)].join(', ')}.` : 'Nenne keinen.'} Ein Projekt, das in den Fakten als vertraulich markiert ist, beschreibst du nur über Lage und Objekttyp (etwa "der Neubau in Chlorakas"), nie mit einem Namen.
+
+Preise und freie Wohnungen nennst du NUR aus "PREISE UND FREIE WOHNUNGEN (live aus dem CRM)", Zahl für Zahl genau so wie dort, nie gerundet, nie ausgerechnet (keine Raten, Summen oder Quadratmeterpreise) und nie aus dem Angebot des Kunden oder der Beschreibung: die können veraltet sein. Steht eine Wohnung dort nicht, sagst du nichts zu ihrer Verfügbarkeit und gibst die Frage in "offen". Auf das Angebot verweisen (Link in den Fakten) darfst du zusätzlich.
+
+NICHT selbst beantworten, sondern in "offen" an Sven geben: Rabatte, Rendite, Wertsteigerung, Mieteinnahmen, Steuern, Finanzierung, Recht/Verträge, Zahlungstermine eines Bestandskunden, Grundrisse/Lagepläne als Datei, persönliche Lage/Einwände, alles, was nicht in den Fakten steht.
 
 Form: Du-Form, deutsch mit echten Umlauten, kein Gedankenstrich (weder — noch – noch ein Bindestrich mit Leerzeichen davor und danach), höchstens 5 kurze Sätze, gern 1-2 Emojis, keine Grußformel (wird angehängt), keine Vorstellung. Beginne mit "${vorname ? `Gern, ${vorname}!` : 'Gern!'}" oder ähnlich. Bleibt etwas offen, schließe mit einem Satz wie "Zu ... meldet sich Sven persönlich bei dir."
 
@@ -1621,6 +1681,10 @@ ${fb.text}`
     // Harte Sperren nach der KI: keine Gedankenstriche, keine Rendite-/Steuerzahlen.
     const antwort = t.antwort.replace(/\s*[—–]\s*/g, ', ').replace(/([\p{L}\p{N}])\s+-\s+(\p{Ll})/gu, '$1, $2').trim()
     if (/rendite|wertsteigerung|\+\s?\d+\s?%|steuer.{0,20}\d/i.test(antwort)) return { ...nein, offen: text }
+    // Kein Name vor der Registrierung, keine Beträge zu Provision, Nachlass & Co.
+    if (enthaeltNamen(antwort, fb.verboten) || geldMitZahl(antwort)) return { ...nein, offen: text }
+    // Beträge nur, wenn sie sicher aus dem CRM kommen (Sven 30.10.): Live-Preisliste oder Zahlungsplan.
+    if (fremdeBetraege(antwort, fb.betraege).length) return { ...nein, offen: text }
     return { ok: true, antwort, alles: !!t.alles, offen: (t.offen ?? '').trim() }
   } catch (e) { console.warn('[booking-bot] faktenAntwort:', e); return nein }
 }
@@ -1630,7 +1694,172 @@ async function faktenNotiz(admin: SupabaseClient, leadId: string, frage: string,
     await admin.from('activities').insert({
       lead_id: leadId, type: 'note', direction: 'inbound',
       subject: offen ? '⚠️ Lotte hat teilweise geantwortet, Rest an Sven' : 'Lotte hat eine Sachfrage beantwortet',
-      content: `Frage: ${frage.slice(0, 600)}\n\nLotte: ${antwort.slice(0, 1200)}${offen ? `\n\nOffen für Sven: ${offen.slice(0, 600)}` : ''}`,
+      content: `Frage: ${frage.slice(0, 600)}\n\nLotte: ${antwort.slice(0, 1200)}${sprachePerLead.get(leadId) === 'en' ? ` ${UEBERSETZT}` : ''}${offen ? `\n\nOffen für Sven: ${offen.slice(0, 600)}` : ''}`,
+      completed_at: new Date().toISOString(),
+    })
+  } catch { /* egal */ }
+}
+
+// ── Feste Antwortregeln (Sven 30.10.2026, Texte in _shared/lotteRegeln.ts) ────
+// Angebotsanfrage, Bauträger-Frage, andere Region, Geld. Die KI ordnet nur ein, die
+// Antworten kommen fest aus lotteRegeln.ts: keine erfundenen Zahlen, keine Namen vor
+// der Registrierung. Sven bekommt zu jeder Regel eine Notiz. Eigener Schalter
+// crm_settings lotte_regeln ('true' = an).
+type RegelWahl = { regel: LotteRegel | 'keine'; region: string | null }
+type RegelErgebnis = { regel: LotteRegel; antwort: string | null; betreff: string; notiz: string }
+
+async function regelnAn(admin: SupabaseClient): Promise<boolean> {
+  const { data } = await admin.from('crm_settings').select('value').eq('key', 'lotte_regeln').maybeSingle()
+  return (data as { value: string } | null)?.value === 'true'
+}
+
+/** KI-Einordnung der Nachricht. null = KI nicht erreichbar (dann wie bisher). */
+async function regelErkennen(text: string, verlauf: Turn[]): Promise<RegelWahl | null> {
+  const sys = `Ein Interessent von Happy Property (Immobilien in Paphos auf Zypern; Sven berät, Lotte ist seine Assistentin) hat per WhatsApp geschrieben. Ordne seine NEUE Nachricht genau einer Regel zu. Du siehst auch den Verlauf davor; Nachrichten mit dem Präfix "[Sven persönlich]" hat Sven selbst geschrieben.
+- angebot: Er möchte allgemein (weitere) Angebote, Exposés, eine Liste oder Übersicht von Projekten oder Investitionsmöglichkeiten, einen Link zu unseren Objekten, oder er fragt, was wir sonst noch haben ("Bitte stellen Sie uns eine Liste der Investitionsmöglichkeiten zu", "Habt ihr noch andere Objekte?", "Kannst du mir ein paar Exposés schicken?"). NICHT angebot: Er will Infos zu EINER bestimmten Wohnung oder zu einem Projekt, das er schon kennt (Lage, Grundriss, Preis, Ausstattung, Zahlungsplan).
+- bautraeger: Er fragt, wer das Projekt baut, wie der Bauträger oder das Projekt heißt oder wer dahintersteckt ("Wer ist der Bauträger?", "Wie heißt die Anlage?", "Ist der Bauträger seriös?").
+- region: Er sagt, dass er lieber oder auch in einer anderen Region als Paphos sucht oder kauft (anderer Ort auf Zypern wie Protaras, Ayia Napa, Larnaca, Limassol, Nikosia oder ein anderes Land), oder er vergleicht Paphos mit einer anderen Region ("Ich werde doch eher in der Region Protaras suchen", "Limassol gefällt uns besser"). Orte im Bezirk Paphos (Chloraka, Peyia, Coral Bay, Tala, Geroskipou, Kissonerga, Emba, Konia, Tsada, Polis, Latchi) sind KEINE andere Region. region = Name der Region oder des Landes, so wie er ihn schreibt.
+- geld: Es geht um Provision, Tippgeber- oder Empfehlungsvergütung, Nachlass, Rabatt oder darum, Preis oder Zahlungskonditionen zu verhandeln ("Gibt es Nachlass?", "Was bekomme ich als Tippgeber?", "Wie hoch ist eure Provision?"). Die reine Frage nach dem Preis einer Wohnung ist NICHT geld, sondern keine.
+- keine: alles andere (Sachfragen zu einem Projekt, Termine, Dank, Smalltalk, Absage, Abmeldung, Budget-Angaben ohne Wunsch nach weiteren Angeboten).
+Enthält die Nachricht geld und etwas anderes, gilt geld. Im Zweifel keine, dann läuft die Nachricht ihren normalen Weg.
+Die Nachricht kann auch englisch sein, die Regeln gelten genauso.
+Gib NUR das Tool emit zurück.`
+  const res = await callAnthropic(Deno.env.get('ANTHROPIC_API_KEY') ?? '', {
+    model: 'claude-sonnet-5-5', fallbackModels: ['claude-opus-5-5', 'claude-sonnet-4-6'], max_tokens: 200, attempts: 2, label: 'lotte-regel',
+    system: sys, messages: [...verlauf, { role: 'user', content: text }],
+    tool_choice: { type: 'tool', name: 'emit' },
+    tools: [{ name: 'emit', description: 'Welche feste Antwortregel passt', input_schema: { type: 'object', properties: {
+      regel: { type: 'string', enum: ['angebot', 'bautraeger', 'region', 'geld', 'keine'] },
+      region: { type: ['string', 'null'], description: 'nur bei region: die andere Region oder das Land' },
+    }, required: ['regel'] } }],
+  })
+  const t = res.ok ? toolInput<Partial<RegelWahl>>(res) : null
+  if (!t || !['angebot', 'bautraeger', 'region', 'geld', 'keine'].includes(String(t.regel))) return null
+  return { regel: t.regel as RegelWahl['regel'], region: t.regel === 'region' ? (t.region ?? null) : null }
+}
+
+async function registrierteBautraeger(admin: SupabaseClient, leadId: string): Promise<string[]> {
+  const { data } = await admin.from('lead_registrations').select('developer').eq('lead_id', leadId).limit(50)
+  return ((data ?? []) as { developer: string | null }[]).map(r => r.developer ?? '').filter(Boolean)
+}
+
+/** Projekte mit frei verkäuflichen Einheiten (nicht im Bestand, kein laufender Deal,
+ *  nicht verkauft oder reserviert) samt günstigster freier Einheit (price_net). */
+type FreieZeile = { id: string; project_id: string; unit_number: string | null; type: string | null; bedrooms: number | null; size_sqm: number | string | null; price_net: number | string; status: string | null; developer_status: string | null }
+
+/** Freie Wohnungen live aus dem CRM: ohne Eigentümer, mit Preis, weder verkauft noch
+ *  reserviert, ohne aktiven Deal. Ohne pids für alle Projekte. */
+async function freieWohnungen(admin: SupabaseClient, pids?: string[]): Promise<FreieZeile[]> {
+  let q = admin.from('crm_project_units').select('id, project_id, unit_number, type, bedrooms, size_sqm, price_net, status, developer_status')
+    .is('property_id', null).gt('price_net', 0)
+  if (pids) q = q.in('project_id', pids)
+  const { data: units } = await q.limit(5000)
+  const { data: deals } = await admin.from('deals').select('unit_id')
+    .not('unit_id', 'is', null).is('archived_from_phase', null).neq('phase', 'deal_verloren').limit(5000)
+  const belegt = new Set(((deals ?? []) as { unit_id: string }[]).map(d => d.unit_id))
+  const weg = (s: string | null) => s === 'sold' || s === 'reserved'
+  return ((units ?? []) as FreieZeile[]).filter(u => !weg(u.status) && !weg(u.developer_status) && !belegt.has(u.id) && Number(u.price_net) > 0)
+}
+
+async function freieProjekte(admin: SupabaseClient): Promise<ProjektFrei[]> {
+  const proP = new Map<string, { ab: number; frei: number; typen: Set<string> }>()
+  for (const u of await freieWohnungen(admin)) {
+    const preis = Number(u.price_net)
+    const e = proP.get(u.project_id) ?? { ab: Infinity, frei: 0, typen: new Set<string>() }
+    e.ab = Math.min(e.ab, preis); e.frei++
+    if (u.type) e.typen.add(u.type)
+    proP.set(u.project_id, e)
+  }
+  if (!proP.size) return []
+  const { data: projs } = await admin.from('crm_projects').select('id, name, developer, location, location_district').in('id', [...proP.keys()])
+  return ((projs ?? []) as { id: string; name: string; developer: string | null; location: string | null; location_district: string | null }[]).map(p => {
+    const e = proP.get(p.id)!
+    return { id: p.id, name: p.name, bautraeger: p.developer ?? '', ort: lageLabel(p.location, p.location_district), ab: e.ab, frei: e.frei, typen: [...e.typen] }
+  })
+}
+
+// Regel 1: Verlauf prüfen (was ging raus, was wurde geöffnet), nach Suchprofil und
+// Budget fragen, Sven die Kandidaten nennen. Lotte schickt selbst keine Projekte.
+async function regelAngebot(admin: SupabaseClient, leadId: string, vorname: string | null, text: string): Promise<RegelErgebnis> {
+  const { data: d1 } = await admin.from('sales_decks').select('token, project_id, created_at').eq('lead_id', leadId).order('created_at').limit(80)
+  const decks = (d1 ?? []) as DeckZeile[]
+  const { data: o1 } = await admin.from('deck_outbox').select('status, sent_at, email_sent_at, whatsapp_sent_at, deck_tokens').eq('lead_id', leadId).limit(40)
+  const { data: e1 } = await admin.from('engagement_events').select('token, occurred_at')
+    .eq('lead_id', leadId).in('type', ['deck_view', 'email_open']).not('token', 'is', null).limit(1000)
+  const { data: a1 } = await admin.from('activities').select('type, created_at, content')
+    .eq('lead_id', leadId).eq('direction', 'outbound').in('type', ['email', 'whatsapp']).ilike('content', '%/deck/%').order('created_at').limit(80)
+  const sendungen = sendungenBauen(decks, (o1 ?? []) as OutboxZeile[], (e1 ?? []) as SichtZeile[], (a1 ?? []) as VersandZeile[])
+  const schon = new Set(decks.map(d => d.project_id).filter((x): x is string => !!x))
+  const frei = await freieProjekte(admin)
+  const registrierte = await registrierteBautraeger(admin, leadId)
+  const kandidaten = kandidatenWaehlen(frei, frei.filter(p => schon.has(p.id)), 3, registrierte)
+  let pn: { id: string; name: string }[] = []
+  if (schon.size) pn = ((await admin.from('crm_projects').select('id, name').in('id', [...schon])).data ?? []) as { id: string; name: string }[]
+  const nameVon = new Map(pn.map(p => [p.id, p.name]))
+  const projektVonToken = Object.fromEntries(decks.map(d => [d.token, d.project_id ? nameVon.get(d.project_id) ?? '' : '']))
+  return {
+    regel: 'angebot', antwort: lotteAngebotText(vorname, sendungen),
+    betreff: '📋 Lotte: Angebotsanfrage, bitte Projekte auswählen',
+    notiz: angebotNotiz(text, sendungen, projektVonToken, kandidaten, registrierte),
+  }
+}
+
+// Regel 2: Bauträger zu den Projekten der jüngsten Sendung (Decks bis 3 Tage vor dem
+// neuesten, höchstens 3). Namen nur bei Registrierung. null = kein Deck, wie bisher.
+async function regelBautraeger(admin: SupabaseClient, leadId: string, vorname: string | null, text: string): Promise<RegelErgebnis | null> {
+  const { data: d1 } = await admin.from('sales_decks').select('project_id, created_at')
+    .eq('lead_id', leadId).not('project_id', 'is', null).order('created_at', { ascending: false }).limit(20)
+  const decks = (d1 ?? []) as { project_id: string; created_at: string }[]
+  if (!decks.length) return null
+  const grenze = Date.parse(decks[0].created_at) - 3 * 864e5
+  const pids = [...new Set(decks.filter(d => Date.parse(d.created_at) >= grenze).map(d => d.project_id))].slice(0, 3)
+  const { data: pj } = await admin.from('crm_projects').select('id, name, developer, location, location_district').in('id', pids)
+  const { data: un } = await admin.from('crm_project_units').select('project_id, type').in('project_id', pids).limit(1000)
+  const registrierte = await registrierteBautraeger(admin, leadId)
+  const einheiten = (un ?? []) as { project_id: string; type: string | null }[]
+  const liste: BautraegerProjekt[] = ((pj ?? []) as { id: string; name: string; developer: string | null; location: string | null; location_district: string | null }[])
+    .sort((a, b) => pids.indexOf(a.id) - pids.indexOf(b.id))
+    .map(p => ({
+      name: p.name, bautraeger: p.developer ?? '', lage: lageLabel(p.location, p.location_district),
+      typ: objektTyp(einheiten.filter(u => u.project_id === p.id).map(u => u.type)), registriert: istRegistriert(p.developer, registrierte),
+    }))
+  if (!liste.length) return null
+  return { regel: 'bautraeger', antwort: lotteBautraegerText(vorname, liste), betreff: bautraegerBetreff(liste), notiz: bautraegerNotiz(text, liste) }
+}
+
+// Regel 3: im Kontakt halten, Zahlen aus crm_settings lotte_region_fakten.
+async function regelRegion(admin: SupabaseClient, vorname: string | null, text: string, region: string | null): Promise<RegelErgebnis> {
+  const { data } = await admin.from('crm_settings').select('value').eq('key', 'lotte_region_fakten').maybeSingle()
+  const f = regionFaktenLesen((data as { value: string } | null)?.value)
+  return { regel: 'region', antwort: lotteRegionText(vorname, region, f), betreff: `🧭 Lotte: Kunde schaut ${region ? `in ${region}` : 'in einer anderen Region'}`, notiz: regionNotiz(text, region, f) }
+}
+
+/** Regel anwenden, ohne zu senden oder zu schreiben (auch für regel_test). */
+async function regelAusfuehren(admin: SupabaseClient, leadId: string, vorname: string | null, text: string, wahl: RegelWahl, imGespraech: boolean): Promise<RegelErgebnis | null> {
+  if (wahl.regel === 'angebot') return await regelAngebot(admin, leadId, vorname, text)
+  if (wahl.regel === 'bautraeger') return await regelBautraeger(admin, leadId, vorname, text)
+  if (wahl.regel === 'region') return await regelRegion(admin, vorname, text, wahl.region)
+  // Regel 4: Geld macht Sven. Ohne Gespräch schreibt Lotte nichts, im Gespräch nur,
+  // dass Sven sich meldet (Aufrufer), nie einen Betrag.
+  if (wahl.regel === 'geld') return { regel: 'geld', antwort: null, betreff: '💶 Geld-Thema, übernimmst du', notiz: geldNotiz(text, imGespraech) }
+  return null
+}
+
+/** Vorfilter, KI, Regel. null = keine Regel, die Nachricht läuft ihren normalen Weg. */
+async function lotteRegel(admin: SupabaseClient, leadId: string, vorname: string | null, text: string, verlauf: Turn[], imGespraech: boolean): Promise<RegelErgebnis | null> {
+  if (!regelVorfilter(text).length) return null
+  try {
+    const wahl = await regelErkennen(text, verlauf)
+    if (!wahl || wahl.regel === 'keine') return null
+    return await regelAusfuehren(admin, leadId, vorname, text, wahl, imGespraech)
+  } catch (e) { console.warn('[booking-bot] lotteRegel:', e); return null }
+}
+
+async function regelNotiz(admin: SupabaseClient, leadId: string, r: RegelErgebnis, gesendet: string | null): Promise<void> {
+  try {
+    await admin.from('activities').insert({
+      lead_id: leadId, type: 'note', direction: 'inbound', subject: r.betreff,
+      content: `${r.notiz}${gesendet ? `\n\nLotte hat geschrieben:\n${gesendet}${sprachePerLead.get(leadId) === 'en' ? `\n${UEBERSETZT}` : ''}` : ''}`.slice(0, 20000),
       completed_at: new Date().toISOString(),
     })
   } catch { /* egal */ }
@@ -1638,12 +1867,17 @@ async function faktenNotiz(admin: SupabaseClient, leadId: string, frage: string,
 
 // Sachfrage OHNE laufendes Termin-Gespräch (Dirk, 29.10.: "Lass mir gern mal einen
 // Google-Maps-Link zukommen"). Aufruf aus waInbound für jede Kundennachricht ohne
-// Terminbezug; Lotte antwortet nur, wenn die Fakten reichen.
+// Terminbezug; Lotte antwortet nur, wenn die Fakten reichen oder eine feste Regel greift.
 async function handleAnswer(admin: SupabaseClient, leadId: string, text: string): Promise<Response> {
-  const { data: sset } = await admin.from('crm_settings').select('key, value').in('key', ['booking_bot_enabled', 'lotte_fakten_antworten'])
+  const { data: sset } = await admin.from('crm_settings').select('key, value').in('key', ['booking_bot_enabled', 'lotte_fakten_antworten', 'lotte_regeln'])
   const sv = new Map(((sset ?? []) as { key: string; value: string }[]).map(s => [s.key, s.value]))
-  if (sv.get('booking_bot_enabled') !== 'true' || sv.get('lotte_fakten_antworten') === 'false') return json({ ok: true, skipped: 'disabled' })
-  if (text.trim().length < 12 || !/\?|link|standort|lage|wo (genau|liegt|befind)|schick|zukommen|wie weit|entfernung|ausstattung|pool|fertig|baubeginn|übergabe|zahlungsplan|wann/i.test(text)) return json({ ok: true, skipped: 'keine_frage' })
+  if (sv.get('booking_bot_enabled') !== 'true') return json({ ok: true, skipped: 'disabled' })
+  const fakten = sv.get('lotte_fakten_antworten') !== 'false'
+  // Die Regeln vor dem Frage-Filter: "Ich werde doch eher in der Region Protaras
+  // suchen" (Arne, 29.10.) ist keine Frage, braucht aber eine Antwort.
+  const regeln = sv.get('lotte_regeln') === 'true' && regelVorfilter(text).length > 0
+  const frage = fakten && text.trim().length >= 12 && /\?|link|standort|lage|wo (genau|liegt|befind)|schick|zukommen|wie weit|entfernung|ausstattung|pool|fertig|baubeginn|übergabe|zahlungsplan|wann|location|where|send|how far|distance|amenities|completion|handover|payment plan|when/i.test(text)
+  if (!regeln && !frage) return json({ ok: true, skipped: fakten ? 'keine_frage' : 'disabled' })
   const { data: opt } = await admin.from('communication_optouts').select('id').eq('lead_id', leadId).limit(1)
   if (opt && opt.length) return json({ ok: true, skipped: 'optout' })
   const { data: lead } = await admin.from('leads').select('first_name, whatsapp, phone, profile_id').eq('id', leadId).maybeSingle()
@@ -1667,6 +1901,15 @@ async function handleAnswer(admin: SupabaseClient, leadId: string, text: string)
   while (verlauf.length && verlauf[verlauf.length - 1].role === 'user') verlauf.pop()
   while (verlauf.length && verlauf[0].role === 'assistant') verlauf.shift()
 
+  if (regeln) {
+    const r = await lotteRegel(admin, leadId, first(l.first_name) || null, text, verlauf, false)
+    if (r) {
+      if (r.antwort) { await sendWa(phone, r.antwort); await logWa(admin, leadId, r.antwort, 'outbound') }
+      await regelNotiz(admin, leadId, r, r.antwort)
+      return json({ ok: true, regel: r.regel, answered: !!r.antwort })
+    }
+  }
+  if (!frage) return json({ ok: true, skipped: fakten ? 'keine_frage' : 'disabled' })
   const fa = await faktenAntwort(admin, leadId, first(l.first_name) || null, text, verlauf)
   if (!fa.ok) return json({ ok: true, skipped: 'fakten_reichen_nicht' })
   await sendWa(phone, fa.antwort); await logWa(admin, leadId, fa.antwort, 'outbound')
@@ -1925,6 +2168,78 @@ async function handleAbsage(admin: SupabaseClient, leadId: string, text: string,
   return json({ ok: true, handled: art, appointment_id: t.id, erinnerungen_gestoppt: nGestoppt, task_id: taskId, bautraeger: kontakte.length, lotte })
 }
 
+// ── Antwortsprache (Sven 30.10.2026) ─────────────────────────────────────────
+// Lotte antwortet in der Sprache der letzten Kundennachricht (Regeln in
+// _shared/kundenSprache.ts). Schreibt ein Kunde dauerhaft Englisch, stellt Lotte
+// die Sprache im Kontakt einmal auf Englisch, damit auch Drip, Reaktivierung und
+// Svens Entwürfe folgen. Schalter: crm_settings lotte_sprache = 'false' (fehlt = an).
+type SprachLage = { sprache: Sprache; erkannt: Sprache | null; dauerhaft: boolean; kontakt: string | null; nummer: string | null; verlauf: string[] }
+
+async function spracheAn(admin: SupabaseClient): Promise<boolean> {
+  const { data } = await admin.from('crm_settings').select('value').eq('key', 'lotte_sprache').maybeSingle()
+  return (data as { value?: string } | null)?.value !== 'false'
+}
+
+async function sprachLage(admin: SupabaseClient, leadId: string, text: string): Promise<SprachLage | null> {
+  const { data: lead } = await admin.from('leads').select('language, whatsapp, phone').eq('id', leadId).maybeSingle()
+  const l = lead as { language: string | null; whatsapp: string | null; phone: string | null } | null
+  if (!l) return null
+  // Die gerade eingegangene Nachricht hat der Webhook meist schon geschrieben. Für
+  // die Umstellung zählen nur die geschriebenen Nachrichten, sonst würde eine
+  // einzige lange Nachricht doppelt gezählt.
+  const { data: inb } = await admin.from('activities').select('content')
+    .eq('lead_id', leadId).eq('type', 'whatsapp').eq('direction', 'inbound')
+    .gt('created_at', new Date(Date.now() - 30 * 86400e3).toISOString())
+    .order('created_at', { ascending: false }).limit(6)
+  const verlauf = ((inb ?? []) as { content: string | null }[]).map(a => (a.content ?? '').trim()).filter(Boolean)
+  const phone = l.whatsapp || l.phone
+  return {
+    sprache: antwortSprache(text, verlauf.slice(0, 4), l.language),
+    erkannt: spracheErkennen(text),
+    dauerhaft: (l.language ?? 'de') === 'de' && dauerhaftEnglisch(verlauf),
+    kontakt: l.language,
+    nummer: phone ? nummer9(phone) : null,
+    verlauf,
+  }
+}
+
+async function aufEnglischStellen(admin: SupabaseClient, leadId: string, verlauf: string[]): Promise<void> {
+  // Nur einmal je Kontakt: hat Sven danach wieder Deutsch eingestellt, bleibt es dabei.
+  const { data: schon } = await admin.from('activities').select('id').eq('lead_id', leadId).eq('type', 'note').eq('subject', SPRACH_BETREFF).limit(1)
+  if (schon && schon.length) return
+  const { data: geaendert, error } = await admin.from('leads').update({ language: 'en' })
+    .eq('id', leadId).or('language.is.null,language.eq.de').select('first_name')
+  if (error) { console.warn('[booking-bot] Sprache umstellen:', error.message); return }
+  if (!geaendert || !geaendert.length) return
+  try {
+    await admin.from('activities').insert({
+      lead_id: leadId, type: 'note', direction: 'inbound', subject: SPRACH_BETREFF,
+      content: sprachNotiz(first((geaendert[0] as { first_name: string | null }).first_name) || null, verlauf),
+      completed_at: new Date().toISOString(),
+    })
+  } catch { /* egal */ }
+}
+
+/** Action mit fester Antwortsprache für diese Nummer ausführen (siehe sprachePerNummer). */
+async function inSprache(nummer: string, leadId: string | null, sprache: Sprache, lauf: () => Promise<Response>): Promise<Response> {
+  sprachePerNummer.set(nummer, sprache)
+  if (leadId) sprachePerLead.set(leadId, sprache)
+  try { return await lauf() } finally {
+    sprachePerNummer.delete(nummer)
+    if (leadId) sprachePerLead.delete(leadId)
+  }
+}
+
+/** Eingangs-Action in der Sprache der letzten Kundennachricht ausführen. */
+async function mitSprache(admin: SupabaseClient, leadId: string, text: string, lauf: () => Promise<Response>): Promise<Response> {
+  let lage: SprachLage | null = null
+  try {
+    if (await spracheAn(admin)) lage = await sprachLage(admin, leadId, text)
+    if (lage?.dauerhaft) await aufEnglischStellen(admin, leadId, lage.verlauf)
+  } catch (e) { console.warn('[booking-bot] Antwortsprache:', e) }
+  return lage?.nummer ? await inSprache(lage.nummer, leadId, lage.sprache, lauf) : await lauf()
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
@@ -1995,16 +2310,36 @@ Deno.serve(async (req) => {
       }
       return json({ ok: true, swept: results.length, results })
     }
-    // engage_unknown kommt ohne lead_id: der Kontakt entsteht erst dort.
-    if (body.action === 'engage_unknown') return await handleEngageUnknown(admin, body.phone ?? '', body.push_name ?? null, body.text ?? '')
+    // regel_test: seiteneffektfreier Test der festen Antwortregeln (kein Senden, kein
+    // DB-Write). Mit lead_id auch der fertige Text samt Notiz für Sven.
+    if (body.action === 'regel_test') {
+      const text = body.text ?? ''
+      const erkennung = await regelErkennen(text, [])
+      const ergebnis = erkennung && body.lead_id ? await regelAusfuehren(admin, body.lead_id, null, text, erkennung, false) : null
+      return json({ ok: true, vorfilter: regelVorfilter(text), erkennung, ergebnis })
+    }
+    // sprache_test: seiteneffektfreier Test der Antwortsprache (kein Senden, kein DB-Write).
+    if (body.action === 'sprache_test') {
+      const text = body.text ?? ''
+      return json({ ok: true, erkannt: spracheErkennen(text), lage: body.lead_id ? await sprachLage(admin, body.lead_id, text) : null })
+    }
+    // engage_unknown kommt ohne lead_id: der Kontakt entsteht erst dort. Deshalb
+    // zählt nur die Nachricht selbst, und Englisch nur, wenn sie eindeutig ist.
+    if (body.action === 'engage_unknown') {
+      const lauf = () => handleEngageUnknown(admin, body.phone ?? '', body.push_name ?? null, body.text ?? '')
+      const nummer = nummer9(body.phone ?? '')
+      return nummer && spracheErkennen(body.text ?? '') === 'en' && await spracheAn(admin) ? await inSprache(nummer, null, 'en', lauf) : await lauf()
+    }
     if (!body.lead_id) return json({ error: 'lead_id fehlt' }, 400)
     if (body.action === 'start') return await handleStart(admin, body.lead_id, body.deal_id ?? null, body.source ?? 'unknown')
     // fakten: seiteneffektfreier Test der Fakten-Antwort (kein Senden, kein DB-Write).
     if (body.action === 'fakten') return json({ ok: true, fakten: await faktenAntwort(admin, body.lead_id, null, body.text ?? '', []) })
-    if (body.action === 'answer') return await handleAnswer(admin, body.lead_id, body.text ?? '')
-    if (body.action === 'engage') return await handleEngage(admin, body.lead_id, body.text ?? '', body.force === true)
-    if (body.action === 'reply') return await handleReply(admin, body.lead_id, body.text ?? '')
-    if (body.action === 'absage') return await handleAbsage(admin, body.lead_id, body.text ?? '', body.fallback, body.still === true)
+    // Antworten auf eine Kundennachricht gehen in deren Sprache raus (mitSprache).
+    const leadId = body.lead_id, text = body.text ?? ''
+    if (body.action === 'answer') return await mitSprache(admin, leadId, text, () => handleAnswer(admin, leadId, text))
+    if (body.action === 'engage') return await mitSprache(admin, leadId, text, () => handleEngage(admin, leadId, text, body.force === true))
+    if (body.action === 'reply') return await mitSprache(admin, leadId, text, () => handleReply(admin, leadId, text))
+    if (body.action === 'absage') return await mitSprache(admin, leadId, text, () => handleAbsage(admin, leadId, text, body.fallback, body.still === true))
     if (body.action === 'nudge') return await handleNudge(admin, body.lead_id, Number(body.stage) || 0, body.source ?? 'no_show', body.intro)
     return json({ error: `Unbekannte action: ${body.action}` }, 400)
   } catch (err) {

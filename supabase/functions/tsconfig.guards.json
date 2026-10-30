@@ -14,6 +14,8 @@
     "_shared/metaSpec.ts",
     "_shared/metaLint.ts",
     "_shared/terminAbsage.ts",
+    "_shared/lotteRegeln.ts",
+    "_shared/kundenSprache.ts",
     "google-drive/index.ts",
     "create-client-drive-folder/index.ts",
     "subscriber-optin/index.ts",
