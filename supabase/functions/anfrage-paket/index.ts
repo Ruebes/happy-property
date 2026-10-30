@@ -70,8 +70,11 @@ interface ProjektRow {
     facts?: string; renders?: string[]; gallery?: Array<{ url: string; category: string; label: string }>
     floorplans?: Array<{ floor: number; label: string; url: string }> | Record<string, string>
     map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }
+    masterplan_units?: Record<string, Lageplan>
   } | null
 }
+// Lageplan der Anlage, auf dem nur eine Wohnung markiert ist (deck_assets.masterplan_units, Flora seit 30.10.26)
+type Lageplan = { image?: string; caption?: string; legend?: Array<{ title?: string; items?: string[] }>; note?: string }
 type CtxUnit = { unitId?: string; unitNumber?: string; netProperty?: number; netFurniture?: number; bedrooms?: number | null }
 type DeckCtx = { units?: CtxUnit[]; furnitureMode?: string; vatMode?: string; completion?: string | null }
 type Block = DeckBlockLite & { mapLabel?: string }
@@ -240,7 +243,7 @@ Antworte nur mit JSON: {"anfrage": true|false, "kandidat": <Nummer oder null>, "
 // die KI auf diese eine Wohnung um. Sicherung: keine neue Zahl, kein Projekt-/Bauträgername,
 // kein Gedankenstrich, sonst bleiben die Texte wie im Quell-Deck (nur Titel + Gruß neu).
 const FP_NR = (bl: Block) => (bl.kicker ?? '').split('·').pop()?.trim().toLowerCase() ?? ''
-async function deckFuerWohnung(q: { blocks: Block[]; ctx: DeckCtx }, nr: string, p: Person, wuensche: string[], namen: string[]):
+async function deckFuerWohnung(q: { blocks: Block[]; ctx: DeckCtx }, nr: string, p: Person, wuensche: string[], namen: string[], lageplan?: Lageplan):
   Promise<{ content: { blocks: Block[] }; ctx: DeckCtx; texte: 'ki' | 'einfach' }> {
   const n = nr.trim().toLowerCase()
   const nummern = new Set(q.blocks.filter(bl => bl.type === 'unit').map(bl => (bl.number ?? '').trim().toLowerCase()))
@@ -252,6 +255,8 @@ async function deckFuerWohnung(q: { blocks: Block[]; ctx: DeckCtx }, nr: string,
   const ctx: DeckCtx = { ...q.ctx, units: (q.ctx.units ?? []).filter(u => String(u.unitNumber ?? '').trim().toLowerCase() === n) }
   // Grundriss-Kennzahlen, die alle Typen des Quell-Decks zusammenfassen, passen nicht mehr.
   for (const bl of blocks) if (bl.type === 'floorplan' && FP_NR(bl) === n) { delete bl.stats; delete bl.bullets }
+  // Der Lageplan des Quell-Decks markiert alle seine Wohnungen; ohne Plan für diese Wohnung bleibt er.
+  if (lageplan?.image) for (const bl of blocks) if (bl.type === 'masterplan') Object.assign(bl, lageplan)
 
   const TEXT_TYPEN = ['cover', 'letter', 'payment', 'cta']
   const vorher = blocks.filter(bl => TEXT_TYPEN.includes(bl.type ?? ''))
@@ -412,7 +417,7 @@ async function start(sb: SupabaseClient, b: Record<string, unknown>): Promise<Re
 
   if (ausMehreren && quellDeck && p.lang === 'de') {
     try {
-      const gekuerzt = await deckFuerWohnung(quellDeck, unit.unit_number, p, wuensche, namen)
+      const gekuerzt = await deckFuerWohnung(quellDeck, unit.unit_number, p, wuensche, namen, a.masterplan_units?.[unit.unit_number])
       const { data: nd, error: dErr } = await sb.from('sales_decks').insert({
         lead_id: leadId, recipient_name: p.name || p.first || null, project_id: ausMehreren.projectId, unit_id: unit.id,
         angle: ausMehreren.angle, status: 'ready', content: gekuerzt.content, deck_context: gekuerzt.ctx,

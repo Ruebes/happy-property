@@ -928,7 +928,7 @@ Deno.serve(async (req) => {
     // Standort-Karte IMMER interaktiv (Deck-Standard): exakte Koordinaten bevorzugt,
     // sonst Such-Query aus Projektname + Ort → Deck.tsx baut ein scroll-/zoombares
     // Google-Embed statt eines statischen Bildes.
-    let projAssets: { masterplan?: MasterplanAsset; masterplan_en?: MasterplanAsset; amenities?: AmenityAsset; amenities_en?: AmenityAsset; views?: ViewsAsset; views_en?: ViewsAsset; videos?: VideoAsset[]; lebensfilm?: LifeFilmAsset } | null = null
+    let projAssets: { masterplan?: MasterplanAsset; masterplan_en?: MasterplanAsset; masterplan_units?: Record<string, MasterplanAsset>; masterplan_units_en?: Record<string, MasterplanAsset>; amenities?: AmenityAsset; amenities_en?: AmenityAsset; views?: ViewsAsset; views_en?: ViewsAsset; videos?: VideoAsset[]; lebensfilm?: LifeFilmAsset } | null = null
     let projRow: { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null; video_url?: string | null; own_video_url?: string | null; developer?: string | null; payment_schedule?: PaySchedule | null } | null = null
     if (body.project_id) {   // gilt für generische UND personalisierte Decks
       try {
@@ -1044,7 +1044,10 @@ Deno.serve(async (req) => {
     injectLifeFilm(blocks, projAssets?.lebensfilm, enDeck)
     // Lageplan der Anlage + Gemeinschaftsanlagen (Gym, Studio, Cafe, Pool ...) je mit
     // Render UND Grundriss - kuratiert in deck_assets, deshalb deterministisch.
-    injectMasterplan(blocks, (enDeck && projAssets?.masterplan_en) || projAssets?.masterplan, enDeck)
+    // Deck mit genau einer Wohnung: Lageplan, auf dem nur sie markiert ist (masterplan_units, Flora 30.10.26).
+    const mpBasis = (enDeck && projAssets?.masterplan_en) || projAssets?.masterplan
+    const mpWohnung = ctx.units.length === 1 ? (enDeck ? projAssets?.masterplan_units_en : projAssets?.masterplan_units)?.[ctx.units[0].unitNumber] : undefined
+    injectMasterplan(blocks, mpBasis && mpWohnung?.image ? { ...mpBasis, ...mpWohnung } : mpBasis, enDeck)
     injectAmenities(blocks, (enDeck && projAssets?.amenities_en) || projAssets?.amenities, enDeck)
     // ── Bildauswahl aus dem Katalog (_shared/deckAssets.ts) ─────────────────
     // Blockbilder (cover/unit/feature/columns) nach Wohnungstyp -> Wohnung -> Motiv,
