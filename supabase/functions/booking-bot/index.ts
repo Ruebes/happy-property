@@ -750,6 +750,13 @@ async function handleNudge(admin: SupabaseClient, leadId: string, stage: number,
   // Ein Termin mit gemeldeter Absage zählt nicht: der Kunde braucht einen neuen.
   const { data: appt } = await admin.from('crm_appointments').select('id').eq('lead_id', leadId).gte('start_time', new Date().toISOString()).is('cancel_reported_at', null).limit(1)
   if (appt && appt.length) return json({ ok: true, skipped: 'has_appointment' })
+  // Café-Angebot unbeantwortet: eigene Nachfrage statt neuer Zeitvorschläge, in der
+  // Sprache, in der der Kunde zuletzt geschrieben hat (wie das Angebot selbst).
+  if (source === 'cafe') {
+    const { data: zk } = await admin.from('activities').select('content').eq('lead_id', leadId)
+      .eq('type', 'whatsapp').eq('direction', 'inbound').order('created_at', { ascending: false }).limit(1).maybeSingle()
+    return await mitSprache(admin, leadId, (zk as { content: string | null } | null)?.content ?? '', () => cafeNachfass(admin, leadId, stage))
+  }
   if (await recentlyAcqMessaged(admin, leadId)) return json({ ok: true, skipped: 'recent_acquisition_wa' })
   // Irgendein aktives Gespräch des Leads (egal welche Quelle) → kein Doppel-Messaging.
   const { data: conv } = await admin.from('booking_conversations').select('id, state, created_at')
@@ -1397,6 +1404,7 @@ async function cafeStart(admin: SupabaseClient, leadId: string, det: ApptReq, te
     expires_at: new Date(Date.now() + 4 * 24 * 3600e3).toISOString(),
   })
   await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound')
+  await cafeNachfassPlanen(admin, leadId, null)
   return json({ ok: true, cafe: slot.label })
 }
 
@@ -1482,7 +1490,63 @@ async function cafeNeuerTag(admin: SupabaseClient, c: ReplyConv, phone: string, 
   const msg = `${vorweg}Dann trage ich ${ihr ? 'euch' : 'dich'} gern für ${slot.label}, um 10 Uhr im ${CAFE_NAME} ein. Passt das?`
   await setConv(admin, c.id, { proposed_slots: [slot], attempts: (c.attempts ?? 0) + 1, last_message: msg })
   await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound')
+  await cafeNachfassPlanen(admin, leadId, c.deal_id)
   return json({ ok: true, handled: 'cafe_neuer_tag', slot: slot.label })
+}
+
+// Nachfrage, wenn das Café-Angebot unbeantwortet bleibt (Sven 30.10.2026: „Wenn solche
+// Leute nicht antworten, fix nachfassen.“ Sabine und Oliver sagten erst 16 Stunden
+// später zu). Stufe 1 nach 3 Stunden, Stufe 2 nach einem Tag. Nachts schiebt die
+// Ruhezeit in process-scheduled-messages auf den Morgen, eine Kundenantwort storniert
+// die offenen Stufen (waInbound).
+const CAFE_NACHFASS_STUNDEN = [3, 24]
+
+async function cafeNachfassPlanen(admin: SupabaseClient, leadId: string, dealId: string | null): Promise<void> {
+  try {
+    await admin.from('scheduled_messages').update({ status: 'cancelled' })
+      .eq('lead_id', leadId).eq('status', 'pending').eq('event_type', 'bot_nudge').eq('bot_nudge_source', 'cafe')
+    const { error } = await admin.from('scheduled_messages').insert(CAFE_NACHFASS_STUNDEN.map((h, i) => ({
+      lead_id: leadId, deal_id: dealId, type: 'whatsapp', event_type: 'bot_nudge',
+      bot_nudge_stage: i + 1, bot_nudge_source: 'cafe', status: 'pending',
+      scheduled_at: new Date(Date.now() + h * 3600e3).toISOString(),
+    })))
+    if (error) console.warn('[booking-bot] Café-Nachfrage planen:', error.message)
+  } catch (e) { console.warn('[booking-bot] Café-Nachfrage planen:', e) }
+}
+
+async function cafeNachfass(admin: SupabaseClient, leadId: string, stage: number): Promise<Response> {
+  const { data: conv } = await admin.from('booking_conversations').select('id, state, proposed_slots, meeting_type')
+    .eq('lead_id', leadId).not('state', 'in', '(booked,handoff,expired)').gt('expires_at', new Date().toISOString())
+    .order('created_at', { ascending: false }).limit(1).maybeSingle()
+  const c = conv as { id: string; state: string; proposed_slots: Slot[] | null; meeting_type: string | null } | null
+  if (!c || c.state !== 'awaiting_cafe') return json({ ok: true, skipped: 'engaged_or_closed' })
+  // Nur wenn Lottes Angebot das Letzte im Chat ist. Hat der Kunde geantwortet (auch nur
+  // mit Foto oder Reaktion) oder Sven selbst geschrieben, fragt sie nicht nach.
+  const { data: zuletzt } = await admin.from('activities').select('direction, auto, created_at')
+    .eq('lead_id', leadId).eq('type', 'whatsapp').order('created_at', { ascending: false }).limit(1).maybeSingle()
+  const z = zuletzt as { direction: string; auto: boolean | null; created_at: string } | null
+  if (!z || z.direction !== 'outbound' || z.auto !== true) return json({ ok: true, skipped: 'engaged' })
+  if (Date.now() - Date.parse(z.created_at) < 3600e3) return json({ ok: true, skipped: 'recent_acquisition_wa' })
+  const { data: lead } = await admin.from('leads').select('first_name, whatsapp, phone').eq('id', leadId).maybeSingle()
+  const l = lead as { first_name: string | null; whatsapp: string | null; phone: string | null } | null
+  const phone = l?.whatsapp || l?.phone
+  if (!l || !phone) return json({ ok: true, skipped: 'no_phone' })
+  // Angebotener Tag vorbei, zu knapp oder inzwischen belegt: dann der nächste freie.
+  let slot: Slot | null = (c.proposed_slots ?? [])[0] ?? null
+  const neuerTag = !slot || Date.parse(slot.startIso) - Date.now() < 3 * 3600e3 || !(await cafeFrei(admin, slot))
+  if (neuerTag) slot = await naechsterCafeTag(admin, {})
+  if (!slot) return json({ ok: true, skipped: 'cafe_kein_tag' })
+  const ihr = c.meeting_type === 'cafe_ihr'
+  const name = first(l.first_name)
+  const hallo = `Hallo${name ? ` ${name}` : ''} 🐾`
+  const msg = neuerTag
+    ? `${hallo} Lotte hier, kurze Nachfrage: ${ihr ? 'Habt ihr' : 'Hast du'} noch Lust auf einen Kaffee mit Sven? Am ${slot.label}, sitzt er von 10 bis 12 Uhr im ${CAFE_NAME}. Soll ich ${ihr ? 'euch' : 'dich'} dafür eintragen?`
+    : stage >= 2
+      ? `${hallo} Ich frag ein letztes Mal nach: Soll ich ${ihr ? 'euch' : 'dich'} für ${slot.label}, um 10 Uhr im ${CAFE_NAME} eintragen? Sven würde sich freuen!`
+      : `${hallo} Lotte hier, kurze Nachfrage: Soll ich ${ihr ? 'euch' : 'dich'} für ${slot.label}, um 10 Uhr im ${CAFE_NAME} eintragen? Ein kurzes Ja reicht. Passt ein anderer Tag besser, ${ihr ? 'schreibt' : 'schreib'} mir einfach, welcher.`
+  await setConv(admin, c.id, { proposed_slots: [slot], last_message: msg, expires_at: new Date(Date.now() + 4 * 24 * 3600e3).toISOString() })
+  await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound')
+  return json({ ok: true, nudged: stage, source: 'cafe', slot: slot.label })
 }
 
 async function cafeBuchen(admin: SupabaseClient, c: ReplyConv, l: { first_name: string | null; whatsapp: string | null; phone: string | null }, leadId: string, slot: Slot, ihr: boolean): Promise<Response> {
@@ -2035,6 +2099,7 @@ async function absageVerschieben(admin: SupabaseClient, t: AbsageTermin, leadId:
       const m = `Kein Problem${vorname ? `, ${vorname}` : ''}! Dann verschieben wir das Treffen im ${CAFE_NAME}. Soll ich ${ihr ? 'euch' : 'dich'} für ${slot.label}, um 10 Uhr eintragen?`
       await absageGespraech(admin, { lead_id: leadId, deal_id: t.deal_id, source: 'cafe', state: 'awaiting_cafe', proposed_slots: [slot], last_message: m, meeting_type: ihr ? 'cafe_ihr' : 'cafe_du' })
       await senden(m)
+      await cafeNachfassPlanen(admin, leadId, t.deal_id)
       return `Lotte hat das nächste Café-Treffen angeboten: ${slot.label}, 10 Uhr.`
     }
   } else if (t.type !== 'inperson' && !mitBautraeger) {
