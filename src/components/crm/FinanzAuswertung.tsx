@@ -64,7 +64,7 @@ export default function FinanzAuswertung({ txs, onCategorize, categorizing }: {
     const neutral = new Set<string>(FIN_NEUTRAL_CATS)
     const income = new Map<string, Row>(), expense = new Map<string, Row>(), payees = new Map<string, Row>()
     const months = new Map<string, { inc: number; exp: number }>()
-    let deposits = 0, withdrawals = 0, transfers = 0, uncategorized = 0
+    let deposits = 0, withdrawals = 0, transfers = 0, oldIn = 0, oldOut = 0, uncategorized = 0
     const bump = (m: Map<string, Row>, key: string, amount: number) => {
       const cur = m.get(key) ?? { key, sum: 0, count: 0 }
       cur.sum += amount; cur.count += 1; m.set(key, cur)
@@ -75,7 +75,8 @@ export default function FinanzAuswertung({ txs, onCategorize, categorizing }: {
       const amount = Number(x.amount)
       const cat = x.category ?? ''
       if (neutral.has(cat)) {
-        if (cat === 'einlage') deposits += amount
+        if (cat === 'altfirma') { if (amount > 0) oldIn += amount; else oldOut += -amount }
+        else if (cat === 'einlage') deposits += amount
         else if (cat === 'entnahme') withdrawals += Math.abs(amount)
         else transfers += Math.abs(amount)
         continue
@@ -94,9 +95,9 @@ export default function FinanzAuswertung({ txs, onCategorize, categorizing }: {
     return {
       incomeRows, expenseRows, incomeSum, expenseSum, result: incomeSum - expenseSum,
       monthRows, topPayees: sorted(payees).slice(0, 10),
-      deposits, withdrawals, transfers, uncategorized,
+      deposits, withdrawals, transfers, oldIn, oldOut, uncategorized,
       avgExpense: monthRows.length ? expenseSum / monthRows.length : 0,
-      empty: incomeRows.length + expenseRows.length === 0 && deposits + withdrawals + transfers === 0,
+      empty: incomeRows.length + expenseRows.length === 0 && deposits + withdrawals + transfers + oldIn + oldOut === 0,
     }
   }, [eurTxs, period, from, to])
 
@@ -259,10 +260,11 @@ export default function FinanzAuswertung({ txs, onCategorize, categorizing }: {
 
       <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 text-sm text-gray-600 space-y-2">
         <p className="font-semibold text-gray-900">{t('crm.fin.neutralTitle', 'Nicht als Einnahme oder Ausgabe gezählt')}</p>
-        {(data.deposits > 0 || data.withdrawals > 0 || data.transfers > 0) && (
+        {(data.deposits > 0 || data.withdrawals > 0 || data.transfers > 0 || data.oldIn > 0 || data.oldOut > 0) && (
           <ul className="space-y-0.5">
             {data.deposits > 0 && <li>{t('crm.fin.nDeposits', 'Deine Einlagen im Zeitraum: {{sum}} (Darlehen an die Firma, kein Umsatz)', { sum: fmtEur(data.deposits) })}</li>}
             {data.withdrawals > 0 && <li>{t('crm.fin.nWithdrawals', 'Überweisungen an dich im Zeitraum: {{sum}} (keine Betriebsausgabe)', { sum: fmtEur(data.withdrawals) })}</li>}
+            {(data.oldIn > 0 || data.oldOut > 0) && <li>{t('crm.fin.nOldCompany', 'sveru GmbH (alte Firma) im Zeitraum: {{in}} eingegangen, {{out}} an dich weitergeleitet (gehört nicht zu Happy Property)', { in: fmtEur(data.oldIn), out: fmtEur(data.oldOut) })}</li>}
             {data.transfers > 0 && <li>{t('crm.fin.nTransfers', 'Umbuchungen im Zeitraum: {{sum}} (Devisentausch zwischen eigenen Konten)', { sum: fmtEur(data.transfers) })}</li>}
           </ul>
         )}

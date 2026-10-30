@@ -807,7 +807,11 @@ export interface AiReplyExample {
 // einlage / entnahme / umbuchung sind KEIN Geschäftsvorfall: Privateinlagen,
 // Rückzahlungen an den Gesellschafter und Devisentausch zwischen eigenen Konten
 // zählen weder als Einnahme noch als Ausgabe (Vorgabe Sven 31.08.2026).
-export const FIN_NEUTRAL_CATS = ['einlage', 'entnahme', 'umbuchung'] as const
+// altfirma: Zahlungen der alten sveru Sport GmbH (2024) und ihre Weiterleitung an
+// Sven. Bleiben in der Buchungsliste, die Auswertung zählt aber nur Happy Property
+// (Sven 30.10.2026). Bewusst NICHT im KI-Katalog von revolut-sync: es kommen keine
+// neuen sveru-Zahlungen, die KI soll die Kategorie nicht vergeben.
+export const FIN_NEUTRAL_CATS = ['einlage', 'entnahme', 'umbuchung', 'altfirma'] as const
 
 export const FIN_CATS = [
   'kundenzahlung', 'developer', 'werbung', 'software', 'gebuehren', 'buero',
@@ -821,6 +825,7 @@ export const FIN_CAT_LABEL: Record<string, string> = {
   steuern_abgaben: '🧾 Steuern & Abgaben', gehalt_privat: '👤 Gehalt/Privat',
   sonstiges: '📦 Sonstiges',
   einlage: '⬇️ Einlage', entnahme: '⬆️ Entnahme', umbuchung: '🔄 Umbuchung',
+  altfirma: '🗂 sveru GmbH (alte Firma)',
 }
 
 export interface FinTransaction {
