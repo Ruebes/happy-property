@@ -85,6 +85,14 @@ async function modus(sb: SupabaseClient): Promise<'on' | 'off'> {
   return String((data as { value?: string } | null)?.value ?? 'off').trim() === 'on' ? 'on' : 'off'
 }
 
+// Projekte ohne Aufgabe (Sven 30.10.26, Flora Panorama: „läuft ja alles automatisch“):
+// Das fertige Paket im Postausgang reicht. crm_settings.anfrage_paket_ohne_aufgabe =
+// Projekt-IDs, mit Komma getrennt (derselbe Schlüssel steuert track-engagement).
+async function ohneAufgabe(sb: SupabaseClient, projectId: string): Promise<boolean> {
+  const { data } = await sb.from('crm_settings').select('value').eq('key', 'anfrage_paket_ohne_aufgabe').maybeSingle()
+  return String((data as { value?: string } | null)?.value ?? '').split(/[\s,]+/).includes(projectId)
+}
+
 async function person(sb: SupabaseClient, b: Record<string, unknown>): Promise<Person | null> {
   const leadId = typeof b.lead_id === 'string' ? b.lead_id : null
   const subId = typeof b.subscriber_id === 'string' ? b.subscriber_id : null
@@ -318,6 +326,9 @@ async function start(sb: SupabaseClient, b: Record<string, unknown>): Promise<Re
   const frage = typeof b.frage === 'string' ? b.frage.trim().slice(0, 1000) : ''
   const wuensche = (Array.isArray(b.wuensche) ? b.wuensche : []).map(String).slice(0, 6)
   const taskId = typeof b.task_id === 'string' ? b.task_id : null
+  // Formular ohne Aufgabe: Scheitert der Deck-Start, legt der Handler die Aufgabe mit der
+  // vollen Beschreibung aus track-engagement an (Frage, Wünsche, Deck-Link), nicht svenAufgabe.
+  const ersatzFolgt = !taskId && !!(b.aufgabe_bei_fehler as { title?: string } | undefined)?.title
   const leadId = p.kind === 'lead' ? p.id : null
 
   // Protokollzeile für alles, was nicht zum Paket wird (nachvollziehbar, kein Rauschen).
@@ -430,8 +441,8 @@ async function start(sb: SupabaseClient, b: Record<string, unknown>): Promise<Re
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       await sb.from('anfrage_pakete').update({ status: 'fehler', grund: msg.slice(0, 300) }).eq('id', id)
-      await svenAufgabe(sb, { id, p, unitNr: unit.unit_number, projektName: projekt.name, quelle, text, frage, taskId, fehler: msg })
-      return { ok: false, started: false, reason: 'deck_kuerzen_fehler', error: msg }
+      const aufgabe = ersatzFolgt ? null : await svenAufgabe(sb, { id, p, unitNr: unit.unit_number, projektName: projekt.name, quelle, text, frage, taskId, fehler: msg })
+      return { ok: false, started: false, reason: 'deck_kuerzen_fehler', error: msg, task_id: aufgabe }
     }
   }
 
@@ -481,8 +492,8 @@ async function start(sb: SupabaseClient, b: Record<string, unknown>): Promise<Re
   } catch (e) { genFehler = e instanceof Error ? e.message : String(e) }
   if (!jobId) {
     await sb.from('anfrage_pakete').update({ status: 'fehler', grund: genFehler.slice(0, 300) }).eq('id', id)
-    await svenAufgabe(sb, { id, p, unitNr: unit.unit_number, projektName: projekt.name, quelle, text, frage, taskId, fehler: genFehler })
-    return { ok: false, started: false, reason: 'deck_start_fehler', error: genFehler }
+    const aufgabe = ersatzFolgt ? null : await svenAufgabe(sb, { id, p, unitNr: unit.unit_number, projektName: projekt.name, quelle, text, frage, taskId, fehler: genFehler })
+    return { ok: false, started: false, reason: 'deck_start_fehler', error: genFehler, task_id: aufgabe }
   }
   // Das Postausgang-Netz in process-scheduled-messages soll für dieses Deck KEINEN
   // eigenen Entwurf bauen - den baut abschluss() mit Rechnungen und PDFs.
@@ -509,8 +520,15 @@ async function start(sb: SupabaseClient, b: Record<string, unknown>): Promise<Re
 interface PaketRow {
   id: string; quelle: Quelle; lead_id: string | null; subscriber_id: string | null; empfaenger_email: string | null; empfaenger_name: string | null
   project_id: string; unit_id: string; nachricht: string | null; status: string; job_id: string | null; task_id: string | null
-  wuensche?: string[] | null; deck_token?: string | null
+  wuensche?: string[] | null; deck_token?: string | null; quell_token?: string | null
   versuche: number; abschluss_at: string | null; created_at: string
+}
+
+// Person aus der Paket-Zeile, wenn Lead oder Abonnent inzwischen fehlt (nur für die Meldung).
+function zeilenPerson(row: PaketRow): Person {
+  const name = (row.empfaenger_name ?? '').trim()
+  return { kind: 'frei', id: null, first: name.split(' ')[0] ?? '', name: name || (row.empfaenger_email ?? 'Unbekannt'),
+    email: row.empfaenger_email, phone: null, lang: 'de', bookingToken: null }
 }
 
 async function abschliessen(sb: SupabaseClient, id: string): Promise<{ fertig: boolean; status?: string; fehler?: string }> {
@@ -532,7 +550,11 @@ async function abschliessen(sb: SupabaseClient, id: string): Promise<{ fertig: b
   if (!job || job.status === 'failed' || !p || !unit || !projekt) {
     const grund = !job ? 'Deck-Job fehlt' : job.status === 'failed' ? `Deck fehlgeschlagen: ${job.error ?? ''}` : 'Daten fehlen'
     const { data: c } = await sb.from('anfrage_pakete').update({ status: 'fehler', grund: grund.slice(0, 300) }).eq('id', id).eq('status', 'deck').select('id')
-    if (c?.length && p && unit && projekt) await svenAufgabe(sb, { id, p, unitNr: unit.unit_number, projektName: projekt.name, quelle: row.quelle, text: row.nachricht ?? '', frage: '', taskId: row.task_id, fehler: grund })
+    // Ohne Aufgabe (z. B. Formular ohne Aufgabe) auch bei fehlenden Daten melden, sonst
+    // ginge die Anfrage still verloren (Wohnung etwa vom Preislisten-Abgleich gelöscht).
+    if (c?.length && ((p && unit && projekt) || !row.task_id)) {
+      await svenAufgabe(sb, { id, p: p ?? zeilenPerson(row), unitNr: unit?.unit_number ?? '?', projektName: projekt?.name ?? '', quelle: row.quelle, text: row.nachricht ?? '', frage: '', taskId: row.task_id, fehler: grund, wuensche: row.wuensche, quellToken: row.quell_token })
+    }
     return { fertig: true, status: 'fehler', fehler: grund }
   }
   if (!['ready', 'review_required'].includes(job.status) || !job.deck_token) return { fertig: false }
@@ -548,7 +570,7 @@ async function abschliessen(sb: SupabaseClient, id: string): Promise<{ fertig: b
       grund: out.hinweis,
     }).eq('id', id)
     await svenAufgabe(sb, { id, p, unitNr: unit.unit_number, projektName: projekt.name, quelle: row.quelle, text: row.nachricht ?? '', frage: '',
-      taskId: row.task_id, fertig: { deckUrl: `${PORTAL_URL}/deck/${job.deck_token}?preview=1`, ampel: out.ampel, befunde: out.befunde, calcUrls: out.calcUrls } })
+      taskId: row.task_id, projectId: projekt.id, fertig: { deckUrl: `${PORTAL_URL}/deck/${job.deck_token}?preview=1`, ampel: out.ampel, befunde: out.befunde, calcUrls: out.calcUrls } })
     return { fertig: true, status: 'fertig' }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -556,7 +578,7 @@ async function abschliessen(sb: SupabaseClient, id: string): Promise<{ fertig: b
     // Freigeben für den nächsten Versuch; nach 3 Versuchen Fehler an Sven.
     if ((row.versuche ?? 0) + 1 >= 3) {
       await sb.from('anfrage_pakete').update({ status: 'fehler', grund: msg.slice(0, 300) }).eq('id', id)
-      await svenAufgabe(sb, { id, p, unitNr: unit.unit_number, projektName: projekt.name, quelle: row.quelle, text: row.nachricht ?? '', frage: '', taskId: row.task_id, fehler: msg })
+      await svenAufgabe(sb, { id, p, unitNr: unit.unit_number, projektName: projekt.name, quelle: row.quelle, text: row.nachricht ?? '', frage: '', taskId: row.task_id, fehler: msg, wuensche: row.wuensche, quellToken: row.quell_token })
     } else {
       await sb.from('anfrage_pakete').update({ abschluss_at: null }).eq('id', id)
     }
@@ -698,9 +720,10 @@ async function baueEntwurf(sb: SupabaseClient, row: PaketRow, p: Person, unit: U
 // ── Aufgabe/Notiz für Sven ──────────────────────────────────────────────────
 async function svenAufgabe(sb: SupabaseClient, o: {
   id: string; p: Person; unitNr: string; projektName: string; quelle: Quelle; text: string; frage: string; taskId: string | null
-  fertig?: { deckUrl: string; ampel: string; befunde: string[]; calcUrls: string[] }; fehler?: string
-}): Promise<void> {
-  const objekt = `Wohnung ${o.unitNr} (${o.projektName})`
+  fertig?: { deckUrl: string; ampel: string; befunde: string[]; calcUrls: string[] }; fehler?: string; projectId?: string
+  wuensche?: string[] | null; quellToken?: string | null
+}): Promise<string | null> {
+  const objekt = o.projektName ? `Wohnung ${o.unitNr} (${o.projektName})` : `Wohnung ${o.unitNr}`
   const wo = o.quelle === 'whatsapp' ? 'per WhatsApp' : o.quelle === 'mail' ? 'per Mail' : o.quelle === 'formular' ? 'über „Mehr Infos"' : ''
   const zeilen = o.fertig ? [
     `📦 Infopaket liegt im Postausgang (Mail + WhatsApp), bitte prüfen und senden.`,
@@ -709,6 +732,10 @@ async function svenAufgabe(sb: SupabaseClient, o: {
     `Rechnungen: ${o.fertig.calcUrls.join(' · ')}`,
     `Postausgang: ${PORTAL_URL}/admin/crm/postausgang`,
   ] : [`⚠️ Infopaket konnte nicht vorbereitet werden: ${String(o.fehler ?? '').slice(0, 300)}. Bitte selbst über den Deck-Wizard erstellen.`]
+  // Fertiges Paket ohne Aufgabe: bei Projekten aus anfrage_paket_ohne_aufgabe reicht der
+  // Postausgang, nur die Notiz am Lead (Sven 30.10.26).
+  const ohne = !!o.fertig && !o.taskId && !!o.projectId && await ohneAufgabe(sb, o.projectId)
+  let neueAufgabe: string | null = null
 
   // Formular: die Aufgabe aus track-engagement gibt es schon, sie bekommt den Stand.
   if (o.taskId) {
@@ -720,12 +747,16 @@ async function svenAufgabe(sb: SupabaseClient, o: {
         description: `${tt.description ?? ''}\n\n${zeilen.join('\n')}`.trim(),
       }).eq('id', o.taskId)
     }
-  } else {
+  } else if (!ohne) {
     const { data: admin } = await sb.from('profiles').select('id').eq('role', 'admin').order('created_at').limit(1).maybeSingle()
     const adminId = (admin as { id: string } | null)?.id ?? null
     const beschreibung = [
       `Wer: ${[o.p.name, o.p.email, o.p.phone].filter(Boolean).join(' · ')}`,
-      `Anfrage ${wo}: „${o.text.replace(/\s+/g, ' ').slice(0, 500)}“`,
+      // Formular ohne Aufgabe hat oft keinen Text, dann nur der Weg.
+      o.text.trim() ? `Anfrage ${wo}: „${o.text.replace(/\s+/g, ' ').slice(0, 500)}“` : `Anfrage ${wo}`,
+      // Formular ohne Aufgabe: Wünsche und angefragtes Deck aus der Paket-Zeile.
+      ...(o.wuensche?.length ? [`Möchte: ${o.wuensche.join(', ')}`] : []),
+      ...(o.quellToken ? [`Deck: ${PORTAL_URL}/deck/${o.quellToken}?preview=1`] : []),
       ...zeilen,
     ].join('\n')
     const { data: task, error } = await sb.from('crm_tasks').insert({
@@ -733,8 +764,9 @@ async function svenAufgabe(sb: SupabaseClient, o: {
       description: beschreibung, created_by: adminId, assigned_to: adminId, status: 'offen', due_date: cyDate(new Date()),
       assigned_notified_at: new Date().toISOString(),
     }).select('id').single()
-    if (error || !task) { console.error('[anfrage-paket] Aufgabe:', error?.message); return }
+    if (error || !task) { console.error('[anfrage-paket] Aufgabe:', error?.message); return null }
     const taskId = (task as { id: string }).id
+    neueAufgabe = taskId
     await sb.from('anfrage_pakete').update({ task_id: taskId }).eq('id', o.id)
     if (adminId) await sb.from('crm_task_assignees').insert({ task_id: taskId, profile_id: adminId, channel: 'system' })
     if (o.p.kind === 'lead' && o.p.id) await sb.from('crm_task_leads').insert({ task_id: taskId, lead_id: o.p.id })
@@ -747,6 +779,43 @@ async function svenAufgabe(sb: SupabaseClient, o: {
       subject: o.fertig ? `📦 Infopaket vorbereitet: ${objekt}` : `⚠️ Infopaket nicht vorbereitet: ${objekt}`,
       content: zeilen.join('\n'), completed_at: new Date().toISOString(),
     }).then(({ error }) => { if (error) console.warn('[anfrage-paket] Notiz:', error.message) })
+  }
+  return o.taskId ?? neueAufgabe
+}
+
+// ── Ersatz-Aufgabe (Formular ohne Aufgabe) ──────────────────────────────────
+// track-engagement legt bei Projekten ohne Aufgabe keine an und schickt sie als
+// aufgabe_bei_fehler mit. Entsteht kein Paket, kommt sie hier doch, sonst ginge die
+// Anfrage still verloren (30.10.26: Arne + Dirk, wohnung_fehlt).
+const ERSATZ_GRUND: Record<string, string> = {
+  automatik_aus: 'Automatik aus', kein_empfaenger: 'Empfänger fehlt', kontaktsperre: 'Kontaktsperre am Lead',
+  deck_fehlt: 'Deck nicht gefunden', mehrere_wohnungen: 'keine Wohnung gewählt', wohnung_fehlt: 'Wohnung im Deck nicht gefunden',
+  wohnung_vergeben: 'Wohnung nicht mehr frei', teil_einheit: 'Teil eines Doppelapartments', schon_vorbereitet: 'Paket zu dieser Wohnung gibt es schon',
+  projekt_fehlt: 'Projekt fehlt', keine_fakten: 'Projekt ohne Fakten', db_fehler: 'Datenbankfehler', fehler: 'technischer Fehler',
+  deck_kuerzen_fehler: 'Deck ließ sich nicht kürzen', deck_start_fehler: 'Deck-Erstellung startete nicht',
+}
+async function ersatzAufgabe(sb: SupabaseClient, b: Record<string, unknown>, e: { title: string; description?: string }, r: Record<string, unknown>): Promise<void> {
+  const grund = String(r.reason ?? 'fehler')
+  const zeile = `⚠️ Infopaket konnte nicht automatisch vorbereitet werden (${ERSATZ_GRUND[grund] ?? grund}). Bitte selbst antworten.`
+  const leadId = typeof b.lead_id === 'string' ? b.lead_id : null
+  const { data: admin } = await sb.from('profiles').select('id').eq('role', 'admin').order('created_at').limit(1).maybeSingle()
+  const adminId = (admin as { id: string } | null)?.id ?? null
+  const { data: task, error } = await sb.from('crm_tasks').insert({
+    title: e.title.slice(0, 200), description: `${e.description ?? ''}\n\n${zeile}`.trim(),
+    created_by: adminId, assigned_to: adminId, status: 'offen', due_date: cyDate(new Date()),
+    assigned_notified_at: new Date().toISOString(),
+  }).select('id').single()
+  if (error || !task) { console.error('[anfrage-paket] Ersatz-Aufgabe:', error?.message); return }
+  const taskId = (task as { id: string }).id
+  if (adminId) await sb.from('crm_task_assignees').insert({ task_id: taskId, profile_id: adminId, channel: 'system' })
+  if (leadId) await sb.from('crm_task_leads').insert({ task_id: taskId, lead_id: leadId })
+  await sb.functions.invoke('task-notify', { body: { mode: 'dispatch', task_id: taskId }, headers: { Authorization: `Bearer ${SERVICE}` } })
+    .catch((x: unknown) => console.warn('[anfrage-paket] Ersatz dispatch:', x))
+  if (leadId) {
+    await sb.from('activities').insert({
+      lead_id: leadId, type: 'note', direction: 'outbound', auto: true,
+      subject: '⚠️ Infopaket nicht vorbereitet', content: zeile, completed_at: new Date().toISOString(),
+    }).then(({ error: nErr }) => { if (nErr) console.warn('[anfrage-paket] Ersatz-Notiz:', nErr.message) })
   }
 }
 
@@ -871,7 +940,7 @@ async function sweep(sb: SupabaseClient): Promise<Record<string, unknown>> {
         const p = await person(sb, { lead_id: row.lead_id, subscriber_id: row.subscriber_id, email: row.empfaenger_email, name: row.empfaenger_name })
         const { data: u } = await sb.from('crm_project_units').select('unit_number').eq('id', row.unit_id).maybeSingle()
         const { data: pr } = await sb.from('crm_projects').select('name').eq('id', row.project_id).maybeSingle()
-        if (p) await svenAufgabe(sb, { id: row.id, p, unitNr: (u as { unit_number?: string } | null)?.unit_number ?? '?', projektName: (pr as { name?: string } | null)?.name ?? '', quelle: row.quelle, text: row.nachricht ?? '', frage: '', taskId: row.task_id, fehler: 'Deck nach 60 Min nicht fertig' })
+        if (p || !row.task_id) await svenAufgabe(sb, { id: row.id, p: p ?? zeilenPerson(row), unitNr: (u as { unit_number?: string } | null)?.unit_number ?? '?', projektName: (pr as { name?: string } | null)?.name ?? '', quelle: row.quelle, text: row.nachricht ?? '', frage: '', taskId: row.task_id, fehler: 'Deck nach 60 Min nicht fertig', wuensche: row.wuensche, quellToken: row.quell_token })
       }
     }
   }
@@ -917,7 +986,23 @@ Deno.serve(async (req) => {
       const { data } = await sb.from('anfrage_pakete').select('*').eq('id', body.id).maybeSingle()
       return json({ ok: true, row: data })
     }
-    return json(await start(sb, body))
+    // Formular ohne Aufgabe: kein Paket (gleich welcher Grund) = Ersatz-Aufgabe, außer
+    // svenAufgabe hat schon eine angelegt (task_id im Ergebnis). Im Hintergrund, sofort
+    // antworten: Die KI-Kürzung kann länger dauern als das Gateway (rund 150 s), ein 504
+    // hielte track-engagement sonst für „nicht erreicht“ und legte eine falsche Aufgabe an.
+    const ersatz = body.aufgabe_bei_fehler as { title?: string; description?: string } | undefined
+    if (!ersatz?.title) return json(await start(sb, body))
+    const titel = ersatz.title
+    const lauf = start(sb, body)
+      .catch((e: unknown): Record<string, unknown> => ({ ok: false, started: false, reason: 'fehler', error: e instanceof Error ? e.message : String(e) }))
+      .then(async r => {
+        console.log('[anfrage-paket] formular', JSON.stringify(r).slice(0, 300))
+        if (r.started !== true && !r.task_id) await ersatzAufgabe(sb, body, { title: titel, description: ersatz.description }, r)
+      })
+      .catch((e: unknown) => console.error('[anfrage-paket] Ersatz-Aufgabe:', e))
+    if (edgeRt) { edgeRt.waitUntil(lauf); return json({ ok: true, angenommen: true }) }
+    await lauf
+    return json({ ok: true })
   } catch (err) {
     console.error('[anfrage-paket]', err)
     return json({ ok: false, reason: 'fehler', error: (err as Error).message }, 500)

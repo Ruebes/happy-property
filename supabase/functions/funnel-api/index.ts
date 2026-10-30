@@ -306,9 +306,9 @@ async function unterlagenVersenden(admin: SupabaseClient, leadId: string, dealId
   const qns = ((fc as { config?: { questionnaires?: Array<{ slug?: string; info_paket?: InfoPaket }> } } | null)?.config?.questionnaires) ?? []
   const ip = qns.find(q => q?.slug === slug)?.info_paket
   if (!ip?.master_deck_token || !ip.wa_text) return false
-  const { data: m } = await admin.from('sales_decks').select('project_id, angle, content').eq('token', ip.master_deck_token).maybeSingle()
+  const { data: m } = await admin.from('sales_decks').select('project_id, angle, content, deck_context').eq('token', ip.master_deck_token).maybeSingle()
   if (!m) { console.warn('[funnel-api] Unterlagen: Master-Deck fehlt', ip.master_deck_token); return false }
-  const master = m as { project_id: string; angle: string | null; content: unknown }
+  const master = m as { project_id: string; angle: string | null; content: unknown; deck_context: unknown }
   const { data: l } = await admin.from('leads').select('first_name, last_name, booking_token').eq('id', leadId).maybeSingle()
   const lead = (l ?? {}) as { first_name?: string | null; last_name?: string | null; booking_token?: string | null }
   const vorname = (lead.first_name ?? '').trim()
@@ -322,6 +322,9 @@ async function unterlagenVersenden(admin: SupabaseClient, leadId: string, dealId
       token, lead_id: leadId, project_id: master.project_id, angle: master.angle, status: 'ready',
       recipient_name: `${vorname} ${(lead.last_name ?? '').trim()}`.trim() || null,
       content: master.content,
+      // Wohnungsliste mit kopieren: ohne sie findet „Mehr Infos“ (anfrage-paket) die
+      // gewählte Wohnung nicht und bricht mit wohnung_fehlt ab (30.10.26, Arne + Dirk).
+      deck_context: master.deck_context,
       // Klon eines geprüften Master-Decks (wie newsletter_clone): Gate läuft am Master.
       quality_status: 'skipped',
       quality_report: { status: 'skipped', source: 'funnel_unterlagen', master_token: ip.master_deck_token, variant: slug },

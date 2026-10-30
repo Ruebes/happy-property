@@ -501,43 +501,73 @@ async function infoRequest(body: Record<string, unknown>): Promise<{ status: num
     meta: { unit: nr || null, wants: wuensche, question: frage || null, name: wer, email, phone, campaign: UUID_RE.test(campaign) ? campaign : null, internal: intern, paket: paket.sent ? "sent" : (paket.reason ?? null) },
   })
 
-  const { data: admin } = await sb.from('profiles').select('id').eq('role', 'admin').order('created_at').limit(1).maybeSingle()
-  const adminId = (admin as { id: string } | null)?.id ?? null
-  const { data: task, error: tErr } = await sb.from('crm_tasks').insert({
-    title: `${intern ? '[Test] ' : ''}📩 ${wer}: ${paket.sent ? `Infopaket zu ${objekt} verschickt, bitte nachfassen` : schon ? `fragt erneut zu ${objekt}` : `möchte mehr Infos zu ${objekt}`}`.slice(0, 200),
-    description: beschreibung, created_by: adminId, assigned_to: adminId, status: 'offen',
-    due_date: cyDate(new Date()),
-    // Zustellung laeuft ueber die Zustaendigen-Zeile (wie Tasks.tsx), alten Pfad stumm.
-    assigned_notified_at: new Date().toISOString(),
-  }).select('id').single()
-  if (tErr || !task) {
-    console.error('[track-engagement] info_request Aufgabe:', tErr?.message)
-    return { status: 500, body: { error: 'Anfrage konnte nicht gespeichert werden. Bitte schreib Sven direkt.' } }
+  // Ohne Aufgabe (Sven 30.10.26, Flora Panorama: „läuft ja alles automatisch“): Geht das
+  // Paket automatisch in den Postausgang, keine Aufgabe und keine Lotte-Meldung. Entsteht
+  // kein Paket, legt anfrage-paket die Aufgabe an (aufgabe_bei_fehler).
+  // crm_settings.anfrage_paket_ohne_aufgabe = Projekt-IDs, mit Komma getrennt.
+  let ohneAufgabe = false
+  if (anfragePaket && !intern && d.project_id) {
+    const { data: oa } = await sb.from('crm_settings').select('value').eq('key', 'anfrage_paket_ohne_aufgabe').maybeSingle()
+    ohneAufgabe = String((oa as { value?: string } | null)?.value ?? '').split(/[\s,]+/).includes(d.project_id)
   }
-  const taskId = (task as { id: string }).id
-  if (adminId) await sb.from('crm_task_assignees').insert({ task_id: taskId, profile_id: adminId, channel: 'system' })
+  const titel = `${intern ? '[Test] ' : ''}📩 ${wer}: ${paket.sent ? `Infopaket zu ${objekt} verschickt, bitte nachfassen` : schon ? `fragt erneut zu ${objekt}` : `möchte mehr Infos zu ${objekt}`}`.slice(0, 200)
+
+  const aufgabeAnlegen = async (text: string): Promise<string | null> => {
+    const { data: admin } = await sb.from('profiles').select('id').eq('role', 'admin').order('created_at').limit(1).maybeSingle()
+    const adminId = (admin as { id: string } | null)?.id ?? null
+    const { data: task, error: tErr } = await sb.from('crm_tasks').insert({
+      title: titel,
+      description: text, created_by: adminId, assigned_to: adminId, status: 'offen',
+      due_date: cyDate(new Date()),
+      // Zustellung laeuft ueber die Zustaendigen-Zeile (wie Tasks.tsx), alten Pfad stumm.
+      assigned_notified_at: new Date().toISOString(),
+    }).select('id').single()
+    if (tErr || !task) {
+      console.error('[track-engagement] info_request Aufgabe:', tErr?.message)
+      return null
+    }
+    const id = (task as { id: string }).id
+    if (adminId) await sb.from('crm_task_assignees').insert({ task_id: id, profile_id: adminId, channel: 'system' })
+    if (leadId) await sb.from('crm_task_leads').insert({ task_id: id, lead_id: leadId })
+    // Interne Tests (Svens eigener Browser) legen nur die Aufgabe an, ohne Lotte-Meldung.
+    if (!intern) {
+      await sb.functions.invoke('task-notify', { body: { mode: 'dispatch', task_id: id } })
+        .catch((e: unknown) => console.warn('[track-engagement] info_request dispatch:', e))
+    }
+    return id
+  }
+  let taskId: string | null = null
+  if (!ohneAufgabe) {
+    taskId = await aufgabeAnlegen(beschreibung)
+    if (!taskId) return { status: 500, body: { error: 'Anfrage konnte nicht gespeichert werden. Bitte schreib Sven direkt.' } }
+  }
   if (leadId) {
-    await sb.from('crm_task_leads').insert({ task_id: taskId, lead_id: leadId })
     await sb.from('activities').insert({
       lead_id: leadId, type: 'note', direction: 'inbound', auto: false,
       subject: `📩 Mehr Infos angefordert: ${objekt}`, content: beschreibung, completed_at: new Date().toISOString(),
     }).then(({ error }) => { if (error) console.warn('[track-engagement] info_request Notiz:', error.message) })
   }
-  // Interne Tests (Svens eigener Browser) legen nur die Aufgabe an, ohne Lotte-Meldung.
-  if (!intern) {
-    await sb.functions.invoke('task-notify', { body: { mode: 'dispatch', task_id: taskId } })
-      .catch((e: unknown) => console.warn('[track-engagement] info_request dispatch:', e))
-  }
   // Paket im Hintergrund vorbereiten (Deck-Erstellung dauert Minuten).
   if (anfragePaket && !intern) {
     const svc = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    const ohnePaketZeile = zeilen.filter(z => z !== paketZeile).join('\n')
     const p = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/anfrage-paket`, {
       method: 'POST', headers: { Authorization: `Bearer ${svc}`, apikey: svc, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         quelle: 'formular', token, wohnung: nr || null, lead_id: leadId, subscriber_id: subId, email: person ? null : email, name: wer, phone,
         wuensche: wuensche.map(k => WUNSCH[k]), frage, task_id: taskId,
+        // Ohne Aufgabe: anfrage-paket legt sie nur an, wenn kein Paket entsteht.
+        ...(ohneAufgabe ? { aufgabe_bei_fehler: { title: titel, description: ohnePaketZeile } } : {}),
       }),
-    }).then(r => r.text()).catch((e: unknown) => console.warn('[track-engagement] anfrage-paket:', e))
+    }).then(async r => {
+      const t = await r.text()
+      if (!r.ok && ohneAufgabe) throw new Error(`anfrage-paket ${r.status}: ${t.slice(0, 200)}`)
+      return t
+    }).catch(async (e: unknown) => {
+      console.warn('[track-engagement] anfrage-paket:', e)
+      // anfrage-paket nicht erreichbar: dann doch die Aufgabe, sonst ginge die Anfrage verloren.
+      if (ohneAufgabe) await aufgabeAnlegen(`${ohnePaketZeile}\n\n⚠️ Infopaket konnte nicht automatisch vorbereitet werden (technischer Fehler). Bitte selbst antworten.`)
+    })
     const er = (globalThis as { EdgeRuntime?: { waitUntil: (p: Promise<unknown>) => void } }).EdgeRuntime
     if (er) er.waitUntil(p); else await p
   }
