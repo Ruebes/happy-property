@@ -270,6 +270,7 @@ export default function Newsletter() {
   const fetchPast = useCallback(async () => {
     const { data } = await supabase.from('newsletter_campaigns')
       .select('id, title, status, recipients_total, recipients_done, created_at')
+      .neq('status', 'cancelled')
       .order('created_at', { ascending: false }).limit(10)
     setPastCampaigns((data as typeof pastCampaigns) ?? [])
     try {
@@ -672,6 +673,7 @@ export default function Newsletter() {
 
   const card = 'bg-white rounded-2xl shadow-sm border border-gray-100 p-5'
   const input = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40'
+  const btnGhost = 'rounded-md px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 disabled:opacity-50'
   const btnSec = 'px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50'
 
   return (
@@ -910,66 +912,63 @@ export default function Newsletter() {
         {pastCampaigns.length > 0 && (
           <div className={card}>
             <h2 className="text-sm font-semibold text-gray-700 mb-3">{t('crm.newsletter.past', 'Entwürfe & Archiv')}</h2>
-            <div className="space-y-2">
-              {pastCampaigns.map(c => (
-                <div key={c.id} className="border border-gray-100 rounded-xl">
-                  <div className={`flex flex-wrap items-center gap-2 px-3 py-2 text-sm ${c.status !== 'draft' ? 'cursor-pointer hover:bg-gray-50 rounded-xl' : ''}`}
-                    onClick={() => { if (c.status !== 'draft') void toggleArchive(c.id) }}>
-                    <span className="font-medium text-gray-800">{c.title}</span>
-                    {(() => {
-                      // Genau ein Statuswort pro Zeile (Sven 3.10.26): 'geplant' solange noch
-                      // keine Mail raus ist, sonst 'versendet'. Bei 'geplant' steht das
-                      // Startdatum direkt hinter dem Wort, kein zweiter "geplant ab"-Text.
-                      // Der Status der Kampagne selbst steht schon beim Start auf 'sending',
-                      // darum entscheidet der echte Fortschritt ueber das Etikett.
-                      const pr = progress[c.id]
-                      const geplant = !!pr && pr.sent === 0 && pr.pending > 0
-                      const start = geplant && pr.next_at
-                        ? new Date(pr.next_at).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
-                        : ''
-                      const label = c.status === 'draft'
-                        ? t('crm.newsletter.stDraft', 'Entwurf')
-                        : geplant ? t('crm.newsletter.stPlanned', 'geplant')
-                        : t('crm.newsletter.stSent', 'versendet')
-                      const farbe = c.status === 'draft' ? 'bg-gray-100 text-gray-600'
-                        : geplant ? 'bg-blue-50 text-blue-700'
-                        : 'bg-orange-50 text-orange-700'
-                      return (
-                        <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${farbe}`}>
-                          {label}{start && <> · {start}</>}
-                        </span>
-                      )
-                    })()}
-                    <span className="text-xs text-gray-400">
-                      {new Date(c.created_at).toLocaleDateString('de-DE')}
-                      {c.status !== 'draft' && (() => {
-                        const pr = progress[c.id]
-                        if (!pr) return <> · {c.recipients_done}/{c.recipients_total} {t('crm.newsletter.mails', 'Mails')}</>
-                        const total = pr.sent + pr.pending + (pr.failed ?? 0)
-                        if (pr.sent === 0 && pr.pending > 0) {
-                          return <> · {total} {t('crm.newsletter.mails', 'Mails')}</>
-                        }
-                        return <> · <strong className="text-gray-600">{pr.sent}/{total}</strong> {t('crm.newsletter.sentLabel', 'gesendet')}
-                          {(pr.failed ?? 0) > 0 && <> · <strong className="text-red-600">{pr.failed} {t('crm.newsletter.failedLabel', 'fehlgeschlagen')}</strong></>}</>
-                      })()}
-                    </span>
-                    <span className="ml-auto flex items-center gap-2">
-                      <button onClick={e => { e.stopPropagation(); void viewCampaign(c.id) }} disabled={busyKey === `view${c.id}`} className={btnSec}>
-                        {busyKey === `view${c.id}` ? t('crm.newsletter.working', 'Einen Moment…') : t('crm.newsletter.viewNl', '👁 Ansehen')}
+            <div className="divide-y divide-gray-100">
+              {pastCampaigns.map(c => {
+                // Ruhige Liste (Sven 31.10.26): Titel oben, darunter eine graue Zeile mit
+                // Status-Punkt, Datum und Zustellung. Genau ein Statuswort pro Zeile:
+                // 'geplant' solange noch keine Mail raus ist, sonst 'versendet'. Der Status
+                // der Kampagne steht schon beim Start auf 'sending', darum entscheidet der
+                // echte Fortschritt ueber das Etikett.
+                const pr = progress[c.id]
+                const draft = c.status === 'draft'
+                const geplant = !!pr && pr.sent === 0 && pr.pending > 0
+                const start = geplant && pr.next_at
+                  ? new Date(pr.next_at).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+                  : ''
+                const label = draft ? t('crm.newsletter.stDraft', 'Entwurf')
+                  : geplant ? t('crm.newsletter.stPlanned', 'geplant')
+                  : t('crm.newsletter.stSent', 'versendet')
+                const punkt = draft ? 'bg-gray-300' : geplant ? 'bg-blue-400' : 'bg-emerald-400'
+                const total = pr ? pr.sent + pr.pending + (pr.failed ?? 0) : c.recipients_total
+                const info = draft ? ''
+                  : geplant ? `${total} ${t('crm.newsletter.recipientsShort', 'Empfänger')}`
+                  : pr ? `${pr.sent} ${t('crm.newsletter.of', 'von')} ${total} ${t('crm.newsletter.delivered', 'zugestellt')}`
+                  : `${c.recipients_done} ${t('crm.newsletter.of', 'von')} ${c.recipients_total} ${t('crm.newsletter.delivered', 'zugestellt')}`
+                const titel = c.title.replace(/\s*\(Entwurf\)\s*$/, '')
+                return (
+                <div key={c.id}>
+                  <div className={`flex items-center gap-4 py-3 ${draft ? '' : 'cursor-pointer'}`}
+                    onClick={() => { if (!draft) void toggleArchive(c.id) }}>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-gray-800" title={titel}>{titel}</p>
+                      <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-gray-400">
+                        <span className={`h-1.5 w-1.5 rounded-full ${punkt}`} />
+                        <span className="text-gray-600">{label}{start && <> {t('crm.newsletter.for', 'für')} {start}</>}</span>
+                        {!geplant && <span>· {new Date(c.created_at).toLocaleDateString('de-DE')}</span>}
+                        {info && <span>· {info}</span>}
+                        {(pr?.failed ?? 0) > 0 && <span>· {pr!.failed} {t('crm.newsletter.undeliverable', 'nicht zustellbar')}</span>}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button onClick={e => { e.stopPropagation(); void viewCampaign(c.id) }} disabled={busyKey === `view${c.id}`} className={btnGhost}>
+                        {busyKey === `view${c.id}` ? t('crm.newsletter.working', 'Einen Moment…') : t('crm.newsletter.viewShort', 'Ansehen')}
                       </button>
-                      {c.status === 'draft' ? (
+                      {draft ? (
                         <>
-                          <button onClick={() => void loadCampaign(c.id)} disabled={busyKey === `load${c.id}`} className={btnSec}>
-                            {t('crm.newsletter.edit', '✏️ Weiterbearbeiten')}
+                          <button onClick={() => void loadCampaign(c.id)} disabled={busyKey === `load${c.id}`} className={btnGhost}>
+                            {t('crm.newsletter.editShort', 'Bearbeiten')}
                           </button>
-                          <button onClick={() => void deleteDraft(c.id)} className="text-gray-400 hover:text-red-600 text-sm">🗑</button>
+                          <button onClick={() => void deleteDraft(c.id)} className="rounded-md px-2.5 py-1 text-xs font-medium text-gray-400 hover:bg-red-50 hover:text-red-600">
+                            {t('crm.newsletter.deleteShort', 'Löschen')}
+                          </button>
                         </>
                       ) : (
-                        <button onClick={e => { e.stopPropagation(); void toggleArchive(c.id) }} disabled={busyKey === `arch${c.id}`} className={btnSec}>
-                          {busyKey === `arch${c.id}` ? t('crm.newsletter.working', 'Einen Moment…') : t('crm.newsletter.opens', '📈 Öffnungen')}
+                        <button onClick={e => { e.stopPropagation(); void toggleArchive(c.id) }} disabled={busyKey === `arch${c.id}`}
+                          className={`${btnGhost} ${archiveOpen === c.id ? 'bg-gray-100 text-gray-900' : ''}`}>
+                          {busyKey === `arch${c.id}` ? t('crm.newsletter.working', 'Einen Moment…') : t('crm.newsletter.statsShort', 'Auswertung')}
                         </button>
                       )}
-                    </span>
+                    </div>
                   </div>
                   {archiveOpen === c.id && archiveData[c.id] && (() => {
                     // Empfaenger = zugestellte Mails. Die RPC zaehlt nur Deck-Klone und
@@ -980,7 +979,7 @@ export default function Newsletter() {
                     const totalCalcViews = (ad.calc_views ?? []).reduce((a, cv) => a + cv.views, 0)
                     const fmtDt = (v: string) => new Date(v).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
                     return (
-                      <div className="border-t border-gray-100 px-3 py-3">
+                      <div className="pb-4">
                         {/* Statistik */}
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
                           <div className="bg-gray-50 rounded-lg p-2.5">
@@ -1092,7 +1091,7 @@ export default function Newsletter() {
                     )
                   })()}
                 </div>
-              ))}
+              )})}
             </div>
           </div>
         )}

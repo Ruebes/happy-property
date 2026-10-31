@@ -3756,6 +3756,15 @@
       "linkEditChanges": "Achtung: Beim Wechsel auf den Kalender ändert sich die URL — dieser Link muss neu verteilt werden."
     },
     "newsletter": {
+      "recipientsShort": "Empfänger",
+      "of": "von",
+      "delivered": "zugestellt",
+      "for": "für",
+      "undeliverable": "nicht zustellbar",
+      "viewShort": "Ansehen",
+      "editShort": "Bearbeiten",
+      "deleteShort": "Löschen",
+      "statsShort": "Auswertung",
       "title": "Newsletter (individuell)",
       "outro": "Optionaler Zusatz nach den Objekten",
       "outroPh": "z. B. eine persönliche Anmerkung — kann auch leer bleiben",

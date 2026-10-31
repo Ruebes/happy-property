@@ -3756,6 +3756,15 @@
       "linkEditChanges": "Note: switching to the calendar changes the URL — this link has to be shared again."
     },
     "newsletter": {
+      "recipientsShort": "recipients",
+      "of": "of",
+      "delivered": "delivered",
+      "for": "for",
+      "undeliverable": "undeliverable",
+      "viewShort": "View",
+      "editShort": "Edit",
+      "deleteShort": "Delete",
+      "statsShort": "Stats",
       "title": "Newsletter (individual)",
       "outro": "Optional note after the properties",
       "outroPh": "e.g. a personal note — can be left empty",
