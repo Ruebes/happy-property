@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
-import { checkCalendarStatus, createGoogleEvent, updateGoogleEvent } from '../../lib/googleCalendar'
+import { checkCalendarStatus, createGoogleEvent, updateGoogleEvent, type CalendarStatus } from '../../lib/googleCalendar'
 import type { CrmAppointment, AppointmentType } from '../../lib/crmTypes'
 import { DECK_LOGO, DECK_PHOTO } from '../../lib/deckTypes'
 import { apptTzOf, defaultApptTz, zonedToIso, isoToZoned, fmtTimeIn, APPT_TZ_BERLIN, APPT_TZ_NICOSIA, type ApptTz } from '../../lib/tz'
@@ -449,6 +449,11 @@ export default function AppointmentModal({
   // Google-Verbindung ist server-seitig (Service-Account) → einmalige Prüfung.
   const [googleAvailable, setGoogleAvailable]   = useState(false)
   const [saveToGoogle, setSaveToGoogle]         = useState(false)
+  // Haken von Hand gesetzt/entfernt? Dann gilt Svens Wahl, sonst der Standard.
+  const [googleTouched, setGoogleTouched]       = useState(false)
+  // Laufende Prüfung, damit Speichern darauf warten kann (Grit Rudolph, 27.10.:
+  // vor Ende der Prüfung gespeichert → kein Haken → still nicht in Google).
+  const googleCheckRef = useRef<Promise<CalendarStatus> | null>(null)
   const [sendEmailInvite, setSendEmailInvite]   = useState(false)
   const [sendWhatsAppInvite, setSendWhatsAppInvite] = useState(false)
   // Termin verschoben (Datum/Uhrzeit/Zone geändert)? Dann Mail + WhatsApp automatisch
@@ -475,7 +480,9 @@ export default function AppointmentModal({
 
   useEffect(() => {
     let cancelled = false
-    checkCalendarStatus()
+    const check = checkCalendarStatus()
+    googleCheckRef.current = check
+    check
       .then(s => {
         if (cancelled) return
         setGoogleAvailable(s.connected)
@@ -556,6 +563,21 @@ export default function AppointmentModal({
     setSaveError('')
     const warnings: string[] = []
     try {
+      // Google-Prüfung noch offen oder gescheitert? Abwarten bzw. einmal neu prüfen,
+      // statt still ohne Google zu speichern.
+      let gAvail = googleAvailable
+      if (!gAvail && !googleTouched) {
+        let s = await (googleCheckRef.current ?? checkCalendarStatus())
+        if (!s.connected && s.reason === 'error') s = await checkCalendarStatus()
+        gAvail = s.connected
+        if (gAvail) setGoogleAvailable(true)
+      }
+      // Neue Termine gehen standardmäßig nach Google, außer der Haken wurde abgewählt.
+      const wantGoogle = isEdit || googleTouched ? saveToGoogle : true
+      if (!isEdit && wantGoogle && !gAvail) {
+        warnings.push(t('crm.appt.googleSyncWarn', 'Google-Kalender wurde NICHT aktualisiert — Termin bitte erneut öffnen und speichern.'))
+      }
+
       // Eingabe in der gewählten Termin-Zone → UTC (DST-sicher, nicht Browser-Zone).
       const startD = new Date(zonedToIso(date, von, tz))
       const endD   = new Date(zonedToIso(date, bis, tz))
@@ -635,7 +657,7 @@ export default function AppointmentModal({
             console.warn('[AppointmentModal] Google-Update fehlgeschlagen:', gErr)
             warnings.push(t('crm.appt.googleSyncWarn', 'Google-Kalender wurde NICHT aktualisiert — Termin bitte erneut öffnen und speichern.'))
           }
-        } else if (saveToGoogle && googleAvailable) {
+        } else if (saveToGoogle && gAvail) {
           try {
             const g = await createGoogleEvent({ title, startIso: start_time, endIso: end_time, description: googleDesc || undefined, location: effLocation || undefined })
             await supabase.from('crm_appointments')
@@ -669,7 +691,7 @@ export default function AppointmentModal({
         manageToken = (appt as { manage_token?: string | null }).manage_token ?? null
 
         // In den Google-Kalender spiegeln (server-seitig, Service-Account)
-        if (saveToGoogle && googleAvailable) {
+        if (wantGoogle && gAvail) {
           try {
             const g = await createGoogleEvent({
               title,
@@ -1571,7 +1593,7 @@ export default function AppointmentModal({
                   <input
                     type="checkbox"
                     checked={saveToGoogle}
-                    onChange={e => setSaveToGoogle(e.target.checked)}
+                    onChange={e => { setSaveToGoogle(e.target.checked); setGoogleTouched(true) }}
                     className="rounded border-gray-300"
                   />
                   <span className="text-sm text-gray-700">
