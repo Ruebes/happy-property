@@ -1,0 +1,67 @@
+# Builds the CRM frontend on every push to main and publishes the static
+# files to the orphan branch `web-live`. hp-server pulls that branch every
+# minute (/opt/hp-crm-web/update.sh) and switches to the new release.
+# Vercel keeps deploying in parallel until DNS is moved.
+name: deploy-web
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-web
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Check build secrets
+        run: |
+          test -n "$U" || { echo "secret VITE_SUPABASE_URL missing"; exit 1; }
+          test -n "$K" || { echo "secret VITE_SUPABASE_ANON_KEY missing"; exit 1; }
+        env:
+          U: ${{ secrets.VITE_SUPABASE_URL }}
+          K: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Build
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
+
+      - name: Sanity check
+        run: |
+          test -s dist/index.html
+          test -s dist/sw.js
+          # No service_role JWT may end up in the browser bundle.
+          for t in $(grep -rhoE 'eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' dist | sort -u); do
+            p=$(echo "$t" | cut -d. -f2 | tr '_-' '/+'); while [ $(( ${#p} % 4 )) -ne 0 ]; do p="$p="; done
+            if echo "$p" | base64 -d 2>/dev/null | grep -q '"role":"service_role"'; then echo "service_role key in bundle"; exit 1; fi
+          done
+
+      - name: Publish to web-live
+        run: |
+          cd dist
+          echo "${GITHUB_SHA}" > version.txt
+          git init -q -b web-live
+          git config user.name "deploy-web"
+          git config user.email "deploy-web@users.noreply.github.com"
+          git add -A
+          git commit -q -m "web build ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}.git" web-live
