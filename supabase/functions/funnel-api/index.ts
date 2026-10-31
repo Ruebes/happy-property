@@ -42,6 +42,12 @@ const SLOT_MIN = 30                    // Termindauer
 const OPEN_H = 12, CLOSE_H = 20        // 12:00–20:00 Zypern-Zeit
 const LEAD_HOURS = 4                   // Vorlauf
 const DAYS_AHEAD = 14                  // Buchungsfenster
+// Vor-Ort-Besichtigung in Paphos (Sven 31.10.26): 90 Min, Mo–Fr Start 10:00–16:00
+// Zypern-Zeit, 24 h Vorlauf, 6 Wochen voraus (Kunden planen ihre Reise).
+const VORORT = { dur: 90, openH: 10, closeH: 17.5, leadH: 24, days: 42, weekdaysOnly: true }
+const VORORT_ORT = 'Paphos (Treffpunkt kommt per WhatsApp)'
+const CALL = { dur: SLOT_MIN, openH: OPEN_H, closeH: CLOSE_H, leadH: LEAD_HOURS, days: DAYS_AHEAD, weekdaysOnly: false }
+type SlotRegel = typeof CALL
 
 // ── Google Service-Account (Muster aus booking-bot) ─────────────────────────
 function b64url(bytes: Uint8Array): string { let s = ''; for (const b of bytes) s += String.fromCharCode(b); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') }
@@ -110,20 +116,25 @@ function cyToUtc(y: number, mo: number, day: number, h: number, mi: number): Dat
   return new Date(guess - 3 * 3600e3)
 }
 
-// Freie Slots: 30-Min-Raster 12:00–19:30 (Start) Zypern-Zeit, nächste 14 Tage, 4h Vorlauf
-async function computeSlots(admin: SupabaseClient): Promise<string[]> {
+// Freie Slots: 30-Min-Raster 12:00–19:30 (Start) Zypern-Zeit, nächste 14 Tage, 4h Vorlauf.
+// Vor Ort gilt die Regel VORORT (längere Dauer, Vormittag, nur Werktage).
+async function computeSlots(admin: SupabaseClient, r: SlotRegel = CALL): Promise<string[]> {
   const now = new Date()
-  const earliest = now.getTime() + LEAD_HOURS * 3600e3
-  const to = new Date(now.getTime() + (DAYS_AHEAD + 1) * 24 * 3600e3)
+  const earliest = now.getTime() + r.leadH * 3600e3
+  const to = new Date(now.getTime() + (r.days + 1) * 24 * 3600e3)
   const busy = [...await getBusy(admin, now, to), ...await getCrmBusy(admin, now, to)]
-  const isFree = (t: number) => t >= earliest && !busy.some(b => t < b.end && t + SLOT_MIN * 60000 > b.start)
+  const isFree = (t: number) => t >= earliest && !busy.some(b => t < b.end && t + r.dur * 60000 > b.start)
   const out: string[] = []
-  for (let dOff = 0; dOff <= DAYS_AHEAD; dOff++) {
+  for (let dOff = 0; dOff <= r.days; dOff++) {
     const anchor = new Date(now.getTime() + dOff * 24 * 3600e3)
     const p = cyParts(anchor)
-    for (let h = OPEN_H; h < CLOSE_H; h++) {
+    if (r.weekdaysOnly) {
+      const wd = new Date(Date.UTC(p.y, p.mo - 1, p.day)).getUTCDay()
+      if (wd === 0 || wd === 6) continue
+    }
+    for (let h = Math.floor(r.openH); h < r.closeH; h++) {
       for (const mi of [0, 30]) {
-        if (h * 60 + mi + SLOT_MIN > CLOSE_H * 60) continue
+        if (h * 60 + mi < r.openH * 60 || h * 60 + mi + r.dur > r.closeH * 60) continue
         const start = cyToUtc(p.y, p.mo, p.day, h, mi)
         if (isFree(start.getTime())) out.push(start.toISOString())
       }
@@ -434,7 +445,7 @@ Deno.serve(async (req) => {
       // event_id: UUID je Absenden des Kontaktformulars, Browser-Lead hat eventID 'lead-<uuid>'.
       meta_match?: { fbc?: string; fbp?: string; user_agent?: string; event_id?: string }
       slot_start_iso?: string
-      meeting_type?: 'zoom' | 'whatsapp'
+      meeting_type?: 'zoom' | 'whatsapp' | 'vorort'
       source?: string
       contact?: { first_name?: string; last_name?: string; phone?: string; email?: string; website?: string }
       answers?: Array<{ question: string; answer: string }>
@@ -546,8 +557,9 @@ Deno.serve(async (req) => {
 
     // ── slots ────────────────────────────────────────────────────────────────
     if (body.action === 'slots') {
-      const slots = await computeSlots(admin)
-      return json({ ok: true, slots, duration_min: SLOT_MIN })
+      const regel = body.meeting_type === 'vorort' ? VORORT : CALL
+      const slots = await computeSlots(admin, regel)
+      return json({ ok: true, slots, duration_min: regel.dur })
     }
 
     // ── contact ──────────────────────────────────────────────────────────────
@@ -702,15 +714,18 @@ Deno.serve(async (req) => {
     // ── book ─────────────────────────────────────────────────────────────────
     if (body.action === 'book') {
       if (!body.slot_start_iso || !body.lead_id) return json({ error: 'Pflichtfelder fehlen' }, 400)
+      const vorOrt = body.meeting_type === 'vorort'
+      const regel = vorOrt ? VORORT : CALL
       const start = new Date(body.slot_start_iso)
-      if (isNaN(start.getTime()) || start.getTime() < Date.now() + (LEAD_HOURS - 0.25) * 3600e3) return json({ error: 'slot_invalid' })
-      const end = new Date(start.getTime() + SLOT_MIN * 60000)
+      if (isNaN(start.getTime()) || start.getTime() < Date.now() + (regel.leadH - 0.25) * 3600e3) return json({ error: 'slot_invalid' })
+      const end = new Date(start.getTime() + regel.dur * 60000)
       // Konflikt-Check direkt vor der Buchung
       // Rueckblick nicht mehr noetig: getCrmBusy prueft jetzt echte Ueberlappung.
       const busy = [...await getBusy(admin, start, end), ...await getCrmBusy(admin, start, end)]
       if (busy.some(b => start.getTime() < b.end && end.getTime() > b.start)) return json({ error: 'slot_taken' })
 
-      const type = body.meeting_type === 'whatsapp' ? 'whatsapp' : 'zoom'
+      const type = vorOrt ? 'inperson' : body.meeting_type === 'whatsapp' ? 'whatsapp' : 'zoom'
+      const artLabel = vorOrt ? 'Vor Ort in Paphos' : type === 'zoom' ? 'Zoom' : 'WhatsApp-Call'
       // Herkunft der Buchung (Pipeline-/Kalender-Kennzeichnung). Kanäle kommen aus
       // veröffentlichten Links (/termin?src=<kanal>). Frei im Funnel-Editor angelegte
       // Quellen werden akzeptiert, wenn sie das Slug-Format erfüllen (a–z, 0–9, -, _).
@@ -795,8 +810,9 @@ Deno.serve(async (req) => {
           method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             summary: `${[sourceLabel, kalenderLabel].filter(Boolean).length ? `[${[sourceLabel, kalenderLabel].filter(Boolean).join(' · ')}] ` : ''}${apptTitle} ${c.last_name ?? ''}`.trim(),
-            description: `${sourceLabel ? `Über ${sourceLabel.toUpperCase()} gebucht` : 'Über den Website-Funnel gebucht'} (${type === 'zoom' ? 'Zoom' : 'WhatsApp-Call'})${kampagne?.label ? `\nKampagne: ${kampagne.label} (${kampagneCode})` : ''}${projekt ? `\nProjekt: ${projekt.name} (${projekt.via})` : ''}${zoomLink ? `\nZoom: ${zoomLink}` : ''}\nTel: ${phone}\nMail: ${email}`,
+            description: `${sourceLabel ? `Über ${sourceLabel.toUpperCase()} gebucht` : 'Über den Website-Funnel gebucht'} (${artLabel})${vorOrt ? '\nTreffpunkt noch per WhatsApp schicken und im Termin eintragen.' : ''}${kampagne?.label ? `\nKampagne: ${kampagne.label} (${kampagneCode})` : ''}${projekt ? `\nProjekt: ${projekt.name} (${projekt.via})` : ''}${zoomLink ? `\nZoom: ${zoomLink}` : ''}\nTel: ${phone}\nMail: ${email}`,
             ...(kampagne?.google_color_id ? { colorId: String(kampagne.google_color_id) } : {}),
+            ...(vorOrt ? { location: 'Paphos (Treffpunkt per WhatsApp)' } : {}),
             start: { dateTime: start.toISOString(), timeZone: TZ_CY }, end: { dateTime: end.toISOString(), timeZone: TZ_CY },
           }),
         })
@@ -810,7 +826,8 @@ Deno.serve(async (req) => {
         title: apptTitle,
         description: projekt ? `Über den Website-Funnel gebucht, Projekt: ${projekt.name} (${projekt.via})` : 'Über den Website-Funnel gebucht', type,
         start_time: start.toISOString(), end_time: end.toISOString(),
-        zoom_link: zoomLink, phone_number: type === 'whatsapp' ? phone : null,
+        zoom_link: zoomLink, phone_number: type === 'zoom' ? null : phone,
+        ...(vorOrt ? { location: VORORT_ORT, timezone: TZ_CY } : {}),
         google_event_id: gcal?.id ?? null, google_calendar_id: gcal?.calId ?? null,
         source,
         campaign_tag: kalenderLabel ?? null, campaign_color: kampagne?.color ?? null,
@@ -821,7 +838,18 @@ Deno.serve(async (req) => {
       if (!isInternal) {
         void notifyIfToday(admin, [start.toISOString()],
           `📅 Neuer Termin HEUTE um ${cyTime(start.toISOString())}\n\n${c.first_name} ${c.last_name ?? ''}`.trim()
-          + `\n${type === 'zoom' ? 'Zoom' : 'WhatsApp-Anruf'}${phone ? `\n${phone}` : ''}`)
+          + `\n${vorOrt ? 'Vor Ort in Paphos' : type === 'zoom' ? 'Zoom' : 'WhatsApp-Anruf'}${phone ? `\n${phone}` : ''}`)
+      }
+      // Vor Ort braucht immer Svens Handgriff (Treffpunkt), deshalb auch für spätere Tage.
+      if (!isInternal && vorOrt && !isTodayCy(start.toISOString())) {
+        try {
+          const wann = start.toLocaleString('de-DE', { timeZone: TZ_CY, weekday: 'long', day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit' })
+          const text = `${c.first_name} ${c.last_name ?? ''}`.trim() + ` hat eine Besichtigung vor Ort gebucht.\n\n${wann} Uhr (Zypern), 90 Minuten${projekt ? `\nProjekt: ${projekt.name}` : ''}${phone ? `\nTel: ${phone}` : ''}\n\nBitte den Treffpunkt per WhatsApp schicken und im Termin als Ort eintragen.`
+          await admin.functions.invoke('send-email', { body: {
+            to: 'sven@happy-property.com', lead_id: leadId, auto: true, subject: `Vor-Ort-Termin: ${c.first_name} ${c.last_name ?? ''}`.trim(),
+            html: `<div style="font-family:Arial,sans-serif;font-size:15px;color:#374151;white-space:pre-wrap">${text.replace(/</g, '&lt;')}</div>`,
+          } })
+        } catch (e) { console.warn('[funnel-api] Vor-Ort-Hinweis an Sven fehlgeschlagen:', e) }
       }
 
       // Bestätigung über die editierbaren „Termin gebucht"-Vorlagen (Mail + WhatsApp).
@@ -858,7 +886,7 @@ Deno.serve(async (req) => {
           ok: true,
           first_name: a.leads?.first_name ?? '',
           start_iso: a.start_time,
-          meeting_type: a.zoom_link ? 'zoom' : 'whatsapp',
+          meeting_type: a.type === 'inperson' ? 'vorort' : a.zoom_link ? 'zoom' : 'whatsapp',
           past: isPast,
         })
       }
@@ -911,8 +939,11 @@ Deno.serve(async (req) => {
       // manage_reschedule
       if (!body.slot_start_iso) return json({ error: 'slot_start_iso fehlt' }, 400)
       const start = new Date(body.slot_start_iso)
-      if (isNaN(start.getTime()) || start.getTime() < Date.now() + (LEAD_HOURS - 0.25) * 3600e3) return json({ error: 'slot_invalid' })
-      const end = new Date(start.getTime() + SLOT_MIN * 60000)
+      const regelAlt = a.type === 'inperson' ? VORORT : CALL
+      if (isNaN(start.getTime()) || start.getTime() < Date.now() + (regelAlt.leadH - 0.25) * 3600e3) return json({ error: 'slot_invalid' })
+      // Dauer des bestehenden Termins behalten (vor Ort 90 Min, Calls 30 Min)
+      const altDauer = a.end_time ? new Date(a.end_time).getTime() - new Date(a.start_time).getTime() : 0
+      const end = new Date(start.getTime() + (altDauer > 0 ? altDauer : regelAlt.dur * 60000))
       // Eigenen alten Termin nicht als Konflikt werten (CRM-Quelle filtern; Google-freeBusy
       // enthält ihn nur, wenn der neue Slot den alten überlappt — dann greift der Filter unten)
       const oldStartMs = new Date(a.start_time).getTime()

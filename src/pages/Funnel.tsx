@@ -58,7 +58,10 @@ function useUtm(): Record<string, string> {
 //   ?f=<slug> → Fragebogen-Variante aus dem Editor; ?f=none → GAR KEIN Fragebogen
 //     (Welcome → Kontakt → Termin). Unbekannter Slug fällt auf den Standard zurück.
 //   ?p=<seiten-slug> → Projekt-Terminseite (Tabelle funnel_projects), siehe projectSlug.
-function useEntryParams(): { wanted: boolean; deckToken: string; leadToken: string; variant: string; rebook: boolean; project: string } {
+//   ?typ=vorort → Besichtigung vor Ort in Paphos vorwählen (bekannter Kontakt: direkt
+//     zum Kalender). Die Vor-Ort-Karte zeigt der Funnel nur bekannten Kontakten
+//     (Deck, Buchungslink) oder mit diesem Parameter, nicht dem Werbe-Traffic.
+function useEntryParams(): { wanted: boolean; deckToken: string; leadToken: string; variant: string; rebook: boolean; project: string; vorort: boolean } {
   return useMemo(() => {
     const p = new URLSearchParams(window.location.search)
     const deckToken = (p.get('d') ?? '').trim()
@@ -75,6 +78,7 @@ function useEntryParams(): { wanted: boolean; deckToken: string; leadToken: stri
       // wenn der alte Termin weg ist): direkt Terminart → Slot → Kontakt.
       rebook: p.get('buchen') === '1',
       project: (p.get('p') ?? '').trim(),
+      vorort: p.get('typ') === 'vorort',
     }
   }, [])
 }
@@ -238,7 +242,10 @@ export default function Funnel() {
   const [directName, setDirectName] = useState('')
   const [qIdx, setQIdx] = useState(0)
   const [answers, setAnswers] = useState<Record<string, string>>({})
-  const [meetingType, setMeetingType] = useState<'zoom' | 'whatsapp' | null>(null)
+  type MeetingType = 'zoom' | 'whatsapp' | 'vorort'
+  const [meetingType, setMeetingType] = useState<MeetingType | null>(null)
+  const showVorOrt = directEntry.wanted || directEntry.vorort
+  const vorOrtAutoStarted = useRef(false)
   const [slots, setSlots] = useState<string[]>([])
   const [slotsLoading, setSlotsLoading] = useState(false)
   const [dayKey, setDayKey] = useState<string>('')
@@ -249,7 +256,9 @@ export default function Funnel() {
   const sessionRef = useRef<string | null>(null)
   const leadRef = useRef<string | null>(null)
 
-  const tz = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Berlin', [])
+  const browserTz = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Berlin', [])
+  // Vor Ort ist der Kunde auf Zypern: Zeiten in Ortszeit Paphos anzeigen.
+  const tz = meetingType === 'vorort' ? 'Asia/Nicosia' : browserTz
 
   // Track-Aufrufe strikt NACHEINANDER ausführen: Feuern zwei Events, bevor die
   // erste Antwort (mit session_id) zurück ist, legt funnel-api sonst ZWEI Sessions
@@ -356,22 +365,30 @@ export default function Funnel() {
     } finally { setBusy(false) }
   }
 
-  const chooseType = (typ: 'zoom' | 'whatsapp') => {
+  const chooseType = (typ: MeetingType) => {
     setMeetingType(typ)
     void track(QUESTIONS.length + 2, 'meeting_type', typ)
     setPhase('slot')
-    void loadSlots()
+    void loadSlots(typ)
   }
-  const loadSlots = async () => {
+  const loadSlots = async (typ: MeetingType | null = meetingType) => {
     setSlotsLoading(true)
     try {
-      const { data } = await supabase.functions.invoke('funnel-api', { body: { action: 'slots' } })
+      const { data } = await supabase.functions.invoke('funnel-api', { body: { action: 'slots', meeting_type: typ ?? undefined } })
       const s = ((data as { slots?: string[] } | null)?.slots) ?? []
       setSlots(s)
-      if (s.length) setDayKey(new Date(s[0]).toLocaleDateString('de-DE', { timeZone: tz }))
+      if (s.length) setDayKey(new Date(s[0]).toLocaleDateString('de-DE', { timeZone: typ === 'vorort' ? 'Asia/Nicosia' : browserTz }))
       void track(QUESTIONS.length + 3, 'slots_view', String(s.length))
     } finally { setSlotsLoading(false) }
   }
+
+  // ?typ=vorort: die Terminart ist schon gewählt, also die Auswahl überspringen.
+  useEffect(() => {
+    if (!directEntry.vorort || phase !== 'meeting_type' || vorOrtAutoStarted.current) return
+    if (direct && !leadRef.current) return   // Lead-Token wird noch aufgelöst
+    vorOrtAutoStarted.current = true
+    chooseType('vorort')
+  })
 
   const days = useMemo(() => {
     const map = new Map<string, { label: string; slots: string[] }>()
@@ -441,7 +458,7 @@ export default function Funnel() {
       else setPhase('welcome')
     }
     else if (phase === 'meeting_type') { if (!direct && !rebook) setPhase('contact') }
-    else if (phase === 'slot') setPhase('meeting_type')
+    else if (phase === 'slot') { vorOrtAutoStarted.current = true; setPhase('meeting_type') }
   }
 
   const totalSteps = rebook ? 3 : direct ? 2 : QUESTIONS.length + 3
@@ -454,23 +471,26 @@ export default function Funnel() {
   // Default (oder als schon beantwortet), darf qIdx nie ins Leere zeigen.
   const q = QUESTIONS[Math.min(qIdx, QUESTIONS.length - 1)]
 
+  const typLabel = (m: MeetingType | null) => m === 'vorort' ? t('funnel.vorort_short', '📍 Vor Ort in Paphos') : m === 'zoom' ? t('funnel.zoom_short', '📹 Zoom') : t('funnel.whatsapp_call', '💬 WhatsApp-Call')
+  const durMin = meetingType === 'vorort' ? 90 : 30
+  const calDesc = meetingType === 'vorort' ? t('funnel.cal_desc_vorort', 'Besichtigung mit Sven in Paphos. Den Treffpunkt schickt Sven per WhatsApp.') : meetingType === 'zoom' ? t('funnel.cal_desc_zoom', 'Zoom-Link kommt per E-Mail & WhatsApp.') : t('funnel.cal_desc_whatsapp', 'Sven ruft dich per WhatsApp an.')
   const fmtSlot = (s: string) => new Date(s).toLocaleTimeString('de-DE', { timeZone: tz, hour: '2-digit', minute: '2-digit' })
   const fmtSlotFull = (s: string) => new Date(s).toLocaleString('de-DE', { timeZone: tz, weekday: 'long', day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit' })
 
   // „In Kalender speichern": Google-Link + ICS-Download (client-seitig erzeugt)
   const gcalUrl = useMemo(() => {
     if (!slot) return '#'
-    const s = new Date(slot), e = new Date(s.getTime() + 30 * 60000)
+    const s = new Date(slot), e = new Date(s.getTime() + durMin * 60000)
     const f = (d: Date) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
-    return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(t('funnel.cal_summary', 'Strategiegespräch mit Sven · Happy Property'))}&dates=${f(s)}/${f(e)}&details=${encodeURIComponent(meetingType === 'zoom' ? t('funnel.cal_desc_zoom', 'Zoom-Link kommt per E-Mail & WhatsApp.') : t('funnel.cal_desc_whatsapp', 'Sven ruft dich per WhatsApp an.'))}`
+    return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(t('funnel.cal_summary', 'Strategiegespräch mit Sven · Happy Property'))}&dates=${f(s)}/${f(e)}&details=${encodeURIComponent(calDesc)}${meetingType === 'vorort' ? '&location=Paphos' : ''}`
   }, [slot, meetingType])
   const downloadIcs = () => {
-    const s = new Date(slot), e = new Date(s.getTime() + 30 * 60000)
+    const s = new Date(slot), e = new Date(s.getTime() + durMin * 60000)
     const f = (d: Date) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
     const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Happy Property//Termin//DE', 'BEGIN:VEVENT',
       `UID:${slot}@happy-property.com`, `DTSTAMP:${f(new Date())}`, `DTSTART:${f(s)}`, `DTEND:${f(e)}`,
       `SUMMARY:${t('funnel.cal_summary', 'Strategiegespräch mit Sven · Happy Property')}`,
-      `DESCRIPTION:${meetingType === 'zoom' ? t('funnel.cal_desc_zoom', 'Zoom-Link kommt per E-Mail & WhatsApp.') : t('funnel.cal_desc_whatsapp', 'Sven ruft dich per WhatsApp an.')}`,
+      `DESCRIPTION:${calDesc}`, ...(meetingType === 'vorort' ? ['LOCATION:Paphos'] : []),
       'END:VEVENT', 'END:VCALENDAR'].join('\r\n')
     const a = document.createElement('a')
     a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' }))
@@ -604,7 +624,7 @@ export default function Funnel() {
               <p className="mt-1 text-sm text-gray-600">{rebook ? t('funnel.rebook_contact_sub', 'Danach buchen wir deinen Termin sofort verbindlich.') : (INFO?.contact_subtitle ?? cfg.contact.subtitle)}</p>
               {rebook && slot && meetingType && (
                 <div className="mt-4 rounded-xl bg-white border border-[#e6dfd0] p-4 text-sm" style={{ color: NAVY }}>
-                  <span className="font-semibold">{meetingType === 'zoom' ? t('funnel.zoom_call', '📹 Zoom-Call') : t('funnel.whatsapp_call', '💬 WhatsApp-Call')}</span> · {fmtSlotFull(slot)}{t('funnel.oclock', ' Uhr')}
+                  <span className="font-semibold">{meetingType === 'vorort' ? t('funnel.vorort_short', '📍 Vor Ort in Paphos') : meetingType === 'zoom' ? t('funnel.zoom_call', '📹 Zoom-Call') : t('funnel.whatsapp_call', '💬 WhatsApp-Call')}</span> · {fmtSlotFull(slot)}{t('funnel.oclock', ' Uhr')}
                 </div>
               )}
               <div className="mt-6 space-y-4 bg-white rounded-2xl border border-[#e6dfd0] p-6 shadow-sm">
@@ -669,7 +689,7 @@ export default function Funnel() {
               <h2 className="font-heading font-bold text-2xl md:text-3xl text-center" style={{ color: NAVY }}>
                 {direct && directName ? t('funnel.how_to_talk_named', 'Hallo {{name}}, wie möchtest du mit Sven sprechen?', { name: directName }) : t('funnel.how_to_talk', 'Wie möchtest du mit Sven sprechen?')}
               </h2>
-              <div className="grid md:grid-cols-2 gap-4 mt-6">
+              <div className={`grid gap-4 mt-6 ${showVorOrt ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
                 <button onClick={() => chooseType('zoom')} className="rounded-2xl bg-white border-2 border-[#e6dfd0] hover:border-[#ff795d] p-6 text-left shadow-sm hover:shadow-lg transition">
                   <div className="text-3xl">📹</div>
                   <div className="font-heading font-bold text-xl mt-2" style={{ color: NAVY }}>{t('funnel.zoom_title', 'Zoom-Call')}</div>
@@ -680,6 +700,13 @@ export default function Funnel() {
                   <div className="font-heading font-bold text-xl mt-2" style={{ color: NAVY }}>{t('funnel.whatsapp_title', 'WhatsApp-Call')}</div>
                   <p className="text-sm text-gray-500 mt-1">{t('funnel.whatsapp_desc', 'Unkompliziert übers Handy: Sven ruft dich per WhatsApp an.')}</p>
                 </button>
+                {showVorOrt && (
+                  <button onClick={() => chooseType('vorort')} className="rounded-2xl bg-white border-2 border-[#e6dfd0] hover:border-[#ff795d] p-6 text-left shadow-sm hover:shadow-lg transition">
+                    <div className="text-3xl">📍</div>
+                    <div className="font-heading font-bold text-xl mt-2" style={{ color: NAVY }}>{t('funnel.vorort_title', 'Vor Ort in Paphos')}</div>
+                    <p className="text-sm text-gray-500 mt-1">{t('funnel.vorort_desc', 'Du bist auf Zypern oder planst eine Reise? Sven zeigt dir die Wohnungen persönlich, etwa 90 Minuten.')}</p>
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -688,7 +715,9 @@ export default function Funnel() {
             <div>
               <p className="text-xs font-bold tracking-widest uppercase mb-2" style={{ color: CORAL }}>{t('funnel.last_step', 'Letzter Schritt')}</p>
               <h2 className="font-heading font-bold text-2xl md:text-3xl" style={{ color: NAVY }}>{t('funnel.when_suits', 'Wann passt es dir?')}</h2>
-              <p className="mt-1 text-sm text-gray-500">{t('funnel.timezone_note', 'Alle Zeiten in deiner Zeitzone ({{tz}}). Ein Klick bucht den Termin verbindlich.', { tz: tz.replace('_', ' ') })}</p>
+              <p className="mt-1 text-sm text-gray-500">{meetingType === 'vorort'
+                ? t('funnel.timezone_note_vorort', 'Besichtigung in Paphos, alle Zeiten in Ortszeit Zypern. Ein Klick bucht den Termin verbindlich.')
+                : t('funnel.timezone_note', 'Alle Zeiten in deiner Zeitzone ({{tz}}). Ein Klick bucht den Termin verbindlich.', { tz: tz.replace('_', ' ') })}</p>
               {error && <p className="mt-3 text-sm font-medium text-red-600">{error}</p>}
               {slotsLoading || busy ? (
                 <div className="mt-10 flex justify-center"><div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" /></div>
@@ -730,9 +759,9 @@ export default function Funnel() {
               ) : <div className="text-6xl">{cfg.done.emoji || '🎉'}</div>}
               <h2 className="font-heading font-bold text-3xl md:text-4xl mt-4" style={{ color: NAVY }}>{cfg.done.title}</h2>
               <p className="mt-3 text-gray-600 text-[15px]">
-                <strong>{fmtSlotFull(slot)}{t('funnel.oclock', ' Uhr')}</strong> · {meetingType === 'zoom' ? t('funnel.zoom_short', '📹 Zoom') : t('funnel.whatsapp_call', '💬 WhatsApp-Call')}
+                <strong>{fmtSlotFull(slot)}{t('funnel.oclock', ' Uhr')}</strong> · {typLabel(meetingType)}
               </p>
-              <p className="mt-2 text-sm text-gray-500 max-w-md mx-auto">{cfg.done.note}</p>
+              <p className="mt-2 text-sm text-gray-500 max-w-md mx-auto">{meetingType === 'vorort' ? t('funnel.done_note_vorort', 'Die Uhrzeit ist Ortszeit Zypern. Den genauen Treffpunkt schickt dir Sven per WhatsApp.') : cfg.done.note}</p>
               <div className="flex flex-wrap justify-center gap-3 mt-6">
                 <a href={gcalUrl} target="_blank" rel="noreferrer"
                   className="px-5 py-2.5 rounded-full text-sm font-semibold text-white shadow hover:shadow-md transition" style={{ background: NAVY }}>

@@ -13,7 +13,7 @@ const CREAM = '#FAF6EC'
 const CORAL = '#ff795d'
 const NAVY = '#1a2332'
 
-interface ApptInfo { first_name: string; start_iso: string; meeting_type: 'zoom' | 'whatsapp'; past: boolean }
+interface ApptInfo { first_name: string; start_iso: string; meeting_type: 'zoom' | 'whatsapp' | 'vorort'; past: boolean }
 type View = 'loading' | 'invalid' | 'overview' | 'reschedule' | 'cancel' | 'done_reschedule' | 'done_cancel'
 
 export default function TerminVerwalten() {
@@ -28,7 +28,8 @@ export default function TerminVerwalten() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
-  const tz = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Berlin', [])
+  // Vor-Ort-Termine (Paphos) in Ortszeit Zypern, Calls in der Zeitzone des Kunden
+  const tz = useMemo(() => appt?.meeting_type === 'vorort' ? 'Asia/Nicosia' : (Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Berlin'), [appt?.meeting_type])
   const fmtFull = (iso: string) => new Date(iso).toLocaleString('de-DE', { timeZone: tz, weekday: 'long', day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit' })
   const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString('de-DE', { timeZone: tz, hour: '2-digit', minute: '2-digit' })
 
@@ -64,7 +65,7 @@ export default function TerminVerwalten() {
   const openReschedule = async () => {
     setView('reschedule'); setError(''); setBusy(true)
     try {
-      const d = await api({ action: 'slots' })
+      const d = await api({ action: 'slots', meeting_type: appt?.meeting_type === 'vorort' ? 'vorort' : undefined })
       const s = (d?.slots as string[] | undefined) ?? []
       setSlots(s)
       if (s.length) setDayKey(new Date(s[0]).toLocaleDateString('de-DE', { timeZone: tz }))
@@ -130,7 +131,7 @@ export default function TerminVerwalten() {
               </h1>
               <div className="mt-4 rounded-xl bg-[#FAF6EC] border border-[#e6dfd0] p-4">
                 <p className="font-semibold" style={{ color: NAVY }}>{t('funnel.manage.dateLine', '📅 {{date}} Uhr', { date: fmtFull(appt.start_iso) })}</p>
-                <p className="text-sm text-gray-500 mt-1">{appt.meeting_type === 'zoom' ? t('funnel.manage.zoomCall', '📹 Zoom-Call mit Sven') : t('funnel.manage.whatsappCall', '💬 WhatsApp-Call mit Sven')} · {t('funnel.manage.tzNote', 'Zeiten in deiner Zeitzone')}</p>
+                <p className="text-sm text-gray-500 mt-1">{appt.meeting_type === 'vorort' ? t('funnel.manage.vorortTermin', '📍 Besichtigung mit Sven in Paphos') : appt.meeting_type === 'zoom' ? t('funnel.manage.zoomCall', '📹 Zoom-Call mit Sven') : t('funnel.manage.whatsappCall', '💬 WhatsApp-Call mit Sven')} · {appt.meeting_type === 'vorort' ? t('funnel.manage.tzNoteVorort', 'Zeiten in Ortszeit Zypern') : t('funnel.manage.tzNote', 'Zeiten in deiner Zeitzone')}</p>
               </div>
               {appt.past ? (
                 <p className="text-sm text-gray-500 mt-4">{t('funnel.manage.pastNote', 'Dieser Termin liegt in der Vergangenheit.')} <a href="/termin?buchen=1" className="underline" style={{ color: CORAL }}>{t('funnel.manage.pastBookNew', 'Hier kannst du einen neuen buchen.')}</a></p>

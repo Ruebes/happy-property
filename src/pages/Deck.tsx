@@ -121,6 +121,11 @@ const TerminCtx = createContext<string | null>(null)
 function altUrl(termin: string): string {
   return `${termin}${termin.includes('?') ? '&' : '?'}f=passt-nicht`
 }
+// Besichtigung vor Ort in Paphos (Sven 31.10.26): derselbe Link mit vorgewählter
+// Terminart, der bekannte Kontakt landet direkt im Vor-Ort-Kalender (90 Min).
+function vorOrtUrl(termin: string): string {
+  return `${termin}${termin.includes('?') ? '&' : '?'}typ=vorort`
+}
 const VatRefundCtx = createContext<{ byUnit: Record<string, VatRefund>; units: string[] }>({ byUnit: {}, units: [] })
 const unitNorm = (s?: string) => (s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')
 function vatRefundMap(rows: unknown): Record<string, VatRefund> {
@@ -989,6 +994,12 @@ function CtaBlock(b: Extract<DeckBlock, { type: 'cta' }>) {
         <a href={termin} className="inline-block mt-10 px-7 py-3.5 rounded-full font-semibold text-[15px] shadow-lg transition-transform hover:scale-[1.03] print:hidden" style={{ background: GOLD, color: DARK }}>
           📅 {t('deck.ctaTermin', 'Strategiegespräch mit Sven buchen')} <span aria-hidden>→</span>
         </a>
+      )}
+      {termin && (
+        <p className="mt-4 text-[14px] text-gray-300 print:hidden">
+          {t('deck.vorortText', 'Du bist auf Zypern oder planst eine Reise?')}{' '}
+          <a href={vorOrtUrl(termin)} className="underline underline-offset-4 hover:text-white">{t('deck.vorortLink', 'Besichtigung vor Ort in Paphos buchen')} →</a>
+        </p>
       )}
       {termin && (
         <div className="mt-8 rounded-2xl px-6 py-5 border max-w-3xl print:hidden" style={{ borderColor: 'rgba(194,161,94,0.4)' }}>
