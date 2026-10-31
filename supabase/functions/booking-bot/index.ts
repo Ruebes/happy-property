@@ -1505,12 +1505,13 @@ async function cafeJa(admin: SupabaseClient, c: ReplyConv, l: { first_name: stri
 }
 
 // Reaktion auf Lottes Café-Nachricht. evolution-webhook reicht Reaktionen hierher,
-// in den Verlauf kommen sie sonst nicht. Ein 👍 👌 ❤️ 🙏 auf Lottes LETZTE
+// in den Verlauf kommen sie sonst nicht. Ein 👍 👌 ❤️ 🙏 ✅ auf Lottes LETZTE
 // Café-Nachricht, nach der nichts mehr im Chat kam, ist ein Ja: eintragen und
 // bestätigen. Alles andere bleibt ohne Folge, die Nachfrage läuft weiter und bittet
 // um ein kurzes Ja. Nie still stornieren: Nach einem 👍 ohne Termin glaubt der
-// Kunde sonst, er sei eingetragen.
-const CAFE_JA_REAKTION = /^(?:\u{1F44D}|\u{1F44C}|\u{1F64F})[\u{1F3FB}-\u{1F3FF}]?$|^\u{2764}\u{FE0F}?$/u
+// Kunde sonst, er sei eingetragen. ✅ ist bei unseren Kunden die dritthäufigste
+// Reaktion nach 👍 und ❤️ (Evolution, Stand 31.10.2026).
+const CAFE_JA_REAKTION = /^(?:\u{1F44D}|\u{1F44C}|\u{1F64F})[\u{1F3FB}-\u{1F3FF}]?$|^(?:\u{2764}|\u{2705})\u{FE0F}?$/u
 
 async function cafeReaktion(admin: SupabaseClient, phone: string, emoji: string, ziel: string, uid: string | null): Promise<Response> {
   if (!ziel || !CAFE_JA_REAKTION.test(emoji.trim())) return json({ ok: true, skipped: 'reaktion_ohne_folge' })
