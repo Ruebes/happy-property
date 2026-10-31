@@ -1485,8 +1485,11 @@ async function cafeReply(admin: SupabaseClient, c: ReplyConv, l: { first_name: s
 
 async function cafeNeuerTag(admin: SupabaseClient, c: ReplyConv, phone: string, leadId: string, slot: Slot, ihr: boolean, vorweg: string): Promise<Response> {
   const msg = `${vorweg}Dann trage ich ${ihr ? 'euch' : 'dich'} gern für ${slot.label}, um 10 Uhr im ${CAFE_NAME} ein. Passt das?`
+  // Erst senden, dann den neuen Tag ins Gespräch: Schlägt der Versand fehl, gilt ein
+  // späteres "Ja" weiter für den Tag, den der Kunde zuletzt gesehen hat (wie cafeNachfass).
+  const id = await sendWa(phone, msg)
   await setConv(admin, c.id, { proposed_slots: [slot], attempts: (c.attempts ?? 0) + 1, last_message: msg })
-  const id = await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound', id)
+  await logWa(admin, leadId, msg, 'outbound', id)
   await cafeNachfassPlanen(admin, leadId, c.deal_id)
   return json({ ok: true, handled: 'cafe_neuer_tag', slot: slot.label })
 }
