@@ -11,6 +11,8 @@
 // komplett umgangen. Base64 kodiert die rohen UTF-8-Bytes am Stück; Zeilen sauber bei
 // 76 (RFC 2045). Analog zu encodeMimeSubject, das denselben Bug für den Betreff löst.
 
+import { linksAlsButtons } from './linkButtons.ts'
+
 export interface MimePart { mimeType: string; content: string; transferEncoding: string }
 
 const enc = new TextEncoder()
@@ -28,6 +30,7 @@ function base64Body(s: string): string {
 export function buildMimeContent(html: string, text: string): MimePart[] {
   const parts: MimePart[] = []
   if (text) parts.push({ mimeType: 'text/plain; charset="utf-8"', content: base64Body(text), transferEncoding: 'base64' })
-  if (html) parts.push({ mimeType: 'text/html; charset="utf-8"',  content: base64Body(html), transferEncoding: 'base64' })
+  // Nackte Links als Buttons (siehe linkButtons.ts); die Textversion behält die URLs
+  if (html) parts.push({ mimeType: 'text/html; charset="utf-8"',  content: base64Body(linksAlsButtons(html)), transferEncoding: 'base64' })
   return parts
 }
