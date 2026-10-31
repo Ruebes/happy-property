@@ -1,0 +1,1 @@
+import{a as o}from"./index-DT3V1H9E.js";function m(){const{profile:t}=o(),e=t==null?void 0:t.role,n=(t==null?void 0:t.permissions)??{},s=e==="admin",r=e==="admin"||e==="verwalter"||e==="mitarbeiter"&&!!n.werbung,i=r||e==="mitarbeiter"&&!!n.werbung_meta;return{istAdmin:s,darfEntscheiden:r,darfStoppen:i}}export{m as u};

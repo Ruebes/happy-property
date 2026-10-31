@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" sizes="64x64" href="/favicon.png" />
+    <!-- viewport-fit=cover für iPhone Notch / Dynamic Island -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Happy Property</title>
+
+    <!-- PWA Grundkonfiguration -->
+    <meta name="theme-color" content="#ff795d" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
+    <!-- Apple / iOS PWA -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Happy Property" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Splash-Screen Farbe für Android -->
+    <meta name="application-name" content="Happy Property" />
+
+    <link rel="preconnect" href="https://vjlwgajmtqlwjjreowbu.supabase.co" crossorigin />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Montserrat:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script type="module" crossorigin src="/assets/index-DT3V1H9E.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-lbIM7HLt.css">
+    <meta name="hp-build" content="2026-10-31 20:51">
+  <link rel="manifest" href="/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/registerSW.js"></script></head>
+  <body>
+    <div id="root"></div>
+    <!-- Bewertungs-Fragebogen: Daten SOFORT laden, waehrend das App-Bundle noch
+         unterwegs ist. Ueberbrueckt Bundle-Download + Edge-Cold-Start parallel
+         statt nacheinander — die Seite steht, sobald das JS da ist. -->
+    <script>
+      (function () {
+        var m = location.pathname.match(/^\/bewertung\/([A-Za-z0-9]+)\/?$/);
+        if (!m) return;
+        window.__reviewPrefetch = fetch(
+          'https://vjlwgajmtqlwjjreowbu.supabase.co/functions/v1/review-api',
+          { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'view', token: m[1] }) }
+        ).then(function (r) { return r.json() }).catch(function () { return null });
+      })();
+    </script>
+    <!-- Web-Analytics (eigenes Tracking, Edge Function wa-track).
+         Nur Kundenseiten — der Admin-/CRM-Bereich wird nicht getrackt. -->
+    <script>
+      if (!/^\/(admin|login|set-password|report)/.test(location.pathname)) {
+        var _hpwaS = document.createElement('script');
+        _hpwaS.src = 'https://vjlwgajmtqlwjjreowbu.supabase.co/functions/v1/wa-track/t.js';
+        _hpwaS.defer = true;
+        document.head.appendChild(_hpwaS);
+      }
+    </script>
+  </body>
+</html>

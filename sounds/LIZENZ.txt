@@ -1,0 +1,7 @@
+Quelle: Mixkit (https://mixkit.co/free-sound-effects/page/), heruntergeladen am 26.10.2026
+Lizenz: Mixkit Sound Effects Free License (kostenlos, auch gewerblich, ohne Namensnennung;
+nicht als einzelne Tondatei weiterverkaufen oder weitergeben).
+- page-turn-single.wav      = „Page turn single“ (ID 1104)
+- single-book-paging.wav    = „Single book paging“ (ID 1101)
+- big-paper-page-turn.wav   = „Big paper page turn“ (ID 1105)
+Verwendung: Blättergeräusch im Buchmodus des Praxis-CRM (Leitfaden).

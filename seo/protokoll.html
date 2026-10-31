@@ -1,0 +1,357 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="robots" content="noindex,nofollow"><title>SEO-Änderungsprotokoll</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
+<style>
+  :root {
+    --paper: #F6F4EF;
+    --card: #FFFFFF;
+    --ink: #1B1A16;
+    --ink-soft: #5E5A50;
+    --rule: #DED9CD;
+    --rule-firm: #C3BCAA;
+    --accent: #27407E;
+    --accent-soft: #E4E8F4;
+    --gold: #9A6B14;
+    --gold-soft: #F3E9D5;
+    --green: #2F6042;
+    --green-soft: #E3EDE5;
+    --rot: #8C2F26;
+    --rot-soft: #F4E3E1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #14150F; --card: #1D1F18; --ink: #EDEAE0; --ink-soft: #A19D90;
+      --rule: #2E3128; --rule-firm: #454939; --accent: #9DB4EE;
+      --accent-soft: #1E2740; --gold: #DCAE5C; --gold-soft: #2E2617;
+      --green: #86C39C; --green-soft: #1A2A1F;
+      --rot: #E08B80; --rot-soft: #2E1A18;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #14150F; --card: #1D1F18; --ink: #EDEAE0; --ink-soft: #A19D90;
+    --rule: #2E3128; --rule-firm: #454939; --accent: #9DB4EE;
+    --accent-soft: #1E2740; --gold: #DCAE5C; --gold-soft: #2E2617;
+    --green: #86C39C; --green-soft: #1A2A1F;
+    --rot: #E08B80; --rot-soft: #2E1A18;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0; padding: 0 20px 110px;
+    background: var(--paper); color: var(--ink);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 17px; line-height: 1.62; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+
+  .mono {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.73em; letter-spacing: 0.09em; text-transform: uppercase;
+  }
+
+  header { padding: 76px 0 34px; }
+  .kicker { color: var(--gold); margin-bottom: 20px; }
+  h1 {
+    font-family: Georgia, "Iowan Old Style", serif;
+    font-size: clamp(2.2rem, 6.4vw, 3.3rem); line-height: 1.04;
+    letter-spacing: -0.02em; font-weight: 700; margin: 0 0 18px; text-wrap: balance;
+  }
+  .intro { font-size: 1.12rem; color: var(--ink-soft); margin: 0; max-width: 62ch; }
+
+  .facts {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin: 34px 0 0;
+  }
+  .facts div { background: var(--card); padding: 16px 16px 14px; }
+  .facts .n { display: block; font-family: Georgia, serif; font-size: 1.9rem; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .facts .t { display: block; color: var(--ink-soft); margin-top: 7px; }
+
+  h2 {
+    font-family: Georgia, serif; font-size: 1.55rem; letter-spacing: -0.015em;
+    margin: 72px 0 14px; padding-bottom: 12px; border-bottom: 2px solid var(--ink);
+  }
+  p { margin: 0 0 16px; max-width: 66ch; }
+  a { color: var(--accent); text-underline-offset: 3px; }
+  strong { font-weight: 650; }
+  ul { padding-left: 20px; margin: 0 0 18px; max-width: 66ch; }
+  li { margin-bottom: 8px; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.86em;
+    background: var(--card); border: 1px solid var(--rule); padding: 1px 5px;
+    border-radius: 3px; word-break: break-word;
+  }
+
+  /* Eintrag im Protokoll */
+  .log { border-top: 1px solid var(--rule); padding: 34px 0 6px; }
+  .log-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 10px; }
+  h3 { font-size: 1.28rem; line-height: 1.25; margin: 0; letter-spacing: -0.012em; flex: 1 1 300px; text-wrap: balance; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 14px; }
+  .chip { padding: 3px 9px; border-radius: 2px; }
+  .c-ok { background: var(--green-soft); color: var(--green); }
+  .c-teil { background: var(--gold-soft); color: var(--gold); }
+  .c-weg { background: var(--rot-soft); color: var(--rot); }
+  .c-zahl { background: var(--accent-soft); color: var(--accent); }
+
+  .vorher-nachher {
+    background: var(--card); border: 1px solid var(--rule);
+    padding: 0; margin: 0 0 18px; overflow-x: auto;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { color: var(--ink-soft); font-size: 0.73rem; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  .num-cell { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--ink-soft); }
+  .weg { text-decoration: line-through; color: var(--ink-soft); }
+
+  .hinweis {
+    border-left: 3px solid var(--rule-firm); padding: 4px 0 4px 16px;
+    margin: 0 0 18px; color: var(--ink-soft);
+  }
+  .hinweis b { color: var(--ink); }
+  .warnung { border-left-color: var(--rot); }
+  .warnung b { color: var(--rot); }
+
+  footer { margin-top: 80px; border-top: 1px solid var(--rule); padding-top: 22px; color: var(--ink-soft); font-size: 0.93rem; }
+
+  @media (max-width: 560px) { body { font-size: 16px; } }
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="mono kicker">Änderungsprotokoll · steuervorteil-zypern-immobilien.com</div>
+  <h1>Was am SEO schon erledigt ist</h1>
+  <p class="intro">Diese Seite hält fest, was an der Website bereits geändert wurde, damit nichts doppelt gemacht wird. Sie wird bei jeder weiteren Änderung fortgeschrieben. Was noch offen ist, steht im <a href="/seo/arbeitsplan.html">Arbeitsplan</a>.</p>
+
+  <div class="facts">
+    <div><span class="n">60</span><span class="t mono">Titel unter 60 Zeichen</span></div>
+    <div><span class="n">16</span><span class="t mono">Beschreibungen neu</span></div>
+    <div><span class="n">21</span><span class="t mono">Alt-Texte gesetzt</span></div>
+    <div><span class="n">71</span><span class="t mono">FAQ-Paare mit Markup</span></div>
+  </div>
+</header>
+
+<h2>7. September 2026</h2>
+
+<div class="log">
+  <div class="log-head"><h3>Renditeaussagen vereinheitlicht und belegt</h3></div>
+  <div class="chips mono"><span class="chip c-ok">erledigt</span><span class="chip c-zahl">4 Seiten</span><span class="chip c-zahl">Svens Formulierung</span></div>
+  <p>Auf vier Seiten standen unterschiedliche Renditezahlen nebeneinander: „6-8 % in Hotspots“ und „bis zu 10 % jährlich“ auf der Startseite, „6-7 % reale Mietrendite“ auf der Masterclass-Seite, „11-14 % Gesamtertrag“ auf zwei weiteren. Alle vier tragen jetzt dieselbe, von Sven gewählte Formulierung: <b>11-14 % Gesamtertrag pro Jahr, aufgeschlüsselt in 6-8 % Mietrendite plus durchschnittlich 5-6 % Wertzuwachs.</b></p>
+  <p><b>Dazu die Einordnung, die die Zahl trägt:</b> Unter jeder Zahlengruppe steht jetzt, woher sie stammt (Zentralbank-Preisindex Q2 2025, CEIC 2025) und dass Wertentwicklungen der Vergangenheit keine Garantie sind. Die Quellen waren nicht neu erfunden, sondern von der Ärzte-Landingpage übernommen, die das bereits vorbildlich gemacht hat. Diese eine Seite behält ihren eigenen, ausführlicheren Hinweis.</p>
+  <div class="hinweis"><b>Warum das auch für die Sichtbarkeit zählt:</b> Belegte, eingegrenzte Zahlen mit Quelle und Jahr sind genau das Format, das KI-Suchsysteme als zitierfähig einstufen. Eine runde Werbezahl ohne Grundlage wird eher übergangen.</div>
+  <p><b>Unangetastet geblieben:</b> Der Absatz „Welche Mietrendite kannst du realistisch erwarten?“ auf der Startseite. Er ordnet bereits sauber ein (5-8 % je nach Lage, Abhängigkeit von Steuerklasse und laufenden Kosten) und brauchte keine Änderung.</p>
+  <p><b>Nachtrag am selben Tag, nach Svens Freigabe:</b> Auf der Investor-Seite steht unter dem Rechenbeispiel jetzt „Beispielrechnung, keine Zusage“ mit den Faktoren, von denen die echten Zahlen abhängen.</p>
+</div>
+
+<div class="log">
+  <div class="log-head"><h3>Falsche Steueraussage auf der Startseite korrigiert</h3></div>
+  <div class="chips mono"><span class="chip c-weg">war inhaltlich falsch</span><span class="chip c-ok">korrigiert</span></div>
+  <p>In der Vorteilsliste auf der Startseite stand: <b>„In Deutschland wohnhaft, auf Zypern versteuern (0-10%)“</b>. Das widersprach dem eigenen Artikel zum Doppelbesteuerungsabkommen, der im August richtiggestellt wurde. Bei deutschem Wohnsitz gilt die Anrechnungsmethode nach Artikel 22: Die Mieteinnahmen gehören voll in die deutsche Steuererklärung, die auf Zypern gezahlte Steuer wird nur angerechnet. Der Vorteil entsteht über Abschreibung und Finanzierungszinsen, nicht über eine niedrigere Besteuerung.</p>
+  <p>Neu: <b>„Mieteinnahmen auf Zypern niedrig besteuert, in Deutschland angerechnet“.</b> Damit sagen Startseite und Fachartikel dasselbe. Genau auf solche Widersprüche innerhalb einer Website achten KI-Suchsysteme, wenn sie entscheiden, ob eine Quelle verlässlich ist.</p>
+</div>
+
+<div class="log">
+  <div class="log-head"><h3>Zwei Seiten warben für längst vergangene Termine</h3></div>
+  <div class="chips mono"><span class="chip c-ok">umgestellt</span><span class="chip c-zahl">2 Seiten</span></div>
+  <p>Beide Masterclass-Seiten bewarben Webinare, die längst vorbei waren: der 18. Mai 2026 und der 9. August 2026, jeweils mit „Begrenzte Teilnehmerzahl. Keine Aufzeichnung.“ und Anmelde-Knöpfen. Wer heute darauf stieß, meldete sich für nichts an.</p>
+  <p>Da aktuell keine Masterclass geplant ist, sind beide Seiten jetzt auf das kostenlose Beratungsgespräch umgestellt: Termine und Live-Hinweise entfernt, alle Knöpfe führen zum Terminkalender, Seitentitel und Beschreibungen angepasst. <b>Die Seiten bleiben erreichbar</b>, damit Links aus laufenden Anzeigen nicht ins Leere laufen. Der wertvolle Inhalt der Ärzte-Seite (Steuerhebel mit Paragrafen, Quellenangaben, Musterfall) ist vollständig erhalten.</p>
+  <div class="hinweis"><b>Wenn wieder eine Masterclass ansteht:</b> Termin, Anmelde-Texte und Live-Hinweise lassen sich in wenigen Minuten zurücksetzen. Bescheid sagen genügt.</div>
+</div>
+
+<div class="log">
+  <div class="log-head"><h3>Tempo-Einbruch der Startseite gefunden und behoben (Vimeo-Video)</h3></div>
+  <div class="chips mono"><span class="chip c-ok">erledigt</span><span class="chip c-zahl">Tempo 41 auf 82</span><span class="chip c-zahl">Ladezeit 9,8 s auf 3,3 s</span></div>
+  <p><b>Aufgefallen im Wochenbericht:</b> Der Tempo-Wert der Startseite war auf 41 gefallen (Ladezeit 9,8 Sekunden auf dem Handy). Ursache war <b>nicht</b> das Hero-Video vom Startbild, das im August bereits repariert wurde, sondern ein zweites Video: das Vimeo-Video in der Sektion „Warum auf Zypern investieren?“. Es war fest als Player eingebunden und lud bei jedem Seitenaufruf rund 240 KB Vimeo-Programmcode nach, auch bei Besuchern, die es nie anklicken.</p>
+  <p><b>Der Fix (gleiches Prinzip wie beim Hero-Video):</b> An der Stelle steht jetzt das Vorschaubild des Videos mit einem Abspiel-Knopf in Korall. Erst beim Klick wird der Vimeo-Player geladen und startet sofort. Für Besucher sieht es aus wie vorher, nur schneller.</p>
+  <div class="vorher-nachher">
+    <table>
+      <thead><tr><th>Startseite mobil (Google-Messung)</th><th>vorher</th><th>nachher</th></tr></thead>
+      <tbody>
+        <tr><td>Tempo-Wert</td><td class="weg num-cell">41</td><td class="num-cell"><b>82</b></td></tr>
+        <tr><td>Ladezeit größter Inhalt (LCP)</td><td class="weg num-cell">9,8 s</td><td class="num-cell"><b>3,3 s</b></td></tr>
+        <tr><td>Blockierte Zeit (Reaktion auf Tippen)</td><td class="weg num-cell">870 ms</td><td class="num-cell"><b>400 ms</b></td></tr>
+        <tr><td>Vimeo-Ladung ohne Klick</td><td class="weg num-cell">240 KB</td><td class="num-cell"><b>0 KB</b></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="hinweis"><b>Geprüft:</b> Vorschaubild und Abspiel-Knopf sitzen korrekt im 16:9-Rahmen, ein Klick lädt und startet das Video wie zuvor. Vor dem Klick geht kein einziger Abruf an Vimeo.</div>
+  <div class="hinweis warnung"><b>Bleibt offen, weil es Svens Entscheidung braucht:</b> Es laufen drei getrennte Google-Container auf der Seite (Tag Manager, Google-Tag und Google Ads), zusammen rund 250 KB ungenutzter Code. Der Google-Ads-Container lädt dabei ein zweites Mal dieselbe Datei, die der Google-Tag schon geladen hat. Das ließe sich zusammenlegen, aber daran hängt die Conversion-Messung der Werbekampagnen - hier wird nichts ohne Rücksprache angefasst.</div>
+</div>
+
+<h2>29. August 2026</h2>
+
+<div class="log">
+  <div class="log-head"><h3>Master-Prompt abgearbeitet: Inhalte für KI-Suchen, Technik-Rest, Fremdquellen-Plan</h3></div>
+  <div class="chips mono"><span class="chip c-ok">erledigt</span><span class="chip c-zahl">22 Artikel</span><span class="chip c-zahl">6 Geldseiten-FAQ</span><span class="chip c-zahl">llms.txt live</span></div>
+  <p><b>Antwort-Einleitungen (alle 22 Artikel):</b> Jeder Artikel beantwortet seine Kernfrage jetzt in den ersten 100 Wörtern in einem zitierfähigen Absatz mit konkreter Zahl - das ist das Format, das Perplexity und ChatGPT bevorzugt übernehmen. 17 Artikel bekamen zusätzlich neue Titel oder Beschreibungen mit Jahreszahl 2026.</p>
+  <p><b>Aktualität sichtbar gemacht:</b> Non-Dom-Artikel um einen Antrags-Abschnitt ergänzt, DBA-Artikel um den Abschnitt zum häufigsten Irrtum (Anrechnungs- statt Freistellungsmethode, mit Link zur BMF-Quelle) - Behördenquellen und Jahreszahlen im Titel sind genau die Signale, auf die Claude und Google-KI achten.</p>
+  <p><b>Geldseiten ausgebaut:</b> Sechs zentrale Seiten (Start, Kaufprozess, Steuervorteile, Über uns, Termin, Kontakt) haben jetzt sichtbare FAQ-Abschnitte mit wortgleichem Schema-Markup, fünf davon zusätzlich einen „Auf einen Blick“-Kasten mit den wichtigsten Fakten. Die Kaufprozess-Seite wurde von 96 auf über 600 Wörter ausgebaut (7-Schritte-Ablauf vor dem Kontaktformular).</p>
+  <p><b>Technik-Rest erledigt:</b> <code>llms.txt</code> mit allen Geschäftsfakten liegt live (für KI-Assistenten, die sie lesen - Google ignoriert sie, kostet aber nichts), robots.txt lässt alle acht relevanten KI-Crawler ausdrücklich zu, Großschreib-Adressen leiten per 301 auf die Kleinschreibung um, und 13 Funnel-/Doppelseiten sind auf noindex gesetzt, damit Google nur die 47 „echten“ Seiten bewertet.</p>
+  <p><b>happy-property.de:</b> Rollen sauber getrennt - die .de bleibt die Landing-Page-Domain, ihre 22 Artikel-Kopien verweisen jetzt per Canonical auf die Originale der .com, damit sich die beiden Domains nicht gegenseitig Konkurrenz machen.</p>
+  <p><b>Fremdquellen-Plan erstellt:</b> Da 82-89 % aller KI-Zitate aus fremden Quellen stammen, liegt jetzt ein fertiger Plan vor (Bauträger-Backlinks, ProvenExpert, LinkedIn-Firmenseite, 5 Postentwürfe) - die Entscheidungen dazu liegen bei Sven.</p>
+  <div class="hinweis"><b>Offen gelegt:</b> Die Kaufprozess-Seite hat nach dem Ausbau 631 sichtbare Wörter - das Ziel aus dem Audit waren 800+. Bewusst so gelassen: Der Ablauf ist vollständig, und Auffüllen nur der Zahl wegen würde die Qualität senken, auf die KI-Suchen achten.</div>
+</div>
+
+<h2>27. August 2026</h2>
+
+<div class="log">
+  <div class="log-head"><h3>Meldung „Seite sehr langsam“ geprüft - und das Hero-Video repariert</h3></div>
+  <div class="chips mono"><span class="chip c-ok">erledigt</span><span class="chip c-zahl">Plan 08 + 12</span><span class="chip c-zahl">LCP 30,9 s → 4,6 s</span></div>
+  <p><b>Erst die Prüfung:</b> Die SEO-Änderungen vom Vortag haben die Seite nicht verlangsamt. Messwerte identischer Seiten vorher/nachher: Startseite 59 → 63 Punkte, Artikel 82 → 87, Seitengewicht praktisch unverändert. Was sich langsam anfühlte, war zweierlei: Nach den vielen Änderungen war der Seiten-Cache leer, die ersten Aufrufe je Seite dauerten also länger (heilt sich von selbst), und der eigentliche Dauerbrenner war das 4,2-MB-Hero-Video, das schon vor allen Maßnahmen die Ladezeit dominierte.</p>
+  <p><b>Dann der Fix - Maßnahme 12 ist damit erledigt:</b></p>
+  <ul>
+    <li>Video neu kodiert: 960 Pixel breit, ohne Tonspur, <b>1,08 MB statt 4,19 MB</b>. Liegt als <code>Website-Banner-schnell.mp4</code> in der Mediathek, das Original bleibt unangetastet erhalten.</li>
+    <li>Standbild (92 KB) als <code>poster</code> hinterlegt und per Vorlade-Hinweis im Kopfbereich priorisiert, dazu <code>preload="none"</code> am Video.</li>
+    <li>Auf dem Handy wird das Video gar nicht mehr geladen - dort zeigt der Hero nur das Standbild. Am Rechner läuft das Video wie bisher.</li>
+  </ul>
+  <div class="vorher-nachher">
+    <table>
+      <thead><tr><th>Startseite mobil</th><th>vorher</th><th>nachher</th></tr></thead>
+      <tbody>
+        <tr><td>Ladezeit größter Inhalt (LCP)</td><td class="weg num-cell">30,9 s</td><td class="num-cell"><b>4,6 s</b></td></tr>
+        <tr><td>Performance-Wert</td><td class="weg num-cell">59</td><td class="num-cell"><b>79</b></td></tr>
+        <tr><td>Videoladung auf dem Handy</td><td class="weg num-cell">4,19 MB</td><td class="num-cell"><b>0 MB</b></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="hinweis"><b>Offen gelegt, weil es kurz sichtbar war:</b> Beim Einbau der Handy-Regel wurden die zwei Hero-CSS-Klassen zunächst überschrieben statt ergänzt - für wenige Minuten lag das Video als Block über der Startseite. Am Bildschirm geprüft, sofort mit vollständigen Regeln repariert, Desktop und Handy danach per Screenshot abgenommen. Merkregel für alle künftigen CSS-Änderungen über die Schnittstelle: Eine Regel <b>ersetzt</b> die gespeicherte Klasse komplett, immer die ganze Klasse neu schreiben.</div>
+  <div class="hinweis"><b>Für Giona:</b> Maßnahme 08/12 (Video) ist damit vom Tisch. Die restlichen 4,6 Sekunden stecken im render-blockierenden CSS, den extern geladenen Schriften (Maßnahme 10) und dem ungenutzten JavaScript - das sind die nächsten Hebel. Und falls sich die Seite im eingeloggten Zustand langsam anfühlt: Eingeloggte Besucher bekommen nie die Cache-Fassung, das ist normal.</div>
+</div>
+
+<h2>26. August 2026</h2>
+
+<div class="log">
+  <div class="log-head"><h3>Interne Links, Bilder, Schriften - und der Tempo-Durchbruch</h3></div>
+  <div class="chips mono"><span class="chip c-ok">erledigt</span><span class="chip c-zahl">Plan 05 + 09 + 10</span><span class="chip c-zahl">Perf 59 → 88</span></div>
+  <p><b>Interne Links (05):</b> 47 Links im Fließtext von 20 Artikeln gesetzt - jeweils die erste Erwähnung von Begriffen wie Non-Dom-Status, Doppelbesteuerungsabkommen oder Steuervorteile verlinkt jetzt auf die passende Seite. Nie in Überschriften, nie in bestehenden Links, höchstens vier je Artikel. Alle Ziele geprüft.</p>
+  <p><b>Bilder (09):</b> Die vier großen Kachelbilder der Startseite (bis 646 KB) neu aufbereitet, jetzt liefert Optimole daraus rund 100 KB WebP. Merkregel: Optimole wandelt nur bei <code>w:auto</code> ins WebP - eine feste Breite in der Adresse schaltet die Formatumwandlung ab.</p>
+  <p><b>Schriften (10):</b> Montserrat und Playfair Display liegen jetzt als Dateien in der eigenen Mediathek und werden über das Hilfs-Snippet eingebettet; der Verweis auf Google-Server ist aus allen Seiten entfernt. Löst nebenbei das Datenschutzthema der Font-Abmahnwellen. Optik unverändert, per Sichtprüfung abgenommen.</p>
+  <p><b>Video-Nachschliff:</b> Wichtige Erkenntnis für alle künftigen Arbeiten: <code>preload="none"</code> allein bremst ein Autoplay-Video nicht - das <code>autoplay</code>-Attribut lässt den Browser sofort laden, und das Video frisst dem Standbild die Bandbreite weg. Deshalb startet das Hero-Video jetzt per Skript erst nach dem Seitenaufbau (nur ab Tablet-Breite). Endstand Startseite mobil: <b>Performance 88, Ladezeit 2,9 Sekunden</b> - von 59 und 30,9 Sekunden vor Beginn.</p>
+</div>
+
+
+<div class="log">
+  <div class="log-head"><h3>Seitentitel entschlackt</h3></div>
+  <div class="chips mono"><span class="chip c-ok">erledigt</span><span class="chip c-zahl">alle 60 Adressen</span><span class="chip c-zahl">Plan 01 + 13</span></div>
+  <p>Der lange Firmenzusatz an jedem Titel kam nicht aus einer Yoast-Vorlage, sondern war der WordPress-Seitentitel selbst. Er steht jetzt auf <b>Happy Property</b> statt auf „Happy Property - Finde jetzt deine Traumimmobilie auf Zypern“. Damit sind aus 62 Zeichen Ballast 17 geworden, auf einen Schlag für alle Seiten.</p>
+  <p>Danach haben 29 Adressen einen eigenen kurzen SEO-Titel bekommen, weil ihr Titel auch ohne Zusatz noch zu lang war - erst die 22 Blogartikel, am Abend über das Hilfs-Snippet auch die restlichen Seiten samt Startseite. <b>Alle 60 Adressen liegen jetzt unter 60 Zeichen.</b></p>
+  <div class="vorher-nachher">
+    <table>
+      <thead><tr><th>Artikel</th><th>vorher</th><th>nachher</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>/auswandern-nach-zypern-als-rentner/</code></td>
+          <td class="weg">Auswandern nach Zypern als Rentner: Warum immer mehr Deutsche hier ihren Ruhestand verbringen - Happy Property - Finde jetzt … <span class="num-cell">(156)</span></td>
+          <td>Auswandern nach Zypern als Rentner - Happy Property <span class="num-cell">(51)</span></td>
+        </tr>
+        <tr>
+          <td><code>/zypern-limited/</code></td>
+          <td class="weg">Zypern Limited gründen: Steuervorteile, Managementfreiheit &amp; diskrete Holding-Strukturen - Happy Property - Finde jetzt … <span class="num-cell">(151)</span></td>
+          <td>Zypern Limited gründen: Steuern &amp; Struktur - Happy Property <span class="num-cell">(59)</span></td>
+        </tr>
+        <tr>
+          <td><code>/gewerbe-in-zypern-deutsche-finanzamt-deine-struktur/</code></td>
+          <td class="weg">Gewerbe in Zypern, Wohnsitz in Deutschland: So bewertet das deutsche Finanzamt deine Struktur - Happy Property - Finde jetzt … <span class="num-cell">(156)</span></td>
+          <td>Gewerbe in Zypern, Wohnsitz in Deutschland - Happy Property <span class="num-cell">(59)</span></td>
+        </tr>
+        <tr>
+          <td><code>/steuern-optimieren-mit-dem-dba/</code></td>
+          <td class="weg">Doppelbesteuerungs-Abkommen Deutschland-Zypern: So nutzt du es richtig - Happy Property - Finde jetzt … <span class="num-cell">(133)</span></td>
+          <td>DBA Deutschland-Zypern richtig nutzen - Happy Property <span class="num-cell">(54)</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="hinweis"><b>Nachtrag vom selben Abend:</b> Auch die sieben restlichen Seiten und die Startseite sind erledigt. Möglich wurde das durch das kleine Hilfs-Snippet (siehe unten). <b>Stand jetzt: null Titel über 60 Zeichen, alle 60 Adressen geprüft.</b> Für dich bleibt hier nichts mehr zu tun. Wenn du künftig eine neue Seite anlegst und ihr Titel über 60 Zeichen geht, trag im Yoast-Kasten einen kürzeren SEO-Titel ein.</div>
+</div>
+
+<div class="log">
+  <div class="log-head"><h3>Beschreibungen nachgetragen</h3></div>
+  <div class="chips mono"><span class="chip c-ok">erledigt</span><span class="chip c-zahl">16 Seiten</span><span class="chip c-zahl">Plan 02</span></div>
+  <p>Sechzehn Seiten hatten kein Beschreibungsfeld, Google hat sich den Textschnipsel im Suchergebnis also selbst zusammengebaut. Alle haben jetzt einen eigenen Text, zur Dokumentation stehen sie unten. An dem Abend kam außerdem die neue Seite <code>/youtube/</code> dazu, die direkt Titel und Beschreibung bekommen hat.</p>
+  <div class="vorher-nachher">
+    <table>
+      <thead><tr><th>Seite</th><th>Beschreibung (eingetragen)</th></tr></thead>
+      <tbody>
+        <tr><td><code>/steuerliche-vorteile/</code></td><td>Non-Dom-Status, Holding-Struktur und das DBA Deutschland-Zypern: welche Steuervorteile beim Immobilienkauf auf Zypern für Deutsche wirklich zulässig sind.</td></tr>
+        <tr><td><code>/immobilieninvestor-zypern/</code></td><td>Immobilien auf Zypern für Kapitalanleger: Objektsuche, Kaufabwicklung und Verwaltung aus einer Hand. Für Käufer kostenfrei, die Provision zahlt der Bauträger.</td></tr>
+        <tr><td><code>/usp-happy-property/</code></td><td>Happy Property oder klassischer Makler? Der Vergleich: Bauträgerauswahl, Kaufabwicklung, Vermietung und Verwaltung aus einer Hand. Für Käufer kostenfrei.</td></tr>
+        <tr><td><code>/ueber-uns/</code></td><td>Happy Property vermittelt seit 2020 Immobilien auf Zypern, über 80 Objekte bisher. Lerne Sven Rüprich und das Team hinter der Vermittlung kennen.</td></tr>
+        <tr><td><code>/kaufprozess/</code></td><td>So läuft der Immobilienkauf auf Zypern ab: von der Reservierung über den Zahlungsplan bis zu den Title Deeds. Jeder Schritt einzeln erklärt.</td></tr>
+        <tr><td><code>/blog/</code></td><td>Wissen zu Zypern, Steuern und Immobilien: verständliche Fachartikel zu Doppelbesteuerung, Non-Dom-Status, Auswandern und Kapitalanlage auf Zypern.</td></tr>
+        <tr><td><code>/rendite-rechner/</code></td><td>Rendite-Rechner für Immobilien auf Zypern: Mietrendite, Cashflow und Gesamtertrag individuell berechnen. Kostenlos und ohne Anmeldung.</td></tr>
+        <tr><td><code>/masterclass/</code></td><td>Kostenlose Masterclass: Wie deutsche Anleger mit Neubau-Immobilien auf Zypern Rendite erzielen und in Deutschland Steuern sparen. Jetzt Platz sichern.</td></tr>
+        <tr><td><code>/masterclass-fuer-aerzte-apotheker-anmeldung/</code></td><td>Masterclass für Ärzte und Apotheker: Steuerlast senken mit einer Kapitalanlage auf Zypern. Kostenlose Anmeldung, Termin frei wählbar.</td></tr>
+        <tr><td><code>/warum-happy-property/</code></td><td>Warum Happy Property: eigene Bauträgerauswahl, Finanzierung, Vermietung und Verwaltung vor Ort auf Zypern statt reiner Vermittlung ohne Betreuung.</td></tr>
+        <tr><td><code>/expose/</code></td><td>Exposé anfordern: aktuelle Neubau-Objekte auf Zypern mit Preis, Grundriss, Mietprognose und Rechenbeispiel. Kostenlos und unverbindlich.</td></tr>
+        <tr><td><code>/kontakt/</code></td><td>Kontakt zu Happy Property: Fragen zu Immobilien, Steuern oder Finanzierung auf Zypern. Antwort in der Regel am selben Werktag.</td></tr>
+        <tr><td><code>/e-book/</code></td><td>Kostenloses E-Book zu Immobilien-Investments auf Zypern: Steuern, Kaufablauf, Rendite und die häufigsten Fehler deutscher Anleger.</td></tr>
+        <tr><td><code>/newsletter-zypern-insights/</code></td><td>Zypern Insights: regelmäßig konkrete Zahlen, Steuerhinweise und neue Objekte per Mail. Kostenlos und jederzeit abbestellbar.</td></tr>
+        <tr><td><code>/nach-zypern-auswandern/</code></td><td>Nach Zypern auswandern: Steuern, Wohnen, Immobilien und Alltag im Überblick. Was Deutsche vor dem Umzug klären sollten.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="hinweis"><b>Bewusst ausgelassen:</b> Danke-Seiten, Terminbestätigungen, Video- und Replay-Seiten bekommen absichtlich <b>keine</b> Beschreibung. Die gehören nicht in die Suche, sondern auf noindex, das ist Maßnahme 06.</div>
+</div>
+
+<div class="log">
+  <div class="log-head"><h3>Alt-Texte für die Artikelbilder</h3></div>
+  <div class="chips mono"><span class="chip c-ok">erledigt</span><span class="chip c-zahl">21 Bilder, 16 Artikel</span><span class="chip c-zahl">Plan 07</span></div>
+  <p>Alle Kopfbilder der Blogartikel hatten ein leeres Alt-Attribut. Sie haben jetzt einen beschreibenden Text, der das Artikelthema aufgreift, zum Beispiel <em>„Doppelbesteuerungsabkommen Deutschland-Zypern im Überblick“</em> statt gar nichts. Dazu das E-Book-Bild, das auf vier Artikeln vorkommt.</p>
+  <p>Die Bilder der Startseite waren bereits sauber beschriftet und wurden nicht angefasst.</p>
+</div>
+
+<div class="log">
+  <div class="log-head"><h3>FAQ-Fragen sind jetzt echte Überschriften</h3></div>
+  <div class="chips mono"><span class="chip c-ok">erledigt</span><span class="chip c-zahl">71 Paare, 9 Artikel</span><span class="chip c-zahl">Plan 04</span></div>
+  <p>Die FAQ-Texte waren inhaltlich schon gut: Frage, dann die Antwort im ersten Satz. Nur standen die Fragen als normaler Absatz in Fettschrift statt als Zwischenüberschrift. Für Google war das kein FAQ, sondern Fließtext.</p>
+  <p>Alle 66 Fragen in diesen neun Artikeln sind jetzt <code>&lt;h3&gt;</code>:</p>
+  <ul>
+    <li><code>/auswandern-nach-zypern-als-rentner/</code> und <code>/zypern-auswandern-mit-kindern/</code> - je 10 Fragen</li>
+    <li><code>/non-dom-status-zypern/</code> - 10 Fragen</li>
+    <li><code>/auswandern-nach-zypern/</code> und <code>/steuern-auf-zypern/</code> - je 8 Fragen</li>
+    <li><code>/auswandern-nach-zypern-voraussetzungen-das-gilt-fuer-dich/</code> - 7 Fragen</li>
+    <li><code>/zypern-auswandern-steuern/</code> und <code>/zypern-deutsche-community/</code> - je 6 Fragen</li>
+    <li><code>/leben-auf-zypern-erfahrungen-so-wirst-du-teil-der-community/</code> - 6 Fragen, hier zusätzlich die Nummern „8.1“, „8.2“ und so weiter aus den Fragen entfernt, weil die im Google-Ergebnis schlecht aussehen</li>
+  </ul>
+  <div class="hinweis"><b>Nachtrag vom selben Abend: das Markup ist jetzt auch drin.</b> Der erste Versuch, es direkt in den Artikeltext zu schreiben, ist gescheitert - die Oxygen-Vorlage entfernt beim Ausspielen den <code>&lt;script&gt;</code>-Block und lässt den Inhalt als sichtbaren Text stehen. Das wurde sofort zurückgebaut. Der zweite Weg funktioniert: Ein kleines Hilfs-Snippet (siehe unten) spielt das Markup sauber im Kopfbereich der Seite aus. <b>Alle 9 Artikel liefern jetzt gültiges FAQ-Markup mit zusammen 71 Frage-Antwort-Paaren, wortgleich mit dem sichtbaren Text.</b> Geprüft je Artikel: Markup vorhanden, JSON gültig, kein roher Text auf der Seite, Fragen sichtbar. Für dich bleibt hier nur noch: die FAQ-Bereiche der Geldseiten (Maßnahme 4.3b im Arbeitsplan) neu texten - sobald der Text als Überschriften-Absatz-Paare steht, kann das Markup auf demselben Weg nachgezogen werden.</div>
+</div>
+
+<div class="log">
+  <div class="log-head"><h3>Ein kleines Hilfs-Snippet auf der Website</h3></div>
+  <div class="chips mono"><span class="chip c-ok">aktiv</span><span class="chip c-zahl">Code Snippets, Nr. 8</span><span class="chip c-zahl">Freigabe Sven</span></div>
+  <p>Die Schnittstelle der Website gab die Yoast-Felder anfangs nur für Blogartikel frei, nicht für Seiten - deshalb liefen die ersten Schreibversuche auf Seiten ohne Fehlermeldung ins Leere. Mit Svens Freigabe liegt jetzt ein kleines Snippet im Plugin <b>Code Snippets</b> (Name: „HP SEO: Yoast-Felder fuer Seiten + FAQ-Schema“), das genau zwei Dinge tut:</p>
+  <ul>
+    <li>Es gibt die Felder für SEO-Titel und Beschreibung auch für Seiten frei. Nur Administratoren dürfen schreiben.</li>
+    <li>Es spielt das FAQ-Markup aus einem eigenen Feld sauber im Kopfbereich aus. Ungültiger Inhalt wird still ignoriert - es kann also nie roher Text auf der Seite landen.</li>
+  </ul>
+  <p><b>Bitte nicht löschen oder deaktivieren.</b> Ohne das Snippet verschwindet das FAQ-Markup von allen 9 Artikeln, und die automatische Pflege der Seiten-Titel funktioniert nicht mehr. Falls es je Probleme macht: Es lässt sich in Code Snippets mit einem Klick abschalten, die Website läuft dann normal weiter, nur ohne diese beiden Funktionen.</p>
+</div>
+
+<h2>Was dabei aufgefallen ist</h2>
+
+<div class="log">
+  <div class="log-head"><h3>Sieben kaputte Bilder</h3></div>
+  <div class="chips mono"><span class="chip c-weg">Entscheidung Sven</span></div>
+  <p>In <code>/zypern-deutsche-community/</code> stehen sechs Bilder mit einer Adresse, die mit <code>blob:</code> beginnt. Solche Adressen existieren nur in der Browser-Sitzung, in der sie erzeugt wurden. Die Bilder laden also bei <b>keinem</b> Besucher, vermutlich seit dem Tag, an dem der Artikel geschrieben wurde. Sie sind 29 mal 20 Pixel groß, das waren wohl kleine Symbole, die beim Einfügen nie hochgeladen wurden.</p>
+  <p>Dazu ein leeres <code>&lt;img alt=""/&gt;</code> ganz ohne Bildquelle in <code>/immobilien-steuerlich-korrekt-angeben/</code>.</p>
+  <p>Alt-Text darauf zu schreiben wäre sinnlos, deshalb wurden diese sieben übersprungen. Sie gehören gelöscht oder durch echte Bilder ersetzt.</p>
+</div>
+
+<div class="log">
+  <div class="log-head"><h3>Aktualisierungsdatum bringt so nichts</h3></div>
+  <div class="chips mono"><span class="chip c-weg">getestet und verworfen</span></div>
+  <p>Ein Hinweis „Zuletzt aktualisiert am …“ unter jedem Artikel wäre ein guter Vertrauensanker. Auf dieser Website funktioniert er nicht: Das Änderungsdatum in der Datenbank passt bei den meisten Artikeln nicht zum Veröffentlichungsdatum. Bei <code>/non-dom-status-zypern/</code> stand die Aktualisierung auf dem 25. März, die Veröffentlichung aber auf dem 8. April - also vor dem eigenen Erscheinen. Bei anderen sind beide Daten identisch, dann steht dort zweimal derselbe Tag.</p>
+  <p>Eingebaut, live geprüft, wieder zurückgenommen. Sinnvoll wird es erst, wenn es nur erscheint, sobald die Änderung wirklich später liegt als die Veröffentlichung.</p>
+</div>
+
+<h2>Wie geprüft wurde</h2>
+
+<p>Jede Änderung wurde nach dem Speichern am echten Quelltext der Live-Seite kontrolliert, nicht im Editor. Das ist wichtig, weil der Cache von WP-Optimize sonst die alte Fassung zeigt. Von jedem angefassten Artikel liegt der Originaltext als Sicherungskopie vor, jede Änderung ist also umkehrbar.</p>
+
+<footer>
+  <p>Stand 27.08.2026. Diese Seite wird bei jeder weiteren SEO-Änderung fortgeschrieben. Offene Punkte stehen im <a href="/seo/arbeitsplan.html">Arbeitsplan</a>. Fragen an Sven.</p>
+</footer>
+
+</div>
+
+</body></html>
