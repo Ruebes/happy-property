@@ -43,6 +43,8 @@ function extractText(m: EvoMessage): { text: string; mediaOnly: boolean; skip: b
   const cap = (k: string) => (typeof msg[k] === 'object' && msg[k] ? (msg[k] as { caption?: string }).caption ?? '' : '')
   if (msg.imageMessage)    return { text: cap('imageMessage')    || '[Bild]', mediaOnly: !cap('imageMessage'), skip: false }
   if (msg.videoMessage)    return { text: cap('videoMessage')    || '[Video]', mediaOnly: !cap('videoMessage'), skip: false }
+  // Runde Videonachricht (ptv): wie eine Sprachnachricht eine Antwort des Kunden.
+  if (msg.ptvMessage)      return { text: '[Videonachricht]', mediaOnly: true, skip: false }
   if (msg.documentMessage) {
     const fn = (msg.documentMessage as { fileName?: string }).fileName ?? ''
     return { text: cap('documentMessage') || `[Dokument${fn ? ': ' + fn : ''}]`, mediaOnly: !cap('documentMessage'), skip: false }
@@ -121,6 +123,24 @@ Deno.serve(async (req) => {
 
     const phone = jidToPhone(jid)
     if (!phone) return ok('OK (no phone)')          // LID ohne Aufloesung → nichts zuzuordnen
+
+    // Reaktion (👍 und Co.): kommt nicht in den Verlauf. Nur auf Lottes offenes
+    // Café-Angebot zählt eine positive Reaktion als Zusage; booking-bot prüft Emoji,
+    // Ziel-Nachricht und Gespräch selbst (cafe_reaktion) und tut sonst nichts.
+    const reaktion = m?.message?.reactionMessage as unknown as { key?: { id?: string }; text?: string } | undefined
+    if (reaktion && typeof reaktion === 'object') {
+      if (!fromMe && reaktion.text && reaktion.key?.id) {
+        const p = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
+          method:  'POST',
+          headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ action: 'cafe_reaktion', phone, emoji: reaktion.text, ziel: String(reaktion.key.id), uid }),
+        }).then(r => r.text()).then(t => console.log(`[${TAG}] Reaktion von ${phone}: ${t.slice(0, 200)}`))
+          .catch(e => console.error(`[${TAG}] booking-bot cafe_reaktion Fehler:`, e))
+        const er = (globalThis as { EdgeRuntime?: { waitUntil: (p: Promise<unknown>) => void } }).EdgeRuntime
+        if (er) er.waitUntil(p); else await p
+      }
+      return ok('OK (reaction)')
+    }
     const { text, mediaOnly, skip } = extractText(m!)
     if (skip) return ok('OK (no content)')
 
