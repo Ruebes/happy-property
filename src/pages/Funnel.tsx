@@ -199,12 +199,16 @@ export default function Funnel() {
     const code = utmBase.utm_campaign ?? ''
     return code.startsWith('projekt-') ? clean(code.slice(8)) : ''
   }, [directEntry.project, utmBase.utm_campaign])
+  // Bekannter Kontakt ohne ?p=: Projekt aus seinem Deal (lead_prefill). Nur fürs Design,
+  // die Buchungs-Zuordnung steht beim Deal schon fest.
+  const [prefillSlug, setPrefillSlug] = useState('')
+  const designSlug = projectSlug || prefillSlug
   const [proj, setProj] = useState<FunnelProjectPage | null>(null)
   const [projReady, setProjReady] = useState(!projectSlug)
   useEffect(() => {
-    if (!projectSlug) return
-    void loadFunnelProject(projectSlug).then(p => { setProj(p); setProjReady(true) })
-  }, [projectSlug])
+    if (!designSlug) return
+    void loadFunnelProject(designSlug).then(p => { setProj(p); setProjReady(true) })
+  }, [designSlug])
   const projWelcome = proj
     ? Object.fromEntries(Object.entries({ title: proj.title, subtitle: proj.subtitle, hero_url: proj.hero_url }).filter(([, v]) => !!v))
     : {}
@@ -296,11 +300,12 @@ export default function Funnel() {
             ? { action: 'lead_prefill', lead_token: directEntry.leadToken }
             : { action: 'lead_prefill', deck_token: directEntry.deckToken },
         })
-        const d = data as { ok?: boolean; lead_id?: string; first_name?: string } | null
+        const d = data as { ok?: boolean; lead_id?: string; first_name?: string; project_slug?: string } | null
         if (e || !d?.ok || !d.lead_id) throw new Error('prefill failed')
         if (cancelled) return
         leadRef.current = d.lead_id
         setDirectName(d.first_name ?? '')
+        setPrefillSlug((d.project_slug ?? '').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 80))
         void track(0, 'direct_entry')
       } catch {
         if (cancelled) return
@@ -681,6 +686,14 @@ export default function Funnel() {
 
           {phase === 'meeting_type' && (
             <div>
+              {direct && proj?.hero_url && (
+                <div className="relative mb-6">
+                  <img src={proj.hero_url} alt="" className="w-full h-40 md:h-56 object-cover rounded-2xl shadow-lg" />
+                  {HERO_LABEL && (
+                    <span className="absolute right-3 bottom-3 text-[11px] px-2.5 py-1 rounded-md text-white" style={{ background: 'rgba(26,35,50,.7)' }}>{HERO_LABEL}</span>
+                  )}
+                </div>
+              )}
               <div className="flex justify-center mb-6 lg:hidden">
                 <img src={hostSq} alt={cfg.host.name} width={112} height={112}
                   className="w-24 h-24 md:w-28 md:h-28 rounded-full object-cover shadow-lg ring-4 ring-white" />

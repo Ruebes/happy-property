@@ -502,7 +502,17 @@ Deno.serve(async (req) => {
       }
       if (!leadId) return json({ error: 'not_found' }, 404)
       const { data: lead } = await admin.from('leads').select('first_name').eq('id', leadId).maybeSingle()
-      return json({ ok: true, lead_id: leadId, first_name: ((lead as { first_name?: string | null } | null)?.first_name ?? '').trim() })
+      // Projekt-Design (Sven 1.11.26): Kam der Lead über ein Projekt (deals.source_project_id),
+      // zeigt die Terminseite dessen Bild und Hintergrund, auch ohne ?p= im Link.
+      let projectSlug = ''
+      const { data: dl } = await admin.from('deals').select('source_project_id')
+        .eq('lead_id', leadId).not('source_project_id', 'is', null).order('created_at', { ascending: false }).limit(1)
+      const pid = (dl as { source_project_id?: string }[] | null)?.[0]?.source_project_id
+      if (pid) {
+        const { data: fp } = await admin.from('funnel_projects').select('slug').eq('project_id', pid).eq('active', true).limit(1)
+        projectSlug = (fp as { slug?: string }[] | null)?.[0]?.slug ?? ''
+      }
+      return json({ ok: true, lead_id: leadId, first_name: ((lead as { first_name?: string | null } | null)?.first_name ?? '').trim(), project_slug: projectSlug })
     }
 
     // ── direct_answers ───────────────────────────────────────────────────────
