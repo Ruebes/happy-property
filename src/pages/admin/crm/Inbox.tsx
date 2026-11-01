@@ -13,6 +13,10 @@ import { useMailAttachments, MailAttachmentField } from '../../../components/crm
 // sind bewusst AUSGEBLENDET — erkennbar an activities.auto=false; eingehende
 // Nachrichten sind immer echte Kundennachrichten und werden immer gezeigt.
 //
+// Im geöffneten Gespräch werden die automatischen Nachrichten an den Kunden
+// trotzdem nachgeladen und als kompakte graue Zeile (Betreff + Anfang) gezeigt,
+// damit man sieht, worauf der Kunde antwortet. Klick klappt den vollen Text auf.
+//
 // Blauer Punkt = ungelesene eingehende Nachricht. Beim Öffnen der Konversation
 // werden ihre eingehenden Nachrichten als gelesen markiert (activities.read_at).
 
@@ -24,6 +28,7 @@ interface Msg {
   content: string | null
   at: string
   unread: boolean
+  auto?: boolean
 }
 interface Convo {
   lead_id: string
@@ -41,6 +46,13 @@ interface Convo {
 
 type ChannelFilter = 'all' | 'whatsapp' | 'email'
 const ATTACH_BUCKET = 'crm-project-images'
+// Lotte-Aufgaben an Bauträger/Team, die nur am Kunden verbucht werden. Gingen
+// nie an den Kunden, gehören also nicht in seinen Verlauf.
+const INTERNAL_SUBJECTS = ['WhatsApp: registrierung']
+const autoSummary = (m: Msg) => {
+  const text = (m.content ?? '').replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim()
+  return text.length > 140 ? `${text.slice(0, 140)} …` : text
+}
 const INBOX_SELECT = 'id, lead_id, type, direction, subject, content, created_at, completed_at, auto, read_at, lead:leads!inner(first_name, last_name, email, phone, whatsapp)'
 
 
@@ -63,6 +75,9 @@ export default function Inbox() {
   const [sending, setSending] = useState(false)
   const [toast, setToast] = useState('')
   const threadRef = useRef<HTMLDivElement>(null)
+  const [autoMsgs, setAutoMsgs] = useState<Record<string, Msg[]>>({})
+  const [showAuto, setShowAuto] = useState(true)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 4000) }
 
@@ -181,6 +196,29 @@ export default function Inbox() {
 
   useEffect(() => { if (selected) void markRead(selected) }, [selected, markRead])
 
+  // Automatische Nachrichten des geöffneten Kontakts nachladen (einmal je Kontakt).
+  useEffect(() => {
+    if (!selected || selected.startsWith('wa:') || autoMsgs[selected]) return
+    const leadId = selected
+    void (async () => {
+      const { data, error } = await supabase
+        .from('activities')
+        .select('id, type, direction, subject, content, created_at, completed_at')
+        .eq('lead_id', leadId)
+        .in('type', ['email', 'whatsapp'])
+        .eq('auto', true)
+        .eq('direction', 'outbound')
+        .order('created_at', { ascending: false })
+        .limit(200)
+      if (error) { console.warn('[Inbox] automatische Nachrichten:', error.message); return }
+      // deno-lint-ignore no-explicit-any
+      const msgs: Msg[] = ((data ?? []) as any[])
+        .filter(r => !INTERNAL_SUBJECTS.includes(r.subject ?? ''))
+        .map(r => ({ id: r.id, type: r.type, direction: 'outbound', subject: r.subject, content: r.content, at: r.completed_at || r.created_at, unread: false, auto: true }))
+      setAutoMsgs(a => ({ ...a, [leadId]: msgs }))
+    })()
+  }, [selected, autoMsgs])
+
   // Deep-Link aus dem Kunden-Detail: direkt auf diesen Kontakt springen. Hat er schon
   // Nachrichten, ist er in der Liste. Fehlt er dort (z. B. weil die Obergrenze von
   // 5000 Nachrichten erreicht ist), laden wir seinen Verlauf einzeln nach. Hat er
@@ -239,6 +277,12 @@ export default function Inbox() {
   }), [convos, channel, onlyOpen, search])
 
   const current = useMemo(() => convos.find(c => c.lead_id === selected) ?? null, [convos, selected])
+  const thread = useMemo(() => {
+    if (!current) return []
+    const extra = showAuto ? (autoMsgs[current.lead_id] ?? []) : []
+    return [...current.msgs, ...extra].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))
+  }, [current, autoMsgs, showAuto])
+  const autoCount = current ? (autoMsgs[current.lead_id]?.length ?? 0) : 0
   const unreadCount = useMemo(() => convos.filter(c => c.unread > 0).length, [convos])
 
   useEffect(() => {
@@ -250,7 +294,7 @@ export default function Inbox() {
     setReply(''); mailAttach.reset()
   }, [current])
 
-  useEffect(() => { if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight }, [current, sending])
+  useEffect(() => { if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight }, [current, sending, autoCount])
 
   const sendReply = async () => {
     if (!current || (!reply.trim() && mailAttach.files.length === 0)) return
@@ -364,7 +408,7 @@ export default function Inbox() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">{t('crm.inbox.title', 'Posteingang')}</h1>
             <p className="text-sm text-gray-500 mt-0.5">
-              {t('crm.inbox.subtitle', 'Deine Kundenkommunikation — Mail und WhatsApp, ein- und ausgehend. Automatische Nachrichten sind ausgeblendet.')}
+              {t('crm.inbox.subtitle', 'Deine Kundenkommunikation: Mail und WhatsApp, ein- und ausgehend. Automatische Nachrichten erscheinen im Gespräch grau und gekürzt.')}
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -432,6 +476,14 @@ export default function Inbox() {
                       <div className="font-semibold text-gray-900 truncate">{current.name}</div>
                       <div className="text-xs text-gray-400 truncate">{[current.email, current.whatsapp || current.phone].filter(Boolean).join(' · ')}</div>
                     </div>
+                    {!current.unknown && autoCount > 0 && (
+                      <button onClick={() => setShowAuto(v => !v)}
+                        className={`ml-auto shrink-0 text-xs font-medium rounded-lg px-3 py-1.5 border ${showAuto ? 'border-gray-300 bg-gray-100 text-gray-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+                        🤖 {showAuto
+                          ? t('crm.inbox.hideAuto', 'Automatische ausblenden ({{n}})', { n: autoCount })
+                          : t('crm.inbox.showAuto', 'Automatische zeigen ({{n}})', { n: autoCount })}
+                      </button>
+                    )}
                     {current.unknown ? (
                       <span className="shrink-0 text-xs font-medium text-gray-500 bg-gray-100 rounded-lg px-3 py-1.5">
                         {t('crm.inbox.unknownNumber', 'Nummer ohne Kontakt')}
@@ -445,7 +497,23 @@ export default function Inbox() {
                   </div>
 
                   <div ref={threadRef} className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50/50">
-                    {current.msgs.map(m => {
+                    {thread.map(m => {
+                      if (m.auto) {
+                        const open = expanded.has(m.id)
+                        return (
+                          <div key={m.id} className="flex justify-end">
+                            <button onClick={() => setExpanded(s => { const n = new Set(s); if (n.has(m.id)) n.delete(m.id); else n.add(m.id); return n })}
+                              className="max-w-[80%] text-left rounded-xl px-3 py-1.5 text-xs bg-gray-100 border border-gray-200 text-gray-600 hover:bg-gray-200/60">
+                              <div className="text-[10px] text-gray-400 mb-0.5">
+                                🤖 {t('crm.inbox.autoLabel', 'Automatisch')} · {chIcon(m.type)} {new Date(m.at).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                              </div>
+                              {m.type === 'email' && m.subject && <div className="font-semibold text-gray-700">{m.subject}</div>}
+                              <div className="whitespace-pre-wrap break-words">{open ? m.content : autoSummary(m)}</div>
+                              <div className="text-[10px] text-gray-400 mt-0.5">{open ? t('crm.inbox.collapse', 'einklappen') : t('crm.inbox.expand', 'ganzen Text zeigen')}</div>
+                            </button>
+                          </div>
+                        )
+                      }
                       const out = m.direction === 'outbound'
                       return (
                         <div key={m.id} className={`flex ${out ? 'justify-end' : 'justify-start'}`}>

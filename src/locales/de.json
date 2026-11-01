@@ -4240,7 +4240,7 @@
     },
     "inbox": {
       "title": "Posteingang",
-      "subtitle": "Deine Kundenkommunikation — Mail und WhatsApp, ein- und ausgehend. Automatische Nachrichten sind ausgeblendet.",
+      "subtitle": "Deine Kundenkommunikation: Mail und WhatsApp, ein- und ausgehend. Automatische Nachrichten erscheinen im Gespräch grau und gekürzt.",
       "chAll": "Alle",
       "chWa": "WhatsApp",
       "chMail": "Mail",

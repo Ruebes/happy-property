@@ -4240,7 +4240,7 @@
     },
     "inbox": {
       "title": "Inbox",
-      "subtitle": "Your customer communication — email and WhatsApp, inbound and outbound. Automated messages are hidden.",
+      "subtitle": "Your customer communication: email and WhatsApp, inbound and outbound. Automated messages appear greyed out and shortened in the conversation.",
       "chAll": "All",
       "chWa": "WhatsApp",
       "chMail": "Mail",
