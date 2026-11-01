@@ -9,7 +9,7 @@
 // Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (+ die getesteten Keys)
 // Deploy:  supabase functions deploy connectors --no-verify-jwt
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
-import { getWaProvider, setWaProvider, evoConfig, evoConnectionState, evoNumber } from '../_shared/waProvider.ts'
+import { evoConfig, evoConnectionState, evoNumber, WA_SENDER } from '../_shared/waProvider.ts'
 import { gadsAccessToken, gadsListAccessible, gadsCustomerInfo, cleanCustomerId } from '../_shared/googleAds.ts'
 
 const CORS = {
@@ -119,19 +119,11 @@ const CHECKS: Check[] = [
     const u = Deno.env.get('IMAP_USER') ?? ''
     return u ? { ok: true, detail: `Holt Mails von ${u}` } : { ok: false, detail: 'IMAP_USER fehlt.' }
   } },
-  // Zwei WhatsApp-Wege an derselben Nummer; aktiv ist nur einer (crm_settings.wa_provider).
-  { key: 'TIMELINES', label: 'WhatsApp (TimelinesAI)', run: async (sb) => {
-    const tok = Deno.env.get('TIMELINES_API_KEY') ?? ''
-    const aktiv = (await getWaProvider(sb)) === 'timelines'
-    if (!tok) return { ok: false, detail: 'TIMELINES_API_KEY fehlt.' }
-    return { ok: true, detail: aktiv ? 'AKTIV — Versand und Empfang laufen über TimelinesAI.' : 'Rückfallweg (nicht aktiv). Schlüssel hinterlegt.' }
-  } },
-  { key: 'EVOLUTION', label: 'WhatsApp (eigener Server, wa.happy-property.com)', run: async (sb) => {
+  { key: 'EVOLUTION', label: 'WhatsApp (eigener Server, wa.happy-property.com)', run: async () => {
     const cfg = evoConfig()
     if (!cfg.ok) return { ok: false, detail: 'EVOLUTION_URL / EVOLUTION_API_KEY fehlen.' }
-    const aktiv = (await getWaProvider(sb)) === 'evolution'
     const st = await evoConnectionState()
-    const rolle = aktiv ? 'AKTIV — Versand und Empfang laufen über den eigenen Server.' : 'Rückfallweg (nicht aktiv).'
+    const rolle = 'Versand und Empfang laufen über den eigenen Server.'
     if (st === 'open') return { ok: true, detail: `${rolle} Nummer verbunden.` }
     if (st === 'unknown') return { ok: false, detail: `${rolle} Server antwortet nicht.` }
     return { ok: false, detail: `${rolle} Nummer NICHT verbunden (${st}) — „Neu verbinden" klicken.` }
@@ -177,10 +169,6 @@ const CHECKS: Check[] = [
     try { const j = JSON.parse(raw); return { ok: true, detail: `Aktiv als ${j.client_email}` } }
     catch { return { ok: false, detail: 'Service-Account-JSON fehlt/ungültig.' } }
   } },
-  { key: 'KLAVIYO', label: 'Klaviyo (Alt-Import)', run: async () => {
-    const tok = Deno.env.get('KLAVIYO_API_KEY') ?? Deno.env.get('Klaviyo') ?? ''
-    return tok ? { ok: true, detail: 'Schlüssel hinterlegt.' } : { ok: false, detail: 'Kein Schlüssel — eigener Klaviyo-Ersatz läuft unabhängig.' }
-  } },
   // Zoom-Gesprächsnotizen (zoom-calls): Secret Token aus der Zoom-App (Event Subscriptions).
   { key: 'ZOOM_WEBHOOK_SECRET', label: 'Zoom, Gesprächsnotizen (Secret Token)', editable: true, run: async (sb) => {
     const v = await secretOf(sb, 'ZOOM_WEBHOOK_SECRET')
@@ -207,21 +195,6 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({})) as { action?: string; key?: string; value?: string; provider?: string }
 
-    // ── WhatsApp-Weg umschalten (TimelinesAI ↔ eigener Server) ──────────────
-    // Wirkt sofort fuer send-whatsapp, Scheduler, Bot und beide Webhooks.
-    if (body.action === 'wa_provider') {
-      const p = body.provider === 'evolution' ? 'evolution' : body.provider === 'timelines' ? 'timelines' : null
-      if (!p) return json({ error: 'provider muss timelines oder evolution sein.' }, 400)
-      if (p === 'evolution') {
-        if (!evoConfig().ok) return json({ error: 'Evolution ist nicht konfiguriert (Secrets fehlen).' }, 400)
-        const st = await evoConnectionState()
-        if (st !== 'open') return json({ error: `Eigener Server ist nicht verbunden (Status: ${st}). Erst „Neu verbinden".` }, 400)
-      }
-      await setWaProvider(sb, p)
-      console.log(`[connectors] WhatsApp-Weg umgeschaltet auf ${p} durch ${uid}`)
-      return json({ ok: true, provider: p })
-    }
-
     // ── Pairing-Code fuer den eigenen Server holen ─────────────────────────────
     // Der Code laeuft nach kurzer Zeit ab; vorher die Instanz neu starten, sonst
     // liefert Evolution manchmal einen toten Code (Erfahrung Mitja 17.9.2026).
@@ -233,7 +206,7 @@ Deno.serve(async (req) => {
       const h = { apikey: cfg.key }
       await fetch(`${cfg.url}/instance/restart/${cfg.instance}`, { method: 'POST', headers: h, ...timeout(15000) }).catch(() => null)
       await new Promise(r => setTimeout(r, 2500))
-      const number = evoNumber(Deno.env.get('TIMELINES_WA_SENDER') ?? '35795154722')
+      const number = evoNumber(WA_SENDER)
       const r = await fetch(`${cfg.url}/instance/connect/${cfg.instance}?number=${number}`, { headers: h, ...timeout(20000) })
         .then(x => x.json()).catch(e => ({ error: String(e) })) as { pairingCode?: string; code?: string; error?: string }
       if (!r.pairingCode) return json({ error: `Kein Pairing-Code erhalten: ${JSON.stringify(r).slice(0, 160)}` }, 502)

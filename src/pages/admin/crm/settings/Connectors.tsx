@@ -49,24 +49,9 @@ export default function Connectors() {
     } finally { setBusy('') }
   }
 
-  // ── WhatsApp-Weg: TimelinesAI ↔ eigener Server (Evolution) ──────────────
-  // Aktiv ist immer nur einer; die Karte des jeweils anderen zeigt „Aktiv schalten".
+  // ── WhatsApp über den eigenen Server (Evolution) ──────────────────────
   // „Neu verbinden" holt vom eigenen Server einen Pairing-Code fürs Handy.
   const [pairCode, setPairCode] = useState('')
-  const switchProvider = async (provider: 'timelines' | 'evolution') => {
-    const label = provider === 'evolution' ? t('crm.conn.waEvo', 'eigenen Server') : 'TimelinesAI'
-    if (!confirm(t('crm.conn.waSwitchConfirm', 'WhatsApp-Versand und -Empfang ab sofort über {{label}} laufen lassen?', { label }))) return
-    setBusy('WA_SWITCH')
-    try {
-      const { data, error } = await supabase.functions.invoke('connectors', { body: { action: 'wa_provider', provider } })
-      const d = (data ?? {}) as { ok?: boolean; error?: string }
-      if (error || d.error || !d.ok) throw new Error(d.error || error?.message || 'Fehler')
-      showToast(t('crm.conn.waSwitched', '✓ WhatsApp läuft jetzt über {{label}}.', { label }))
-      await load(true)
-    } catch (e) {
-      showToast(`❌ ${e instanceof Error ? e.message : 'Umschalten fehlgeschlagen'}`)
-    } finally { setBusy('') }
-  }
   const fetchPairCode = async () => {
     setBusy('WA_PAIR'); setPairCode('')
     try {
@@ -79,7 +64,6 @@ export default function Connectors() {
       showToast(`❌ ${e instanceof Error ? e.message : 'Kein Code erhalten'}`)
     } finally { setBusy('') }
   }
-  const waActive = (key: string) => conns.find(c => c.key === key)?.detail.startsWith('AKTIV')
 
   // ── Google verbinden (YouTube / Drive): yt-oauth gibt die Zustimmungs-URL nur
   // eingeloggten Admins/Verwaltern heraus (signierter state). Den Tab im Klick
@@ -150,12 +134,6 @@ export default function Connectors() {
                     <button type="button" onClick={() => void connectDropbox()}
                       className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50 shrink-0">
                       🔗 {t('crm.conn.dbxConnect', 'Verbinden')}
-                    </button>
-                  )}
-                  {(c.key === 'TIMELINES' || c.key === 'EVOLUTION') && !waActive(c.key) && (
-                    <button onClick={() => void switchProvider(c.key === 'EVOLUTION' ? 'evolution' : 'timelines')} disabled={busy === 'WA_SWITCH'}
-                      className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50 shrink-0 disabled:opacity-50">
-                      🔀 {t('crm.conn.waActivate', 'Aktiv schalten')}
                     </button>
                   )}
                   {c.key === 'EVOLUTION' && !c.ok && (

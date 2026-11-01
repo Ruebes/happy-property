@@ -28,7 +28,6 @@
     "scan-drive-projects/index.ts",
     "extract-project-facts/index.ts",
     "typeform-webhook/index.ts",
-    "calendly-status/index.ts",
     "meta-leads-sync/index.ts",
     "werbe-ausfuehren/index.ts",
     "werbe-signal/index.ts",

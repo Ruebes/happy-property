@@ -70,7 +70,7 @@ src/
     date.ts              # Datums-Helper
     googleCalendar.ts    # Google-Calendar-Integration
     i18n.ts              # i18next-Setup
-    whatsapp.ts          # WhatsApp (TimelinesAI)
+    whatsapp.ts          # WhatsApp (eigener Server, Evolution API)
     workflowDocuments.ts # Dokument-Workflow-Logik
   locales/             # Übersetzungen (DE/EN)
   styles/              # globals.css + Tailwind
@@ -79,11 +79,11 @@ supabase/functions/    # 14 Edge Functions (siehe unten)
 
 ### Supabase Edge Functions
 
-`admin-user-ops`, `analyze-invoice`, `calendly-webhook`,
+`admin-user-ops`, `analyze-invoice`,
 `create-eigentuemer-access`, `create-zoom-meeting`, `crm-webhook-sender`,
 `notify-bank-change`, `process-scheduled-messages`, `schedule-message`,
 `send-booking-confirmation`, `send-email`, `send-whatsapp`,
-`timelines-webhook`, `typeform-webhook`
+`typeform-webhook`
 
 ## Harte Regeln (immer einhalten)
 

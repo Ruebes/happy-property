@@ -1,9 +1,7 @@
-// WhatsApp-Provider: TimelinesAI (Fremddienst) oder Evolution API (eigener Server
-// hp-server, https://wa.happy-property.com). Umschaltbar ueber crm_settings, Key
-// `wa_provider` = 'timelines' | 'evolution'. Fehlt der Eintrag, gilt TimelinesAI,
-// damit ein vergessener Schalter nie den Versand kippt. Beide Wege haengen an
-// DERSELBEN Nummer (+357 95 154722); es darf immer nur EINER senden und nur
-// EINER eingehende Nachrichten verarbeiten - sonst kommt alles doppelt.
+// WhatsApp-Versand ueber die Evolution API (eigener Server hp-server,
+// https://wa.happy-property.com). TimelinesAI ist seit 01.11.2026 abgeschaltet;
+// der Schalter crm_settings.wa_provider bleibt nur fuer alte Aufrufer bestehen und
+// liefert immer 'evolution'.
 //
 // Secrets (Supabase Edge Function Secrets, nie im Frontend):
 //   EVOLUTION_URL             https://wa.happy-property.com
@@ -16,16 +14,11 @@ import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 export type WaProvider = 'timelines' | 'evolution'
 export const WA_PROVIDER_KEY = 'wa_provider'
 
-export async function getWaProvider(sb: SupabaseClient): Promise<WaProvider> {
-  const { data } = await sb.from('crm_settings').select('value').eq('key', WA_PROVIDER_KEY).maybeSingle()
-  const v = ((data as { value?: string } | null)?.value ?? '').trim().toLowerCase()
-  return v === 'evolution' ? 'evolution' : 'timelines'
-}
+// Absendernummer (Anzeige in Logs und Alarm-Mails, Pairing-Code).
+export const WA_SENDER = '+35795154722'
 
-export async function setWaProvider(sb: SupabaseClient, p: WaProvider): Promise<void> {
-  const { error } = await sb.from('crm_settings')
-    .upsert({ key: WA_PROVIDER_KEY, value: p, updated_at: new Date().toISOString() }, { onConflict: 'key' })
-  if (error) throw error
+export async function getWaProvider(_sb: SupabaseClient): Promise<WaProvider> {
+  return 'evolution'
 }
 
 export function evoConfig() {

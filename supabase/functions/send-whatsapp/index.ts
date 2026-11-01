@@ -1,6 +1,6 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { waAccountGone, waAccountRecovered } from '../_shared/waAccountAlert.ts'
-import { getWaProvider, evoSendText, evoSendMedia, evoSendContact, evoErrorText, EVO_DISCONNECTED_RE, type WaContactCard } from '../_shared/waProvider.ts'
+import { getWaProvider, WA_SENDER, evoSendText, evoSendMedia, evoSendContact, evoErrorText, EVO_DISCONNECTED_RE, type WaContactCard } from '../_shared/waProvider.ts'
 import { translateOutbound } from '../_shared/translate.ts'
 import { resolveLang } from '../_shared/recipientLang.ts'
 import { Image } from '../_vendor/imagescript/ImageScript.js'
@@ -225,7 +225,7 @@ Deno.serve(async (req) => {
     } = await req.json()
 
     const apiKey      = Deno.env.get('TIMELINES_API_KEY')     ?? ''
-    const senderPhone = Deno.env.get('TIMELINES_WA_SENDER')   ?? ''
+    const senderPhone = WA_SENDER
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,

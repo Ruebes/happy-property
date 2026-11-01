@@ -30,7 +30,6 @@ export default function NewsletterLists() {
   const { t } = useTranslation()
   const [rows, setRows] = useState<ListRow[]>([])
   const [loading, setLoading] = useState(true)
-  const [busy, setBusy] = useState<string | null>(null)
   const [toast, setToast] = useState('')
   const [seqFor, setSeqFor] = useState<{ id: string; name: string } | null>(null)
   const [viewList, setViewList] = useState<{ id: string; name: string } | null>(null)
@@ -80,32 +79,6 @@ export default function NewsletterLists() {
   }, [])
   useEffect(() => { void fetchAll() }, [fetchAll])
 
-  const call = async (body: Record<string, unknown>, label: string) => {
-    setBusy(label)
-    try {
-      const { data, error } = await supabase.functions.invoke('klaviyo-sync', { body })
-      if (error) throw error
-      const d = data as { error?: string; gefunden?: number; neu?: number; listen?: unknown[] } | null
-      if (d?.error) { showToast(d.error); return }
-      if (d?.gefunden != null) {
-        showToast(t('crm.lists.fetched', '{{n}} Listen bei Klaviyo gefunden, {{neu}} neu angelegt.', { n: d.gefunden, neu: d.neu ?? 0 }))
-      } else {
-        // Ergebnis je Liste zeigen — sonst weiss niemand, ob wirklich etwas ankam
-        // oder eine Liste still auf einen Fehler gelaufen ist.
-        const r = (d?.listen ?? []) as Array<{ liste?: string; gesehen?: number; neu?: number; fehler?: string }>
-        const fehler = r.filter(x => x.fehler)
-        const summe = r.reduce((n, x) => n + (x.neu ?? 0), 0)
-        showToast(fehler.length
-          ? t('crm.lists.syncedPartly', '{{n}} neue Adressen. {{f}} Liste(n) mit Fehler: {{msg}}', { n: summe, f: fehler.length, msg: fehler[0].fehler ?? '' })
-          : t('crm.lists.syncedN', '{{n}} neue Adressen übernommen.', { n: summe }))
-      }
-      await fetchAll()
-    } catch (err) {
-      console.error('[NewsletterLists] call:', err)
-      showToast(t('crm.lists.error', 'Fehlgeschlagen — steht der Klaviyo-Schlüssel in den Supabase-Secrets?'))
-    } finally { setBusy(null) }
-  }
-
   const toggle = async (r: ListRow) => {
     const prev = rows
     setRows(rs => rs.map(x => x.id === r.id ? { ...x, active: !x.active } : x))
@@ -124,18 +97,8 @@ export default function NewsletterLists() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">{t('crm.lists.title', 'Empfängerlisten')}</h1>
             <p className="text-sm text-gray-500 mt-0.5">
-              {t('crm.lists.subtitle', 'Adressen aus Klaviyo — Webinare, Leadmagneten, Newsletter. Getrennt von deinen CRM-Kunden.')}
+              {t('crm.lists.subtitleOwn', 'Webinare, Leadmagneten, Newsletter. Getrennt von deinen CRM-Kunden.')}
             </p>
-          </div>
-          <div className="flex gap-2">
-            <button onClick={() => void call({ action: 'lists' }, 'lists')} disabled={!!busy}
-              className="px-3 py-1.5 rounded-xl text-sm font-medium border border-gray-200 hover:bg-gray-50 disabled:opacity-50">
-              {busy === 'lists' ? t('common.saving', 'lädt …') : t('crm.lists.fetchLists', 'Listen aus Klaviyo holen')}
-            </button>
-            <button onClick={() => void call({ action: 'sync' }, 'sync')} disabled={!!busy}
-              className="px-3 py-1.5 rounded-xl text-white text-sm font-medium disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>
-              {busy === 'sync' ? t('crm.lists.syncing', 'holt Adressen …') : t('crm.lists.sync', 'Adressen aktualisieren')}
-            </button>
           </div>
         </div>
 
@@ -156,10 +119,7 @@ export default function NewsletterLists() {
           <div className="flex justify-center py-16"><div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" /></div>
         ) : rows.length === 0 ? (
           <div className="bg-white rounded-2xl border border-gray-100 p-8 text-center">
-            <p className="text-sm text-gray-500">{t('crm.lists.empty', 'Noch keine Listen. Klick auf „Listen aus Klaviyo holen".')}</p>
-            <p className="text-xs text-gray-400 mt-2">
-              {t('crm.lists.keyHint', 'Dafür muss der Klaviyo-Schlüssel als KLAVIYO_API_KEY in den Supabase-Secrets hinterlegt sein.')}
-            </p>
+            <p className="text-sm text-gray-500">{t('crm.lists.emptyOwn', 'Noch keine Listen. Oben eine eigene Liste anlegen.')}</p>
           </div>
         ) : (
           <>
