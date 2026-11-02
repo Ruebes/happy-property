@@ -20,7 +20,7 @@
 //   Zoom-Webhook  Header x-zm-signature, geprüft mit ZOOM_WEBHOOK_SECRET
 //                 (connector_secrets, im CRM unter Einstellungen > Connectoren)
 //   Mac-App       Aktion upload, Header x-cron-secret == connector_secrets CALL_UPLOAD_SECRET
-//   Service-Key   Admin-Aktionen: scopes | list | trash_all | test | archiv
+//   Service-Key   Admin-Aktionen: scopes | list | trash_all | test | archiv | archiv_audio | archiv_text | archiv_zurueck
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { authorizeCaller, corsHeaders as CORS, safeEqual } from '../_shared/callerAuth.ts'
@@ -495,37 +495,67 @@ async function leadByTopic(sb: SupabaseClient, topic: string): Promise<string | 
   return rows.length === 1 ? rows[0].id : null
 }
 
-async function archivEintrag(sb: SupabaseClient, token: string, m: ZoomMeetingRec, dryRun: boolean): Promise<Record<string, unknown>> {
-  const basis = { topic: m.topic, start: m.start_time }
+interface ArchivMeeting extends ZoomMeetingRec { error?: string }
+
+/** Details einer Aufnahme. Im Papierkorb liefert Zoom keine Dateien; mit recover wird sie kurz wiederhergestellt. */
+async function archivDetails(token: string, uuid: string, recover: boolean): Promise<ArchivMeeting> {
+  const hol = () => fetch(`https://api.zoom.us/v2/meetings/${encUuid(uuid)}/recordings`, { headers: { Authorization: `Bearer ${token}` } })
+  let r = await hol()
+  if (!r.ok && recover) {
+    const rec = await fetch(`https://api.zoom.us/v2/meetings/${encUuid(uuid)}/recordings/status`, {
+      method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'recover' }),
+    })
+    if (!rec.ok && rec.status !== 204) return { uuid, id: 0, topic: '', start_time: '', error: `recover ${rec.status} ${await rec.text()}` }
+    r = await hol()
+  }
+  if (!r.ok) return { uuid, id: 0, topic: '', start_time: '', error: `${r.status} ${(await r.text()).slice(0, 200)}` }
+  return await r.json() as ArchivMeeting
+}
+
+/** Kleinste brauchbare Audiodatei: M4A (nur Audio), sonst die kleinste MP4. */
+function audioDatei(m: ZoomMeetingRec) {
+  const f = (m.recording_files ?? []).filter(x => x.download_url)
+  return f.find(x => x.file_type === 'M4A')
+    ?? f.filter(x => x.file_type === 'MP4').sort((x, y) => (x.file_size ?? 0) - (y.file_size ?? 0))[0]
+}
+
+async function archivEintrag(sb: SupabaseClient, token: string, m: ZoomMeetingRec): Promise<Record<string, unknown>> {
+  const basis = { uuid: m.uuid, topic: m.topic, start: m.start_time, duration: m.duration ?? null, mb: Math.round((m.total_size ?? 0) / 1048576) }
   if (/masterclass|webinar/i.test(m.topic)) return { ...basis, skip: 'kein Kundengespräch (Titel)' }
   const { data: vorhanden } = await sb.from('call_summaries').select('status').eq('source', 'zoom').eq('external_id', m.uuid).maybeSingle()
-  if (vorhanden && (vorhanden as { status: string }).status === 'fertig') return { ...basis, skip: 'schon ausgewertet' }
-
-  const file = (m.recording_files ?? []).find(f => f.file_type === 'TRANSCRIPT' && f.download_url)
+  if (vorhanden && (vorhanden as { status: string }).status !== 'fehler') return { ...basis, skip: 'schon ausgewertet' }
   const appt = await findAppointment(sb, String(m.id), m.start_time)
   const leadId = appt?.lead_id ?? await leadByTopic(sb, m.topic)
-  if (dryRun) return { ...basis, abschrift: !!file, dateien: (m.recording_files ?? []).map(f => f.file_type), lead_id: leadId }
-  if (!file?.download_url) return { ...basis, skip: 'keine Abschrift bei Zoom' }
+  return { ...basis, lead_id: leadId }
+}
 
-  let dl = await fetch(file.download_url, { headers: { Authorization: `Bearer ${token}` } })
-  if (!dl.ok) {
-    const sep = file.download_url.includes('?') ? '&' : '?'
-    dl = await fetch(`${file.download_url}${sep}access_token=${encodeURIComponent(token)}`)
-  }
-  if (!dl.ok) return { ...basis, error: `Abschrift-Download ${dl.status}` }
-  const { text, speakers } = vttToText(await dl.text())
-  if (speakers.length > 4) return { ...basis, skip: 'Gruppe' }
-  if (text.length < 200) return { ...basis, skip: 'Abschrift zu kurz' }
+/** Abschrift (lokal auf dem Mac erstellt) auswerten, Notiz in die Akte, Aufnahme wieder in den Papierkorb. */
+async function archivText(sb: SupabaseClient, token: string, uuid: string, text: string): Promise<Record<string, unknown>> {
+  const m = await archivDetails(token, uuid, false)
+  if (m.error) return { uuid, error: `Details: ${m.error}` }
+  const basis = { topic: m.topic, start: m.start_time }
+  const zurueck = async () => { const t = await trashRecording(token, uuid); return t.ok ? '' : t.detail }
 
-  const profil = await extractProfil(text, m.start_time)
-  if (!profil) return { ...basis, error: 'KI-Auswertung fehlgeschlagen' }
-  const protokoll = (status: 'fertig' | 'uebersprungen', felder: Record<string, unknown>) =>
+  const protokoll = (status: 'fertig' | 'uebersprungen' | 'fehler', felder: Record<string, unknown>) =>
     sb.from('call_summaries').upsert({
-      source: 'zoom', external_id: m.uuid, started_at: m.start_time, duration_min: m.duration ?? null, status, ...felder,
+      source: 'zoom', external_id: uuid, started_at: m.start_time, duration_min: m.duration ?? null, status, ...felder,
     }, { onConflict: 'source,external_id' })
+
+  if (text.length < 200) {
+    await protokoll('uebersprungen', { grund: 'Archiv: Abschrift zu kurz' })
+    return { ...basis, skip: 'Abschrift zu kurz', papierkorb: await zurueck() || 'ok' }
+  }
+  const appt = await findAppointment(sb, String(m.id), m.start_time)
+  const leadId = appt?.lead_id ?? await leadByTopic(sb, m.topic)
+  const profil = await extractProfil(text, m.start_time)
+  if (!profil) {
+    await protokoll('fehler', { lead_id: leadId, grund: 'Archiv: KI-Auswertung fehlgeschlagen' })
+    return { ...basis, error: 'KI-Auswertung fehlgeschlagen', papierkorb: await zurueck() || 'ok' }
+  }
   if (!profil.kundengespraech) {
     await protokoll('uebersprungen', { lead_id: leadId, grund: 'Archiv: kein Kundengespräch laut KI' })
-    return { ...basis, skip: 'kein Kundengespräch laut KI' }
+    return { ...basis, skip: 'kein Kundengespräch laut KI', papierkorb: await zurueck() || 'ok' }
   }
 
   let activityId: string | null = null
@@ -536,17 +566,18 @@ async function archivEintrag(sb: SupabaseClient, token: string, m: ZoomMeetingRe
       dealId = (data as { id: string } | null)?.id ?? null
     }
     const { act, actErr } = await schreibeNotiz(sb, leadId, dealId, m.start_time, 'Zoom', profil)
-    if (actErr) return { ...basis, error: `Notiz: ${actErr.message}` }
+    if (actErr) return { ...basis, error: `Notiz: ${actErr.message}`, papierkorb: await zurueck() || 'ok' }
     activityId = act?.id ?? null
   }
+  const papierkorb = await zurueck()
   // Auch ohne Kundenakte zählen die Einwände für die Gesamtauswertung.
   await protokoll('fertig', {
     lead_id: leadId, deal_id: dealId, appointment_id: appt?.id ?? null,
     briefing: profil.briefing, notiz: profil.notiz, fakten: faktenAus(profil),
-    activity_id: activityId, aufnahme_geloescht: true,
-    grund: leadId ? 'Archiv (Zoom-Papierkorb)' : 'Archiv, kein Kunde zugeordnet: nur Einwand-Statistik',
+    activity_id: activityId, aufnahme_geloescht: !papierkorb,
+    grund: (leadId ? 'Archiv (Zoom-Papierkorb)' : 'Archiv, kein Kunde zugeordnet: nur Einwand-Statistik') + (papierkorb ? `; Papierkorb: ${papierkorb}` : ''),
   })
-  return { ...basis, ok: true, lead_id: leadId, einwaende: profil.einwaende?.length ?? 0 }
+  return { ...basis, ok: true, lead_id: leadId, einwaende: profil.einwaende?.length ?? 0, papierkorb: papierkorb || 'ok' }
 }
 
 // ── Handler ─────────────────────────────────────────────────────────────────
@@ -579,7 +610,7 @@ Deno.serve(async (req) => {
     return json({ ok: true })
   }
 
-  const body = await req.clone().json().catch(() => ({})) as { action?: string; months?: number; vtt?: string; started_at?: string; trash?: boolean; dry_run?: boolean; offset?: number; limit?: number }
+  const body = await req.clone().json().catch(() => ({})) as { action?: string; months?: number; vtt?: string; started_at?: string; trash?: boolean; uuid?: string; text?: string }
 
   // Mac-App: eigener Schlüssel, darf nur hochladen
   if (body.action === 'upload') {
@@ -607,21 +638,32 @@ Deno.serve(async (req) => {
     const { token, scope } = await zoomToken()
     if (body.action === 'scopes') return json({ scope: scope.split(' ').sort() })
 
-    // Archiv: alte Aufnahmen im Papierkorb auswerten. dry_run (Standard) zeigt nur Zuordnung + Dateien.
-    // Wenige pro Aufruf (KI-Laufzeit), weiter mit offset.
+    // Archiv (Sven 2.11.26): alte Aufnahmen im Papierkorb. Zoom hat dafür keine
+    // Abschrift, deshalb: archiv = Liste + Kundenzuordnung, archiv_audio = Audio
+    // (Aufnahme wird dafür kurz wiederhergestellt), die Abschrift entsteht lokal
+    // auf dem Mac, archiv_text = Auswertung + zurück in den Papierkorb.
     if (body.action === 'archiv') {
       const { meetings, errors } = await listRecordings(token, 12, true)
       meetings.sort((a, b) => a.start_time.localeCompare(b.start_time))
-      const dryRun = body.dry_run !== false
-      const offset = Math.max(0, body.offset ?? 0)
-      const limit = Math.min(dryRun ? 200 : 3, Math.max(1, body.limit ?? (dryRun ? 200 : 2)))
       const sb = sbAdmin()
       const ergebnisse: Record<string, unknown>[] = []
-      for (const m of meetings.slice(offset, offset + limit)) {
-        try { ergebnisse.push(await archivEintrag(sb, token, m, dryRun)) }
-        catch (e) { ergebnisse.push({ topic: m.topic, start: m.start_time, error: String((e as Error).message ?? e) }) }
-      }
-      return json({ gesamt: meetings.length, offset, weiter: offset + limit < meetings.length ? offset + limit : null, errors, ergebnisse })
+      for (const m of meetings) ergebnisse.push(await archivEintrag(sb, token, m))
+      return json({ gesamt: meetings.length, errors, ergebnisse })
+    }
+    if (body.action === 'archiv_audio' && body.uuid) {
+      const m = await archivDetails(token, body.uuid, true)
+      if (m.error) return json({ error: m.error }, 502)
+      const f = audioDatei(m)
+      if (!f?.download_url) return json({ error: 'keine Audiodatei', dateien: (m.recording_files ?? []).map(x => x.file_type) }, 404)
+      const dl = await fetch(f.download_url, { headers: { Authorization: `Bearer ${token}` } })
+      if (!dl.ok || !dl.body) return json({ error: `Download ${dl.status}` }, 502)
+      return new Response(dl.body, { headers: { ...CORS, 'Content-Type': 'application/octet-stream', 'x-datei': String(f.file_type) } })
+    }
+    if (body.action === 'archiv_text' && body.uuid) {
+      return json(await archivText(sbAdmin(), token, body.uuid, typeof body.text === 'string' ? body.text : ''))
+    }
+    if (body.action === 'archiv_zurueck' && body.uuid) {
+      return json(await trashRecording(token, body.uuid))
     }
 
     if (body.action === 'list' || body.action === 'trash_all') {
