@@ -136,11 +136,11 @@ export default function Blog() {
             {label} {p[k]}
           </span>
         ))}
-      {/* Gesamtscore = Urteil der Chefredaktion: sie liest alle Prüferberichte und entscheidet über die Freigabe */}
+      {/* Urteil der Chefredaktion (eigene Lesung, kein Mittelwert der Prüfer): daran hängt die Freigabe ab 85 */}
       {typeof p?.chef === 'number' && (
-        <span title={t('crm.blog.totalHint', 'Urteil der Chefredaktion über alle Prüfungen. Ab 85 freigabereif.') as string}
+        <span title={t('crm.blog.chefHint', 'Eigenes Urteil der Chefredaktion nach Lesen aller Prüferberichte, kein Mittelwert. Ab 85 freigabereif.') as string}
           className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ring-1 ${p.chef >= 85 ? 'bg-emerald-100 text-emerald-800 ring-emerald-300' : 'bg-amber-100 text-amber-800 ring-amber-300'}`}>
-          {t('crm.blog.total', 'Gesamt')} {p.chef}
+          {t('crm.blog.chef', 'Chefredaktion')} {p.chef}
         </span>
       )}
     </div>
