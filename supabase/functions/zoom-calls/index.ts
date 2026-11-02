@@ -20,7 +20,7 @@
 //   Zoom-Webhook  Header x-zm-signature, geprüft mit ZOOM_WEBHOOK_SECRET
 //                 (connector_secrets, im CRM unter Einstellungen > Connectoren)
 //   Mac-App       Aktion upload, Header x-cron-secret == connector_secrets CALL_UPLOAD_SECRET
-//   Service-Key   Admin-Aktionen: scopes | list | trash_all | test
+//   Service-Key   Admin-Aktionen: scopes | list | trash_all | test | archiv
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { authorizeCaller, corsHeaders as CORS, safeEqual } from '../_shared/callerAuth.ts'
@@ -68,7 +68,10 @@ async function trashRecording(token: string, uuid: string): Promise<{ ok: boolea
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10)
 
-interface ZoomMeetingRec { uuid: string; id: number; topic: string; start_time: string; total_size?: number }
+interface ZoomMeetingRec {
+  uuid: string; id: number; topic: string; start_time: string; duration?: number; total_size?: number
+  recording_files?: { id?: string; file_type?: string; file_extension?: string; recording_type?: string; download_url?: string; file_size?: number }[]
+}
 
 async function listRecordings(token: string, months: number, trash = false): Promise<{ meetings: ZoomMeetingRec[]; errors: string[] }> {
   const seen = new Map<string, ZoomMeetingRec>()
@@ -122,12 +125,25 @@ export function vttToText(vtt: string): { text: string; speakers: string[] } {
 
 // ── Claude: Kundenprofil ────────────────────────────────────────────────────
 
+// Feste Einwand-Themen, damit sie sich über viele Gespräche zählen lassen
+// (Grundlage für die Einwandvorbehandlung in Deck, Lotte-Nachrichten, Reels).
+const EINWAND_THEMEN = [
+  'Zypern unbekannt / Entfernung', 'Vertrauen / Rechtssicherheit', 'Bauträger / Fertigstellung',
+  'Preis', 'Finanzierung / Eigenkapital', 'Vermietung / Rendite', 'Steuern', 'Nebenkosten / Verwaltung',
+  'Zeitpunkt / später', 'Partner / Familie entscheidet mit', 'Wiederverkauf / Ausstieg',
+  'Lage / Objekt passt nicht', 'Sonstiges',
+] as const
+
+interface Einwand { thema: string; aussage: string; behandelt: 'ja' | 'teilweise' | 'nein' }
+
 interface Profil {
   kundengespraech: boolean
   briefing: string
   notiz: string
   termine?: { datum: string; was: string }[]
   kunde_name?: string
+  einwaende?: Einwand[]
+  temperatur?: 'heiss' | 'warm' | 'kalt'
 }
 
 const PROFIL_TOOL = {
@@ -144,6 +160,20 @@ const PROFIL_TOOL = {
         type: 'array', description: 'Konkrete Daten aus dem Gespräch (Anreise, Besichtigung, Rückmeldung bis ...), als Datum aufgelöst.',
         items: { type: 'object', properties: { datum: { type: 'string', description: 'YYYY-MM-DD' }, was: { type: 'string' } }, required: ['datum', 'was'] },
       },
+      einwaende: {
+        type: 'array',
+        description: 'Jeder Einwand, jede Sorge oder jeder Grund gegen einen Kauf, den der KUNDE äußert (auch leise Zweifel). Reine Sachfragen ohne Zweifel sind kein Einwand. Leer, wenn keiner kam.',
+        items: {
+          type: 'object',
+          properties: {
+            thema: { type: 'string', enum: [...EINWAND_THEMEN] },
+            aussage: { type: 'string', description: 'Was der Kunde sinngemäß gesagt hat, ein kurzer Satz, ohne Namen.' },
+            behandelt: { type: 'string', enum: ['ja', 'teilweise', 'nein'], description: 'Hat Sven den Einwand im Gespräch ausgeräumt?' },
+          },
+          required: ['thema', 'aussage', 'behandelt'],
+        },
+      },
+      temperatur: { type: 'string', enum: ['heiss', 'warm', 'kalt'], description: 'Kaufnähe am Gesprächsende: heiss = will konkret kaufen/reservieren, warm = ernsthaft interessiert, kalt = eher nicht.' },
     },
     required: ['kundengespraech', 'briefing', 'notiz'],
   },
@@ -163,6 +193,7 @@ Regeln:
 - Die Abschrift ist automatisch erstellt und kann Hörfehler enthalten (Projektnamen, Zahlen). Offensichtliche Hörfehler sinnvoll lesen, bei Zweifel weglassen.
 - Auch die Sprecherangaben können vereinzelt falsch sein. Entscheide nach dem Inhalt, ob Sven oder der Kunde etwas über sich sagt. Was Sven über Objekte, Zypern oder seine Leistungen erzählt, ist kein Kundenfakt.
 - Deutsch mit echten Umlauten. Keine Gedankenstriche (— oder –), stattdessen Komma, Punkt oder Doppelpunkt.
+- Halte jeden Einwand und jede Sorge des Kunden zusätzlich im Feld einwaende fest, mit festem Thema. Schätze am Ende die Kaufnähe (temperatur).
 - Ruf das Werkzeug kundenprofil auf.
 
 ABSCHRIFT:
@@ -179,8 +210,38 @@ async function extractProfil(text: string, startedAt: string): Promise<Profil | 
   const p = toolInput<Profil>(res)
   if (!p || typeof p.briefing !== 'string' || typeof p.notiz !== 'string') return null
   const clean = (s: string) => s.replace(/\s*[—–]\s*/g, ', ').trim()
-  return { ...p, briefing: clean(p.briefing), notiz: clean(p.notiz) }
+  const einwaende = (Array.isArray(p.einwaende) ? p.einwaende : [])
+    .filter(e => e && typeof e.aussage === 'string' && e.aussage.trim())
+    .map(e => ({
+      thema: (EINWAND_THEMEN as readonly string[]).includes(e.thema) ? e.thema : 'Sonstiges',
+      aussage: clean(e.aussage),
+      behandelt: (['ja', 'teilweise', 'nein'] as const).includes(e.behandelt) ? e.behandelt : 'nein',
+    }))
+  return { ...p, briefing: clean(p.briefing), notiz: clean(p.notiz), einwaende }
 }
+
+const TEMP_LABEL = { heiss: 'heiß', warm: 'warm', kalt: 'kalt' } as const
+const BEHANDELT_LABEL = { ja: 'ausgeräumt', teilweise: 'teilweise ausgeräumt', nein: 'offen' } as const
+
+/** Notiztext: Profil plus Einwände/Temperatur als eigener Block. */
+function notizText(p: Profil): string {
+  const teile = [p.briefing, p.notiz]
+  const e = p.einwaende ?? []
+  if (e.length || p.temperatur) {
+    const zeilen = ['Einwände (erfasst):']
+    for (const x of e) zeilen.push(`- ${x.thema}: ${x.aussage} (${BEHANDELT_LABEL[x.behandelt]})`)
+    if (!e.length) zeilen.push('- keine')
+    if (p.temperatur) zeilen.push('', `Kaufnähe: ${TEMP_LABEL[p.temperatur]}`)
+    teile.push(zeilen.join('\n'))
+  }
+  return teile.join('\n\n')
+}
+
+/** Strukturierte Felder für call_summaries.fakten (Auswertung über alle Gespräche). */
+const faktenAus = (p: Profil) => ({
+  termine: p.termine ?? [], kunde_name: p.kunde_name ?? null,
+  einwaende: p.einwaende ?? [], temperatur: p.temperatur ?? null,
+})
 
 // ── Zuordnung Call → CRM-Termin ─────────────────────────────────────────────
 
@@ -219,7 +280,7 @@ async function schreibeNotiz(sb: SupabaseClient, leadId: string, dealId: string 
   const { data, error } = await sb.from('activities').insert({
     lead_id: leadId, deal_id: dealId, type: 'note', direction: 'outbound', auto: true,
     subject: `📞 Gespräch ${tag} (${kanal}): Kundenprofil`,
-    content: `${profil.briefing}\n\n${profil.notiz}`,
+    content: notizText(profil),
     completed_at: startedAt,
   }).select('id').single()
   return { act: data as { id: string } | null, actErr: error }
@@ -311,7 +372,7 @@ async function processTranscript(obj: ZoomObject, downloadToken: string): Promis
   await protokoll('fertig', {
     lead_id: appt.lead_id, deal_id: appt.deal_id, appointment_id: appt.id,
     briefing: profil.briefing, notiz: profil.notiz,
-    fakten: { termine: profil.termine ?? [], kunde_name: profil.kunde_name ?? null },
+    fakten: faktenAus(profil),
     activity_id: act?.id ?? null, aufnahme_geloescht: geloescht,
     grund: geloescht ? null : `Aufnahme nicht gelöscht: ${loeschGrund}`.slice(0, 300),
   })
@@ -406,12 +467,86 @@ async function processUpload(b: UploadBody): Promise<Record<string, unknown>> {
   await protokoll('fertig', {
     lead_id: leadId, deal_id: dealId, appointment_id: apptId,
     briefing: profil.briefing, notiz: profil.notiz,
-    fakten: { termine: profil.termine ?? [], kunde_name: profil.kunde_name ?? null },
+    fakten: faktenAus(profil),
     activity_id: act?.id ?? null,
   })
   const { data: lead } = await sb.from('leads').select('first_name, last_name').eq('id', leadId).maybeSingle()
   const l = lead as { first_name: string | null; last_name: string | null } | null
   return { ok: true, kunde: `${l?.first_name ?? ''} ${l?.last_name ?? ''}`.trim() }
+}
+
+// ── Archiv: alte Aufnahmen aus dem Zoom-Papierkorb (Sven 2.11.26) ──────────
+//
+// Die Aufnahmen von Feb. bis Juni 2026 liegen im Papierkorb (30 Tage). Wir
+// werten sie einmal aus wie einen neuen Call (Profil + Einwände), die Abschrift
+// wird nicht gespeichert, die Aufnahme bleibt im Papierkorb. Kunde über den
+// Termin, sonst über den Namen im Meeting-Titel („Vorname Nachname und Sven").
+
+async function leadByTopic(sb: SupabaseClient, topic: string): Promise<string | null> {
+  const m = topic.match(/^(.+?)\s+und\s+Sven\b/i)
+  const name = (m?.[1] ?? '').replace(/\s+/g, ' ').trim()
+  const teile = name.split(' ')
+  if (teile.length < 2) return null
+  const vor = teile[0]
+  const nach = teile.slice(1).join(' ')
+  const { data } = await sb.from('leads').select('id')
+    .ilike('first_name', `${vor}%`).ilike('last_name', `${nach}%`).limit(3)
+  const rows = (data ?? []) as { id: string }[]
+  return rows.length === 1 ? rows[0].id : null
+}
+
+async function archivEintrag(sb: SupabaseClient, token: string, m: ZoomMeetingRec, dryRun: boolean): Promise<Record<string, unknown>> {
+  const basis = { topic: m.topic, start: m.start_time }
+  if (/masterclass|webinar/i.test(m.topic)) return { ...basis, skip: 'kein Kundengespräch (Titel)' }
+  const { data: vorhanden } = await sb.from('call_summaries').select('status').eq('source', 'zoom').eq('external_id', m.uuid).maybeSingle()
+  if (vorhanden && (vorhanden as { status: string }).status === 'fertig') return { ...basis, skip: 'schon ausgewertet' }
+
+  const file = (m.recording_files ?? []).find(f => f.file_type === 'TRANSCRIPT' && f.download_url)
+  const appt = await findAppointment(sb, String(m.id), m.start_time)
+  const leadId = appt?.lead_id ?? await leadByTopic(sb, m.topic)
+  if (dryRun) return { ...basis, abschrift: !!file, dateien: (m.recording_files ?? []).map(f => f.file_type), lead_id: leadId }
+  if (!file?.download_url) return { ...basis, skip: 'keine Abschrift bei Zoom' }
+
+  let dl = await fetch(file.download_url, { headers: { Authorization: `Bearer ${token}` } })
+  if (!dl.ok) {
+    const sep = file.download_url.includes('?') ? '&' : '?'
+    dl = await fetch(`${file.download_url}${sep}access_token=${encodeURIComponent(token)}`)
+  }
+  if (!dl.ok) return { ...basis, error: `Abschrift-Download ${dl.status}` }
+  const { text, speakers } = vttToText(await dl.text())
+  if (speakers.length > 4) return { ...basis, skip: 'Gruppe' }
+  if (text.length < 200) return { ...basis, skip: 'Abschrift zu kurz' }
+
+  const profil = await extractProfil(text, m.start_time)
+  if (!profil) return { ...basis, error: 'KI-Auswertung fehlgeschlagen' }
+  const protokoll = (status: 'fertig' | 'uebersprungen', felder: Record<string, unknown>) =>
+    sb.from('call_summaries').upsert({
+      source: 'zoom', external_id: m.uuid, started_at: m.start_time, duration_min: m.duration ?? null, status, ...felder,
+    }, { onConflict: 'source,external_id' })
+  if (!profil.kundengespraech) {
+    await protokoll('uebersprungen', { lead_id: leadId, grund: 'Archiv: kein Kundengespräch laut KI' })
+    return { ...basis, skip: 'kein Kundengespräch laut KI' }
+  }
+
+  let activityId: string | null = null
+  let dealId: string | null = appt?.deal_id ?? null
+  if (leadId) {
+    if (!dealId) {
+      const { data } = await sb.from('deals').select('id').eq('lead_id', leadId).order('updated_at', { ascending: false }).limit(1).maybeSingle()
+      dealId = (data as { id: string } | null)?.id ?? null
+    }
+    const { act, actErr } = await schreibeNotiz(sb, leadId, dealId, m.start_time, 'Zoom', profil)
+    if (actErr) return { ...basis, error: `Notiz: ${actErr.message}` }
+    activityId = act?.id ?? null
+  }
+  // Auch ohne Kundenakte zählen die Einwände für die Gesamtauswertung.
+  await protokoll('fertig', {
+    lead_id: leadId, deal_id: dealId, appointment_id: appt?.id ?? null,
+    briefing: profil.briefing, notiz: profil.notiz, fakten: faktenAus(profil),
+    activity_id: activityId, aufnahme_geloescht: true,
+    grund: leadId ? 'Archiv (Zoom-Papierkorb)' : 'Archiv, kein Kunde zugeordnet: nur Einwand-Statistik',
+  })
+  return { ...basis, ok: true, lead_id: leadId, einwaende: profil.einwaende?.length ?? 0 }
 }
 
 // ── Handler ─────────────────────────────────────────────────────────────────
@@ -444,7 +579,7 @@ Deno.serve(async (req) => {
     return json({ ok: true })
   }
 
-  const body = await req.clone().json().catch(() => ({})) as { action?: string; months?: number; vtt?: string; started_at?: string; trash?: boolean }
+  const body = await req.clone().json().catch(() => ({})) as { action?: string; months?: number; vtt?: string; started_at?: string; trash?: boolean; dry_run?: boolean; offset?: number; limit?: number }
 
   // Mac-App: eigener Schlüssel, darf nur hochladen
   if (body.action === 'upload') {
@@ -471,6 +606,23 @@ Deno.serve(async (req) => {
 
     const { token, scope } = await zoomToken()
     if (body.action === 'scopes') return json({ scope: scope.split(' ').sort() })
+
+    // Archiv: alte Aufnahmen im Papierkorb auswerten. dry_run (Standard) zeigt nur Zuordnung + Dateien.
+    // Wenige pro Aufruf (KI-Laufzeit), weiter mit offset.
+    if (body.action === 'archiv') {
+      const { meetings, errors } = await listRecordings(token, 12, true)
+      meetings.sort((a, b) => a.start_time.localeCompare(b.start_time))
+      const dryRun = body.dry_run !== false
+      const offset = Math.max(0, body.offset ?? 0)
+      const limit = Math.min(dryRun ? 200 : 3, Math.max(1, body.limit ?? (dryRun ? 200 : 2)))
+      const sb = sbAdmin()
+      const ergebnisse: Record<string, unknown>[] = []
+      for (const m of meetings.slice(offset, offset + limit)) {
+        try { ergebnisse.push(await archivEintrag(sb, token, m, dryRun)) }
+        catch (e) { ergebnisse.push({ topic: m.topic, start: m.start_time, error: String((e as Error).message ?? e) }) }
+      }
+      return json({ gesamt: meetings.length, offset, weiter: offset + limit < meetings.length ? offset + limit : null, errors, ergebnisse })
+    }
 
     if (body.action === 'list' || body.action === 'trash_all') {
       const { meetings, errors } = await listRecordings(token, Math.min(60, body.months ?? 36), body.action === 'list' && body.trash === true)
