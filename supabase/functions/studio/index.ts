@@ -58,6 +58,7 @@ import {
 } from '../_shared/metaGraph.ts'
 import { cleanName, creativeFeaturesSpec } from '../_shared/metaSpec.ts'
 import { LINT_ALLOWED_HOSTS } from '../_shared/metaLint.ts'
+import { SB_URL } from '../_shared/sbUrl.ts'
 
 declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
 
@@ -67,9 +68,9 @@ const CORS = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
-const SVEN_PHOTO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg'
+const SVEN_PHOTO = `${SB_URL}/storage/v1/object/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg`
 // Echtes Lotte-Foto als Persona-Referenz (für „Lotte mit ins Bild")
-const LOTTE_PHOTO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte1.jpg'
+const LOTTE_PHOTO = `${SB_URL}/storage/v1/object/public/Assets/wa/lotte1.jpg`
 
 // Bildaufbau-Regel fuer ALLE Einzelbilder: oben bleibt Platz fuer den Korall-
 // Badge, unten fuer das Creme-Panel. Ohne diese Ansage landete der Text

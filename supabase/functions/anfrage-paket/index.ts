@@ -41,6 +41,7 @@ import {
   GUIDE_URL, LOGO, PHOTO_SQ, SERIF, SANS, CALC_STANDARD, type CalcStandard, type Markt, marktAnnahmen, calcParams,
   esc, kundenFotos, karte, rechnungKarte, zahlungKarte, ratenplan, ratenplanKarte,
 } from '../info-paket/bausteine.ts'
+import { SB_URL } from '../_shared/sbUrl.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -1232,7 +1233,7 @@ async function versenden(sb: SupabaseClient, id: string): Promise<string> {
 // (sonst sähen Kunden, die schon im Portal waren, beim ersten Klick den Login).
 const NACH_DEM_KAUF_URL = `${PORTAL_URL}/s/nach-dem-kauf.html`
 // Original statt /render/image: nur width ohne height schneidet das Bild zu.
-const APP_BILD = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/landing-assets/app/as_einnahmen.jpg'
+const APP_BILD = `${SB_URL}/storage/v1/object/public/landing-assets/app/as_einnahmen.jpg`
 function nachDemKaufKarte(): string {
   const punkte = [
     ['Komplette Verwaltung', 'deiner Wohnung, du musst nicht vor Ort sein.'],

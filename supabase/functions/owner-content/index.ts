@@ -11,6 +11,7 @@
 // Deploy:  supabase functions deploy owner-content --no-verify-jwt
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { lotteBild } from '../_shared/lotte.ts'
+import { SB_URL } from '../_shared/sbUrl.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -23,7 +24,7 @@ const TEST_MAIL = 'sven@happy-property.com'
 const TEST_PHONE = '+35795096409'
 // Eigenes Motiv fuer Upload-Meldungen: Lotte am Laptop beim Hochladen
 // (Svens Drive „Lotte Upload", gespiegelt nach Assets/wa).
-const LOTTE_UPLOAD = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte-upload.jpg'
+const LOTTE_UPLOAD = `${SB_URL}/storage/v1/object/public/Assets/wa/lotte-upload.jpg`
 
 interface Recipient { name: string; email: string | null; phone: string | null; lang: 'de' | 'en' }
 

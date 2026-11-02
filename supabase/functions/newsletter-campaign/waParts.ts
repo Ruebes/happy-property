@@ -1,3 +1,4 @@
+import { SB_URL } from '../_shared/sbUrl.ts'
 // Newsletter-WhatsApp als mehrere Nachrichten (Sven 17.10.26): "eine mit dem
 // Content, eine mit der Immo der Woche und eine mit der Empfehlung". Jede
 // Nachricht ist eine eigene scheduled_messages-Zeile mit eigenem Bild.
@@ -12,7 +13,7 @@
 // Svens Portraet: Bild jeder Nachricht ohne eigenes Bild und ohne Exposé-Link.
 // Ohne Bild haengt process-scheduled-messages (alsLotte bei recipient 'client')
 // ein Lotte-Hundefoto an, und das wirkt unter Svens Gruss falsch.
-export const SVEN_WA_IMAGE = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/render/image/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg?width=900&height=900&resize=cover&quality=80'
+export const SVEN_WA_IMAGE = `${SB_URL}/storage/v1/render/image/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg?width=900&height=900&resize=cover&quality=80`
 // = TEXT_LIMIT in send-whatsapp. Laengere Teile teilt send-whatsapp selbst, dann
 // werden aus einem Teil zwei Nachrichten (mit Bild schon ab 950 Zeichen).
 export const WA_PART_LIMIT = 1900

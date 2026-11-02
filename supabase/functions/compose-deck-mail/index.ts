@@ -15,13 +15,14 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { bookingUrl } from '../_shared/bookingLink.ts'
 import { uspBoxHtml } from '../_shared/socialFooter.ts'
 import { gateCaller } from '../_shared/callerGate.ts'
+import { SB_URL } from '../_shared/sbUrl.ts'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
 // Terminlink kommt vom Aufrufer (persönlicher Link des Leads, ohne Fragebogen).
 // Ohne Angabe der neutrale Weg ohne Fragebogen — nie mehr Calendly.
 // Marke / Kontakt (= deckTypes DECK_LOGO/DECK_PHOTO/DECK_CONTACT)
-const LOGO  = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg'
-const PHOTO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg'
+const LOGO  = `${SB_URL}/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg`
+const PHOTO = `${SB_URL}/storage/v1/object/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg`
 // Foto ist nicht quadratisch (5672×3781) → server-seitig quadratisch zuschneiden,
 // sonst quetscht width=height=56 das Bild. Supabase-Transform resize=cover (2x für Retina).
 const PHOTO_SQ = PHOTO.replace('/object/public/', '/render/image/public/') + '?width=112&height=112&resize=cover&quality=80'

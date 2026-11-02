@@ -25,6 +25,7 @@ import { gateCaller } from '../_shared/callerGate.ts'
 import { isOptedOut, loadNewsletterOptoutKeys, mailVariants, optoutMailKey, optoutTelKey } from '../_shared/newsletterOptout.ts'
 import { SlotBook, abGroup, berlinWeekHour, detectSendPattern, nextOccurrence, weekHourLabel, type SendSample } from './sendTime.ts'
 import { WA_PART_LIMIT, WA_PART_STEP_MS, deckTokenIn, ownImage, partImage, planWaRebuild, splitWaParts, withAffiliateBlock, type WaRow } from './waParts.ts'
+import { SB_URL } from '../_shared/sbUrl.ts'
 
 // ── Eigenes-HTML-Modus (content_mode='html') ─────────────────────────────────
 // Sven fügt fertiges HTML ein → wird als HTML verschickt (Text-Fallback macht
@@ -207,8 +208,8 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 const SITE = 'https://portal.happy-property.com'
 // Happy-Property-CI (= compose-deck-mail): Playfair/Montserrat, Creme/Navy/Coral,
 // Logo-Header, Objekt-Karten, Signatur mit Foto, dunkler Social-Footer.
-const LOGO  = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg'
-const PHOTO_SQ = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/render/image/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg?width=112&height=112&resize=cover&quality=80'
+const LOGO  = `${SB_URL}/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg`
+const PHOTO_SQ = `${SB_URL}/storage/v1/render/image/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg?width=112&height=112&resize=cover&quality=80`
 const CI = { cream: '#fffcf6', navy: '#1a2332', coral: '#ff795d', ink: '#2a2a2a', line: '#e6dfd0', mute: '#999' }
 const DARK = '#1b1b22', GOLD = '#C2A15E'
 const SERIF = "'Playfair Display',Georgia,serif", SANS = "'Montserrat',Helvetica,Arial,sans-serif"

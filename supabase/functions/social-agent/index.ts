@@ -33,6 +33,7 @@ import { hfGenerateBytes as hfGen, hfUploadImage as hfUp, type HfStore } from '.
 import { CI, CI_FONT, loadCiFonts } from '../_shared/brand.ts'
 import { slideSvg, coverOverlaySvg, composeCover, normalizeSlides, hookOverlaySvg, slideOverflow, type CarSlide } from './carousel.ts'
 import { seamCheck, smallUrl, type SeamCheck } from './imageGuard.ts'
+import { SB_URL } from '../_shared/sbUrl.ts'
 
 declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
 
@@ -2057,8 +2058,8 @@ Regeln:
           if (refUrls.length || searchedRef) {
             const refs: Array<{ id: string }> = []
             const personaFoto = persona === 'sven'
-              ? 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/sven-termin.jpg'
-              : persona === 'lotte' ? 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte1.jpg' : null
+              ? `${SB_URL}/storage/v1/object/public/Assets/wa/sven-termin.jpg`
+              : persona === 'lotte' ? `${SB_URL}/storage/v1/object/public/Assets/wa/lotte1.jpg` : null
             const pushRef = async (url: string) => {
               const b = new Uint8Array(await (await fetch(url)).arrayBuffer())
               refs.push({ id: await hfUploadImage(sb, b, 'image/auto') })   // Helfer wandelt nach PNG

@@ -22,8 +22,9 @@
 // Deploy:  supabase functions deploy dropbox-oauth --no-verify-jwt
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { authorizeCaller, safeEqual } from '../_shared/callerAuth.ts'
+import { SB_URL } from '../_shared/sbUrl.ts'
 
-const SELF = 'https://vjlwgajmtqlwjjreowbu.supabase.co/functions/v1/dropbox-oauth'
+const SELF = `${SB_URL}/functions/v1/dropbox-oauth`
 const CONNECTORS_PAGE = 'https://portal.happy-property.com/admin/crm/settings/connectors'
 const TTL_MS = 10 * 60 * 1000
 

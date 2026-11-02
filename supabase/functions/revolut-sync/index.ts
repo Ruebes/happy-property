@@ -30,6 +30,7 @@
 
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { gateCaller } from '../_shared/callerGate.ts'
+import { SB_URL } from '../_shared/sbUrl.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -85,7 +86,7 @@ interface OpenInvoice {
   customer_snapshot: { company_name?: string; contact_name?: string; email?: string } | null
 }
 
-const BRAND_LOGO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg'
+const BRAND_LOGO = `${SB_URL}/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg`
 const eur = (n: number, c: string) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: c || 'EUR' }).format(n)
 const dDe = (iso: string) => new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: 'long', year: 'numeric' })
 
@@ -98,7 +99,7 @@ function paymentConfirmationHtml(inv: OpenInvoice, paidIso: string): string {
     <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:16px;padding:36px 32px">
       <img src="${BRAND_LOGO}" alt="Happy Property" style="height:34px;margin-bottom:20px" />
       <div style="text-align:center;margin:0 0 18px;">
-        <img src="https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte-kasse.jpg" alt="Lotte" width="240" style="width:240px;max-width:100%;border-radius:14px;" />
+        <img src="${SB_URL}/storage/v1/object/public/Assets/wa/lotte-kasse.jpg" alt="Lotte" width="240" style="width:240px;max-width:100%;border-radius:14px;" />
         <p style="font-size:12px;color:#6b7280;margin:6px 0 0;">Lotte · persönliche Assistentin von Sven 🐾</p>
       </div>
       <div style="font-size:15px;color:#1b1b22;line-height:1.65">

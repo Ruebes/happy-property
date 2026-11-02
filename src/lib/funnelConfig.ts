@@ -216,7 +216,7 @@ export const DEFAULT_FUNNEL_CONFIG: FunnelConfig = {
   },
   done: {
     emoji: '🎉',
-    image_url: 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/funnel/sven-lotte-pool.jpg',
+    image_url: `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/deck-assets/funnel/sven-lotte-pool.jpg`,
     image_caption: 'Sven & Lotte freuen sich auf dich',
     title: 'Dein Termin steht!',
     note: 'Die Bestätigung ist per E-Mail und WhatsApp unterwegs — inklusive Kalender-Datei.',

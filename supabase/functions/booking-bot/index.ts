@@ -40,6 +40,7 @@ import {
 } from '../_shared/lotteRegeln.ts'
 import { antwortSprache, dauerhaftEnglisch, spracheErkennen, sprachNotiz, SPRACH_BETREFF, type Sprache } from '../_shared/kundenSprache.ts'
 import { ruhezeitZiel } from '../_shared/ruhezeit.ts'
+import { SB_URL } from '../_shared/sbUrl.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -287,16 +288,16 @@ async function createCalendarEvent(admin: SupabaseClient, ev: { title: string; s
 // dass hier eine Assistentin schreibt und kein Mensch — und nimmt einem Fehlgriff
 // des Bots die Schaerfe.
 const LOTTE_BILDER = [
-  'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte1.jpg',
-  'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte2.jpg',
-  'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte3.jpg',
+  `${SB_URL}/storage/v1/object/public/Assets/wa/lotte1.jpg`,
+  `${SB_URL}/storage/v1/object/public/Assets/wa/lotte2.jpg`,
+  `${SB_URL}/storage/v1/object/public/Assets/wa/lotte3.jpg`,
 ]
 const lotteBild = () => LOTTE_BILDER[Math.floor(Math.random() * LOTTE_BILDER.length)]
 
 // Es gibt Faelle, in denen sich SVEN selbst meldet statt Lotte: Leute, die ihn
 // noch gar nicht kennen (Meta-Fragebogen, 21.8.). Dann seine Unterschrift und
 // sein Foto - eine Assistentin mit Hundefoto wirkt beim Erstkontakt zu flapsig.
-const SVEN_BILD = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/sven-termin.jpg'
+const SVEN_BILD = `${SB_URL}/storage/v1/object/public/Assets/wa/sven-termin.jpg`
 const SVEN_QUELLEN = ['meta_formular']
 
 function withSignoff(text: string, asSven = false): string {
@@ -484,8 +485,8 @@ async function askType(admin: SupabaseClient, convId: string, phone: string, lea
 // ── Happy-Property-Mail-CI (= compose-deck-mail: Logo, Playfair/Montserrat, Coral/Navy) ──
 const MAIL = {
   cream: '#fffcf6', navy: '#1a2332', coral: '#ff795d', ink: '#2a2a2a', line: '#e6dfd0', mute: '#8a8578', dark: '#1b1b22', gold: '#C2A15E',
-  logo: 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg',
-  photoSq: 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/render/image/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg?width=112&height=112&resize=cover&quality=80',
+  logo: `${SB_URL}/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg`,
+  photoSq: `${SB_URL}/storage/v1/render/image/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg?width=112&height=112&resize=cover&quality=80`,
   sans: `'Montserrat',Arial,Helvetica,sans-serif`, serif: `'Playfair Display',Georgia,serif`,
 }
 function escH(s: string): string { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') }

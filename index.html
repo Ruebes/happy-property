@@ -20,7 +20,7 @@
     <!-- Splash-Screen Farbe für Android -->
     <meta name="application-name" content="Happy Property" />
 
-    <link rel="preconnect" href="https://vjlwgajmtqlwjjreowbu.supabase.co" crossorigin />
+    <link rel="preconnect" href="%VITE_SUPABASE_URL%" crossorigin />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -38,7 +38,7 @@
         var m = location.pathname.match(/^\/bewertung\/([A-Za-z0-9]+)\/?$/);
         if (!m) return;
         window.__reviewPrefetch = fetch(
-          'https://vjlwgajmtqlwjjreowbu.supabase.co/functions/v1/review-api',
+          '%VITE_SUPABASE_URL%/functions/v1/review-api',
           { method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'view', token: m[1] }) }
         ).then(function (r) { return r.json() }).catch(function () { return null });
@@ -50,7 +50,7 @@
     <script>
       if (!/^\/(admin|login|set-password|report)/.test(location.pathname)) {
         var _hpwaS = document.createElement('script');
-        _hpwaS.src = 'https://vjlwgajmtqlwjjreowbu.supabase.co/functions/v1/wa-track/t.js';
+        _hpwaS.src = '%VITE_SUPABASE_URL%/functions/v1/wa-track/t.js';
         _hpwaS.defer = true;
         document.head.appendChild(_hpwaS);
       }

@@ -12,6 +12,7 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFP
 import fontkit from 'npm:@pdf-lib/fontkit@1.1.1'
 import { initWasm, Resvg } from 'https://esm.sh/@resvg/resvg-wasm@2.6.2'
 import { Image } from '../_vendor/imagescript/ImageScript.js'
+import { SB_URL } from '../_shared/sbUrl.ts'
 
 type Row = { label?: string; sub?: string; value?: string; strong?: boolean }
 type Phase = { label?: string; title?: string; rows?: Row[]; sumLabel?: string; sumValue?: string }
@@ -32,7 +33,7 @@ const MUTE = rgb(0.45, 0.45, 0.48)
 const LINE = rgb(0xe6 / 255, 0xdf / 255, 0xd0 / 255)
 const CREAM = rgb(0xfa / 255, 0xf6 / 255, 0xec / 255)
 const W = 595.28, H = 841.89, M = 42
-const LOGO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg'
+const LOGO = `${SB_URL}/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg`
 const KONTAKT = 'Happy Property · Sven Rüprich · +357 95 09 64 09 · sven@happy-property.com'
 
 const stripHtml = (s?: string) => (s ?? '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim()

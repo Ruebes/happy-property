@@ -8,11 +8,12 @@ import { callAnthropic, textOf } from '../_shared/anthropic.ts'
 import { zahlungsUebersicht } from './datenblatt.ts'
 import { normalizePaySchedule } from '../_shared/deckContext.ts'
 import { saisonPreisFuer } from '../_shared/saisonZiel.ts'
+import { SB_URL } from '../_shared/sbUrl.ts'
 
 // Über portal.happy-property.com (Vercel-Rewrite auf Supabase Storage, Sven 11.10.26).
 export const GUIDE_URL = 'https://portal.happy-property.com/immobilienguide-paphos-2026.pdf'
-export const LOGO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg'
-export const PHOTO_SQ = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/render/image/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg?width=112&height=112&resize=cover&quality=80'
+export const LOGO = `${SB_URL}/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg`
+export const PHOTO_SQ = `${SB_URL}/storage/v1/render/image/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg?width=112&height=112&resize=cover&quality=80`
 export const SERIF = "'Playfair Display',Georgia,serif", SANS = "'Montserrat',Helvetica,Arial,sans-serif"
 
 // Standardannahmen der Rechnung = Svens Wizard-Stand vom Oktober 2026

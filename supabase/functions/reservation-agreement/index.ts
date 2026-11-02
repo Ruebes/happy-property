@@ -50,6 +50,7 @@ import { signView, signSubmit } from './sign.ts'
 import { docCreate, docView, docSubmit, docQueueSweep } from './docsign.ts'
 import { loadSeal, saveSeal, removeSeal, sealDataUrl, pngFromInput, MAX_SEAL_BYTES } from './seal.ts'
 import { specialTermsEn, type SpecialTerms } from './terms.ts'
+import { SB_URL } from '../_shared/sbUrl.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -79,7 +80,7 @@ const AI_MIME = /^(application\/pdf|image\/(jpeg|png|webp|gif))$/
 const DEAD_PHASES = ['deal_verloren', 'archiviert']
 // Bild zur WhatsApp an den Bauträger (Higgsfield, Unterlagen auf dem Schreibtisch). Ohne Bild
 // zeigt WhatsApp zum Drive-Link nur die Google-Anmeldeseite als Vorschau (Sven 15.10.).
-const DEV_WA_IMAGE = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/reservierung-unterlagen.jpg'
+const DEV_WA_IMAGE = `${SB_URL}/storage/v1/object/public/Assets/wa/reservierung-unterlagen.jpg`
 
 type Client = SupabaseClient
 type Mode = 'on' | 'test' | 'off'

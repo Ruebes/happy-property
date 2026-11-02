@@ -13,6 +13,7 @@
 
 import { computeUnitPrice, eur, unitKey, vatModeForAngle, type UnitPriceResult, type VatMode,
          VAT_CAP_SQM, VAT_CAP_WERT, VAT_MAX_SQM, VAT_MAX_WERT } from './deckVat.ts'
+import { SB_URL } from './sbUrl.ts'
 
 export type FurnitureMode = 'none' | 'included' | 'optional'
 export type DeckLang = 'de' | 'en'
@@ -108,7 +109,7 @@ export interface DeckContext {
 }
 
 export const MARINA_MODEL =
-  'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/paphos-marina-model.jpg'
+  `${SB_URL}/storage/v1/object/public/deck-assets/brand/paphos-marina-model.jpg`
 
 /** Luma-Standard aus dem Agent-Guide. Greift, wenn ein Luma-Projekt keinen
  *  eigenen payment_schedule hinterlegt hat.

@@ -14,10 +14,11 @@ import { uploadToken, uploadFile } from './drive.ts'
 import { loadSeal, saveSeal, sealDataUrl, pngFromInput, clientIp, LOCK_MINUTES, MAX_SEAL_BYTES } from './seal.ts'
 import { cleanName, cleanSignature, sha256Hex, placeOf, langOf } from './sign.ts'
 import { b64, esc, invoke, whatsappSven, whatsappPdf, markOwnUpload, notifyCustomerSigned, SVEN_MAIL, SVEN_PHONE, CRM_LEAD, todayCy } from './index.ts'
+import { SB_URL } from '../_shared/sbUrl.ts'
 
 type Res = { status: number; body: Record<string, unknown> }
 const SIGN_BASE = 'https://portal.happy-property.com/sign/d/'
-const WA_IMAGE = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/reservierung-unterlagen.jpg'
+const WA_IMAGE = `${SB_URL}/storage/v1/object/public/Assets/wa/reservierung-unterlagen.jpg`
 const TOKEN_RE = /^[0-9a-f]{36}$/
 const MAX_PDF_BYTES = 15 * 1024 * 1024
 

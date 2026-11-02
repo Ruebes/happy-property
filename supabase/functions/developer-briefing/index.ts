@@ -22,6 +22,7 @@ import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { gateCaller } from '../_shared/callerGate.ts'
 import { callAnthropic, toolInput } from '../_shared/anthropic.ts'
 import { BRIEFING_CSS } from './template.ts'
+import { SB_URL } from '../_shared/sbUrl.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -33,7 +34,7 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
 const PORTAL = 'https://portal.happy-property.com'
-const LOGO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg'
+const LOGO = `${SB_URL}/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg`
 const SVEN_TEL = '+35795096409'
 const SVEN_TEL_DISP = '+357 95 09 64 09'
 const MODELL = 'claude-sonnet-5-5'

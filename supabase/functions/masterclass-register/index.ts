@@ -20,6 +20,7 @@ import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { buildIcs, toB64 } from '../_shared/ics.ts'
 import { CI } from '../_shared/brand.ts'
 import { ermittleHerkunft, mitHerkunft } from '../_shared/herkunft.ts'
+import { SB_URL } from '../_shared/sbUrl.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -58,7 +59,7 @@ const EVENTS: Record<string, Ev> = {
     list: 'Masterclass Ärzte 15.11.2026',
     thanksUrl: 'https://steuervorteil-zypern-immobilien.com/masterclass-fuer-aerzte-apotheker-danke/',
     landingUrl: 'https://steuervorteil-zypern-immobilien.com/live-masterclass-zypern-immobilien/',
-    waImage: 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/landing-assets/mc-aerzte/wa-bestaetigung-1511-alle.jpg',
+    waImage: `${SB_URL}/storage/v1/object/public/landing-assets/mc-aerzte/wa-bestaetigung-1511-alle.jpg`,
   },
 }
 const FN_URL = () => `${Deno.env.get('SUPABASE_URL')}/functions/v1/masterclass-register`

@@ -117,7 +117,7 @@ const HP_PHOTO_SQ = DECK_PHOTO.replace('/object/public/', '/render/image/public/
 const HP_SANS = "Montserrat, Helvetica, Arial, sans-serif"
 // Termin-Bild je Sprache (öffentlich) — als WhatsApp-Bild, damit statt einer
 // wilden Maps-Link-Vorschau ein sauberes „Termin vereinbart"-Motiv erscheint.
-const LOTTE_TERMIN_IMG = (lang: string) => `https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte-termin-${lang === 'en' ? 'eng' : 'de'}.jpg`
+const LOTTE_TERMIN_IMG = (lang: string) => `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/Assets/wa/lotte-termin-${lang === 'en' ? 'eng' : 'de'}.jpg`
 
 interface InviteParams {
   firstName: string; isEdit: boolean; title: string

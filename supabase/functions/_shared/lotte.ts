@@ -1,3 +1,4 @@
+import { SB_URL } from './sbUrl.ts'
 // Lotte — die Absenderin aller automatischen Kunden-WhatsApps.
 //
 // Sven: „Ab jetzt stellt sich der Bot immer als Lotte, Svens persönliche
@@ -8,9 +9,9 @@
 // Deck-Titelbild oder eine Video-Vorschau im Text hat Vorrang (send-whatsapp
 // loest das auf). Es gibt nur EINEN Anhang-Slot je Nachricht.
 export const LOTTE_BILDER = [
-  'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte1.jpg',
-  'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte2.jpg',
-  'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte3.jpg',
+  `${SB_URL}/storage/v1/object/public/Assets/wa/lotte1.jpg`,
+  `${SB_URL}/storage/v1/object/public/Assets/wa/lotte2.jpg`,
+  `${SB_URL}/storage/v1/object/public/Assets/wa/lotte3.jpg`,
 ]
 export const lotteBild = (): string => LOTTE_BILDER[Math.floor(Math.random() * LOTTE_BILDER.length)]
 

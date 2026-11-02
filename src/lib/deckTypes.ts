@@ -51,8 +51,8 @@ export interface DeckContent {
 }
 
 // Happy-Property-Logo (dunkle Variante, passt zur Deck-Optik) + Svens Foto.
-export const DECK_LOGO  = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg'
-export const DECK_PHOTO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg'
+export const DECK_LOGO  = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg`
+export const DECK_PHOTO = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg`
 
 // Statischer Kontaktblock (Happy Property / Sven) — erscheint im CTA-Footer.
 export const DECK_CONTACT = {
