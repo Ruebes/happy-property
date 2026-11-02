@@ -129,13 +129,20 @@ export default function Blog() {
 
   const PunkteChips = ({ p }: { p: Punkte }) => (
     <div className="flex flex-wrap gap-1.5 mt-2">
-      {([['chef', 'Chefredaktion'], ['fakten', 'Fakten'], ['stimme', 'Stimme'], ['seo', 'SEO'], ['geo', 'KI-Suche']] as const)
+      {([['fakten', 'Fakten'], ['stimme', 'Stimme'], ['seo', 'SEO'], ['geo', 'KI-Suche']] as const)
         .filter(([k]) => typeof p?.[k] === 'number')
         .map(([k, label]) => (
           <span key={k} className={`text-xs px-2 py-0.5 rounded-full ${(p[k] ?? 0) >= 85 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
             {label} {p[k]}
           </span>
         ))}
+      {/* Gesamtscore = Urteil der Chefredaktion: sie liest alle Prüferberichte und entscheidet über die Freigabe */}
+      {typeof p?.chef === 'number' && (
+        <span title={t('crm.blog.totalHint', 'Urteil der Chefredaktion über alle Prüfungen. Ab 85 freigabereif.') as string}
+          className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ring-1 ${p.chef >= 85 ? 'bg-emerald-100 text-emerald-800 ring-emerald-300' : 'bg-amber-100 text-amber-800 ring-amber-300'}`}>
+          {t('crm.blog.total', 'Gesamt')} {p.chef}
+        </span>
+      )}
     </div>
   )
 
