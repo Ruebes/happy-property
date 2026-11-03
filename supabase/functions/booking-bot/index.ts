@@ -752,6 +752,12 @@ async function handleNudge(admin: SupabaseClient, leadId: string, stage: number,
   if ((st as { value?: string } | null)?.value !== 'true') return json({ ok: true, skipped: 'disabled' })
   const { data: opt } = await admin.from('communication_optouts').select('id').eq('lead_id', leadId).limit(1)
   if (opt && opt.length) return json({ ok: true, skipped: 'optout' })
+  // Zufriedenheit nach dem Gespräch: auch mit Folgetermin, in der Sprache des Kunden.
+  if (source === 'zufriedenheit') {
+    const { data: zk } = await admin.from('activities').select('content').eq('lead_id', leadId)
+      .eq('type', 'whatsapp').eq('direction', 'inbound').order('created_at', { ascending: false }).limit(1).maybeSingle()
+    return await mitSprache(admin, leadId, (zk as { content: string | null } | null)?.content ?? '', () => zufriedenheitFragen(admin, leadId))
+  }
   // Ein Termin mit gemeldeter Absage zählt nicht: der Kunde braucht einen neuen.
   const { data: appt } = await admin.from('crm_appointments').select('id').eq('lead_id', leadId).gte('start_time', new Date().toISOString()).is('cancel_reported_at', null).limit(1)
   if (appt && appt.length) return json({ ok: true, skipped: 'has_appointment' })
@@ -941,6 +947,7 @@ async function replyRunde(admin: SupabaseClient, c: ReplyConv, leadId: string, t
   const l = lead as { first_name: string | null; whatsapp: string | null; phone: string | null; email: string | null }
   const phone = l.whatsapp || l.phone || ''
   if (c.state === 'awaiting_cafe') return await cafeReply(admin, c, l, leadId, text)
+  if (c.state === 'awaiting_zufriedenheit') return await zufriedenheitAntwort(admin, c, l, leadId, text)
   // KEIN logWa fuer inbound: der timelines-webhook hat die Nachricht bereits
   // geschrieben, und zwar mit whatsapp_message_id. Der zweite Schreiber hier liess
   // im Kundenverlauf jede eingehende Nachricht doppelt erscheinen und verfaelschte
@@ -2394,6 +2401,117 @@ async function mitSprache(admin: SupabaseClient, leadId: string, text: string, l
     if (lage?.dauerhaft) await aufEnglischStellen(admin, leadId, lage.verlauf)
   } catch (e) { console.warn('[booking-bot] Antwortsprache:', e) }
   return lage?.nummer ? await inSprache(lage.nummer, leadId, lage.sprache, lauf) : await lauf()
+}
+
+// ── Zufriedenheit nach dem Gespräch (Sven 3.11.2026, Idee aus dem Playbook) ─────
+// zoom-calls plant nach jedem ausgewerteten Kundengespräch einen bot_nudge mit
+// Quelle 'zufriedenheit' (etwa 2 Stunden später, Ruhezeit regelt der Versand). Lotte
+// fragt einmal je Kunde nach einer Zahl von 1 bis 10. 9 oder 10: Bewertungs- und
+// Tippgeber-Link. 6 oder weniger: Sven meldet sich, dazu eine Aufgabe. 7 oder 8: Dank.
+// Antwortet der Kunde ohne Zahl, nimmt seine Nachricht den normalen Weg.
+const PORTAL = 'https://portal.happy-property.com'
+
+async function zufriedenheitFragen(admin: SupabaseClient, leadId: string): Promise<Response> {
+  const { data: frueher } = await admin.from('booking_conversations').select('id').eq('lead_id', leadId).eq('source', 'zufriedenheit').limit(1)
+  if (frueher && frueher.length) return json({ ok: true, skipped: 'schon_gefragt' })
+  // Läuft schon ein Gespräch mit Lotte, keine zweite Frage dazwischen.
+  const { data: conv } = await admin.from('booking_conversations').select('id').eq('lead_id', leadId)
+    .not('state', 'in', '(booked,handoff,expired)').gt('expires_at', new Date().toISOString()).limit(1)
+  if (conv && conv.length) return json({ ok: true, skipped: 'engaged' })
+  const { data: lead } = await admin.from('leads').select('first_name, whatsapp, phone').eq('id', leadId).maybeSingle()
+  const l = lead as { first_name: string | null; whatsapp: string | null; phone: string | null } | null
+  const phone = l?.whatsapp || l?.phone
+  if (!l || !phone) return json({ ok: true, skipped: 'no_phone' })
+  const name = first(l.first_name)
+  const msg = `Hallo${name ? ` ${name}` : ''} 🐾 Lotte hier. Danke für dein Gespräch mit Sven! Eine kurze Frage: Wie zufrieden warst du auf einer Skala von 1 bis 10? Schreib mir einfach die Zahl zurück.`
+  const id = await sendWa(phone, msg)
+  await admin.from('booking_conversations').insert({
+    lead_id: leadId, source: 'zufriedenheit', state: 'awaiting_zufriedenheit', last_message: msg,
+    expires_at: new Date(Date.now() + 3 * 24 * 3600e3).toISOString(),
+  })
+  await logWa(admin, leadId, msg, 'outbound', id)
+  return json({ ok: true, gefragt: true })
+}
+
+/** Zahl von 1 bis 10 in der Antwort ("8", "8/10", "eine 9", "10 von 10"). In langen
+ *  Texten nur in der Form "8/10" oder "8 von 10", sonst wäre "in 2 Wochen" eine 2. */
+function zufriedenheitZahl(text: string): number | null {
+  const skala = text.match(/(?<![\d,.])(10|[1-9])\s*(?:\/|von|out of|of)\s*10\b/i)
+  if (skala) return Number(skala[1])
+  if (text.trim().length > 80) return null
+  const m = text.match(/(?<![\d,.])(10|[1-9])(?![\d,.]*\d)/)
+  return m ? Number(m[1]) : null
+}
+
+async function zufriedenheitAntwort(admin: SupabaseClient, c: ReplyConv, l: { first_name: string | null; whatsapp: string | null; phone: string | null }, leadId: string, text: string): Promise<Response> {
+  const phone = l.whatsapp || l.phone || ''
+  const zahl = zufriedenheitZahl(text)
+  if (zahl == null) {
+    await setConv(admin, c.id, { state: 'expired' })
+    return await handleAnswer(admin, leadId, text)
+  }
+  const name = first(l.first_name)
+  const { data: ld } = await admin.from('leads').select('first_name, last_name, email, whatsapp, phone, language').eq('id', leadId).maybeSingle()
+  const lead = ld as { first_name: string | null; last_name: string | null; email: string | null; whatsapp: string | null; phone: string | null; language: string | null } | null
+  const vollerName = `${lead?.first_name ?? ''} ${lead?.last_name ?? ''}`.trim() || 'Kunde'
+  try {
+    await admin.from('activities').insert({ lead_id: leadId, type: 'note', direction: 'inbound', auto: true, subject: `⭐ Zufriedenheit nach dem Gespräch: ${zahl}/10`, content: text.slice(0, 1000), completed_at: new Date().toISOString() })
+    const { data: cs } = await admin.from('call_summaries').select('id, fakten').eq('lead_id', leadId).eq('status', 'fertig').order('created_at', { ascending: false }).limit(1).maybeSingle()
+    const row = cs as { id: string; fakten: Record<string, unknown> | null } | null
+    if (row) await admin.from('call_summaries').update({ fakten: { ...(row.fakten ?? {}), zufriedenheit: zahl } }).eq('id', row.id)
+  } catch (e) { console.warn('[booking-bot] Zufriedenheit speichern:', e) }
+
+  let msg: string
+  let state = 'expired'
+  if (zahl >= 9) {
+    const links = await zufriedenheitLinks(admin, leadId, vollerName, lead)
+    msg = `Das freut uns riesig, danke${name ? ` ${name}` : ''}! 🧡`
+      + (links.bewertung ? `\n\nMagst du uns eine kurze Bewertung schreiben? Das dauert 2 Minuten und hilft uns sehr:\n${links.bewertung}` : '')
+      + (links.empfehlung ? `\n\nUnd falls du jemanden kennst, für den Zypern auch spannend wäre: Das ist dein persönlicher Empfehlungs-Link. Kauft jemand darüber eine Immobilie, bekommst du 1.000 € als Dankeschön.\n${links.empfehlung}` : '')
+  } else if (zahl <= 6) {
+    state = 'handoff'
+    msg = `Danke für deine ehrliche Antwort${name ? `, ${name}` : ''}. Das nehmen wir ernst. Sven meldet sich persönlich bei dir.`
+    await absageAufgabe(admin, leadId, `Zufriedenheit ${zahl}/10: ${vollerName} melden`,
+      `${vollerName} hat nach dem Gespräch mit ${zahl} von 10 geantwortet. Lotte hat gesagt, dass du dich persönlich meldest.\n\nAntwort: ${text.slice(0, 500)}`)
+  } else {
+    msg = `Danke dir für die Rückmeldung${name ? `, ${name}` : ''}! 🙏`
+  }
+  await setConv(admin, c.id, { state, last_message: msg })
+  const id = await sendWa(phone, msg)
+  await logWa(admin, leadId, msg, 'outbound', id)
+  return json({ ok: true, zufriedenheit: zahl })
+}
+
+/** Bewertungs-Link (offene Anfrage wiederverwenden) und Tippgeber-Link, wie review-api. */
+async function zufriedenheitLinks(admin: SupabaseClient, leadId: string, name: string, lead: { email: string | null; whatsapp: string | null; phone: string | null; language: string | null } | null): Promise<{ bewertung: string | null; empfehlung: string | null }> {
+  let bewertung: string | null = null
+  let empfehlung: string | null = null
+  let reviewId: string | null = null
+  try {
+    const { data: offen } = await admin.from('review_requests').select('id, token').eq('lead_id', leadId).eq('status', 'sent').limit(1).maybeSingle()
+    let r = offen as { id: string; token: string } | null
+    if (!r) {
+      const { data: neu, error } = await admin.from('review_requests')
+        .insert({ lead_id: leadId, recipient_name: name, language: lead?.language === 'en' ? 'en' : 'de', status: 'sent', sent_at: new Date().toISOString() })
+        .select('id, token').single()
+      if (error) console.warn('[booking-bot] Bewertungsanfrage:', error.message)
+      r = neu as typeof r
+    }
+    if (r) { bewertung = `${PORTAL}/bewertung/${r.token}`; reviewId = r.id }
+  } catch (e) { console.warn('[booking-bot] Bewertungsanfrage:', e) }
+  try {
+    const { data: aff, error } = await admin.rpc('ensure_affiliate', {
+      p_lead_id: leadId, p_subscriber_id: null, p_name: name,
+      p_email: lead?.email ?? null, p_whatsapp: lead?.whatsapp ?? lead?.phone ?? null, p_source: 'zufriedenheit',
+    })
+    const a = aff as { id: string; code: string } | null
+    if (error || !a) console.warn('[booking-bot] Tippgeber:', error?.message)
+    else {
+      empfehlung = `${PORTAL}/termin?src=empfehlung&ref=${a.code}`
+      if (reviewId) await admin.from('review_requests').update({ affiliate_id: a.id }).eq('id', reviewId)
+    }
+  } catch (e) { console.warn('[booking-bot] Tippgeber:', e) }
+  return { bewertung, empfehlung }
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────

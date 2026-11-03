@@ -275,6 +275,23 @@ async function findAppointment(sb: SupabaseClient, meetingId: string, startIso: 
 
 // ── Notiz beim Kunden ───────────────────────────────────────────────────────
 
+// Lotte fragt nach dem Gespräch nach der Zufriedenheit (1 bis 10), etwa 2 Stunden
+// später über booking-bot (Quelle 'zufriedenheit'). Die Ruhezeit regelt der Versand,
+// einmal je Kunde prüft booking-bot. Nur bei neuen Gesprächen, nie beim Archiv.
+async function zufriedenheitPlanen(sb: SupabaseClient, leadId: string, dealId: string | null) {
+  try {
+    const { data: offen } = await sb.from('scheduled_messages').select('id').eq('lead_id', leadId)
+      .eq('event_type', 'bot_nudge').eq('bot_nudge_source', 'zufriedenheit').in('status', ['pending', 'processing', 'sent']).limit(1)
+    if (offen && offen.length) return
+    const { error } = await sb.from('scheduled_messages').insert({
+      lead_id: leadId, deal_id: dealId, type: 'whatsapp', event_type: 'bot_nudge',
+      bot_nudge_stage: 1, bot_nudge_source: 'zufriedenheit', status: 'pending',
+      scheduled_at: new Date(Date.now() + 2 * 3600e3).toISOString(),
+    })
+    if (error) console.warn('[zoom-calls] Zufriedenheit planen:', error.message)
+  } catch (e) { console.warn('[zoom-calls] Zufriedenheit planen:', e) }
+}
+
 async function schreibeNotiz(sb: SupabaseClient, leadId: string, dealId: string | null, startedAt: string, kanal: string, profil: Profil) {
   const tag = new Date(startedAt).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', timeZone: 'Asia/Nicosia' })
   const { data, error } = await sb.from('activities').insert({
@@ -358,6 +375,7 @@ async function processTranscript(obj: ZoomObject, downloadToken: string): Promis
     await protokoll('fehler', { lead_id: appt.lead_id, appointment_id: appt.id, grund: `Notiz: ${actErr.message}` })
     return { error: 'notiz' }
   }
+  await zufriedenheitPlanen(sb, appt.lead_id!, appt.deal_id)
 
   // Erst wenn die Notiz sicher steht: Aufnahme in den Zoom-Papierkorb.
   let geloescht = false
@@ -464,6 +482,7 @@ async function processUpload(b: UploadBody): Promise<Record<string, unknown>> {
     await protokoll('fehler', { lead_id: leadId, appointment_id: apptId, grund: `Notiz: ${actErr.message}` })
     return { error: 'notiz' }
   }
+  await zufriedenheitPlanen(sb, leadId, dealId)
   await protokoll('fertig', {
     lead_id: leadId, deal_id: dealId, appointment_id: apptId,
     briefing: profil.briefing, notiz: profil.notiz,
