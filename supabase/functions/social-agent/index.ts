@@ -416,7 +416,13 @@ type ApKind = 'reel' | 'news' | 'lotte' | 'linkedin'
 interface ApSlot { dow: number; kind: ApKind; time: string; li_time?: string; format?: 'single' | 'carousel' }
 // li_slots getrennt von slots: ältere Studio-Versionen im Browser-Cache kennen die Art
 // 'linkedin' nicht und stürzten daran ab (weiße Seite, 26.9.2026).
-interface ApCfg { enabled?: boolean; reels_folder?: string; lotte_folder?: string; social_folder?: string; reel_platforms?: string[]; slots?: ApSlot[]; li_slots?: ApSlot[] }
+interface ApCfg { enabled?: boolean; reels_folder?: string; lotte_folder?: string; social_folder?: string; reel_platforms?: string[]; reel_youtube_from?: string; slots?: ApSlot[]; li_slots?: ApSlot[] }
+// Reels gehen ab reel_youtube_from (YYYY-MM-DD, Slot-Tag) zusätzlich als YouTube-Short raus.
+// Sven 3.11.2026: 6 Shorts pro Woche ab 22.11., davor belegt Leonard den Kanal.
+function reelPlatforms(cfg: ApCfg, ymd: string): string[] {
+  const base = cfg.reel_platforms?.length ? cfg.reel_platforms : ['facebook', 'instagram']
+  return cfg.reel_youtube_from && ymd >= cfg.reel_youtube_from && !base.includes('youtube') ? [...base, 'youtube'] : base
+}
 interface ApState { state?: 'pending' | 'ready' | 'failed'; attempts?: number; error?: string; task?: boolean }
 interface ApWant { key: string; kind: ApKind; ymd: string; when: Date; liWhen: Date | null; format?: 'single' | 'carousel' }
 async function autopilotCfg(sb: SupabaseClient): Promise<ApCfg> {
@@ -2747,7 +2753,7 @@ Regeln:
         const { data: ins, error: insErr } = await sb.from('social_posts').insert({
           topic: TOPIC[kind],
           title: kind === 'reel' ? `🎞️ ${reelFile!.name.replace(/\.[^.]+$/, '')}`.slice(0, 200) : kind === 'lotte' ? '🐾 Lotte · entsteht …' : kind === 'linkedin' ? '💼 LinkedIn · entsteht …' : '📰 News · entsteht …',
-          platforms: kind === 'reel' ? (cfg.reel_platforms?.length ? cfg.reel_platforms : ['facebook', 'instagram']) : kind === 'linkedin' ? ['linkedin'] : ['facebook', 'instagram'],
+          platforms: kind === 'reel' ? reelPlatforms(cfg, pick.ymd) : kind === 'linkedin' ? ['linkedin'] : ['facebook', 'instagram'],
           format: 'single', status: 'entwurf', scheduled_for: pick.when.toISOString(),
           autopilot_slot: pick.key, post_results: { autopilot: pending },
           news_source: reelFile ? `drive:${reelFile.id}` : null,
