@@ -28,6 +28,13 @@ export const WEB_CSS = `.pj-hero{position:relative;min-height:640px;background-c
 .pj-card-n{font-family:'Playfair Display',serif;color:#ff795d;font-size:28px;line-height:1;margin:0 0 10px}
 .pj-card-t{font-size:16px;font-weight:700;color:#1a2332;margin:0 0 6px}
 .pj-card-p{font-size:15px;line-height:1.6;color:#4a4a4a;margin:0}
+.pj-faq{margin-top:26px;display:grid;gap:12px}
+.pj-faq-i{background-color:#fff;border:1px solid #e6dfd0;border-radius:12px;padding:18px 22px}
+.pj-faq-q{font-size:16px;font-weight:700;color:#1a2332;cursor:pointer;list-style:none;display:flex;justify-content:space-between;gap:16px}
+.pj-faq-q::-webkit-details-marker{display:none}
+.pj-faq-q::after{content:'+';color:#ff795d;font-size:22px;line-height:1;font-weight:400}
+.pj-faq-i[open] .pj-faq-q::after{content:'−'}
+.pj-faq-i[open] .pj-faq-q{margin-bottom:10px}
 .pj-units{margin-top:26px;border:1px solid #e6dfd0;border-radius:12px;overflow:hidden;background-color:#fff}
 .pj-urow{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,.9fr);gap:12px;padding:16px 20px;border-bottom:1px solid #efe9dc;align-items:center}
 .pj-uhead{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,.9fr);gap:12px;padding:12px 20px;background-color:#f5efe3}

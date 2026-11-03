@@ -1689,6 +1689,7 @@ export default function Deck() {
       case 'w_spec':    return t('deck.bookCh.spec', 'Ausstattung')
       case 'inventory': return t('deck.bookCh.inventory', 'Inventar')
       case 'w_why':     return t('deck.bookCh.why', 'Warum Happy Property')
+      case 'w_fragen':  return t('deck.bookCh.fragen', 'Häufige Fragen')
       case 'cta':       return t('deck.bookCh.cta', 'Nächster Schritt')
       case 'cover':     return t('deck.bookCh.overview', 'Überblick')
       default:          return k || ('headline' in b && typeof b.headline === 'string' ? b.headline : '')

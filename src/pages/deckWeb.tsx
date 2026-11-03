@@ -59,6 +59,7 @@ export type WebBlock =
   | { type: 'w_gallery'; page: ProjectPage }
   | { type: 'w_spec'; page: ProjectPage }
   | { type: 'w_why'; preis?: DeckWhyPreis }
+  | { type: 'w_fragen' }
 export type AnyBlock = DeckBlock | WebBlock
 export const isWebBlock = (b: AnyBlock): b is WebBlock => b.type.startsWith('w_')
 
@@ -129,6 +130,7 @@ export function webBlocks(blocks: DeckBlock[], page: ProjectPage): AnyBlock[] {
   if (page.gallery?.length) out.push({ type: 'w_gallery', page })
   if (page.spec?.length) out.push({ type: 'w_spec', page })
   out.push(...of('inventory'))
+  out.push({ type: 'w_fragen' })
   out.push({ type: 'w_why', preis: cover?.why })
   out.push(...of('cta'))
   return out
@@ -446,6 +448,30 @@ function Spec({ page }: { page: ProjectPage }) {
     </div></section>
   )
 }
+// Einwand-Vorbehandlung (Sven 3.11.26): Die häufigsten Einwände aus 33 ausgewerteten
+// Kundengesprächen (call_summaries.fakten.einwaende), als Frage und Antwort vor dem
+// Gespräch beantwortet. Regeln: keine Renditezahlen, Finanzierung über deutsche
+// Beleihung statt zyprischer Bank, "Kontakt herstellen" statt "vermitteln".
+const FRAGEN: [string, string][] = [
+  ['Brauche ich eine Bank auf Zypern?', 'In den meisten Fällen nicht. Einfacher und meist günstiger ist es, eine bezahlte Immobilie in Deutschland zu beleihen. Zyprische Banken prüfen erst, wenn das Geld gebraucht wird, also oft Monate nach der Anzahlung, und eine Zinsbindung im Voraus gibt es dort nicht. Sven stellt dir auf Wunsch den Kontakt zu einem Banker in Deutschland her.'],
+  ['Was passiert, wenn der Bauträger nicht fertig baut?', 'Du zahlst nicht alles auf einmal, sondern in Raten nach Baufortschritt. Den Kaufvertrag prüft unser Anwalt, er wird beim Grundbuchamt hinterlegt, und Garantie, Lieferumfang und Fristen sind in unseren Musterverträgen klar geregelt. Den Baufortschritt siehst du laufend mit Fotos in der Happy Property App.'],
+  ['Zahle ich doppelt Steuern?', 'Nein. Deutschland und Zypern haben ein Doppelbesteuerungsabkommen. Die Mieteinnahmen werden in Zypern versteuert, und diese Steuer wird in Deutschland angerechnet. Wie das in deinem Fall aussieht, rechnet Sven im Gespräch mit dir anhand einer Beispielrechnung unserer Steuerkanzlei durch. Für deine persönliche Lage ist dein Steuerberater der richtige Ansprechpartner.'],
+  ['Wer kümmert sich um die Vermietung?', 'Das übernehmen wir: Gäste, Reinigung und Instandhaltung. Einnahmen und Belegung siehst du in der App. Mit welchen Einnahmen du rechnen kannst, zeigen wir dir nicht als Werbeversprechen, sondern im persönlichen Rendite-Rechner nach allen Kosten, mit jeder Annahme offen sichtbar.'],
+  ['Muss ich jetzt schon alles bezahlen können?', 'Nein. Beim Neubau verteilt sich der Kaufpreis über die Bauzeit. Wichtig ist, dass die Finanzierung steht, bevor du reservierst. Genau das klären wir im Gespräch, damit du nicht mitten im Zahlungsplan eine Lücke hast.'],
+  ['Kann ich das alles aus Deutschland erledigen?', 'Ja. Besichtigen kannst du vor Ort oder per Video. Unterschriften und Behördengänge laufen über unseren Anwalt mit Vollmacht. Du musst für den Kauf nicht nach Zypern reisen, bist aber jederzeit willkommen.'],
+]
+function Fragen() {
+  return (
+    <section className="pj-sec"><div className="pj-wrap pj-narrow">
+      <Head kicker="Häufige Fragen" title="Was andere Käufer vorher wissen wollten" />
+      <div className="pj-faq">
+        {FRAGEN.map(([f, a], i) => (
+          <details key={i} className="pj-faq-i"><summary className="pj-faq-q">{f}</summary><p className="pj-card-p">{a}</p></details>
+        ))}
+      </div>
+    </div></section>
+  )
+}
 const WHY: [string, string][] = [
   ['Gleicher Preis wie beim Bauträger', 'Unsere Vergütung trägt der Bauträger. Du zahlst keinen Cent mehr, als wenn du direkt kaufst.'],
   ['Ein Anwalt auf deiner Seite', 'Sonst musst du mit dem Vertrag des Bauträgers allein klarkommen oder selbst einen Anwalt auf Zypern suchen. Bei uns prüft ihn unser Anwalt.'],
@@ -487,6 +513,7 @@ export function WebBlockView({ block }: { block: WebBlock }) {
     case 'w_gallery': inner = <Gallery page={block.page} />; break
     case 'w_spec':    inner = <Spec page={block.page} />; break
     case 'w_why':     inner = <Why preis={block.preis} />; break
+    case 'w_fragen':  inner = <Fragen />; break
   }
   // Abstand nach unten nur für die hellen Abschnitte, Hero/Kennzahlen/Dunkles schließen bündig an.
   const pad = !['w_hero', 'w_facts', 'w_amen', 'w_why'].includes(block.type) && !(block.type === 'w_more' && block.page.more?.[block.i]?.tone !== 'white')
