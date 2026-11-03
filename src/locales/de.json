@@ -3610,7 +3610,19 @@
       "rateBad": "Nicht gut",
       "rateSaved": "Gespeichert — fließt in die Werbe-Auswertung ein.",
       "ratedVia": "Bewertet über das Termin-Popup",
-      "ratedViaLead": "Bewertet in der Kundenansicht"
+      "ratedViaLead": "Bewertet in der Kundenansicht",
+      "lastCall": "Aus dem Gespräch vom {{datum}}",
+      "temp": "Kaufnähe",
+      "tempHot": "heiß",
+      "tempWarm": "warm",
+      "tempCold": "kalt",
+      "satisfaction": "Zufriedenheit",
+      "objDone": "ausgeräumt",
+      "objPartly": "teilweise",
+      "objOpen": "offen",
+      "noObjections": "Keine Einwände erfasst.",
+      "topObjections": "Häufigste Einwände im Erstgespräch",
+      "topObjectionsHint": "Am besten früh selbst ansprechen. Antworten stehen im Deck unter „Häufige Fragen“."
     },
     "botMsg": {
       "saved": "✅ Bot-Text gespeichert",

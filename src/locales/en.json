@@ -3610,7 +3610,19 @@
       "rateBad": "Not good",
       "rateSaved": "Saved — feeds into the ads analytics.",
       "ratedVia": "Rated via the appointment popup",
-      "ratedViaLead": "Rated on the customer page"
+      "ratedViaLead": "Rated on the customer page",
+      "lastCall": "From the call on {{datum}}",
+      "temp": "Buying intent",
+      "tempHot": "hot",
+      "tempWarm": "warm",
+      "tempCold": "cold",
+      "satisfaction": "Satisfaction",
+      "objDone": "resolved",
+      "objPartly": "partly",
+      "objOpen": "open",
+      "noObjections": "No objections recorded.",
+      "topObjections": "Most common objections in first calls",
+      "topObjectionsHint": "Best to raise them yourself early. Answers are in the deck under “Common questions”."
     },
     "botMsg": {
       "saved": "✅ Bot text saved",

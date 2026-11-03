@@ -16,6 +16,12 @@ const SHOWN_KEY = 'apptPrepShown'          // localStorage: bereits gezeigte Ter
 const LEAD_WINDOW_MIN = 2                    // wie viele Minuten vorher aufpoppen
 const POLL_MS = 30_000
 
+// Einwand-Vorbehandlung (Sven 3.11.26): zoom-calls schreibt je Gespräch die
+// Einwände, die Kaufnähe und später Lottes Zufriedenheitsfrage in call_summaries.fakten.
+type Einwand = { thema: string; aussage: string; behandelt: 'ja' | 'teilweise' | 'nein' }
+type Fakten = { einwaende?: Einwand[]; temperatur?: 'heiss' | 'warm' | 'kalt'; zufriedenheit?: number }
+type Vorher = { datum: string; fakten: Fakten }
+
 function getShown(): string[] {
   try { return JSON.parse(localStorage.getItem(SHOWN_KEY) || '[]') as string[] } catch { return [] }
 }
@@ -31,6 +37,8 @@ export default function AppointmentPrepPopup() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [rating, setRating] = useState<'gut' | 'schlecht' | 'no_show' | null>(null)
+  const [vorher, setVorher] = useState<Vorher | null>(null)
+  const [top, setTop] = useState<string[]>([])
   const locale = i18n.language?.startsWith('en') ? 'en-US' : 'de-DE'
 
   const check = useCallback(async () => {
@@ -88,6 +96,32 @@ export default function AppointmentPrepPopup() {
       setRating(prev)
     }
   }, [appt, rating, t])
+
+  // Letztes ausgewertetes Gespräch dieses Kunden. Ohne eins (Erstgespräch) die drei
+  // Einwände, die über alle Gespräche am häufigsten kamen.
+  useEffect(() => {
+    setVorher(null); setTop([])
+    if (!appt) return
+    let aktiv = true
+    void (async () => {
+      if (appt.lead_id) {
+        const { data } = await supabase.from('call_summaries').select('started_at, created_at, fakten')
+          .eq('lead_id', appt.lead_id).eq('status', 'fertig').order('created_at', { ascending: false }).limit(1).maybeSingle()
+        const r = data as { started_at: string | null; created_at: string; fakten: Fakten | null } | null
+        if (aktiv && r?.fakten && (r.fakten.einwaende?.length || r.fakten.temperatur || r.fakten.zufriedenheit)) {
+          setVorher({ datum: r.started_at ?? r.created_at, fakten: r.fakten })
+          return
+        }
+      }
+      const { data: alle } = await supabase.from('call_summaries').select('fakten').eq('status', 'fertig').limit(500)
+      const n = new Map<string, number>()
+      for (const r of (alle ?? []) as { fakten: Fakten | null }[]) {
+        for (const e of r.fakten?.einwaende ?? []) if (e.thema && e.thema !== 'Sonstiges') n.set(e.thema, (n.get(e.thema) ?? 0) + 1)
+      }
+      if (aktiv) setTop([...n.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k))
+    })()
+    return () => { aktiv = false }
+  }, [appt])
 
   useEffect(() => {
     void check()
@@ -184,6 +218,43 @@ export default function AppointmentPrepPopup() {
               {notes || <span className="text-gray-400">{t('crm.prep.noLeadInfo', 'Keine Angaben aus dem Formular hinterlegt.')}</span>}
             </div>
           </div>
+
+          {/* Einwände aus dem letzten Gespräch, sonst die häufigsten insgesamt */}
+          {vorher ? (
+            <div>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                {t('crm.prep.lastCall', 'Aus dem Gespräch vom {{datum}}', { datum: new Date(vorher.datum).toLocaleDateString(locale, { day: 'numeric', month: 'numeric' }) })}
+              </p>
+              <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-sm text-gray-700 space-y-1.5">
+                {(vorher.fakten.temperatur || vorher.fakten.zufriedenheit != null) && (
+                  <p className="text-xs text-gray-600">
+                    {vorher.fakten.temperatur && <>{t('crm.prep.temp', 'Kaufnähe')}: <b>{{ heiss: t('crm.prep.tempHot', 'heiß'), warm: t('crm.prep.tempWarm', 'warm'), kalt: t('crm.prep.tempCold', 'kalt') }[vorher.fakten.temperatur]}</b></>}
+                    {vorher.fakten.temperatur && vorher.fakten.zufriedenheit != null && ' · '}
+                    {vorher.fakten.zufriedenheit != null && <>{t('crm.prep.satisfaction', 'Zufriedenheit')}: <b>{vorher.fakten.zufriedenheit}/10</b></>}
+                  </p>
+                )}
+                {(vorher.fakten.einwaende ?? []).map((e, i) => (
+                  <p key={i}>
+                    <span className={`inline-block text-[10px] font-bold uppercase px-1.5 py-0.5 rounded mr-1.5 ${e.behandelt === 'ja' ? 'bg-green-100 text-green-700' : e.behandelt === 'teilweise' ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-red-700'}`}>
+                      {e.behandelt === 'ja' ? t('crm.prep.objDone', 'ausgeräumt') : e.behandelt === 'teilweise' ? t('crm.prep.objPartly', 'teilweise') : t('crm.prep.objOpen', 'offen')}
+                    </span>
+                    <b>{e.thema}:</b> {e.aussage}
+                  </p>
+                ))}
+                {!vorher.fakten.einwaende?.length && <p className="text-gray-400">{t('crm.prep.noObjections', 'Keine Einwände erfasst.')}</p>}
+              </div>
+            </div>
+          ) : top.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                {t('crm.prep.topObjections', 'Häufigste Einwände im Erstgespräch')}
+              </p>
+              <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-sm text-gray-700">
+                {top.map((k, i) => <span key={k}>{i > 0 && ' · '}{k}</span>)}
+                <p className="text-[11px] text-gray-500 mt-1">{t('crm.prep.topObjectionsHint', 'Am besten früh selbst ansprechen. Antworten stehen im Deck unter „Häufige Fragen“.')}</p>
+              </div>
+            </div>
+          )}
 
           {/* Lead-Bewertung: ein Klick — gut / schlecht / No-Show */}
           <div>
