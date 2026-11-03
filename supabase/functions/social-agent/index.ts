@@ -3025,7 +3025,7 @@ Regeln:
     if (body.action === 'publish') {
       if (!body.post_id) return json({ error: 'post_id fehlt' }, 400)
       const { data: post } = await sb.from('social_posts').select('*').eq('id', body.post_id).maybeSingle()
-      const p0 = post as { content: string | null; image_url: string | null; image_urls: string[] | null; format: string | null; platforms: string[]; status: string; topic: string | null } | null
+      const p0 = post as { content: string | null; image_url: string | null; image_urls: string[] | null; format: string | null; platforms: string[]; status: string; topic: string | null; news_source?: string | null } | null
       // Bilderliste: image_urls (Mehrfach) mit image_url als Fallback; Karussell nur mit >= 2.
       const imgs = (Array.isArray(p0?.image_urls) ? p0!.image_urls! : []).filter(Boolean)
       if (p0 && !imgs.length && p0.image_url) imgs.push(p0.image_url)
@@ -3205,10 +3205,17 @@ Regeln:
             if (!size || size > 80 * 1048576) throw new Error(`Video zu groß für den Auto-Upload (${Math.round(size / 1048576)} MB, max. 80 MB)`) 
             const vres = await fetch(videoUrl)
             const bytes = new Uint8Array(await vres.arrayBuffer())
-            const title = (p.title ?? '').replace(/^[^A-Za-z0-9ÄÖÜäöü]*/, '').slice(0, 95) || 'Happy Property'
+            // Reels aus dem Drive heißen "Reel 40 - Direkt am Meer wohnen" (ue statt ü). Als Short
+            // taugt der Dateiname nicht: Titel = erste Zeile des Postingtexts (der Hook), Links mit
+            // src=youtube, damit die Termin-Herkunft stimmt.
+            const isReel = (p0?.news_source ?? '').startsWith('drive:')
+            const hook = (p.content ?? '').split('\n').map(l => l.trim()).find(l => l.length > 3) ?? ''
+            const clean = (s: string) => s.replace(/^[^A-Za-z0-9ÄÖÜäöü„"]*/, '').replace(/[\s\p{Extended_Pictographic}️]+$/u, '').trim()
+            const title = (isReel && hook ? clean(hook) : clean((p.title ?? '').replace(/^\W*Reel \d+\s*(Sven Ruprich)?\s*-\s*/i, ''))).slice(0, 95) || 'Happy Property'
+            const description = (p.content ?? '').replace(/src=instagram/g, 'src=youtube').slice(0, 4800)
             const init = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', {
               method: 'POST', headers: { Authorization: `Bearer ${td.access_token}`, 'Content-Type': 'application/json', 'X-Upload-Content-Length': String(bytes.length), 'X-Upload-Content-Type': 'video/mp4' },
-              body: JSON.stringify({ snippet: { title, description: (p.content ?? '').slice(0, 4800), categoryId: '26' }, status: { privacyStatus: 'public', selfDeclaredMadeForKids: false } }),
+              body: JSON.stringify({ snippet: { title, description, categoryId: '22', defaultLanguage: 'de', defaultAudioLanguage: 'de' }, status: { privacyStatus: 'public', selfDeclaredMadeForKids: false } }),
             })
             const loc = init.headers.get('location')
             if (!init.ok || !loc) throw new Error(`Upload-Init ${init.status}: ${(await init.text()).slice(0, 200)}`)
