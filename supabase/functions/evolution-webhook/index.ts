@@ -155,6 +155,19 @@ Deno.serve(async (req) => {
       pushName: m?.pushName ?? null,
     }, TAG)
     if (r.outcome === 'error') return new Response(JSON.stringify({ error: r.error }), { status: 500 })
+
+    // Eingehende Sprachnachricht: im Hintergrund abschreiben (wa-transcribe ersetzt den
+    // Platzhalter im Verlauf). Der Webhook antwortet sofort, ein Fehler dort stört nichts.
+    if (m?.message?.audioMessage && !fromMe && uid && (r.outcome === 'processed' || r.outcome === 'no-lead')) {
+      const p = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/wa-transcribe`, {
+        method:  'POST',
+        headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ uid }),
+      }).then(async res => { if (!res.ok) console.error(`[${TAG}] wa-transcribe ${res.status}`); await res.body?.cancel() })
+        .catch(e => console.error(`[${TAG}] wa-transcribe Fehler:`, e))
+      const er = (globalThis as { EdgeRuntime?: { waitUntil: (p: Promise<unknown>) => void } }).EdgeRuntime
+      if (er) er.waitUntil(p); else await p
+    }
     return ok(`OK (${r.outcome})`)
   } catch (error) {
     console.error(`[${TAG}]`, error instanceof Error ? error.message : String(error))

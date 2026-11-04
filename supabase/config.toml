@@ -10,6 +10,10 @@ project_id = "vjlwgajmtqlwjjreowbu"
 [functions.evolution-webhook]
 verify_jwt = false
 
+# Vom evolution-webhook aufgerufen (Service-Role, eigene Prüfung per authorizeCaller).
+[functions.wa-transcribe]
+verify_jwt = false
+
 [functions.typeform-webhook]
 verify_jwt = false
 
