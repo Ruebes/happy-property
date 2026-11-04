@@ -16,9 +16,22 @@ import {
 // bei Buchung storniert). Slots: 12–20 Uhr Zypern-Zeit, 4 h Vorlauf, Anzeige in
 // der Zeitzone des Kunden. Jeder Schritt trackt in funnel_events (Drop-off).
 
-const CREAM = '#FAF6EC'
-const CORAL = '#ff795d'
-const NAVY = '#1a2332'
+// Weihnachtslook: nur 16.11. bis 26.12.2026 Zypern-Zeit, danach automatisch wieder Standard.
+// Das Geschenk-Angebot läuft bis 24.12. Prüfen vorab mit ?hpxmas=1, abschalten mit ?hpxmas=0.
+const XMAS_BASE = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/deck-assets/website/weihnachten-2026/`
+const xmasDay = (() => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Nicosia', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date()).map(x => [x.type, x.value]))
+  return `${p.year}-${p.month}-${p.day}`
+})()
+const xmasFlag = new URLSearchParams(window.location.search).get('hpxmas')
+const XMAS = xmasFlag === '1' || (xmasFlag !== '0' && xmasDay >= '2026-11-16' && xmasDay <= '2026-12-26')
+const XMAS_OFFER = XMAS && (xmasFlag === '1' || xmasDay <= '2026-12-24')
+const XMAS_LIGHTS = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='26'%3E%3Cpath d='M0 3 Q30 19 60 3 T120 3' fill='none' stroke='%23e9e2d2' stroke-width='1.5'/%3E%3Ccircle cx='30' cy='17' r='4.5' fill='%23e8423f'/%3E%3Ccircle cx='60' cy='9' r='4.5' fill='%2352b788'/%3E%3Ccircle cx='90' cy='17' r='4.5' fill='%23f7d774'/%3E%3C/svg%3E"
+const XMAS_SNOW = 'radial-gradient(2px 2px at 20px 30px,#fff,transparent),radial-gradient(3px 3px at 90px 110px,#fff,transparent),radial-gradient(2px 2px at 160px 60px,#fff,transparent),radial-gradient(3px 3px at 230px 170px,#fff,transparent),radial-gradient(2px 2px at 300px 20px,#fff,transparent),radial-gradient(2px 2px at 370px 130px,#fff,transparent)'
+
+const CREAM = XMAS ? '#fffcf6' : '#FAF6EC'
+const CORAL = XMAS ? '#b3202a' : '#ff795d'
+const NAVY = XMAS ? '#12352a' : '#1a2332'
 const INK = '#1a1a1a'
 // Sven-Porträt für die Terminwahl (rund, server-seitig quadratisch zugeschnitten —
 // das Original ist 5672×3781 Querformat)
@@ -231,7 +244,9 @@ export default function Funnel() {
     [cfg],
   )
   const QUESTION_TEXT: Record<string, string> = Object.fromEntries(QUESTIONS.map(q => [q.key, q.title]))
-  const HERO = WEL.hero_url || FUNNEL_HERO_DEFAULT
+  // Weihnachten: nur die Standard-Startseite bekommt Schlitten und Titel, Projekt- und Anzeigenseiten behalten ihre eigenen
+  const xmasWelcome = XMAS && !proj && !qn?.welcome?.hero_url && !qn?.bg_url
+  const HERO = xmasWelcome ? `${XMAS_BASE}hero-handy.jpg` : (WEL.hero_url || FUNNEL_HERO_DEFAULT)
   // Ansprechpartner: eigenes Foto aus dem Editor oder Svens Standard-Foto
   const hostSq = cfg.host.photo_url ? funnelImageUrl(cfg.host.photo_url, 224, 224) : SVEN_SQ
   const hostSide = cfg.host.photo_url ? funnelImageUrl(cfg.host.photo_url, 512, 640) : SVEN_SIDE
@@ -514,25 +529,29 @@ export default function Funnel() {
       <div className="h-1.5 w-full bg-black/5">
         <div className="h-full transition-all duration-500" style={{ width: `${(stepNow / totalSteps) * 100}%`, background: CORAL }} />
       </div>
-      <div className={`flex items-center justify-between px-5 md:px-10 py-4${BG ? ' bg-white/95' : ''}`}>
-        <div className="flex items-center gap-3">
-          <img src={DECK_LOGO} alt="Happy Property" className="h-8 md:h-9 w-auto" />
+      {XMAS && <style>{'@keyframes hpXmasSnow{to{transform:translateY(420px)}}@media (prefers-reduced-motion:reduce){.hp-xmas-snow{animation:none!important}}'}</style>}
+      <div className={`relative overflow-hidden flex items-center justify-between px-5 md:px-10 ${XMAS ? 'py-2' : 'py-4'}${BG && !XMAS ? ' bg-white/95' : ''}`}
+        style={XMAS ? { background: NAVY } : undefined}>
+        {XMAS && <span aria-hidden className="hp-xmas-snow absolute left-0 right-0 bottom-0 pointer-events-none" style={{ top: -420, backgroundImage: XMAS_SNOW, backgroundSize: '420px 420px', opacity: .55, animation: 'hpXmasSnow 30s linear infinite' }} />}
+        <div className="relative flex items-center gap-3">
+          <img src={XMAS ? `${XMAS_BASE}logo-gruen.png` : DECK_LOGO} alt="Happy Property" className={XMAS ? 'h-14 md:h-16 w-auto' : 'h-8 md:h-9 w-auto'} />
           {/* Handy/Tablet: kleiner Kopf statt Seitenspalte. Terminart zeigt ihn schon groß. */}
           {showHost && phase !== 'meeting_type' && (
-            <span className="lg:hidden flex items-center gap-2 pl-3 border-l border-black/10">
+            <span className={`lg:hidden flex items-center gap-2 pl-3 border-l ${XMAS ? 'border-white/20' : 'border-black/10'}`}>
               {/* Standard-Foto zeigt Sven halbtotal: im 32-px-Kreis aufs Gesicht zoomen */}
               <span className="w-8 h-8 rounded-full overflow-hidden shadow ring-2 ring-white shrink-0">
                 <img src={hostSq} alt="" width={32} height={32} className="w-8 h-8 object-cover"
                   style={cfg.host.photo_url ? undefined : { transform: 'translate(42%, 46%) scale(2)' }} />
               </span>
-              <span className="text-sm font-semibold" style={{ color: NAVY }}>{hostFirstName}</span>
+              <span className="text-sm font-semibold" style={{ color: XMAS ? '#fff' : NAVY }}>{hostFirstName}</span>
             </span>
           )}
         </div>
         {phase !== 'welcome' && phase !== 'done' && !((direct || rebook) && phase === 'meeting_type') && (
-          <button onClick={back} className="text-sm text-gray-500 hover:text-gray-800">← {t('funnel.back', 'Zurück')}</button>
+          <button onClick={back} className={`relative text-sm ${XMAS ? 'text-white/80 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>← {t('funnel.back', 'Zurück')}</button>
         )}
       </div>
+      {XMAS && <div aria-hidden style={{ height: 26, background: `url("${XMAS_LIGHTS}") repeat-x` }} />}
 
       <div className="flex-1 flex items-center justify-center px-5 pb-10">
         <div className="w-full flex justify-center items-start gap-10">
@@ -551,17 +570,23 @@ export default function Funnel() {
             // Projektseite: erst zeigen, wenn Bild + Text da sind (kein kurzes Aufblitzen des Standards)
             <div className="text-center" style={projReady ? undefined : { visibility: 'hidden' }}>
               <div className="relative mb-8">
-                <img src={HERO} alt={proj?.title ? '' : 'Sven – Happy Property'} className="w-full h-56 md:h-72 object-cover rounded-2xl shadow-lg" />
+                <img src={HERO} alt={proj?.title ? '' : 'Sven – Happy Property'} className="w-full h-56 md:h-72 object-cover rounded-2xl shadow-lg" style={xmasWelcome ? { objectPosition: '50% 8%' } : undefined} />
                 {HERO_LABEL && (
                   <span className="absolute right-3 bottom-3 text-[11px] px-2.5 py-1 rounded-md text-white" style={{ background: 'rgba(26,35,50,.7)' }}>{HERO_LABEL}</span>
                 )}
               </div>
               <h1 className="font-heading font-bold text-3xl md:text-5xl leading-tight" style={{ color: NAVY }}>
-                {WEL.title}
+                {xmasWelcome && XMAS_OFFER && !qn?.welcome?.title ? t('funnel.xmas_title', 'Beschenk dich dieses Jahr selbst.') : WEL.title}
               </h1>
               <p className="mt-4 text-gray-600 text-[15px] md:text-base max-w-xl mx-auto">
                 {WEL.subtitle}
               </p>
+              {XMAS_OFFER && (
+                <div className="mt-5 mx-auto max-w-lg rounded-xl bg-white px-4 py-3 text-sm font-semibold leading-relaxed"
+                  style={{ border: `2px dashed ${CORAL}`, color: NAVY }}>
+                  🎁 {t('funnel.xmas_offer', 'Reservierung bis 24.12.2026 unterschrieben, dann übernehmen wir deine Kaufnebenkosten.')}
+                </div>
+              )}
               <button onClick={() => {
                 void track(0, 'start')
                 if (QUESTIONS.length) setPhase('questions')
@@ -770,7 +795,7 @@ export default function Funnel() {
                   )}
                 </figure>
               ) : <div className="text-6xl">{cfg.done.emoji || '🎉'}</div>}
-              <h2 className="font-heading font-bold text-3xl md:text-4xl mt-4" style={{ color: NAVY }}>{cfg.done.title}</h2>
+              <h2 className="font-heading font-bold text-3xl md:text-4xl mt-4" style={{ color: NAVY }}>{XMAS ? t('funnel.xmas_done', 'Frohe Weihnachten, dein Termin steht!') : cfg.done.title}</h2>
               <p className="mt-3 text-gray-600 text-[15px]">
                 <strong>{fmtSlotFull(slot)}{t('funnel.oclock', ' Uhr')}</strong> · {typLabel(meetingType)}
               </p>
