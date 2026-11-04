@@ -21,7 +21,7 @@ export type DeckWhyPreis = { h2?: string; title: string; text: string }
 export type DeckBlock =
   | { type: 'cover';   kicker?: string; title: string; tagline?: string; forLine?: string; image?: string; video?: string; why?: DeckWhyPreis }
   | { type: 'letter';  kicker?: string; headline?: string; paragraphs: string[]; signoff?: string; signName?: string }
-  | { type: 'unit';    compact?: boolean; kicker?: string; number?: string; nickname?: string; specs?: string[]; priceMain?: string; priceSub?: string; priceLines?: { label: string; value: string; strong?: boolean; strike?: boolean }[]; note?: string; image?: string }
+  | { type: 'unit';    compact?: boolean; sold?: boolean; kicker?: string; number?: string; nickname?: string; specs?: string[]; priceMain?: string; priceSub?: string; priceLines?: { label: string; value: string; strong?: boolean; strike?: boolean }[]; note?: string; image?: string }
   | { type: 'facts';   kicker?: string; headline?: string; items?: { min: string; label: string }[]; image?: string; mapUrl?: string; mapLabel?: string; mapMarker?: { x: number; y: number }; mapLat?: number; mapLng?: number; mapQuery?: string; mapEmbed?: string }
   | { type: 'marina';  kicker?: string; headline?: string; fromLabel?: string; fromSub?: string; toLabel?: string; toSub?: string; distance?: string; drive?: string; valuePct?: string; valueText?: string; note?: string }
   | { type: 'columns'; kicker?: string; headline?: string; image?: string; cols?: { title: string; sub?: string; text: string }[] }

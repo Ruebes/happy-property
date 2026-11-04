@@ -11324,6 +11324,7 @@
     "infoErrSend": "Sorry, that did not work. Feel free to message Sven directly on WhatsApp.",
     "infoTitleUnit": "More info on apartment {{nr}}",
     "unitInfo": "Request more info on {{nr}}",
+    "unitSold": "Sold",
     "infoErrUnit": "Please choose the apartment you would like info on.",
     "infoTitleMulti": "Request more info",
     "infoUnit": "Which apartment?",

@@ -179,12 +179,23 @@ function UnitInfoButton({ nr }: { nr?: string }) {
 }
 
 function UnitBlock(b: Extract<DeckBlock, { type: 'unit' }>) {
+  const { t } = useTranslation()
+  // Verkaufte Wohnung in einem schon versendeten Sammel-Deck: bleibt sichtbar, aber durchgestrichen,
+  // klein und ohne Knöpfe (Flora 4.11.26). Die Liste der anfragbaren Wohnungen lässt sie aus.
+  const sold = !!b.sold
   return (
-    <section className={`px-5 md:px-20 grid grid-cols-1 md:grid-cols-2 items-center ${b.compact ? 'py-10 gap-6 md:gap-10' : 'py-16 gap-10'}`} style={{ background: CREAM }}>
-      <Img src={b.image} className={`w-full object-cover rounded-xl ${b.compact ? 'h-[200px] md:h-[360px]' : 'h-[420px]'}`} />
-      <div>
+    <section className={`px-5 md:px-20 grid grid-cols-1 md:grid-cols-2 items-center ${sold ? 'py-6 gap-4 md:gap-10' : b.compact ? 'py-10 gap-6 md:gap-10' : 'py-16 gap-10'}`} style={{ background: CREAM }}>
+      {sold ? (
+        <div className="relative">
+          <Img src={b.image} className="w-full object-cover rounded-xl h-[120px] md:h-[180px] grayscale opacity-60" />
+          <span className="absolute top-3 left-3 rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white" style={{ background: DARK }}>{t('deck.unitSold', 'Verkauft')}</span>
+        </div>
+      ) : (
+        <Img src={b.image} className={`w-full object-cover rounded-xl ${b.compact ? 'h-[200px] md:h-[360px]' : 'h-[420px]'}`} />
+      )}
+      <div className={sold ? 'opacity-70' : undefined}>
         <Kicker>{b.kicker}</Kicker>
-        <h2 className={`font-heading font-bold mt-2 ${b.compact ? 'text-5xl md:text-6xl' : 'text-6xl md:text-7xl'}`} style={{ color: INK }}>{b.number}</h2>
+        <h2 className={`font-heading font-bold mt-2 ${sold ? 'text-3xl md:text-4xl line-through' : b.compact ? 'text-5xl md:text-6xl' : 'text-6xl md:text-7xl'}`} style={{ color: INK }}>{b.number}</h2>
         {b.nickname && <p className="font-heading italic text-xl md:text-2xl mt-1" style={{ color: GOLD }}>{b.nickname}</p>}
         {b.specs && b.compact ? (
           <p className="mt-4 text-[14px] leading-relaxed text-gray-700">
@@ -200,21 +211,21 @@ function UnitBlock(b: Extract<DeckBlock, { type: 'unit' }>) {
             {b.priceLines.map((l, i) => (
               <div key={i} className={`flex items-baseline justify-between gap-4 ${l.strong ? 'pt-1.5 mt-1.5 border-t border-white/15' : ''}`}>
                 <span className={`${l.strong ? 'text-white font-semibold' : 'text-gray-400'} text-[13px]`}>{l.label}</span>
-                <span className={`font-heading ${l.strong ? 'text-white text-2xl font-bold' : 'text-gray-200 text-base'} whitespace-nowrap${l.strike ? ' line-through' : ''}`} style={l.strong ? undefined : { color: l.strike ? '#9aa2ad' : '#e5e0d5' }}>{l.value}</span>
+                <span className={`font-heading ${l.strong ? 'text-white text-2xl font-bold' : 'text-gray-200 text-base'} whitespace-nowrap${l.strike || sold ? ' line-through' : ''}`} style={l.strong ? undefined : { color: l.strike || sold ? '#9aa2ad' : '#e5e0d5' }}>{l.value}</span>
               </div>
             ))}
-            <VatRefundRow unit={b.number} />
+            {!sold && <VatRefundRow unit={b.number} />}
           </div>
         ) : (b.priceMain || b.priceSub) && (
           <div className="mt-6 rounded-xl px-5 py-4" style={{ background: DARK }}>
             {b.priceSub && <p className="text-[11px] font-semibold uppercase tracking-[0.15em]" style={{ color: GOLD }}>{b.priceSub.split('·')[0]}</p>}
-            <p className="font-heading font-bold text-white text-4xl mt-1">{b.priceMain}</p>
+            <p className={`font-heading font-bold text-white text-4xl mt-1${sold ? ' line-through' : ''}`}>{b.priceMain}</p>
             {b.priceSub && b.priceSub.includes('·') && <p className="text-xs text-gray-400 mt-1">{b.priceSub.split('·').slice(1).join('·').trim()}</p>}
-            <VatRefundRow unit={b.number} />
+            {!sold && <VatRefundRow unit={b.number} />}
           </div>
         )}
         {b.note && <p className="mt-4 text-[13px] leading-relaxed text-gray-600" dangerouslySetInnerHTML={{ __html: b.note }} />}
-        <UnitInfoButton nr={b.number} />
+        {!sold && <UnitInfoButton nr={b.number} />}
       </div>
     </section>
   )
@@ -1627,8 +1638,9 @@ export default function Deck() {
   const klassisch = new URLSearchParams(window.location.search).get('klassisch') === '1'
   const web = !!page && !klassisch && deckLang !== 'en'
   const view: AnyBlock[] = web && page ? webBlocks(content.blocks, page) : content.blocks
-  const unitNr = (content.blocks.find(b => b.type === 'unit') as Extract<DeckBlock, { type: 'unit' }> | undefined)?.number?.trim() || null
-  const deckUnits = content.blocks.flatMap(b => b.type === 'unit' && b.number?.trim() ? [b.number.trim()] : [])
+  const unitNr = (content.blocks.find(b => b.type === 'unit' && !b.sold) as Extract<DeckBlock, { type: 'unit' }> | undefined)?.number?.trim() || null
+  const deckUnits = content.blocks.flatMap(b => b.type === 'unit' && !b.sold && b.number?.trim() ? [b.number.trim()] : [])
+  const unitCount = content.blocks.filter(b => b.type === 'unit').length
   const openInfo = (nr: string | null) => { setInfoUnit(nr); setInfo(true) }
   const terminUrl = person?.booking_url ?? '/termin?src=deck'
   const waUrl = `https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(unitNr
@@ -1638,8 +1650,8 @@ export default function Deck() {
   // direkt vor dem Abschluss-Block, sonst stünde dasselbe zweimal untereinander.
   // Sammel-Decks: erst nach der letzten Wohnung, nicht schon nach der ersten.
   const fpIdx = view.findIndex(b => b.type === 'floorplan')
-  const lastUnitIdx = view.reduce((m, b, i) => (b.type === 'unit' || b.type === 'floorplan') ? i : m, -1)
-  const ctaAfter = deckUnits.length > 3 ? lastUnitIdx : fpIdx >= 0 ? fpIdx : view.findIndex(b => b.type === 'unit')
+  const lastUnitIdx = view.reduce((m, b, i) => ((b.type === 'unit' && !b.sold) || b.type === 'floorplan') ? i : m, -1)
+  const ctaAfter = unitCount > 3 ? lastUnitIdx : fpIdx >= 0 ? fpIdx : view.findIndex(b => b.type === 'unit')
   const showInline = ctaAfter >= 0 && view[ctaAfter + 1]?.type !== 'cta'
   // Buchseiten: ein Abschnitt je Seite, das schmale Kennzahlen-Band steht mit auf der Titelseite.
   const bookPages: number[][] = []

@@ -11116,6 +11116,7 @@
     "infoErrSend": "Das hat leider nicht geklappt. Schreib Sven gern direkt per WhatsApp.",
     "infoTitleUnit": "Mehr Infos zu Wohnung {{nr}}",
     "unitInfo": "Mehr Infos zu {{nr}} anfordern",
+    "unitSold": "Verkauft",
     "infoErrUnit": "Bitte wähle die Wohnung aus, zu der du Infos möchtest.",
     "infoTitleMulti": "Mehr Infos anfordern",
     "infoUnit": "Welche Wohnung?",

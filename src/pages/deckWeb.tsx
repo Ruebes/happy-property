@@ -94,14 +94,19 @@ export function webBlocks(blocks: DeckBlock[], page: ProjectPage): AnyBlock[] {
     const plans = of('floorplan')
     const used = new Set<number>()
     out.push(...of('letter'))
-    units.forEach(u => {
+    // Verkaufte Wohnungen ans Ende und ohne Grundriss, freie zuerst (Flora 4.11.26).
+    ;[...units.filter(u => !u.sold), ...units.filter(u => u.sold)].forEach(u => {
       out.push({ ...u, compact: true })
       const nr = u.number?.trim()
       const j = nr ? plans.findIndex((p, k) => !used.has(k) && (p.kicker ?? '').split(/[^\p{L}\p{N}]+/u).includes(nr)) : -1
-      if (j >= 0) { used.add(j); out.push({ ...plans[j], collapsed: true }) }
+      if (j >= 0) { used.add(j); if (!u.sold) out.push({ ...plans[j], collapsed: true }) }
     })
     out.push(...plans.filter((_, k) => !used.has(k)), ...of('masterplan'))
-  } else out.push(...of('letter'), ...units, ...of('floorplan'), ...of('masterplan'))
+  } else {
+    const verkauft = units.flatMap(u => u.sold && u.number?.trim() ? [u.number.trim()] : [])
+    const plans = of('floorplan').filter(p => !(p.kicker ?? '').split(/[^\p{L}\p{N}]+/u).some(w => verkauft.includes(w)))
+    out.push(...of('letter'), ...units, ...plans, ...of('masterplan'))
+  }
   // Deck-eigene Videos (Baustelle heute) direkt nach dem Grundriss, Projektvideos
   // und Lebensfilm zeigt die Seite selbst.
   out.push(...of('video').filter(v => v.web))
