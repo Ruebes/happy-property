@@ -17,7 +17,7 @@
 // (pg_cron / interne Function-zu-Function-Aufrufe) und ist immer erlaubt.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
-import { safeEqual } from './callerAuth.ts'
+import { isCronCall, safeEqual } from './callerAuth.ts'
 
 export interface AdsCaller {
   /** true wenn der Aufruf vom System kommt (pg_cron / Service-Role) */
@@ -39,7 +39,10 @@ export class AdsAuthError extends Error {
  * Prüft den Authorization-Header und wirft AdsAuthError (401/403) wenn der
  * Aufrufer keine Werbe-Rechte hat. Gibt bei Erfolg den Aufrufer zurück.
  */
-export async function requireAdsAccess(req: Request): Promise<AdsCaller> {
+export async function requireAdsAccess(req: Request, opts: { cron?: boolean } = {}): Promise<AdsCaller> {
+  // pg_cron mit x-cron-secret, nur wo die Function es ausdrücklich zulässt.
+  if (opts.cron && await isCronCall(req)) return { system: true, userId: null, role: 'cron' }
+
   const supabaseUrl     = Deno.env.get('SUPABASE_URL')!
   const serviceRoleKey  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
   const anonKey         = Deno.env.get('SUPABASE_ANON_KEY') ?? ''

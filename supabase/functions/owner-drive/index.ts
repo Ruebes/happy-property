@@ -28,7 +28,7 @@
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { lotteBild } from '../_shared/lotte.ts'
 import { resolveLang, type Lang } from '../_shared/recipientLang.ts'
-import { safeEqual } from '../_shared/callerAuth.ts'
+import { isCronCall, safeEqual } from '../_shared/callerAuth.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -187,6 +187,7 @@ async function uploadFile(token: string, folderId: string, name: string, mime: s
 // authEmail = die im Login-Token bestätigte Adresse (auth.users). profiles.email
 // kann der Nutzer selbst ändern und taugt deshalb NICHT zur Kunden-Zuordnung.
 async function caller(req: Request, sb: Client): Promise<{ service: boolean; profile: Profile | null; authEmail: string }> {
+  if (await isCronCall(req)) return { service: true, profile: null, authEmail: '' }   // pg_cron hp-owner-drive-sweep
   const jwt = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
   if (!jwt) return { service: false, profile: null, authEmail: '' }
   if (safeEqual(jwt, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')) return { service: true, profile: null, authEmail: '' }   // konstante Zeit (Review S1)

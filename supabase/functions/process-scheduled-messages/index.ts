@@ -18,6 +18,7 @@
 //   );
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { isCronCall } from '../_shared/callerAuth.ts'
 import { getWaProvider, evoConfig, EVO_DISCONNECTED_RE } from '../_shared/waProvider.ts'
 import { lotteBild } from '../_shared/lotte.ts'
 import { translateOutbound } from '../_shared/translate.ts'
@@ -406,9 +407,10 @@ async function deckOutboxSweep(supabase: ReturnType<typeof createClient>) {
 
 // ── Hauptfunktion ─────────────────────────────────────────────────────────────
 
-// Läuft --no-verify-jwt: nur Cron (Service-Role-Bearer) oder eingeloggte Staff-
+// Läuft --no-verify-jwt: nur Cron (x-cron-secret oder Service-Role-Bearer) oder eingeloggte Staff-
 // Nutzer (Admin-Button "Jetzt ausführen") dürfen den Lauf anstoßen.
 async function guardOk(req: Request): Promise<boolean> {
+  if (await isCronCall(req)) return true
   const jwt = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
   if (!jwt) return false
   if (jwt === Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')) return true
@@ -426,6 +428,10 @@ Deno.serve(async (req: Request) => {
   }
   if (!(await guardOk(req))) {
     return new Response(JSON.stringify({ error: 'Nicht autorisiert' }), { status: 401, headers: { ...CORS, 'Content-Type': 'application/json' } })
+  }
+  // Prüft nur den Zugang, ohne dass etwas versendet wird.
+  if (new URL(req.url).searchParams.get('ping') === '1') {
+    return new Response(JSON.stringify({ ok: true, ping: true }), { status: 200, headers: { ...CORS, 'Content-Type': 'application/json' } })
   }
 
   const supabase = createClient(

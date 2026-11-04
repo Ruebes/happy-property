@@ -628,7 +628,7 @@ async function faellige(sb: Sb): Promise<string[]> {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
-  const denied = await gateCaller(req, 'deck-review', { service: true, roles: ['admin', 'verwalter', 'mitarbeiter'] }, CORS)
+  const denied = await gateCaller(req, 'deck-review', { cron: true, service: true, roles: ['admin', 'verwalter', 'mitarbeiter'] }, CORS)
   if (denied) return denied
   try {
     const body = await req.json().catch(() => ({})) as { token?: string; action?: string; force?: boolean; wait?: boolean }

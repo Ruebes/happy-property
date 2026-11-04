@@ -857,7 +857,7 @@ Deno.serve(async (req) => {
       }
     }
   }
-  const denied = await gateCaller(req, 'reservation-agreement', { service: true, roles: ['admin'] }, CORS)
+  const denied = await gateCaller(req, 'reservation-agreement', { cron: true, service: true, roles: ['admin'] }, CORS)
   if (denied) return denied
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   try {

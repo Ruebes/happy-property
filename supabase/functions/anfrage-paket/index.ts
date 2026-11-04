@@ -1366,7 +1366,7 @@ async function sweep(sb: SupabaseClient): Promise<Record<string, unknown>> {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
-  const denied = await gateCaller(req, 'anfrage-paket', { service: true, roles: ['admin'] }, CORS)
+  const denied = await gateCaller(req, 'anfrage-paket', { cron: true, service: true, roles: ['admin'] }, CORS)
   if (denied) return denied
   try {
     const body = await req.json().catch(() => ({})) as Record<string, unknown>

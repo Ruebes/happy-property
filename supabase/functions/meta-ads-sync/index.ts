@@ -747,9 +747,9 @@ Deno.serve(async (req) => {
   let ledger: { sb: Sb; datum: string } | null = null
   const summary: Summary = {}
   try {
-    // Rechte-Guard: läuft mit --no-verify-jwt. pg_cron ruft mit dem
-    // Service-Role-Key (gilt als System-Aufruf), Menschen brauchen 'werbung'.
-    const caller = await requireAdsAccess(req)
+    // Rechte-Guard: läuft mit --no-verify-jwt. pg_cron ruft mit x-cron-secret
+    // (gilt als System-Aufruf), Menschen brauchen 'werbung'.
+    const caller = await requireAdsAccess(req, { cron: true })
 
     const { token, account } = metaEnv()
     if (!token) throw new Error('META_ACCESS_TOKEN fehlt (Supabase Secrets)')

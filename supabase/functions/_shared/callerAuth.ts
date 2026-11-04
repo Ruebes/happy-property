@@ -99,6 +99,18 @@ export async function isSignedServiceJwt(sb: SupabaseClient, jwt: string): Promi
   } catch { return false }
 }
 
+/**
+ * Nur der pg_cron-Weg: true, wenn x-cron-secret zu connector_secrets[cronKey] passt.
+ * Für Functions mit eigener Prüfung statt authorizeCaller. Den Wert nie loggen.
+ */
+export async function isCronCall(req: Request, cronKey = 'CRON_SECRET'): Promise<boolean> {
+  const sent = req.headers.get('x-cron-secret') ?? ''
+  if (!sent) return false
+  const sb = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')
+  const { data } = await sb.from('connector_secrets').select('value').eq('key', cronKey).maybeSingle()
+  return safeEqual(sent, (data as { value?: string | null } | null)?.value ?? '')
+}
+
 const AD_SEGMENTS = ['meta', 'youtube', 'google']
 
 /** Spiegel von hasPerm() für die Rolle mitarbeiter. */

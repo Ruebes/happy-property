@@ -9,6 +9,7 @@
 // Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 // Deploy:  supabase functions deploy tasks-maintenance --no-verify-jwt
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { isCronCall } from '../_shared/callerAuth.ts'
 import { lotteBild } from '../_shared/lotte.ts'
 
 const CORS = {
@@ -19,8 +20,9 @@ const CORS = {
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
 
 // Läuft --no-verify-jwt und ist destruktiv (löscht Aufgaben, Anhänge, Konten):
-// nur Cron (Service-Role-Bearer) oder eingeloggte Admins dürfen auslösen.
+// nur Cron (x-cron-secret oder Service-Role-Bearer) oder eingeloggte Admins dürfen auslösen.
 async function isAdminOrService(req: Request): Promise<boolean> {
+  if (await isCronCall(req)) return true
   const jwt = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
   if (!jwt) return false
   if (jwt === Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')) return true
@@ -35,6 +37,8 @@ async function isAdminOrService(req: Request): Promise<boolean> {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   if (!(await isAdminOrService(req))) return json({ error: 'Nicht autorisiert' }, 401)
+  // Prüft nur den Zugang, ohne dass etwas gelöscht wird.
+  if (new URL(req.url).searchParams.get('ping') === '1') return json({ ok: true, ping: true })
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   try {
     // 1) Anhänge archivierter Aufgaben löschen (Storage + Zeilen)
