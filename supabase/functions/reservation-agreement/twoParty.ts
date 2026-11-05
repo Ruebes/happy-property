@@ -698,23 +698,27 @@ function finalTargets(sb: SupabaseClient, row: AgreementRow, ctx: Ctx, p: Payloa
   const phoneTail = (s: string) => s.replace(/\D/g, '').slice(-9)
   const phones = test ? [SVEN_PHONE] : [customerPhone(ctx), ...fl.buyers.map(b => b.telephone)].map(x => (x ?? '').trim()).filter(Boolean).filter((x, i, a) => a.findIndex(y => phoneTail(y) === phoneTail(x)) === i)
   const quiet = test ? undefined : (customerPhone(ctx) || phones[0] || '')
+  // Ein zweiter Käufer wird mit seinem eigenen Vornamen angesprochen
+  const buyerFirst = (b?: FloraBuyer) => { const w = (b?.name ?? '').split(/\s+/)[0] ?? ''; return w ? w.charAt(0) + w.slice(1).toLowerCase() : '' }
+  const firstForMail = (to: string) => test || to === (ctx.lead.email ?? '').trim().toLowerCase() ? first : buyerFirst(fl.buyers.find(b => b.email.trim().toLowerCase() === to)) || first
+  const firstForPhone = (ph: string) => test || phoneTail(ph) === phoneTail(customerPhone(ctx)) ? first : buyerFirst(fl.buyers.find(b => phoneTail(b.telephone) === phoneTail(ph))) || first
   for (const to of mails) {
     out.push({
       key: `mail:buyer:${to}`, customer: quiet,
       send: async () => invoke(sb, 'send-email', {
         to, subject: `${prefix}${L === 'de' ? `Von beiden Seiten unterschrieben: Reservierungsvertrag Flora Panorama ${unit}` : `Signed by both sides: reservation agreement Flora Panorama ${unit}`}`,
         html: L === 'de'
-          ? `<p>Hallo ${esc(first)},</p><p>dein Reservierungsvertrag für <b>Flora Panorama, Apartment ${esc(unit)}</b> ist jetzt von beiden Seiten unterschrieben. Du findest ihn im Anhang${driveFiled ? ' und in deinem Google-Drive-Ordner' : ''}.</p><p><b>Nächster Schritt:</b> die Anzahlung von ${esc(p.fields.deposit_text)} ist bis spätestens ${due} zu überweisen. Geht sie nicht rechtzeitig ein, endet der Vertrag automatisch (Klausel 3.1).</p>${bankHtml(ctx.template.bank, 'de')}<p>Viele Grüße<br>Sven &middot; Happy Property</p>`
-          : `<p>Hi ${esc(first)},</p><p>your reservation agreement for <b>Flora Panorama, apartment ${esc(unit)}</b> has now been signed by both sides. You will find it attached${driveFiled ? ' and in your Google Drive folder' : ''}.</p><p><b>Next step:</b> the deposit of ${esc(p.fields.deposit_text)} has to be transferred by ${due} at the latest. If it is not received in time, the agreement ends automatically (clause 3.1).</p>${bankHtml(ctx.template.bank, 'en')}<p>Best regards<br>Sven &middot; Happy Property</p>`,
+          ? `<p>Hallo ${esc(firstForMail(to))},</p><p>dein Reservierungsvertrag für <b>Flora Panorama, Apartment ${esc(unit)}</b> ist jetzt von beiden Seiten unterschrieben. Du findest ihn im Anhang${driveFiled ? ' und in deinem Google-Drive-Ordner' : ''}.</p><p><b>Nächster Schritt:</b> die Anzahlung von ${esc(p.fields.deposit_text)} ist bis spätestens ${due} zu überweisen. Geht sie nicht rechtzeitig ein, endet der Vertrag automatisch (Klausel 3.1).</p>${bankHtml(ctx.template.bank, 'de')}<p>Viele Grüße<br>Sven &middot; Happy Property</p>`
+          : `<p>Hi ${esc(firstForMail(to))},</p><p>your reservation agreement for <b>Flora Panorama, apartment ${esc(unit)}</b> has now been signed by both sides. You will find it attached${driveFiled ? ' and in your Google Drive folder' : ''}.</p><p><b>Next step:</b> the deposit of ${esc(p.fields.deposit_text)} has to be transferred by ${due} at the latest. If it is not received in time, the agreement ends automatically (clause 3.1).</p>${bankHtml(ctx.template.bank, 'en')}<p>Best regards<br>Sven &middot; Happy Property</p>`,
         attachment: attach(fname, await pdf()), auto: true, lang: L, already_translated: true, ...(test ? {} : { lead_id: ctx.lead.id }),
       }),
     })
   }
   phones.forEach((phone, i) => out.push({
     key: `wa:buyer:${phoneTail(phone)}`, customer: test ? undefined : phone,
-    send: () => waPdf({ name: i === 0 ? (test ? 'Sven' : first || 'Kunde') : 'Kunde', phone }, prefix + (L === 'de'
-      ? `Hallo ${first} 🐾\n\nhier ist Lotte von Happy Property. Dein Reservierungsvertrag für Flora Panorama, Apartment ${unit} ist jetzt von beiden Seiten unterschrieben, hier ist das PDF.\n\nDie Anzahlung von ${p.fields.deposit_text} ist bis spätestens ${due} fällig. Details stehen in deiner E-Mail.\n\nLiebe Grüße, Lotte`
-      : `Hi ${first} 🐾\n\nLotte from Happy Property here. Your reservation agreement for Flora Panorama, apartment ${unit} has now been signed by both sides, here is the PDF.\n\nThe deposit of ${p.fields.deposit_text} is due by ${due} at the latest. You will find the details in your email.\n\nBest, Lotte`), L, test ? undefined : ctx.lead.id),
+    send: () => waPdf({ name: i === 0 ? (test ? 'Sven' : first || 'Kunde') : (firstForPhone(phone) || 'Kunde'), phone }, prefix + (L === 'de'
+      ? `Hallo ${firstForPhone(phone)} 🐾\n\nhier ist Lotte von Happy Property. Dein Reservierungsvertrag für Flora Panorama, Apartment ${unit} ist jetzt von beiden Seiten unterschrieben, hier ist das PDF.\n\nDie Anzahlung von ${p.fields.deposit_text} ist bis spätestens ${due} fällig. Details stehen in deiner E-Mail.\n\nLiebe Grüße, Lotte`
+      : `Hi ${firstForPhone(phone)} 🐾\n\nLotte from Happy Property here. Your reservation agreement for Flora Panorama, apartment ${unit} has now been signed by both sides, here is the PDF.\n\nThe deposit of ${p.fields.deposit_text} is due by ${due} at the latest. You will find the details in your email.\n\nBest, Lotte`), L, test ? undefined : ctx.lead.id),
   }))
 
   // Bauträger
