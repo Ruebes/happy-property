@@ -9,6 +9,7 @@
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { renderAgreement, type AgreementFields } from './pdf.ts'
 import { uploadToken, uploadFile } from './drive.ts'
+import { tpSubmit, tpView } from './twoParty.ts'
 import { loadSeal, saveSeal, sealDataUrl, pngFromInput, clientIp, LOCK_MINUTES, MAX_SEAL_BYTES } from './seal.ts'
 import {
   loadCtx, leadName, todayCy, b64, esc, invoke, whatsappSven, whatsappPdf, fileNameFor, markOwnUpload, notifyCustomerSigned,
@@ -46,6 +47,7 @@ export async function signView(sb: SupabaseClient, body: Record<string, unknown>
   const { row, test } = hit
   const p = payloadOf(row, test)
   if (!p || row.status === 'abgebrochen') return { status: 404, body: { error: 'not_found' } }
+  if (p.template.layout === 'flora') return await tpView(sb, { row, side: 'vendor', test })
   if (!test) {
     const { data: deal } = await sb.from('deals').select('phase, unit_id').eq('id', row.deal_id).maybeSingle()
     const d = deal as { phase?: string; unit_id?: string | null } | null
@@ -105,6 +107,7 @@ export async function signSubmit(sb: SupabaseClient, body: Record<string, unknow
   const { row, test } = hit
   const p = payloadOf(row, test)
   if (!p || row.status === 'abgebrochen') return { status: 404, body: { error: 'not_found' } }
+  if (p.template.layout === 'flora') return await tpSubmit(sb, { row, side: 'vendor', test }, body, req)
   const name = cleanName(body.name)
   if (!name) return { status: 400, body: { error: 'invalid_name' } }
   const png = cleanSignature(body.signature)

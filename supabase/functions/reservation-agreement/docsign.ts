@@ -67,7 +67,7 @@ async function docCtx(sb: SupabaseClient, dealId: string, projectId?: string | n
   const { data: dev } = await sb.from('crm_developers').select('id, name').ilike('name', p.developer).limit(1).maybeSingle()
   if (!dev) return { error: `Bauträger ${p.developer} nicht angelegt` }
   const developer = dev as { id: string; name: string }
-  const { data: tpl } = await sb.from('reservation_templates').select('company_name, sign_place').eq('developer_id', developer.id).eq('is_active', true).maybeSingle()
+  const { data: tpl } = await sb.from('reservation_templates').select('company_name, sign_place').eq('developer_id', developer.id).eq('is_active', true).neq('layout', 'flora').maybeSingle()
   const t = tpl as { company_name?: string; sign_place?: string | null } | null
   const { data: contacts } = await sb.from('crm_developer_contacts')
     .select('name, email, phone, whatsapp, role, language, is_primary, drive_access, sign_wa_video').eq('developer_id', developer.id).order('is_primary', { ascending: false })
@@ -312,7 +312,7 @@ export async function docView(sb: SupabaseClient, body: Record<string, unknown>)
   const signed = !row.test && row.status === 'unterschrieben' && !!row.signed_pdf_path
   const pdf = await storageBytes(sb, signed ? row.signed_pdf_path! : row.source_path)
   if (!pdf) return { status: 500, body: { error: 'pdf_missing' } }
-  const { data: tpl } = await sb.from('reservation_templates').select('sign_place').eq('developer_id', row.developer_id).eq('is_active', true).maybeSingle()
+  const { data: tpl } = await sb.from('reservation_templates').select('sign_place').eq('developer_id', row.developer_id).eq('is_active', true).neq('layout', 'flora').maybeSingle()
   const seal = signed ? null : await loadSeal(sb, row.developer_id)
   return {
     status: 200,
@@ -388,7 +388,7 @@ export async function docSubmit(sb: SupabaseClient, body: Record<string, unknown
     const src = await fillInputs(raw, opts.inputs ?? [], values)
     if (newSeal && !row.test) await saveSeal(sb, row.developer_id, newSeal, `${name} (Unterschriftsseite)`)
     const seal = useSeal ? (newSeal ?? await loadSeal(sb, row.developer_id)) : null
-    const { data: tpl } = await sb.from('reservation_templates').select('sign_place').eq('developer_id', row.developer_id).eq('is_active', true).maybeSingle()
+    const { data: tpl } = await sb.from('reservation_templates').select('sign_place').eq('developer_id', row.developer_id).eq('is_active', true).neq('layout', 'flora').maybeSingle()
     const place = placeOf({ sign_place: (tpl as { sign_place?: string | null } | null)?.sign_place })
     const company = String(row.sign_meta?.company ?? '')
     const role = (row.sign_meta?.role as string | null) ?? null

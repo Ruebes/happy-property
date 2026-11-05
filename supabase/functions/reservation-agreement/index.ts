@@ -35,6 +35,10 @@
 //   { action:'sign_submit', token, signature, name, use_seal?, seal? }  Unterschrift (+ Stempel) einsetzen
 //   { action:'doc_view' | 'doc_submit', token, ... }      dasselbe für Spezifikationen (/sign/d/:token, docsign.ts)
 //
+// Zwei-Parteien-Ablauf (Vorlage layout 'flora', twoParty.ts): sign_view / sign_submit verzweigen dorthin, dazu öffentlich
+//   { action:'buyer_view', token }                         Kundenseite /sign/k/:token
+//   { action:'buyer_submit', token, signer_key, signature } Kunde unterschreibt
+//
 // Admin weitere: doc_create {deal_id, file_base64, file_name, title?, test?} (docsign.ts),
 //                seal_get | seal_set {png} | seal_delete  {developer_id} (seal.ts)
 //
@@ -50,6 +54,7 @@ import { signView, signSubmit } from './sign.ts'
 import { docCreate, docView, docSubmit, docQueueSweep } from './docsign.ts'
 import { loadSeal, saveSeal, removeSeal, sealDataUrl, pngFromInput, MAX_SEAL_BYTES } from './seal.ts'
 import { specialTermsEn, type SpecialTerms } from './terms.ts'
+import { buyerView, findBuyerRow, floraFieldsFor, FLORA_SAMPLE, floraSend, floraWarnings, loadParts, tpSubmit, twoPartySweep } from './twoParty.ts'
 import { SB_URL } from '../_shared/sbUrl.ts'
 
 const CORS = {
@@ -80,7 +85,7 @@ const AI_MIME = /^(application\/pdf|image\/(jpeg|png|webp|gif))$/
 const DEAD_PHASES = ['deal_verloren', 'archiviert']
 // Bild zur WhatsApp an den Bauträger (Higgsfield, Unterlagen auf dem Schreibtisch). Ohne Bild
 // zeigt WhatsApp zum Drive-Link nur die Google-Anmeldeseite als Vorschau (Sven 15.10.).
-const DEV_WA_IMAGE = `${SB_URL}/storage/v1/object/public/Assets/wa/reservierung-unterlagen.jpg`
+export const DEV_WA_IMAGE = `${SB_URL}/storage/v1/object/public/Assets/wa/reservierung-unterlagen.jpg`
 
 type Client = SupabaseClient
 type Mode = 'on' | 'test' | 'off'
@@ -89,9 +94,11 @@ export interface TemplateDb extends TemplateRow {
   id: string; name: string; developer_id: string; is_active: boolean; auto_send: boolean
   property_prefix: string | null; project_addresses: Record<string, string>; sign_place: string | null
 }
-interface Buyer {
+export interface Buyer {
   full_name: string; document_number: string; document_type: string; nationality: string
   date_of_birth: string; expiry_date: string; file_id: string; file_name: string
+  // Nur Zwei-Parteien-Vertrag: Angaben, die nicht im Ausweis stehen
+  salutation?: string; address?: string; phone?: string; email?: string
 }
 interface CheckedFile {
   name: string; at: string; created?: string | null
@@ -107,16 +114,29 @@ export interface AgreementRow {
   unit_document_id: string | null; drive_file_id: string | null; sent_at: string | null
   sven_notified_at: string | null; created_at: string; signed_file_id: string | null
   data: AgreementFields | null; template_snapshot: TemplateDb | null
-  sign_token: string | null; test_sign_token: string | null; test_payload: { fields: AgreementFields; template: TemplateDb } | null
+  sign_token: string | null; test_sign_token: string | null
+  test_payload: {
+    fields: AgreementFields; template: TemplateDb; lang?: string; buyer_lang?: string; round?: number
+    link_delivery?: Record<string, { at?: string; tries?: number; next?: string; err?: string; gave_up?: boolean }> | null
+    final_sent?: boolean; final_delivery?: unknown
+  } | null
   seller_signed_at: string | null; seller_signer_name: string | null; signed_pdf_path: string | null; signer_lang: string | null
   own_file_ids: string[] | null; updated_at: string; sending_at: string | null
   special_terms: SpecialTerms | null
+  // Zwei-Parteien-Vertrag (twoParty.ts)
+  buyer_sign_token: string | null; test_buyer_sign_token: string | null; sign_round: number
+  contract: { net_price?: number | null; title_deed_amount?: number | null } | null
+  buyer_signed_at: string | null; buyer_lang: string | null
+  completed_at: string | null; finalizing_at: string | null
+  link_delivery: Record<string, { at?: string; tries?: number; next?: string; err?: string; gave_up?: boolean }> | null
+  final_delivery: Record<string, { at?: string; tries?: number; next?: string; err?: string; gave_up?: boolean }> | null
+  final_sent_at: string | null
 }
 export interface Ctx {
   /** reservation_notes = Sondervereinbarungen, von Sven auf Deutsch bei der Wohnungsauswahl */
   deal: { id: string; lead_id: string; unit_id: string | null; phase: string; reservation_notes: string | null }
-  lead: { id: string; first_name: string | null; last_name: string | null; email: string | null; drive_folder_id: string | null; drive_folder_url: string | null }
-  unit: { id: string; unit_number: string; type: string | null; price_net: number | null; project_id: string }
+  lead: { id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; whatsapp: string | null; drive_folder_id: string | null; drive_folder_url: string | null }
+  unit: { id: string; unit_number: string; type: string | null; price_net: number | null; project_id: string; bedrooms: number | null; size_sqm: number | null; terrace_sqm: number | null }
   /** Teil-Wohnungen (Doppelapartment, z. B. A1 = A1a + A1b) */
   subUnits: string[]
   project: { id: string; name: string; developer: string | null; location: string | null; payment_schedule: { reservation?: number; reservationVat?: boolean } | null }
@@ -151,9 +171,9 @@ export async function loadCtx(sb: Client, dealId: string, fallbackTemplate?: Tem
   if (!deal) return { error: 'Deal nicht gefunden' }
   const d = deal as Ctx['deal']
   if (!d.unit_id) return { error: 'Am Deal ist keine Wohnung zugewiesen' }
-  const { data: lead } = await sb.from('leads').select('id, first_name, last_name, email, drive_folder_id, drive_folder_url').eq('id', d.lead_id).maybeSingle()
+  const { data: lead } = await sb.from('leads').select('id, first_name, last_name, email, phone, whatsapp, drive_folder_id, drive_folder_url').eq('id', d.lead_id).maybeSingle()
   if (!lead) return { error: 'Kunde nicht gefunden' }
-  const { data: unit } = await sb.from('crm_project_units').select('id, unit_number, type, price_net, project_id').eq('id', d.unit_id).maybeSingle()
+  const { data: unit } = await sb.from('crm_project_units').select('id, unit_number, type, price_net, project_id, bedrooms, size_sqm, terrace_sqm').eq('id', d.unit_id).maybeSingle()
   if (!unit) return { error: 'Wohnung nicht gefunden' }
   const u = unit as Ctx['unit']
   const { data: subs } = await sb.from('crm_project_units').select('unit_number').eq('parent_unit_id', u.id).order('unit_number')
@@ -166,7 +186,11 @@ export async function loadCtx(sb: Client, dealId: string, fallbackTemplate?: Tem
   const devId = (dev as { id?: string } | null)?.id
   if (!devId) return { error: `Bauträger ${p.developer} nicht angelegt` }
   const { data: active } = await sb.from('reservation_templates').select('*').eq('developer_id', devId).eq('is_active', true).maybeSingle()
-  const tpl = active ?? fallbackTemplate ?? null
+  const candidate = (active ?? fallbackTemplate ?? null) as TemplateDb | null
+  // Vorlage kann auf ein Projekt und einzelne Wohnungen begrenzt sein (Flora: nur die Angebotsapartments)
+  const x = candidate?.extra
+  const inScope = !x?.only_project_id || (x.only_project_id === u.project_id && (!x.only_units?.length || x.only_units.includes(u.unit_number)))
+  const tpl = inScope ? candidate : null
   if (!tpl) return { error: `Keine Reservierungsvorlage für ${p.developer}` }
   const { data: contacts } = await sb.from('crm_developer_contacts')
     .select('name, email, phone, whatsapp, is_primary, drive_access, language, sign_wa_video').eq('developer_id', devId).order('is_primary', { ascending: false })
@@ -307,7 +331,8 @@ function kindOf(type: string | null): PropertyKind {
   return 'apartment'
 }
 
-function fieldsFor(ctx: Ctx, buyers: Buyer[], terms: { en: string; problem: string | null }): { fields: AgreementFields; problems: string[] } {
+function fieldsFor(ctx: Ctx, buyers: Buyer[], terms: { en: string; problem: string | null }, row?: Pick<AgreementRow, 'contract'> | null): { fields: AgreementFields; problems: string[] } {
+  if (ctx.template.layout === 'flora') return floraFieldsFor(ctx, buyers, terms, row)
   const problems: string[] = terms.problem ? [terms.problem] : []
   const t = ctx.template
   const net = ctx.unit.price_net != null ? Number(ctx.unit.price_net) : null
@@ -499,6 +524,7 @@ async function sendOut(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array,
 }
 
 async function sendOutLocked(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array, fields: AgreementFields, buyers: Buyer[], test: boolean): Promise<Record<string, unknown>> {
+  if (ctx.template.layout === 'flora') return await floraSend(sb, row, ctx, pdf, fields, buyers, test)
   const fname = fileNameFor(ctx)
   // Mail-Anhang ohne Leerzeichen: denomailer kürzt Namen mit Leerzeichen sonst auf das erste Wort.
   const attachment = { filename: fname.replace(/\s*-\s*/g, '_').replace(/\s+/g, '_'), content_base64: b64(pdf), content_type: 'application/pdf' }
@@ -612,7 +638,7 @@ ${fields.special_terms ? `<p><b>Sondervereinbarung</b> (deine Eingabe): ${esc((c
   return { ok: mailOk, test, sent_to: devTargets, errors, sign_link: signLink }
 }
 
-function newToken(): string {
+export function newToken(): string {
   const b = crypto.getRandomValues(new Uint8Array(18))
   return Array.from(b, x => x.toString(16).padStart(2, '0')).join('')
 }
@@ -663,6 +689,9 @@ async function processRow(sb: Client, initial: AgreementRow, m: Mode): Promise<R
     await sb.from('reservation_agreements').update({ status: 'abgebrochen', sign_token: null, error: 'Am Deal hängt inzwischen eine andere Wohnung', updated_at: new Date().toISOString() }).eq('id', row.id)
     return { deal: row.deal_id, abgebrochen: 'andere Wohnung' }
   }
+  // Zwei-Parteien-Vertrag: nach dem Versand ändert die Automatik nichts mehr, Sven sendet bei Bedarf neu.
+  // Unterschriften und Zustellung laufen über twoPartySweep.
+  if (ctx.template.layout === 'flora' && row.status === 'gesendet') return { deal: row.deal_id, beobachtet: true }
   const scan = await scanFolder(sb, row, ctx)
   const { buyers, minors, lastIdAt } = buyersFrom(scan.checked)
   if (scan.changed) {
@@ -702,7 +731,7 @@ async function processRow(sb: Client, initial: AgreementRow, m: Mode): Promise<R
   if (!c || c.status !== row.status || c.sending_at) return { deal: row.deal_id, skipped: 'Stand geändert' }
 
   const terms = await specialTermsEn(sb, row.id, row.special_terms, ctx.deal.reservation_notes)
-  const { fields, problems } = fieldsFor(ctx, buyers, terms)
+  const { fields, problems } = fieldsFor(ctx, buyers, terms, row)
   const reasons = gate(ctx, buyers, problems, scan.checked, minors)
   let pdf: Uint8Array
   try { pdf = await renderAgreement(ctx.template, fields) }
@@ -746,7 +775,7 @@ async function retryDrive(sb: Client, row: AgreementRow): Promise<Record<string,
 }
 
 /** Entwurf ablegen (nur Storage, für die Vorschau im CRM). */
-async function storePdfDraft(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array): Promise<string | null> {
+export async function storePdfDraft(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array): Promise<string | null> {
   const path = `unit-documents/${ctx.unit.id}/${Date.now()}-reservation-draft.pdf`
   const { error } = await sb.storage.from('unit-documents').upload(path, pdf, { contentType: 'application/pdf', upsert: false })
   if (error) { console.warn('[reservation-agreement] Entwurf:', error.message); return row.pdf_path }
@@ -795,6 +824,8 @@ async function sweep(sb: Client): Promise<Record<string, unknown>> {
   for (const r of (pendingDrive ?? []) as AgreementRow[]) {
     try { results.push(await retryDrive(sb, r)) } catch (e) { results.push({ deal: r.deal_id, drive_error: (e as Error).message }) }
   }
+  // 4. Zwei-Parteien-Verträge: offene Zustellungen nachholen, fertige Unterschriften zusammenführen
+  results.push(...await twoPartySweep(sb))
   return { ok: true, mode: m, docs, created, results }
 }
 
@@ -808,6 +839,8 @@ async function rowFor(sb: Client, dealId: string, ctx: Ctx): Promise<AgreementRo
       unit_id: ctx.unit.id, template_id: ctx.template.id, status: 'wartet_ausweis', buyers: [], sign_token: null,
       data: null, template_snapshot: null, review_reason: null, error: null, sent_at: null, sent_to: null,
       seller_signed_at: null, seller_signer_name: null, seller_sign_meta: null, signed_pdf_path: null, signed_file_id: null,
+      buyer_sign_token: null, contract: null, buyer_signed_at: null, completed_at: null, finalizing_at: null,
+      link_delivery: null, final_delivery: null, final_sent_at: null, unit_document_id: null,
       updated_at: new Date().toISOString(),
     }).eq('id', existing.id).select('*').single()
     if (error) throw new Error(error.message)
@@ -829,6 +862,10 @@ function cleanBuyers(input: unknown): Buyer[] | null {
     document_type: String(b.document_type ?? 'passport'), nationality: String(b.nationality ?? ''),
     date_of_birth: String(b.date_of_birth ?? ''), expiry_date: String(b.expiry_date ?? ''),
     file_id: String(b.file_id ?? ''), file_name: String(b.file_name ?? 'von Hand'),
+    ...(b.salutation ? { salutation: String(b.salutation) } : {}),
+    ...(b.address ? { address: String(b.address).replace(/\s+/g, ' ').trim() } : {}),
+    ...(b.phone ? { phone: String(b.phone).trim() } : {}),
+    ...(b.email ? { email: String(b.email).trim() } : {}),
   })).filter(b => b.full_name)
 }
 
@@ -838,17 +875,24 @@ const SAMPLE: AgreementFields = {
   price_text: 'EUR 634,800 + VAT', deposit_text: 'EUR 20,000 + 19% VAT = EUR 23,800',
 }
 
+async function buyerSubmit(sb: Client, body: Record<string, unknown>, req: Request) {
+  const hit = await findBuyerRow(sb, body.token)
+  return hit ? await tpSubmit(sb, hit, body, req) : { status: 404, body: { error: 'not_found' } }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   // Öffentliche Unterschriftsseite: nur mit gültigem Token, kein Login (sign.ts prüft alles)
   if (req.method === 'POST') {
     const peek = await req.clone().json().catch(() => ({})) as Record<string, unknown>
-    if (['sign_view', 'sign_submit', 'doc_view', 'doc_submit'].includes(String(peek.action))) {
+    if (['sign_view', 'sign_submit', 'doc_view', 'doc_submit', 'buyer_view', 'buyer_submit'].includes(String(peek.action))) {
       const sbPub = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
       try {
         const res = peek.action === 'sign_view' ? await signView(sbPub, peek)
           : peek.action === 'sign_submit' ? await signSubmit(sbPub, peek, req)
           : peek.action === 'doc_view' ? await docView(sbPub, peek)
+          : peek.action === 'buyer_view' ? await buyerView(sbPub, peek)
+          : peek.action === 'buyer_submit' ? await buyerSubmit(sbPub, peek, req)
           : await docSubmit(sbPub, peek, req)
         return json(res.body, res.status)
       } catch (e) {
@@ -877,7 +921,7 @@ Deno.serve(async (req) => {
     if (action === 'preview_template') {
       const t = body.template as TemplateRow | undefined
       if (!t?.company_name) return json({ error: 'Vorlage fehlt' }, 400)
-      const base = t.layout === 'pafilia'
+      const base = t.layout === 'flora' ? FLORA_SAMPLE : t.layout === 'pafilia'
         ? { ...SAMPLE, unit_number: 'B7/102', price_text: 'EUR 710,000 plus V.A.T.', deposit_text: 'EUR 10,000 plus V.A.T.' }
         : SAMPLE
       const pdf = await renderAgreement(t, { ...base, ...(body.sample as Partial<AgreementFields> ?? {}) })
@@ -931,15 +975,40 @@ Deno.serve(async (req) => {
     if (action === 'status') {
       const { data } = await sb.from('reservation_agreements').select('*').eq('deal_id', dealId).maybeSingle()
       const ctx = await loadCtx(sb, dealId, (data as AgreementRow | null)?.template_snapshot)
-      return json({ ok: true, row: data ?? null, template: 'error' in ctx ? null : { id: ctx.template.id, name: ctx.template.name }, reason: 'error' in ctx ? ctx.error : null, mode: await mode(sb), reservation_notes: 'error' in ctx ? null : ctx.deal.reservation_notes })
+      const two = !('error' in ctx) && ctx.template.layout === 'flora'
+      const r = data as AgreementRow | null
+      const parts = two && r?.sign_round ? await loadParts(sb, r.id, r.sign_round) : []
+      return json({
+        ok: true, row: data ?? null, template: 'error' in ctx ? null : { id: ctx.template.id, name: ctx.template.name }, reason: 'error' in ctx ? ctx.error : null, mode: await mode(sb), reservation_notes: 'error' in ctx ? null : ctx.deal.reservation_notes,
+        ...(two ? {
+          two_party: {
+            price_net: ctx.unit.price_net, title_deed_default: ctx.template.extra?.title_deed_amount ?? null,
+            parts: parts.map(x => ({ side: x.side, name: x.name, at: x.created_at })),
+            vendor_signers: ctx.template.extra?.vendor_signers ?? [], buyer_count: r?.data?.flora?.buyers.length ?? 0,
+          },
+        } : {}),
+      })
     }
 
     const ctx = await loadCtx(sb, dealId)
     if ('error' in ctx) return json({ error: ctx.error }, 400)
 
     if (action === 'preview' || action === 'send') {
-      const row = await rowFor(sb, dealId, ctx)
+      const two = ctx.template.layout === 'flora'
+      let row = await rowFor(sb, dealId, ctx)
+      // Preis und Betrag (g) je Vertrag: gelten auch für Vorschau und Sweep, unterschrieben wird aber nur row.data
+      if (two && body.contract && typeof body.contract === 'object') {
+        const c = body.contract as Record<string, unknown>
+        const amount = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null }
+        const contract = { net_price: amount(c.net_price), title_deed_amount: amount(c.title_deed_amount) }
+        await sb.from('reservation_agreements').update({ contract, updated_at: new Date().toISOString() }).eq('id', row.id)
+        row = { ...row, contract }
+      }
       let buyers = cleanBuyers(body.buyers)
+      // Anrede, Adresse usw. tippt Sven von Hand: bleibt erhalten, wenn er die Karte zwischendurch schließt
+      if (two && buyers && !['gesendet', 'unterschrieben'].includes(row.status)) {
+        await sb.from('reservation_agreements').update({ buyers, updated_at: new Date().toISOString() }).eq('id', row.id)
+      }
       let minors: string[] = []
       let checked = row.checked_files ?? {}
       if (!buyers) {
@@ -951,14 +1020,19 @@ Deno.serve(async (req) => {
         minors = found.minors
       }
       const terms = await specialTermsEn(sb, row.id, row.special_terms, ctx.deal.reservation_notes)
-      const { fields, problems } = fieldsFor(ctx, buyers, terms)
-      const reasons = gate(ctx, buyers, problems, checked, minors)
+      const { fields, problems } = fieldsFor(ctx, buyers, terms, row)
+      const reasons = [...gate(ctx, buyers, problems, checked, minors), ...(two ? floraWarnings(ctx) : [])]
       const pdf = await renderAgreement(ctx.template, fields)
       // Vorschau ändert den Vertrag NICHT: row.data ist das, was der Bauträger unterschreibt.
       if (action === 'preview') return json({ ok: true, pdf_base64: b64(pdf), fields, buyers, reasons })
       // send: Sven hat geprüft. Harte Hindernisse bleiben harte Hindernisse.
       const hard = [...problems, ...(buyers.length ? [] : ['Keine Käufer']), ...buyers.filter(b => !b.document_number).map(b => `Nummer fehlt bei ${b.full_name}`), ...(ctx.devEmails.length ? [] : ['Keine E-Mail beim Bauträger'])]
       if (hard.length) return json({ error: hard.join(' · ') }, 400)
+      // Zwei-Parteien: neu senden macht vorhandene Unterschriften ungültig, das geht nur ausdrücklich
+      if (two && body.test !== true && body.force !== true && row.sign_round) {
+        const signedParts = await loadParts(sb, row.id, row.sign_round)
+        if (signedParts.length) return json({ error: `already_signed: ${signedParts.map(x => x.name).join(', ')}` }, 409)
+      }
       const res = await sendOut(sb, row, ctx, pdf, fields, buyers, body.test === true)
       return json({ ok: true, ...res, reasons })
     }

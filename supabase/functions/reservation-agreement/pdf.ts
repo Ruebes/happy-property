@@ -4,6 +4,7 @@
 // Bauträger mit eigenem Vordruck: reservation_templates.layout (z. B. 'pafilia' → pdfPafilia.ts).
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'npm:pdf-lib@1.17.1'
 import { renderPafilia } from './pdfPafilia.ts'
+import { renderFlora, type FloraFields, type FloraSignatures, type VendorSigner } from './pdfFlora.ts'
 
 export interface TemplateRow {
   logo_text: string | null
@@ -14,10 +15,16 @@ export interface TemplateRow {
   company_tel: string | null
   bank: { account_name?: string; account_number?: string; iban?: string; swift?: string; bank_name?: string }
   notes: string | null
-  /** Vordruck: leer/'mito' = Mito-Aufbau, 'pafilia' = Pafilia/Minthis-Aufbau */
+  /** Vordruck: leer/'mito' = Mito-Aufbau, 'pafilia' = Pafilia/Minthis-Aufbau, 'flora' = Flora Panorama (Aaron) */
   layout?: string | null
   /** Zusatzfelder einzelner Vordrucke (Pafilia: Registernummer, Zahlungs- und Reservierungsfrist) */
-  extra?: { registration_no?: string; payment_term?: string; reservation_term?: string; price_note?: string } | null
+  extra?: {
+    registration_no?: string; payment_term?: string; reservation_term?: string; price_note?: string
+    /** Vorlage gilt nur für dieses Projekt und diese Wohnungen (Flora: Angebotsapartments) */
+    only_project_id?: string; only_units?: string[]
+    /** Zwei-Parteien-Ablauf: Unterzeichner des Bauträgers, Mindestzahl, Standard für Betrag (g), eigener Stempel */
+    vendor_signers?: VendorSigner[]; vendor_min_signers?: number; title_deed_amount?: number; seal_path?: string
+  } | null
 }
 
 export type PropertyKind = 'villa' | 'townhouse' | 'apartment'
@@ -45,6 +52,7 @@ export interface AgreementFields {
   deposit_text: string      // EUR 20,000 + 19% VAT = EUR 23,800
   id_types?: string[]       // passport | id_card | other, gleiche Reihenfolge wie purchasers
   special_terms?: string    // Sondervereinbarung, englisch (Svens Eingabe bei der Reservierung, übersetzt)
+  flora?: FloraFields       // nur layout 'flora': alle Vertragswerte
 }
 
 const W = 595.28, H = 841.89
@@ -92,7 +100,8 @@ export function wrap(font: PDFFont, size: number, text: string, width: number): 
  * Eine A4-Seite. Passt der Inhalt nicht (z. B. 3+ Käufer), wird kompakter gesetzt; passt es
  * dann immer noch nicht, wirft die Funktion, statt Zeilen über den Seitenrand zu schreiben.
  */
-export async function renderAgreement(t: TemplateRow, f: AgreementFields, seller?: SellerSignature): Promise<Uint8Array> {
+export async function renderAgreement(t: TemplateRow, f: AgreementFields, seller?: SellerSignature, flora?: FloraSignatures): Promise<Uint8Array> {
+  if (t.layout === 'flora') return await renderFlora(t, f, flora)
   if (t.layout === 'pafilia') return await renderPafilia(t, f, seller)
   const normal = await renderOnce(t, f, seller, false)
   if (normal.bottom >= 24) return normal.bytes

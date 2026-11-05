@@ -191,11 +191,14 @@ Deno.serve(async (req: Request) => {
               .select('email').eq('developer_id', devId).eq('drive_access', true)
             unitDevEmails = ((withDrive ?? []) as { email?: string | null }[]).map(x => (x.email ?? '').trim()).filter(Boolean)
             const { data: resTpl } = await supabase.from('reservation_templates')
-              .select('id').eq('developer_id', devId).eq('is_active', true).limit(1).maybeSingle()
+              .select('id, extra').eq('developer_id', devId).eq('is_active', true).limit(1).maybeSingle()
+            // Vorlage kann auf einzelne Wohnungen begrenzt sein (Flora Panorama: nur die Angebotsapartments)
+            const resX = (resTpl as { extra?: { only_project_id?: string; only_units?: string[] } } | null)?.extra
+            const resInScope = !resX?.only_project_id || (resX.only_project_id === (unit as { project_id?: string }).project_id && (!resX.only_units?.length || resX.only_units.includes(unitNumber)))
             // Nur wenn die Automatik wirklich scharf ist (Modus on), sonst der bisherige Text
             const { data: resMode } = await supabase.from('crm_settings').select('value').eq('key', 'reservation_agreement_mode').maybeSingle()
             const modeOn = String((resMode as { value?: unknown } | null)?.value ?? '').replace(/"/g, '').trim() === 'on'
-            unitDevHasResTemplate = !!resTpl && modeOn
+            unitDevHasResTemplate = !!resTpl && modeOn && resInScope
           }
         }
       }
