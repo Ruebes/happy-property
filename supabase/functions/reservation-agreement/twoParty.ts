@@ -52,6 +52,14 @@ const MAX_TRIES = 96                 // 96 x 30 Minuten = 48 Stunden
 const DEAD = ['deal_verloren', 'archiviert']
 const TOKEN_RE = /^[0-9a-f]{36}$/
 const NON_REFUNDABLE = '€15.000,00 plus VAT'
+const VAT_PCT = 19                   // Sven 5.11.2026: 40 % Anzahlung plus 19 % MwSt
+/** Für den Kunden, damit er den richtigen Betrag überweist. Der Vertrag selbst bleibt bei „plus VAT". */
+function depositPay(net: number | null | undefined, lang: Lang): string {
+  if (!net) return ''
+  const a = floraAmounts(net, 0).a
+  const gross = Math.round(a * (100 + VAT_PCT)) / 100
+  return lang === 'de' ? `${euro(a)} plus ${VAT_PCT} % MwSt = ${euro(gross)}` : `${euro(a)} plus ${VAT_PCT}% VAT = ${euro(gross)}`
+}
 export const FEE: Record<number, { type: string; label: string; amount: string }> = {
   0: { type: 'Studio', label: 'studio', amount: '130,00' },
   1: { type: 'One-Bedroom', label: 'one-bedroom', amount: '150,00' },
@@ -288,7 +296,7 @@ export async function tpView(sb: SupabaseClient, hit: Hit): Promise<Res> {
       company_name: p.template.company_name, title: p.template.title,
       property_name: 'Flora Panorama', unit_number: fl.unit, type_label: fl.type_label,
       price_text: p.fields.price_text, deposit_text: p.fields.deposit_text, non_refundable_text: NON_REFUNDABLE,
-      deposit: am ? euro(am.a) : null, special_terms: p.fields.special_terms ?? null,
+      deposit: am ? euro(am.a) : null, deposit_pay_text: depositPay(fl.net_price, side === 'buyer' ? p.buyerLang : p.lang), special_terms: p.fields.special_terms ?? null,
       // Kundenlink vor der Unterschrift des Bauträgers: noch nichts zu tun
       waiting_vendor: side === 'buyer' && !sideDone(p, parts, 'vendor'),
       signers: signersOf(p, side).map(s => ({ key: s.key, name: s.name, signed: !!signed(s.key, side), signed_at: signed(s.key, side)?.created_at ?? null })),
@@ -488,8 +496,8 @@ function linkTargets(sb: SupabaseClient, row: AgreementRow, ctx: Ctx, p: Payload
       send: () => invoke(sb, 'send-email', {
         to: mail, subject: `${prefix}${L === 'de' ? `Dein Reservierungsvertrag Flora Panorama ${unit}` : `Your reservation agreement Flora Panorama ${unit}`}`,
         html: L === 'de'
-          ? `<p>Hallo ${esc(first)},</p><p>dein Reservierungsvertrag für <b>Flora Panorama, Apartment ${esc(unit)}</b> ist fertig, der Bauträger hat bereits unterschrieben. Du kannst ihn jetzt direkt am Handy prüfen und mit dem Finger unterschreiben, drucken ist nicht nötig.</p><p>Kaufpreis: ${esc(p.fields.price_text)}<br>Anzahlung (40 %): ${esc(p.fields.deposit_text)}, fällig innerhalb von 5 Tagen nach der Unterschrift</p>${button(link, 'Vertrag prüfen und unterschreiben')}<p>Sobald du unterschrieben hast, bekommst du den fertigen Vertrag per E-Mail und WhatsApp.</p><p>Viele Grüße<br>Sven &middot; Happy Property</p>`
-          : `<p>Hi ${esc(first)},</p><p>your reservation agreement for <b>Flora Panorama, apartment ${esc(unit)}</b> is ready and the developer has already signed. You can now check it and sign it with your finger right on your phone, no printing needed.</p><p>Purchase price: ${esc(p.fields.price_text)}<br>Deposit (40%): ${esc(p.fields.deposit_text)}, due within 5 days of signing</p>${button(link, 'Check and sign the agreement')}<p>As soon as you have signed, you will receive the final agreement by email and WhatsApp.</p><p>Best regards<br>Sven &middot; Happy Property</p>`,
+          ? `<p>Hallo ${esc(first)},</p><p>dein Reservierungsvertrag für <b>Flora Panorama, Apartment ${esc(unit)}</b> ist fertig, der Bauträger hat bereits unterschrieben. Du kannst ihn jetzt direkt am Handy prüfen und mit dem Finger unterschreiben, drucken ist nicht nötig.</p><p>Kaufpreis: ${esc(p.fields.price_text)}<br>Anzahlung (40 %): ${esc(depositPay(fl.net_price, 'de'))}, fällig innerhalb von 5 Tagen nach der Unterschrift</p>${button(link, 'Vertrag prüfen und unterschreiben')}<p>Sobald du unterschrieben hast, bekommst du den fertigen Vertrag per E-Mail und WhatsApp.</p><p>Viele Grüße<br>Sven &middot; Happy Property</p>`
+          : `<p>Hi ${esc(first)},</p><p>your reservation agreement for <b>Flora Panorama, apartment ${esc(unit)}</b> is ready and the developer has already signed. You can now check it and sign it with your finger right on your phone, no printing needed.</p><p>Purchase price: ${esc(p.fields.price_text)}<br>Deposit (40%): ${esc(depositPay(fl.net_price, 'en'))}, due within 5 days of signing</p>${button(link, 'Check and sign the agreement')}<p>As soon as you have signed, you will receive the final agreement by email and WhatsApp.</p><p>Best regards<br>Sven &middot; Happy Property</p>`,
         auto: true, lang: L, already_translated: true, ...(test ? {} : { lead_id: ctx.lead.id }),
       }),
     })
@@ -708,8 +716,8 @@ function finalTargets(sb: SupabaseClient, row: AgreementRow, ctx: Ctx, p: Payloa
       send: async () => invoke(sb, 'send-email', {
         to, subject: `${prefix}${L === 'de' ? `Von beiden Seiten unterschrieben: Reservierungsvertrag Flora Panorama ${unit}` : `Signed by both sides: reservation agreement Flora Panorama ${unit}`}`,
         html: L === 'de'
-          ? `<p>Hallo ${esc(firstForMail(to))},</p><p>dein Reservierungsvertrag für <b>Flora Panorama, Apartment ${esc(unit)}</b> ist jetzt von beiden Seiten unterschrieben. Du findest ihn im Anhang${driveFiled ? ' und in deinem Google-Drive-Ordner' : ''}.</p><p><b>Nächster Schritt:</b> die Anzahlung von ${esc(p.fields.deposit_text)} ist bis spätestens ${due} zu überweisen. Geht sie nicht rechtzeitig ein, endet der Vertrag automatisch (Klausel 3.1).</p>${bankHtml(ctx.template.bank, 'de')}<p>Viele Grüße<br>Sven &middot; Happy Property</p>`
-          : `<p>Hi ${esc(firstForMail(to))},</p><p>your reservation agreement for <b>Flora Panorama, apartment ${esc(unit)}</b> has now been signed by both sides. You will find it attached${driveFiled ? ' and in your Google Drive folder' : ''}.</p><p><b>Next step:</b> the deposit of ${esc(p.fields.deposit_text)} has to be transferred by ${due} at the latest. If it is not received in time, the agreement ends automatically (clause 3.1).</p>${bankHtml(ctx.template.bank, 'en')}<p>Best regards<br>Sven &middot; Happy Property</p>`,
+          ? `<p>Hallo ${esc(firstForMail(to))},</p><p>dein Reservierungsvertrag für <b>Flora Panorama, Apartment ${esc(unit)}</b> ist jetzt von beiden Seiten unterschrieben. Du findest ihn im Anhang${driveFiled ? ' und in deinem Google-Drive-Ordner' : ''}.</p><p><b>Nächster Schritt:</b> die Anzahlung von ${esc(depositPay(fl.net_price, 'de'))} ist bis spätestens ${due} zu überweisen. Geht sie nicht rechtzeitig ein, endet der Vertrag automatisch (Klausel 3.1).</p>${bankHtml(ctx.template.bank, 'de')}<p>Viele Grüße<br>Sven &middot; Happy Property</p>`
+          : `<p>Hi ${esc(firstForMail(to))},</p><p>your reservation agreement for <b>Flora Panorama, apartment ${esc(unit)}</b> has now been signed by both sides. You will find it attached${driveFiled ? ' and in your Google Drive folder' : ''}.</p><p><b>Next step:</b> the deposit of ${esc(depositPay(fl.net_price, 'en'))} has to be transferred by ${due} at the latest. If it is not received in time, the agreement ends automatically (clause 3.1).</p>${bankHtml(ctx.template.bank, 'en')}<p>Best regards<br>Sven &middot; Happy Property</p>`,
         attachment: attach(fname, await pdf()), auto: true, lang: L, already_translated: true, ...(test ? {} : { lead_id: ctx.lead.id }),
       }),
     })
@@ -717,8 +725,8 @@ function finalTargets(sb: SupabaseClient, row: AgreementRow, ctx: Ctx, p: Payloa
   phones.forEach((phone, i) => out.push({
     key: `wa:buyer:${phoneTail(phone)}`, customer: test ? undefined : phone,
     send: () => waPdf({ name: i === 0 ? (test ? 'Sven' : first || 'Kunde') : (firstForPhone(phone) || 'Kunde'), phone }, prefix + (L === 'de'
-      ? `Hallo ${firstForPhone(phone)} 🐾\n\nhier ist Lotte von Happy Property. Dein Reservierungsvertrag für Flora Panorama, Apartment ${unit} ist jetzt von beiden Seiten unterschrieben, hier ist das PDF.\n\nDie Anzahlung von ${p.fields.deposit_text} ist bis spätestens ${due} fällig. Details stehen in deiner E-Mail.\n\nLiebe Grüße, Lotte`
-      : `Hi ${firstForPhone(phone)} 🐾\n\nLotte from Happy Property here. Your reservation agreement for Flora Panorama, apartment ${unit} has now been signed by both sides, here is the PDF.\n\nThe deposit of ${p.fields.deposit_text} is due by ${due} at the latest. You will find the details in your email.\n\nBest, Lotte`), L, test ? undefined : ctx.lead.id),
+      ? `Hallo ${firstForPhone(phone)} 🐾\n\nhier ist Lotte von Happy Property. Dein Reservierungsvertrag für Flora Panorama, Apartment ${unit} ist jetzt von beiden Seiten unterschrieben, hier ist das PDF.\n\nDie Anzahlung von ${depositPay(fl.net_price, 'de')} ist bis spätestens ${due} fällig. Details stehen in deiner E-Mail.\n\nLiebe Grüße, Lotte`
+      : `Hi ${firstForPhone(phone)} 🐾\n\nLotte from Happy Property here. Your reservation agreement for Flora Panorama, apartment ${unit} has now been signed by both sides, here is the PDF.\n\nThe deposit of ${depositPay(fl.net_price, 'en')} is due by ${due} at the latest. You will find the details in your email.\n\nBest, Lotte`), L, test ? undefined : ctx.lead.id),
   }))
 
   // Bauträger

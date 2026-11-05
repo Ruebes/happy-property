@@ -24,6 +24,7 @@ export interface TwoPartyView {
   type_label: string
   price_text: string
   deposit_text: string
+  deposit_pay_text: string
   non_refundable_text: string
   deposit: string | null
   special_terms: string | null
@@ -167,7 +168,7 @@ export default function TwoPartySign({ token, initial }: { token: string; initia
             <p className="text-3xl">✅</p>
             <p className="font-semibold text-gray-900">{t('twoPartySign.completeTitle', 'Signed by both sides')}</p>
             <p className="text-sm text-gray-500">{isBuyer
-              ? t('twoPartySign.completeBuyer', 'You will receive the final agreement by email and WhatsApp. Next step: transfer the deposit of {{deposit}}.', { deposit: view.deposit_text })
+              ? t('twoPartySign.completeBuyer', 'You will receive the final agreement by email and WhatsApp. Next step: transfer the deposit of {{deposit}}.', { deposit: view.deposit_pay_text })
               : t('twoPartySign.completeVendor', 'The final agreement comes by email and WhatsApp.')}</p>
             {isBuyer && bank && (
               <div className="text-left text-sm bg-gray-50 rounded-xl px-3 py-2.5">
@@ -195,7 +196,7 @@ export default function TwoPartySign({ token, initial }: { token: string; initia
             {isBuyer && (
               <div className="text-sm bg-orange-50 border border-orange-100 rounded-xl px-3 py-2.5 space-y-1.5">
                 <p className="font-semibold text-hp-navy">{t('twoPartySign.buyerPoints', 'The key points before you sign')}</p>
-                <p className="text-gray-700"><b>{t('twoPartySign.pointDeposit', 'Deposit (40% of the price)')}:</b> {view.deposit_text}, {t('twoPartySign.pointDue', 'due within 5 days of signing. If it is not received in time, the agreement ends automatically.')}</p>
+                <p className="text-gray-700"><b>{t('twoPartySign.pointDeposit', 'Deposit (40% of the price)')}:</b> {view.deposit_pay_text}, {t('twoPartySign.pointDue', 'due within 5 days of signing. If it is not received in time, the agreement ends automatically.')}</p>
                 <p className="text-gray-700"><b>{t('twoPartySign.pointNonRefund', 'Of this, non-refundable if you do not sign the contract of sale')}:</b> {view.non_refundable_text}</p>
                 {view.other_done && <p className="text-green-700">✓ {t('twoPartySign.vendorDoneNote', 'The developer has already signed.')}</p>}
               </div>
