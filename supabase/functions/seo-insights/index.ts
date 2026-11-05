@@ -219,7 +219,8 @@ async function buildSnapshot(sb: SupabaseClient): Promise<Record<string, unknown
     urls.push(...(sm.text.match(/<loc>([^<]+)<\/loc>/g) ?? []).map(m => m.replace(/<\/?loc>/g, '')))
   }
   const metrics = {
-    pages: urls.length, titles_over_60: 0, desc_missing: 0, faq_pages: 0, faq_pairs: 0,
+    pages: urls.length, pages_indexable: 0, pages_noindex: 0,
+    titles_over_60: 0, desc_missing: 0, faq_pages: 0, faq_pairs: 0,
     internal_links: 0, alt_missing: 0, old_tax_rate: 0, errors: 0, ttfb_avg_ms: 0,
     llms_txt: false, robots_ai_ok: false,
   }
@@ -231,7 +232,16 @@ async function buildSnapshot(sb: SupabaseClient): Promise<Record<string, unknown
       const r = await fetchText(`${u}?hp_seo_check=1`)
       if (!r.ok) { metrics.errors++; continue }
       ttfbSum += r.ttfbMs; ttfbN++
-      const title = /<title>(.*?)<\/title>/s.exec(r.text)?.[1]?.trim() ?? ''
+      // Absichtlich aus dem Index genommene Seiten (Danke-, Funnel-, Archivseiten)
+      // sind kein Mangel und wuerden den Bericht dauerhaft rot faerben.
+      const robotsMeta = /name=["']robots["'][^>]*content=["']([^"']*)/i.exec(r.text)?.[1] ?? ''
+      if (/noindex/i.test(robotsMeta)) { metrics.pages_noindex++; continue }
+      metrics.pages_indexable++
+      const rawTitle = /<title>(.*?)<\/title>/s.exec(r.text)?.[1]?.trim() ?? ''
+      // HTML-Entities zaehlen als ein Zeichen, nicht als fuenf ("&amp;" = "&").
+      const title = rawTitle.replace(/&amp;/g, '&').replace(/&quot;/g, '"')
+        .replace(/&#0?39;|&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+        .replace(/&nbsp;/g, ' ')
       if (title.length > 60) metrics.titles_over_60++
       if (!/name="description"/.test(r.text)) metrics.desc_missing++
       if (r.text.includes('FAQPage')) {
@@ -239,8 +249,26 @@ async function buildSnapshot(sb: SupabaseClient): Promise<Record<string, unknown
         metrics.faq_pairs += (r.text.match(/"@type":\s*"Question"/g) ?? []).length
       }
       metrics.internal_links += (r.text.match(CONTENT_LINK_RE) ?? []).length
-      metrics.alt_missing += (r.text.match(/<img\b(?![^>]*\balt="[^"]+")[^>]*>/g) ?? []).length
-      if (/12[,.]5\s*(%|Prozent)/.test(r.text)) metrics.old_tax_rate++
+      // Nur sichtbare Inhaltsbilder: Skript-Bloecke, Zaehlpixel und bewusst
+      // leere Dekobilder (alt="") sind keine fehlenden Alt-Texte.
+      const sichtbar = r.text.replace(/<script[\s\S]*?<\/script>/g, '')
+        .replace(/<noscript[\s\S]*?<\/noscript>/g, '')
+      metrics.alt_missing += (sichtbar.match(/<img\b[^>]*>/g) ?? []).filter(tag =>
+        !/\balt=["'][^"']+["']/.test(tag) && !/\balt=["']["']/.test(tag) &&
+        !/facebook\.com\/tr|\/tr\?id=|width=["']?1["']?\s|pixel/i.test(tag)).length
+      // Eine Nennung von 12,5 % ist nur dann falsch, wenn sie NICHT als
+      // frueherer Wert eingeordnet ist ("zuvor", "vorher", "statt", "bis 2025").
+      // Nur SICHTBAREN Text pruefen: CSS-Werte wie calc(12.5%) sind keine
+      // Steueraussage. Und eine Nennung ist nur falsch, wenn sie nicht als
+      // frueherer Wert eingeordnet oder als Irrtum erklaert wird.
+      const sichtText = sichtbar.replace(/<style[\s\S]*?<\/style>/g, '')
+        .replace(/style="[^"]*"/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
+      if (/12[,.]5\s*(%|Prozent)/.test(sichtText)) {
+        const stellen = sichtText.match(/.{0,110}12[,.]5\s*(?:%|Prozent).{0,110}/g) ?? []
+        const eingeordnet = (s: string) =>
+          /(zuvor|vorher|bisher|statt|fr(?:ü|ue)her|veraltet|bis\s*20\d\d|seit\s*1\.?\s*Januar|sind es\s*15|jetzt\s*15|nicht mehr|rechnest? noch|sprechen noch|Fehler)/i.test(s)
+        if (stellen.some(st => !eingeordnet(st))) metrics.old_tax_rate++
+      }
     }
   }
   await Promise.all([worker(), worker(), worker(), worker(), worker(), worker()])
@@ -490,6 +518,7 @@ function renderHtml(data: WeekData, analysis: Analysis): string {
     card(h2('Google Search Console') + gscBlock) +
     card(h2('Seiten-Gesundheit') +
       `<table style="width:100%;border-collapse:collapse;font-size:14px">` +
+      healthRow('Seiten im Google-Index', 'pages_indexable', false) +
       healthRow('Titel über 60 Zeichen', 'titles_over_60') +
       healthRow('Seiten ohne Beschreibung', 'desc_missing') +
       healthRow('Artikel mit FAQ-Markup', 'faq_pages', false) +
