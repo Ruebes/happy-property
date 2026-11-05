@@ -62,12 +62,35 @@ function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit): Promise
     .finally(() => clearTimeout(timer))
 }
 
+const AUTH_STORAGE_KEY = 'happy-property-auth'
+
+// Umzug auf den eigenen Server: Sitzungen aus der Cloud tragen ein ES256-Token, das
+// der eigene Server nicht prüfen kann (er signiert mit HS256). Die Refresh-Tokens
+// ziehen mit um. Darum das Token als abgelaufen markieren: supabase-js holt dann beim
+// Start ein neues, bevor die erste Abfrage läuft, und niemand wird abgemeldet.
+// Solange das Frontend auf die Cloud zeigt, macht dieser Block nichts.
+export function markForeignSessionExpired(url: string, storage: Storage): void {
+  if (url.includes('.supabase.co')) return
+  try {
+    const raw = storage.getItem(AUTH_STORAGE_KEY)
+    const session = raw ? JSON.parse(raw) as { access_token?: string; expires_at?: number } : null
+    if (!session?.access_token || session.expires_at === 0) return
+    const header = JSON.parse(atob(session.access_token.split('.')[0].replace(/-/g, '+').replace(/_/g, '/'))) as { alg?: string }
+    if (header.alg === 'HS256') return
+    storage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ ...session, expires_at: 0 }))
+  } catch {
+    // Unlesbare Sitzung: supabase-js entscheidet wie bisher selbst.
+  }
+}
+
+markForeignSessionExpired(supabaseUrl, window.localStorage)
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession:     true,
     autoRefreshToken:   true,
     detectSessionInUrl: true,
-    storageKey:         'happy-property-auth',
+    storageKey:         AUTH_STORAGE_KEY,
     storage:            window.localStorage,
   },
   global: {
