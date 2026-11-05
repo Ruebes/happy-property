@@ -452,10 +452,21 @@ export async function notifyCustomerSigned(sb: Client, leadId: string, what: { d
 }
 
 export async function whatsappSven(sb: Client, text: string): Promise<string | null> {
-  return await invoke(sb, 'send-whatsapp', {
+  const err = await invoke(sb, 'send-whatsapp', {
     event_type: 'reservation_agreement', override_text: text, auto: true, lang: 'de', already_translated: true,
     lead_data: { lead_name: 'Sven', lead_phone: SVEN_PHONE },
   })
+  // Ist WhatsApp getrennt, kommt die Meldung per Mail, sonst erfährt Sven nichts davon
+  if (err) {
+    const url = text.match(/https?:\/\/\S+/)?.[0] ?? ''
+    const body = esc((url ? text.replace(url, '') : text).trim()).replace(/\n/g, '<br>')
+    await invoke(sb, 'send-email', {
+      to: SVEN_MAIL, subject: 'Reservierung: Meldung für dich (WhatsApp ist nicht verbunden)',
+      html: `<p>${body}</p>${url ? `<p><a href="${url}" style="display:inline-block;background:#1a2332;color:#ffffff;padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:600">Öffnen</a></p>` : ''}`,
+      auto: true, lang: 'de', already_translated: true,
+    }).catch(e => console.error('[reservation-agreement] Mail an Sven', (e as Error).message))
+  }
+  return err
 }
 
 export function fileNameFor(ctx: Ctx): string {
@@ -657,7 +668,7 @@ function mergeBuyers(row: AgreementRow, found: Buyer[], checked: Record<string, 
   for (const f of found) {
     const same = saved.find(k => norm(k.full_name) === norm(f.full_name))
     if (same && f.document_number && !expired(f.expiry_date) && (!same.document_number || expired(same.expiry_date))) {
-      Object.assign(same, { document_number: f.document_number, document_type: f.document_type, expiry_date: f.expiry_date, file_id: f.file_id, file_name: f.file_name })
+      Object.assign(same, { document_number: f.document_number, document_type: f.document_type, expiry_date: f.expiry_date, file_id: f.file_id, file_name: f.file_name, nationality: same.nationality || f.nationality, date_of_birth: same.date_of_birth || f.date_of_birth })
     }
   }
   const since = row.sent_at ?? ''
@@ -731,8 +742,10 @@ async function processRow(sb: Client, initial: AgreementRow, m: Mode): Promise<R
   if (!c || c.status !== row.status || c.sending_at) return { deal: row.deal_id, skipped: 'Stand geändert' }
 
   const terms = await specialTermsEn(sb, row.id, row.special_terms, ctx.deal.reservation_notes)
-  const { fields, problems } = fieldsFor(ctx, buyers, terms, row)
-  const reasons = gate(ctx, buyers, problems, scan.checked, minors)
+  // Zwei-Parteien: von Hand Eingetragenes (Adresse, Anrede usw.) bleibt, der Ausweis ergänzt es nur
+  const list = ctx.template.layout === 'flora' ? mergeBuyers(row, buyers, scan.checked) : buyers
+  const { fields, problems } = fieldsFor(ctx, list, terms, row)
+  const reasons = gate(ctx, list, problems, scan.checked, minors)
   let pdf: Uint8Array
   try { pdf = await renderAgreement(ctx.template, fields) }
   catch (e) { reasons.push(`PDF: ${(e as Error).message}`); pdf = new Uint8Array() }
@@ -741,10 +754,10 @@ async function processRow(sb: Client, initial: AgreementRow, m: Mode): Promise<R
     const reason = m === 'test' && !reasons.length ? 'Testmodus: Vertrag ist fertig, ging nur an Sven' : reasons.join(' · ')
     const stored = pdf.length ? await storePdfDraft(sb, row, ctx, pdf) : row.pdf_path
     await sb.from('reservation_agreements').update({
-      status: 'pruefen', review_reason: reason, buyers, pdf_path: stored, updated_at: new Date().toISOString(),
+      status: 'pruefen', review_reason: reason, buyers: list, pdf_path: stored, updated_at: new Date().toISOString(),
     }).eq('id', row.id)
     if (m === 'test' && !reasons.length) {
-      const res = await sendOut(sb, row, ctx, pdf, fields, buyers, true)
+      const res = await sendOut(sb, row, ctx, pdf, fields, list, true)
       await sb.from('reservation_agreements').update({ sven_notified_at: new Date().toISOString() }).eq('id', row.id)
       return { deal: row.deal_id, test: res }
     }
@@ -752,7 +765,7 @@ async function processRow(sb: Client, initial: AgreementRow, m: Mode): Promise<R
     await sb.from('reservation_agreements').update({ sven_notified_at: new Date().toISOString() }).eq('id', row.id)
     return { deal: row.deal_id, pruefen: reason }
   }
-  return { deal: row.deal_id, ...(await sendOut(sb, row, ctx, pdf, fields, buyers, false)) }
+  return { deal: row.deal_id, ...(await sendOut(sb, row, ctx, pdf, fields, list, false)) }
 }
 
 /** Digital unterschrieben, aber der Drive-Upload ging schief: erneut versuchen (bis 7 Tage). */
