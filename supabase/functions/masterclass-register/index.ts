@@ -9,8 +9,10 @@
 //   3. Sofort: Bestätigung per E-Mail (Zoom-Link, Kalender-Buttons, .ics-Anhang)
 //      und per WhatsApp.
 //   4. Erinnerungen als scheduled_messages am Abonnenten (feste Uhrzeiten, NICHT
-//      relativ zur Anmeldung wie bei Listen-Sequenzen): 24 h vorher (Mail+WhatsApp),
-//      1 h vorher (Mail+WhatsApp), 15 Min vorher (nur WhatsApp).
+//      relativ zur Anmeldung wie bei Listen-Sequenzen): 24 h, 3 h und 90 Min vorher,
+//      alle nur per Mail. Sven, 5.11.2026: nach der WhatsApp-Sperre keine Wellen mehr.
+//      Die Abstände passen zum Mail-Budget von rund 50 je Stunde (eine Mail mit Fehler
+//      450 kommt erst 60 Minuten später nochmal, also womöglich nach dem Start).
 //
 // GET ?ics=<event> liefert die Kalenderdatei (Apple/Outlook-Desktop).
 //
@@ -113,7 +115,7 @@ function confirmMail(first: string, key: string, ev: Ev) {
     ${zoomBox(ev)}
     <p style="margin:0 0 8px;font-weight:700;color:${CI.navy}">Jetzt in den Kalender eintragen</p>
     <p style="margin:0 0 4px">${btn(c.google, 'Google Kalender', true)}${btn(c.ics, 'Apple / Outlook (.ics)', true)}${btn(c.outlook, 'Outlook.com', true)}${btn(c.yahoo, 'Yahoo', true)}</p>
-    <p style="margin:18px 0 0">Du bekommst am Vortag und eine Stunde vorher noch eine Erinnerung mit dem Link. Bis Sonntag!</p>
+    <p style="margin:18px 0 0">Du bekommst am Vortag und kurz vor dem Start noch eine Erinnerung mit dem Link. Bis Sonntag!</p>
     <p style="margin:18px 0 0">Liebe Grüße<br><strong>Sven Rüprich</strong><br><span style="color:${CI.mute}">Gründer Happy Property</span></p>`)
   const wa = `Hallo ${first}, du bist dabei! 🎉\n\n*${ev.short}*\n📅 ${ev.dateLabel}, ${ev.timeLabel}\n💻 Live per Zoom, ca. 60 Minuten plus Fragerunde\n\nZoom-Link: ${ev.zoomUrl}\nKenncode: ${ev.zoomPw}\n\nTrag dir den Termin am besten gleich in den Kalender ein: ${c.google}\n\nIch erinnere dich am Vortag und kurz vor Start noch einmal. Bis Sonntag!\nSven`
   return { subject: `Deine Anmeldung: ${ev.short}, ${ev.dateLabel}, ${ev.timeLabel}`, html, wa }
@@ -132,16 +134,20 @@ function reminderMails(first: string, key: string, ev: Ev) {
     wa: `Hallo ${first}, kurze Erinnerung: morgen um 11:00 Uhr (deutsche Zeit) startet die ${ev.short}. 📅\n\nZoom-Link: ${ev.zoomUrl}\nKenncode: ${ev.zoomPw}\n\nBis morgen!\nSven`,
   }
   const hour = {
-    subject: `In einer Stunde: ${ev.short}`,
+    subject: `Heute 11 Uhr: ${ev.short}`,
     html: mailShell(`
-      <h1 style="margin:0 0 14px;font-family:'Playfair Display',Georgia,serif;font-size:24px;line-height:1.2;color:${CI.navy}">In einer Stunde geht es los.</h1>
+      <h1 style="margin:0 0 14px;font-family:'Playfair Display',Georgia,serif;font-size:24px;line-height:1.2;color:${CI.navy}">Heute um 11 Uhr geht es los.</h1>
+      <p style="margin:0">${esc(first)}, um 11:00 Uhr (deutsche Zeit) starten wir. Der Zoom-Raum ist ab 10 Minuten vor Beginn offen.</p>
+      ${zoomBox(ev)}
+      <p style="margin:0">Bis später!<br><strong>Sven</strong></p>`),
+  }
+  const quarter = {
+    subject: 'Gleich geht es los: Dein Zoom-Link',
+    html: mailShell(`
+      <h1 style="margin:0 0 14px;font-family:'Playfair Display',Georgia,serif;font-size:24px;line-height:1.2;color:${CI.navy}">Gleich geht es los.</h1>
       <p style="margin:0">${esc(first)}, um 11:00 Uhr (deutsche Zeit) starten wir. Der Zoom-Raum ist ab 10 Minuten vor Beginn offen.</p>
       ${zoomBox(ev)}
       <p style="margin:0">Bis gleich!<br><strong>Sven</strong></p>`),
-    wa: `${first}, in einer Stunde geht es los! ⏰ Um 11:00 Uhr startet die ${ev.short}.\n\nZoom-Link: ${ev.zoomUrl}\nKenncode: ${ev.zoomPw}\n\nBis gleich!\nSven`,
-  }
-  const quarter = {
-    wa: `Wir starten in 15 Minuten. 🚀 Hier geht es rein: ${ev.zoomUrl}\nKenncode: ${ev.zoomPw}\n\nBis gleich, Sven`,
   }
   return { day, hour, quarter }
 }
@@ -149,7 +155,7 @@ function reminderMails(first: string, key: string, ev: Ev) {
 // ── Texte aus dem Listen-Workflow (CRM → Workflows → Listen-Workflows) ───────
 // Hängt an der Event-Liste ein aktiver Workflow, liefern seine Nachrichten die
 // Texte, in dieser Reihenfolge: 1. Bestätigung (sofort), 2. Vortag (24 h vorher),
-// 3. eine Stunde vorher, 4. 15 Minuten vorher. Die Versandzeiten bleiben fest am
+// 3. drei Stunden vorher, 4. 90 Minuten vorher. Die Versandzeiten bleiben fest am
 // Termin, Wartezeiten im Workflow zählen hier nicht. Leeres Feld oder fehlender
 // Schritt → eingebauter Text oben. Platzhalter: {{vorname}}, {{datum}}, {{uhrzeit}},
 // {{zoom_link}}, {{meeting_id}}, {{kenncode}}, {{kalender_google}}, {{kalender_ics}},
@@ -326,7 +332,6 @@ Deno.serve(async (req) => {
     const at = (minBefore: number) => new Date(start - minBefore * 60_000).toISOString()
     const r = reminderMails(first, key, ev)
     const day = pick(1, r.day), hour = pick(2, r.hour), quarter = pick(3, r.quarter)
-    const wantWa = !!phone
     const rows: Record<string, unknown>[] = []
     const now = Date.now()
     const push = (minBefore: number, row: Record<string, unknown>) => {
@@ -335,14 +340,12 @@ Deno.serve(async (req) => {
       rows.push({ subscriber_id: subId, event_type: 'newsletter', status: 'pending', scheduled_at: at(minBefore), ...row })
     }
     const plan = (minBefore: number, m: Txt) => {
-      const mail = !!(m.subject && m.html), wa = wantWa && !!m.wa
-      if (!mail && !wa) return
-      push(minBefore, { type: mail && wa ? 'both' : mail ? 'email' : 'whatsapp',
-        email_subject: mail ? m.subject : null, email_body: mail ? m.html : null, whatsapp_text: wa ? m.wa : null })
+      if (!m.subject || !m.html) return
+      push(minBefore, { type: 'email', email_subject: m.subject, email_body: m.html })
     }
     plan(24 * 60, day)
-    plan(60, hour)
-    plan(15, quarter)
+    plan(180, hour)
+    plan(90, quarter)
     if (rows.length) {
       // Doppelte Anmeldung: alte offene Erinnerungen dieses Abonnenten für das Event ersetzen.
       await sb.from('scheduled_messages').delete().eq('subscriber_id', subId).eq('status', 'pending').eq('event_type', 'newsletter')
