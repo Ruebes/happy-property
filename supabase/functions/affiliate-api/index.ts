@@ -7,9 +7,10 @@
 //   Empfehlungsgeber im Kunden (LeadDetail → LeadReferrer):
 //   POST { action:'referrer_get', lead_id }   → zugewiesener Tippgeber, Provision, Abrechnung
 //   POST { action:'referrer_search', lead_id, q } → Tippgeber + CRM-Kunden zum Zuweisen
-//   POST { action:'referrer_set', lead_id, affiliate_id | referrer_lead_id | new_referrer, commission? }
+//   POST { action:'referrer_set', lead_id, affiliate_id | referrer_lead_id | new_referrer, commission? | percent? }
 //   POST { action:'referrer_remove', lead_id } → Zuweisung loesen (nur solange nicht abgerechnet)
-//   POST { action:'commission_set', lead_id, amount|null } → Provision fuer diesen Kunden (null = 1.000 €)
+//   POST { action:'commission_set', lead_id, amount|null | percent } → Provision fuer diesen Kunden
+//        (fester Betrag, null = 1.000 €, oder Prozent unserer Netto-Provision, siehe commission.ts)
 //   POST { action:'affiliate_update', affiliate_id, ... } → Kontakt/Adresse/Steuerstatus des Tippgebers
 //   POST { action:'preview_pdf', is_business? } → Muster-Abrechnung als base64 (Vorlage ansehen)
 //   POST { action:'address_lookup', affiliate_id } → Adresse erneut in den Unterlagen suchen (Hintergrund)
@@ -55,6 +56,7 @@ import { PDFDocument, PDFFont, PDFImage, StandardFonts, rgb } from 'npm:pdf-lib@
 import fontkit from 'npm:@pdf-lib/fontkit@1.1.1'
 import { authorizeCaller, safeEqual } from '../_shared/callerAuth.ts'
 import { addressComplete, findAddress, hasAddress, missingData, parseReply } from './address.ts'
+import { commissionBase, parsePercent, percentLabel, resolveCommission, type BaseDeal, type BaseInvoice } from './commission.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -111,6 +113,7 @@ interface Payout {
   paid_at: string | null; created_at: string; service_date?: string | null
   payout_link_id?: string | null; payout_link_state?: string | null; payout_link_expires_at?: string | null
   payout_link_sent_at?: string | null; payout_link_error?: string | null; payout_link_attempt?: number
+  commission_percent?: number | null; commission_base?: number | null
 }
 type LinkResult = { url: string | null; state: string | null; expires: string | null; error?: string }
 
@@ -383,6 +386,12 @@ async function addTask(sb: SupabaseClient, title: string, description: string) {
     const taskId = (task as { id: string } | null)?.id
     if (taskId) await sb.from('crm_task_assignees').insert({ task_id: taskId, profile_id: adminId, channel: 'system' })
   } catch { /* Aufgabe ist nice-to-have */ }
+}
+
+// Aufgabe genau einmal anlegen, auch wenn der Scan alle 30 Minuten vorbeikommt
+async function addTaskOnce(sb: SupabaseClient, title: string, description: string) {
+  const { data } = await sb.from('crm_tasks').select('id').eq('source', 'affiliate').eq('title', title).limit(1)
+  if (!data?.length) await addTask(sb, title, description)
 }
 
 async function addNote(sb: SupabaseClient, leadId: string | null, subject: string, content: string, userId?: string) {
@@ -838,9 +847,25 @@ async function dealDone(sb: SupabaseClient, leadId: string): Promise<boolean> {
   return !!data?.length
 }
 
+// Basis einer prozentualen Provision: unsere Netto-Provision aus den Deals des Kunden.
+// Wirft bei Datenbankfehlern: Mit halben Daten darf kein Betrag entstehen.
+async function baseFor(sb: SupabaseClient, leadId: string): Promise<number | null> {
+  const { data: ds, error: de } = await sb.from('deals').select('id, phase, archived_from_phase, commission_amount').eq('lead_id', leadId)
+  if (de) throw new Error(de.message)
+  const deals = (ds ?? []) as BaseDeal[]
+  if (!deals.length) return null
+  const { data: inv, error: ie } = await sb.from('crm_invoices').select('deal_id, subtotal_net')
+    .in('deal_id', deals.map(d => d.id)).not('status', 'in', '(canceled,draft)')
+  if (ie) throw new Error(ie.message)
+  return commissionBase(deals, (inv ?? []) as BaseInvoice[])
+}
+
+const commissionText = (fixed: number | null, percent: number | null) =>
+  percent != null ? `${percentLabel(percent)} unserer Netto-Provision` : eur(fixed ?? AMOUNT)
+
 async function referrerState(sb: SupabaseClient, leadId: string) {
-  const { data: l } = await sb.from('leads').select('id, first_name, last_name, referred_by_affiliate, referral_commission').eq('id', leadId).maybeSingle()
-  const lead = l as { id: string; first_name: string | null; last_name: string | null; referred_by_affiliate: string | null; referral_commission: number | null } | null
+  const { data: l } = await sb.from('leads').select('id, first_name, last_name, referred_by_affiliate, referral_commission, referral_commission_percent').eq('id', leadId).maybeSingle()
+  const lead = l as { id: string; first_name: string | null; last_name: string | null; referred_by_affiliate: string | null; referral_commission: number | null; referral_commission_percent: number | null } | null
   if (!lead) return null
   let referrer: (Affiliate & { url: string; referred_count: number }) | null = null
   if (lead.referred_by_affiliate) {
@@ -863,6 +888,8 @@ async function referrerState(sb: SupabaseClient, leadId: string) {
     address,
     missing: referrer ? missingData(referrer) : [],
     commission: lead.referral_commission != null ? Number(lead.referral_commission) : null,
+    commission_percent: lead.referral_commission_percent != null ? Number(lead.referral_commission_percent) : null,
+    commission_base: await baseFor(sb, leadId).catch(() => null),
     default_commission: AMOUNT,
     link_max: LINK_MAX,
     payout,
@@ -924,19 +951,34 @@ async function payoutScan(sb: SupabaseClient): Promise<unknown[]> {
   // Geworbene Leads, deren Deal Provision erhalten hat und fuer die es noch
   // keine Auszahlung gibt (pro geworbenem Kunden genau eine).
   const { data: leads } = await sb.from('leads')
-    .select('id, first_name, last_name, referred_by_affiliate, referral_commission')
+    .select('id, first_name, last_name, referred_by_affiliate, referral_commission, referral_commission_percent')
     .not('referred_by_affiliate', 'is', null)
-  for (const l of (leads ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; referred_by_affiliate: string; referral_commission: number | null }>) {
+  for (const l of (leads ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; referred_by_affiliate: string; referral_commission: number | null; referral_commission_percent: number | null }>) {
     if (!(await dealDone(sb, l.id))) continue
     const { data: existing } = await sb.from('affiliate_payouts').select('id').eq('referred_lead_id', l.id).limit(1)
     if (existing?.length) continue
-    const amount = l.referral_commission != null && Number(l.referral_commission) > 0 ? Number(l.referral_commission) : AMOUNT
+    const percent = l.referral_commission_percent != null ? Number(l.referral_commission_percent) : null
+    let base: number | null = null
+    if (percent != null) {
+      try { base = await baseFor(sb, l.id) }
+      catch (e) { results.push({ lead: l.id, error: String(e) }); continue }   // nächster Lauf versucht es neu
+    }
+    const commission = resolveCommission(l.referral_commission, percent, base, AMOUNT)
+    // Prozent vereinbart, aber unsere Provision steht nirgends: nicht raten, sondern warten
+    if (!commission) {
+      const kunde = `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() || l.id
+      await addTaskOnce(sb, `💶 Tippgeber-Provision: Provisionsbetrag fehlt bei ${kunde}`,
+        `${kunde} hat gekauft, der Empfehlungsgeber bekommt ${commissionText(null, percent)}. Am Deal steht aber kein Provisionsbetrag und es gibt keine Rechnung, deshalb lässt sich die Auszahlung nicht berechnen.\n\nBitte am Deal eintragen, dann gehen Abrechnung und Auszahlungs-Link beim nächsten Lauf automatisch raus: ${PORTAL}/admin/crm/leads/${l.id}`)
+      results.push({ lead: l.id, wartet_auf: ['Provisionsbetrag am Deal'] })
+      continue
+    }
+    const amount = commission.amount
     // Svens Regel: Abrechnung nur mit kompletten Stammdaten. Fehlt etwas, fragt Lotte
     // (einmal) bzw. Sven bekommt eine Aufgabe; der nächste Lauf rechnet dann ab.
     const missing = await ensureData(sb, l.referred_by_affiliate, l, amount)
     if (missing.length) { results.push({ lead: l.id, wartet_auf: missing }); continue }
     const { data: created, error: ce } = await sb.from('affiliate_payouts')
-      .insert({ affiliate_id: l.referred_by_affiliate, referred_lead_id: l.id, amount, status: 'offen' })
+      .insert({ affiliate_id: l.referred_by_affiliate, referred_lead_id: l.id, amount, status: 'offen', commission_percent: commission.percent, commission_base: commission.base })
       .select('*').single()
     if (ce) { results.push({ lead: l.id, error: ce.message }); continue }
     const payout = created as Payout
@@ -948,7 +990,7 @@ async function payoutScan(sb: SupabaseClient): Promise<unknown[]> {
     const kunde = `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim()
     const liveLink = r.link?.state === 'active' && !!r.link.url
     await addNote(sb, l.id, '💶 Tippgeber-Provision abgerechnet',
-      `${affName}: ${eur(amount)}. ${r.ok ? 'Abrechnung verschickt' : `Abrechnung NICHT zugestellt (${r.error})`}${liveLink ? ', Revolut-Auszahlungslink mitgeschickt' : ''}.`)
+      `${affName}: ${eur(amount)}${commission.percent != null ? ` (${percentLabel(commission.percent)} von ${eur(commission.base ?? 0)})` : ''}. ${r.ok ? 'Abrechnung verschickt' : `Abrechnung NICHT zugestellt (${r.error})`}${liveLink ? ', Revolut-Auszahlungslink mitgeschickt' : ''}.`)
     // Aufgabe fuer Sven nur, wenn er etwas tun muss
     if (!r.ok) {
       await addTask(sb, `💶 Tippgeber-Abrechnung ${eur(amount)} prüfen: ${affName}`,
@@ -1111,7 +1153,14 @@ Deno.serve(async (req) => {
       if (paid?.length) return json({ error: `Die Provision ist schon abgerechnet (${(paid[0] as { doc_no: string | null }).doc_no ?? 'offen'}). Zuweisung und Betrag sind deshalb gesperrt.` }, 409)
 
       let commission: number | null | undefined
-      if ('commission' in body || 'amount' in body) {
+      let percent: number | null = null   // ein fester Betrag ersetzt einen Prozentsatz und umgekehrt
+      const hasPercent = body.percent !== undefined && body.percent !== null && body.percent !== ''
+      if (hasPercent) {
+        if ((body.commission ?? body.amount ?? null) !== null) return json({ error: 'Bitte entweder einen Betrag oder einen Prozentsatz angeben.' }, 400)
+        percent = parsePercent(body.percent)
+        if (percent === null) return json({ error: 'Der Prozentsatz muss zwischen 0,01 % und 100 % liegen.' }, 400)
+        commission = null
+      } else if ('commission' in body || 'amount' in body) {
         const raw = body.commission ?? body.amount
         if (raw === null || raw === '' || raw === undefined) commission = null
         else {
@@ -1124,14 +1173,14 @@ Deno.serve(async (req) => {
 
       if (action === 'commission_set') {
         if (commission === undefined) return json({ error: 'amount fehlt.' }, 400)
-        const { error: ue } = await sb.from('leads').update({ referral_commission: commission }).eq('id', leadId)
+        const { error: ue } = await sb.from('leads').update({ referral_commission: commission, referral_commission_percent: percent }).eq('id', leadId)
         if (ue) return json({ error: ue.message }, 500)
-        if (lead.referred_by_affiliate) await addNote(sb, leadId, '🤝 Tippgeber-Provision geändert', `Neue Provision: ${eur(commission ?? AMOUNT)}.`, userId)
+        if (lead.referred_by_affiliate) await addNote(sb, leadId, '🤝 Tippgeber-Provision geändert', `Neue Provision: ${commissionText(commission, percent)}.`, userId)
         return json({ ok: true, ...(await referrerState(sb, leadId)) })
       }
 
       if (action === 'referrer_remove') {
-        const { error: ue } = await sb.from('leads').update({ referred_by_affiliate: null, referral_commission: null }).eq('id', leadId)
+        const { error: ue } = await sb.from('leads').update({ referred_by_affiliate: null, referral_commission: null, referral_commission_percent: null }).eq('id', leadId)
         if (ue) return json({ error: ue.message }, 500)
         if (lead.referred_by_affiliate) await addNote(sb, leadId, '🤝 Empfehlungsgeber entfernt', 'Zuweisung des Tippgebers wurde gelöst.', userId)
         return json({ ok: true, ...(await referrerState(sb, leadId)) })
@@ -1178,14 +1227,14 @@ Deno.serve(async (req) => {
       if (aff.lead_id === leadId) return json({ error: 'Ein Kunde kann sich nicht selbst empfehlen.' }, 400)
 
       const patch: Record<string, unknown> = { referred_by_affiliate: aff.id }
-      if (commission !== undefined) patch.referral_commission = commission
+      if (commission !== undefined) Object.assign(patch, { referral_commission: commission, referral_commission_percent: percent })
       const { error: ue } = await sb.from('leads').update(patch).eq('id', leadId)
       if (ue) return json({ error: ue.message }, 500)
       if (!aff.active) await sb.from('affiliates').update({ active: true }).eq('id', aff.id)
-      const { data: lc } = await sb.from('leads').select('referral_commission').eq('id', leadId).maybeSingle()
-      const amt = Number((lc as { referral_commission: number | null } | null)?.referral_commission ?? AMOUNT)
+      const { data: lc } = await sb.from('leads').select('referral_commission, referral_commission_percent').eq('id', leadId).maybeSingle()
+      const saved = lc as { referral_commission: number | null; referral_commission_percent: number | null } | null
       await addNote(sb, leadId, '🤝 Empfehlungsgeber zugewiesen',
-        `Empfohlen von ${aff.name} (manuell zugewiesen). Bei Provisionseingang: ${eur(amt)} Tippgeber-Provision.`, userId)
+        `Empfohlen von ${aff.name} (manuell zugewiesen). Tippgeber-Provision bei Provisionseingang: ${commissionText(saved?.referral_commission != null ? Number(saved.referral_commission) : null, saved?.referral_commission_percent != null ? Number(saved.referral_commission_percent) : null)}.`, userId)
       // Adresse fehlt? In den Unterlagen suchen (und ggf. gleich fragen), im Hintergrund.
       if (!addressComplete(aff)) background(addressStep(sb, aff.id))
       return json({ ok: true, ...(await referrerState(sb, leadId)) })

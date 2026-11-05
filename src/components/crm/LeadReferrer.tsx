@@ -5,7 +5,8 @@ import { supabase } from '../../lib/supabase'
 
 // ── Empfehlungsgeber ─────────────────────────────────────────────────────────
 // Wer hat diesen Kunden empfohlen (Tippgeber-Programm)? Zuweisen, Provision je
-// Kunde (Standard 1.000 €) und die Abrechnungsdaten des Tippgebers pflegen.
+// Kunde (fester Betrag, Standard 1.000 €, oder Prozent unserer Netto-Provision) und
+// die Abrechnungsdaten des Tippgebers pflegen.
 // Sobald der Deal auf „Provision erhalten" steht, schickt affiliate-api (Cron)
 // Abrechnung + Revolut-Auszahlungslink automatisch an den Tippgeber.
 // Fehlt seine Adresse, sucht affiliate-api sie in Profil und Drive-Unterlagen; sonst
@@ -20,6 +21,7 @@ interface Referrer {
 interface Payout {
   id: string; amount: number; status: string; doc_no: string | null; doc_url: string | null
   payout_link_state: string | null; payout_link_error: string | null; paid_at: string | null
+  commission_percent: number | null; commission_base: number | null
 }
 interface AddressState {
   status: 'ok' | 'searching' | 'not_found' | 'requested'
@@ -28,12 +30,18 @@ interface AddressState {
 }
 interface State {
   referrer: Referrer | null; commission: number | null; default_commission: number; link_max: number
+  commission_percent: number | null   // statt festem Betrag: Prozent unserer Netto-Provision
+  commission_base: number | null      // unsere Netto-Provision aus dem Deal, falls bekannt
   payout: Payout | null; deal_done: boolean; address: AddressState | null
   missing: string[]   // fehlende Stammdaten: ohne sie keine Abrechnung
 }
 interface Hit { kind: 'affiliate' | 'lead'; id: string; name: string; email: string | null; hint: string }
 
 const eur = (n: number) => n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
+const pct = (n: number) => n.toLocaleString('de-DE', { maximumFractionDigits: 2 }) + ' %'
+// Nur Anzeige. IDENTISCH zu supabase/functions/affiliate-api/commission.ts, dort wird abgerechnet.
+const percentOf = (base: number, percent: number) => Math.round(Math.round(base * 100) * Math.round(percent * 100) / 10000) / 100
+const commaNumber = (n: number) => String(n).replace('.', ',')
 const input = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400'
 const emptyAddr = { name: '', email: '', whatsapp: '', street: '', postal_code: '', city: '', country: 'Deutschland', is_business: false, vat_id: '' }
 
@@ -49,6 +57,7 @@ export default function LeadReferrer({ leadId }: { leadId: string }) {
   const [hits, setHits] = useState<Hit[]>([])
   const [searching, setSearching] = useState(false)
   const [amount, setAmount] = useState('')
+  const [unit, setUnit] = useState<'eur' | 'pct'>('eur')
   const [form, setForm] = useState(emptyAddr)
   const searchSeq = useRef(0)
 
@@ -66,11 +75,17 @@ export default function LeadReferrer({ leadId }: { leadId: string }) {
     return d ?? {}
   }, [leadId])
 
+  // Eingabefeld auf den gespeicherten Stand setzen
+  const resetField = (s: State) => {
+    setUnit(s.commission_percent != null ? 'pct' : 'eur')
+    setAmount(commaNumber(s.commission_percent ?? s.commission ?? s.default_commission))
+  }
+
   const apply = (d: Partial<State>) => {
     if (!('referrer' in d)) return
     const s = d as State
     setSt(s)
-    setAmount(String(s.commission ?? s.default_commission).replace('.', ','))
+    resetField(s)
   }
 
   const load = useCallback(async () => {
@@ -124,21 +139,40 @@ export default function LeadReferrer({ leadId }: { leadId: string }) {
   }
 
   const parsedAmount = () => {
+    if (unit === 'pct') {
+      // Beim Prozentsatz ist auch der Punkt ein Komma: „7.5“ darf nie zu 75 % werden
+      const p = Math.round(Number(amount.replace('%', '').trim().replace(',', '.')) * 100) / 100
+      return p > 0 && p <= 100 ? p : null
+    }
     const n = Number(amount.replace(/\./g, '').replace(',', '.'))
     return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null
   }
 
+  const invalidNotice = () => setNotice(unit === 'pct'
+    ? t('crm.referrer.percentInvalid', 'Bitte einen Prozentsatz zwischen 0,01 und 100 eingeben.')
+    : t('crm.referrer.amountInvalid', 'Bitte eine gültige Provision eingeben.'))
+
+  const switchUnit = (u: 'eur' | 'pct') => {
+    if (u === unit || !st) return
+    setUnit(u)
+    setNotice('')
+    if (u === 'pct') setAmount(st.commission_percent != null ? commaNumber(st.commission_percent) : '')
+    else setAmount(commaNumber(st.commission ?? st.default_commission))
+  }
+
   const assign = (target: Record<string, unknown>, name: string) => {
     const amt = parsedAmount()
-    if (!amt) { setNotice(t('crm.referrer.amountInvalid', 'Bitte eine gültige Provision eingeben.')); return }
-    if (st?.deal_done && !window.confirm(t('crm.referrer.confirmDue', { amount: eur(amt), name }))) return
-    void run({ action: 'referrer_set', commission: amt, ...target }, () => { setMode('view'); setQ(''); setHits([]) })
+    if (!amt) { invalidNotice(); return }
+    // Prozent ohne bekannte Provision: Es geht noch nichts raus, also nichts zu bestätigen
+    const sum = unit === 'eur' ? amt : st?.commission_base ? percentOf(st.commission_base, amt) : null
+    if (st?.deal_done && sum != null && !window.confirm(t('crm.referrer.confirmDue', { amount: eur(sum), name }))) return
+    void run({ action: 'referrer_set', ...(unit === 'pct' ? { percent: amt } : { commission: amt }), ...target }, () => { setMode('view'); setQ(''); setHits([]) })
   }
 
   const saveAmount = () => {
     const amt = parsedAmount()
-    if (!amt) { setNotice(t('crm.referrer.amountInvalid', 'Bitte eine gültige Provision eingeben.')); return }
-    void run({ action: 'commission_set', amount: amt }, () => setNotice(t('crm.referrer.saved', 'Gespeichert.')))
+    if (!amt) { invalidNotice(); return }
+    void run({ action: 'commission_set', ...(unit === 'pct' ? { percent: amt } : { amount: amt }) }, () => setNotice(t('crm.referrer.saved', 'Gespeichert.')))
   }
 
   const remove = () => {
@@ -180,22 +214,47 @@ export default function LeadReferrer({ leadId }: { leadId: string }) {
   const p = st?.payout ?? null
   const locked = !!p
   const amt = parsedAmount()
-  const overMax = !!st && !!amt && amt > st.link_max
+  const estimate = unit === 'pct' && amt && st?.commission_base ? percentOf(st.commission_base, amt) : null
+  const overMax = !!st && (unit === 'pct' ? estimate != null && estimate > st.link_max : !!amt && amt > st.link_max)
+  const unchanged = unit === 'pct'
+    ? amt != null && amt === st?.commission_percent
+    : st?.commission_percent == null && amt === (st?.commission ?? st?.default_commission)
   const addressMissing = !!r && (!r.street || !r.postal_code || !r.city)
 
   const amountField = (
-    <div className="flex items-center gap-2">
-      <label className="text-xs text-gray-500 w-20 flex-shrink-0">{t('crm.referrer.commission', 'Provision')}</label>
-      <div className="relative w-36">
-        <input value={amount} onChange={e => setAmount(e.target.value)} disabled={locked || busy} inputMode="decimal"
-          className={`${input} pr-7 text-right disabled:bg-gray-50 disabled:text-gray-500`} />
-        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">€</span>
+    <div className="space-y-1">
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-xs text-gray-500 w-20 flex-shrink-0">{t('crm.referrer.commission', 'Provision')}</label>
+        <div className="relative w-36">
+          <input value={amount} onChange={e => setAmount(e.target.value)} disabled={locked || busy} inputMode="decimal"
+            className={`${input} pr-7 text-right disabled:bg-gray-50 disabled:text-gray-500`} />
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">{unit === 'pct' ? '%' : '€'}</span>
+        </div>
+        <div className="flex rounded-lg border border-gray-200 overflow-hidden text-sm">
+          {(['eur', 'pct'] as const).map(u => (
+            <button key={u} type="button" onClick={() => switchUnit(u)} disabled={locked || busy} aria-pressed={unit === u}
+              className={`px-3 py-2 disabled:opacity-50 ${unit === u ? 'bg-orange-50 text-hp-highlight font-medium' : 'text-gray-500 hover:bg-gray-50'}`}>
+              {u === 'pct' ? '%' : '€'}
+            </button>
+          ))}
+        </div>
+        {mode === 'view' && r && !locked && (
+          <button onClick={saveAmount} disabled={busy || unchanged}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40">
+            {t('crm.referrer.save', 'Speichern')}
+          </button>
+        )}
       </div>
-      {mode === 'view' && r && !locked && (
-        <button onClick={saveAmount} disabled={busy || amt === (st?.commission ?? st?.default_commission)}
-          className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40">
-          {t('crm.referrer.save', 'Speichern')}
-        </button>
+      {p?.commission_percent != null && p.commission_base != null ? (
+        <p className="text-[11px] text-gray-500 sm:pl-[5.5rem]">{t('crm.referrer.percentOf', { pct: pct(p.commission_percent), base: eur(p.commission_base), amount: eur(p.amount) })}</p>
+      ) : unit === 'pct' && !locked && (
+        <p className="text-[11px] text-gray-500 sm:pl-[5.5rem]">
+          {estimate != null && amt && st?.commission_base
+            ? t('crm.referrer.percentOf', { pct: pct(amt), base: eur(st.commission_base), amount: eur(estimate) })
+            : st?.commission_base
+              ? t('crm.referrer.percentBase', { base: eur(st.commission_base) })
+              : t('crm.referrer.percentNoBase', 'Prozent von unserer Netto-Provision. Der Betrag steht fest, sobald am Deal eine Provision steht.')}
+        </p>
       )}
     </div>
   )
@@ -217,7 +276,9 @@ export default function LeadReferrer({ leadId }: { leadId: string }) {
             p?.status === 'bezahlt' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
             : p ? 'bg-amber-50 text-amber-700 border-amber-200'
             : 'bg-orange-50 text-hp-highlight border-orange-200'}`}>
-            {p ? `${eur(p.amount)} · ${t(`crm.affiliates.status_${p.status}`, p.status)}` : eur(st.commission ?? st.default_commission)}
+            {p
+              ? `${eur(p.amount)} · ${t(`crm.affiliates.status_${p.status}`, p.status)}`
+              : st.commission_percent != null ? pct(st.commission_percent) : eur(st.commission ?? st.default_commission)}
           </span>
         )}
       </div>
@@ -271,7 +332,7 @@ export default function LeadReferrer({ leadId }: { leadId: string }) {
                 {t('crm.referrer.assignBtn', 'Zuweisen')}
               </button>
             )}
-            <button onClick={() => { setMode('view'); setQ(''); setHits([]); setNotice(''); if (st) setAmount(String(st.commission ?? st.default_commission).replace('.', ',')) }}
+            <button onClick={() => { setMode('view'); setQ(''); setHits([]); setNotice(''); if (st) resetField(st) }}
               className="px-3 py-1.5 rounded-lg text-sm border border-gray-200 text-gray-600 hover:bg-gray-50">
               {t('crm.referrer.cancel', 'Abbrechen')}
             </button>
@@ -399,6 +460,8 @@ export default function LeadReferrer({ leadId }: { leadId: string }) {
                 {p.payout_link_error && p.status !== 'bezahlt' && <p className="text-amber-700">{t('crm.referrer.linkError', { error: p.payout_link_error })}</p>}
                 <p className="text-gray-400">{t('crm.referrer.locked', 'Abgerechnet: Zuweisung und Betrag sind gesperrt. Auszahlung steuerst du unter Tippgeber.')}</p>
               </>
+            ) : st.deal_done && st.commission_percent != null && st.commission_base == null ? (
+              <p className="text-amber-700">{t('crm.referrer.statusDueNoBase', 'Kauf abgeschlossen, aber am Deal steht keine Provision. Ohne sie lässt sich die Prozent-Provision nicht berechnen. Trag sie am Deal ein, dann gehen Abrechnung und Revolut-Link automatisch raus.')}</p>
             ) : st.deal_done && st.missing?.length ? (
               <p className="text-amber-700">
                 {t('crm.referrer.statusDueMissing', { missing: st.missing.join(', ') })}{' '}

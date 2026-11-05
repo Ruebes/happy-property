@@ -8,7 +8,7 @@ import { supabase } from '../../../lib/supabase'
 // (angelegt von ensure_affiliate, Code aendert sich nie). Diese Seite listet alle
 // Tippgeber untereinander: Name + eigener Link, aufklappbar die Leute, die er
 // empfohlen hat, und die Auszahlungen (Standard 1.000 €, je Kunde in der Kundenakte
-// aenderbar). Seit 17.10.2026 verschickt der Cron Abrechnung UND Revolut-Payout-Link
+// aenderbar, als Betrag oder Prozent). Seit 17.10.2026 verschickt der Cron Abrechnung UND Revolut-Payout-Link
 // automatisch (Svens Vorgabe); verlangt Revolut eine Freigabe, wartet der Link in der
 // App. Hier: Status sehen, Link neu senden, Muster-Abrechnung ansehen.
 
@@ -18,6 +18,7 @@ interface Payout {
   doc_no: string | null; doc_url: string | null; payout_link: string | null
   emailed_at: string | null; paid_at: string | null; created_at: string
   payout_link_state?: string | null; payout_link_error?: string | null; payout_link_sent_at?: string | null
+  commission_percent?: number | null; commission_base?: number | null
 }
 const LINK_DEAD = ['expired', 'cancelled', 'failed']
 interface Affiliate {
@@ -31,6 +32,7 @@ const fmt = (iso: string | null) => iso
   ? new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })
   : '–'
 const eur = (n: number) => n.toLocaleString('de-DE', { minimumFractionDigits: 2 }) + ' €'
+const pct = (n: number) => n.toLocaleString('de-DE', { maximumFractionDigits: 2 }) + ' %'
 const leadName = (l: ReferredLead) => `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() || l.email || '?'
 
 export default function Affiliates() {
@@ -221,6 +223,9 @@ export default function Affiliates() {
                             {a.payouts.map(p => (
                               <div key={p.id} className="flex flex-wrap items-center gap-2 text-sm">
                                 <span className="font-medium text-hp-slate">{eur(p.amount)}</span>
+                                {p.commission_percent != null && p.commission_base != null && (
+                                  <span className="text-xs text-gray-400">{t('crm.affiliates.payoutPercent', { pct: pct(p.commission_percent), base: eur(p.commission_base) })}</span>
+                                )}
                                 <span className={`text-xs px-2 py-0.5 rounded-full ${
                                   p.status === 'bezahlt' ? 'bg-green-50 text-green-700'
                                   : p.status === 'abgerechnet' ? 'bg-amber-50 text-amber-700'
