@@ -74,7 +74,8 @@
       "error": "Sending failed",
       "cancelled": "Cancelled",
       "signed": "Signed, filed with the unit",
-      "notStarted": "Starts with stage Reservation"
+      "notStarted": "Starts with stage Reservation",
+      "twoRunning": "Signatures in progress"
     },
     "modeTest": "Test mode",
     "modeOff": "Off",
@@ -100,7 +101,29 @@
     "notesPh": "Optional, in German. Translated into English for the agreement.",
     "notesEn": "In the agreement:",
     "notesSaved": "Saved. Goes into the agreement in English (the preview shows the wording).",
-    "notesSavedResend": "Saved. The developer already has the agreement, please send it again for the new version."
+    "notesSavedResend": "Saved. The developer already has the agreement, please send it again for the new version.",
+    "twoVendor": "Developer",
+    "twoVendorOpen": "not signed yet",
+    "twoBuyer": "Client",
+    "twoBuyerSent": "Link sent, not signed yet",
+    "twoBuyerWait": "gets their link once the developer has signed",
+    "copyBuyerLink": "Copy signing link for the client",
+    "twoDone": "Signed by both sides",
+    "salutation": "Salutation",
+    "docPassport": "Passport",
+    "docIdCard": "ID card",
+    "nationality": "Nationality, e.g. German",
+    "phoneLead": "Phone (empty = from the CRM)",
+    "phone": "Phone",
+    "address": "Address: street, postcode city, country",
+    "emailLead": "Email (empty = from the CRM)",
+    "email": "Email",
+    "contractTitle": "Contract values",
+    "netPrice": "Net price in euros",
+    "titleDeed": "Amount (g) at title deed, net euros",
+    "contractHint": "The system calculates all instalments from the net price. Check them in the preview.",
+    "confirmResign": "Warning: signatures already exist ({{names}}). Sending again voids them and everyone has to sign again. Really send again?",
+    "sentOpen": "Sent. Still open, retried automatically: {{list}}"
   },
   "reservationTpl": {
     "title": "Reservation template",
@@ -12174,5 +12197,29 @@
       "stop": "Do not send",
       "work": "Needs work"
     }
+  },
+  "twoPartySign": {
+    "waiting": "The developer signs first. You will receive your link by email and WhatsApp as soon as the agreement is ready for you.",
+    "vendorDoneNote": "The developer has already signed.",
+    "buyerPoints": "The key points before you sign",
+    "pointPrice": "Purchase price",
+    "pointDeposit": "Deposit (40% of the price)",
+    "pointDue": "due within 5 days of signing. If it is not received in time, the agreement ends automatically.",
+    "pointNonRefund": "Of this, non-refundable if you do not sign the contract of sale",
+    "howBuyer": "Please read the PDF, then sign with your finger in the white box and tick the box.",
+    "howVendor": "Please check the PDF. Each person signs in their own box, which also works one after the other through the same link.",
+    "signerDone": "Signed",
+    "signAs": "Signature of {{name}}",
+    "submit": "{{name}} signs",
+    "agreeBuyer": "I have read the agreement and I sign it.",
+    "agreeVendor": "I have checked the agreement and sign it on behalf of {{company}}.",
+    "ownDoneVendor": "Thank you! The agreement now goes to the client for signature. As soon as they have signed, you will receive the final PDF by email and WhatsApp.",
+    "partialVendor": "Still missing: {{names}}. This also works later through the same link.",
+    "partialBuyer": "Still missing: {{names}}. This also works later through the same link.",
+    "completeTitle": "Signed by both sides",
+    "completeBuyer": "You will receive the final agreement by email and WhatsApp. Next step: transfer the deposit of {{deposit}}.",
+    "completeVendor": "The final agreement comes by email and WhatsApp.",
+    "bankTitle": "Bank details for the deposit",
+    "vendorFirst": "The developer has to sign first."
   }
 }

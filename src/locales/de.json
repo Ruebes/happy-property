@@ -74,7 +74,8 @@
       "error": "Fehler beim Versand",
       "cancelled": "Abgebrochen",
       "signed": "Unterschrieben, an der Wohnung abgelegt",
-      "notStarted": "Startet mit Phase Reservierung"
+      "notStarted": "Startet mit Phase Reservierung",
+      "twoRunning": "Unterschriften laufen"
     },
     "modeTest": "Testmodus",
     "modeOff": "Aus",
@@ -100,7 +101,29 @@
     "notesPh": "Optional, auf Deutsch. Kommt übersetzt ins Englische in den Vertrag.",
     "notesEn": "Im Vertrag:",
     "notesSaved": "Gespeichert. Kommt übersetzt in den Vertrag (Vorschau zeigt den Wortlaut).",
-    "notesSavedResend": "Gespeichert. Der Bauträger hat den Vertrag schon, für den neuen Stand bitte erneut senden."
+    "notesSavedResend": "Gespeichert. Der Bauträger hat den Vertrag schon, für den neuen Stand bitte erneut senden.",
+    "twoVendor": "Bauträger",
+    "twoVendorOpen": "noch nicht unterschrieben",
+    "twoBuyer": "Kunde",
+    "twoBuyerSent": "Link ist raus, noch nicht unterschrieben",
+    "twoBuyerWait": "bekommt seinen Link, sobald der Bauträger unterschrieben hat",
+    "copyBuyerLink": "Unterschriftslink für den Kunden kopieren",
+    "twoDone": "Von beiden Seiten unterschrieben",
+    "salutation": "Anrede",
+    "docPassport": "Reisepass",
+    "docIdCard": "Personalausweis",
+    "nationality": "Staatsangehörigkeit, z. B. German",
+    "phoneLead": "Telefon (leer = aus dem CRM)",
+    "phone": "Telefon",
+    "address": "Adresse: Straße, PLZ Ort, Land",
+    "emailLead": "E-Mail (leer = aus dem CRM)",
+    "email": "E-Mail",
+    "contractTitle": "Vertragswerte",
+    "netPrice": "Nettopreis in Euro",
+    "titleDeed": "Betrag (g) bei Besitzurkunde, Euro netto",
+    "contractHint": "Alle Teilbeträge rechnet das System aus dem Nettopreis. Kontrolle über die Vorschau.",
+    "confirmResign": "Achtung: Es liegen schon Unterschriften vor ({{names}}). Neu senden macht sie ungültig, alle müssen noch einmal unterschreiben. Wirklich neu senden?",
+    "sentOpen": "Raus. Noch offen, wird automatisch wiederholt: {{list}}"
   },
   "reservationTpl": {
     "title": "Reservierungsvorlage",
@@ -11966,5 +11989,29 @@
       "stop": "Nicht senden",
       "work": "Nacharbeit"
     }
+  },
+  "twoPartySign": {
+    "waiting": "Der Bauträger unterschreibt zuerst. Du bekommst deinen Link per E-Mail und WhatsApp, sobald der Vertrag für dich bereit ist.",
+    "vendorDoneNote": "Der Bauträger hat bereits unterschrieben.",
+    "buyerPoints": "Das Wichtigste vor der Unterschrift",
+    "pointPrice": "Kaufpreis",
+    "pointDeposit": "Anzahlung (40 % des Preises)",
+    "pointDue": "fällig innerhalb von 5 Tagen nach der Unterschrift. Geht sie nicht rechtzeitig ein, endet der Vertrag automatisch.",
+    "pointNonRefund": "Davon nicht erstattbar, falls du den Kaufvertrag nicht unterschreibst",
+    "howBuyer": "Bitte das PDF lesen, dann mit dem Finger in das weiße Feld unterschreiben und den Haken setzen.",
+    "howVendor": "Bitte das PDF prüfen. Jede Person unterschreibt in ihrem eigenen Feld, das geht auch nacheinander über denselben Link.",
+    "signerDone": "Unterschrieben",
+    "signAs": "Unterschrift von {{name}}",
+    "submit": "{{name}} unterschreibt",
+    "agreeBuyer": "Ich habe den Vertrag gelesen und unterschreibe ihn.",
+    "agreeVendor": "Ich habe den Vertrag geprüft und unterschreibe ihn für {{company}}.",
+    "ownDoneVendor": "Danke! Der Vertrag geht jetzt an den Kunden zur Unterschrift. Sobald er unterschrieben hat, bekommst du das fertige PDF per E-Mail und WhatsApp.",
+    "partialVendor": "Es fehlt noch: {{names}}. Das geht auch später über denselben Link.",
+    "partialBuyer": "Es fehlt noch: {{names}}. Das geht auch später über denselben Link.",
+    "completeTitle": "Von beiden Seiten unterschrieben",
+    "completeBuyer": "Du bekommst den fertigen Vertrag per E-Mail und WhatsApp. Nächster Schritt: die Anzahlung von {{deposit}} überweisen.",
+    "completeVendor": "Der fertige Vertrag kommt per E-Mail und WhatsApp.",
+    "bankTitle": "Bankverbindung für die Anzahlung",
+    "vendorFirst": "Der Bauträger muss zuerst unterschreiben."
   }
 }

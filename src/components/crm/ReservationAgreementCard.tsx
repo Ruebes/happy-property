@@ -14,6 +14,14 @@ interface StatusResponse {
   reason: string | null
   mode: 'on' | 'test' | 'off'
   reservation_notes?: string | null
+  /** Nur Zwei-Parteien-Vertrag (Flora Panorama) */
+  two_party?: {
+    price_net: number | null
+    title_deed_default: number | null
+    parts: Array<{ side: 'buyer' | 'vendor'; name: string; at: string }>
+    vendor_signers: Array<{ key: string; name: string }>
+    buyer_count: number
+  }
 }
 
 const STATUS_STYLE: Record<string, string> = {
@@ -41,6 +49,10 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
   const [notesSaved, setNotesSaved] = useState('')
   const [notesBusy, setNotesBusy] = useState(false)
   const notesDirtyRef = useRef(false)
+  // Zwei-Parteien-Vertrag: Nettopreis und Betrag (g), beides je Vertrag
+  const [netPrice, setNetPrice] = useState('')
+  const [titleDeed, setTitleDeed] = useState('')
+  const contractLoaded = useRef(false)
 
   const load = useCallback(async () => {
     try {
@@ -49,6 +61,11 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
       if (!manualRef.current) setBuyers(r.row?.buyers ?? [])
       setNotesSaved(r.reservation_notes ?? '')
       if (!notesDirtyRef.current) setNotes(r.reservation_notes ?? '')
+      if (r.two_party && !contractLoaded.current) {
+        contractLoaded.current = true
+        setNetPrice(String(r.row?.contract?.net_price ?? r.two_party.price_net ?? ''))
+        setTitleDeed(String(r.row?.contract?.title_deed_amount ?? r.two_party.title_deed_default ?? ''))
+      }
     } catch {
       setSt(null)
     }
@@ -57,10 +74,19 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
 
   if (!st?.template) return null
   const row = st.row
+  const two = st.two_party ?? null
+  const contract = two ? { net_price: Number(netPrice.replace(',', '.')) || null, title_deed_amount: Number(titleDeed.replace(',', '.')) || null } : undefined
+  const vendorParts = two?.parts.filter(p => p.side === 'vendor') ?? []
+  const buyerParts = two?.parts.filter(p => p.side === 'buyer') ?? []
+  const copyLink = (url: string) => {
+    navigator.clipboard?.writeText(url)
+      .then(() => setMsg({ ok: true, text: t('reservation.linkCopied', 'Unterschriftslink kopiert') }))
+      .catch(() => setMsg({ ok: false, text: url }))
+  }
   const statusLabel: Record<string, string> = {
     wartet_ausweis: t('reservation.status.waiting', 'Wartet auf Ausweis'),
     pruefen:        t('reservation.status.review', 'Bitte prüfen'),
-    gesendet:       t('reservation.status.sent', 'An Bauträger geschickt'),
+    gesendet:       two ? t('reservation.status.twoRunning', 'Unterschriften laufen') : t('reservation.status.sent', 'An Bauträger geschickt'),
     unterschrieben: t('reservation.status.signed', 'Unterschrieben, an der Wohnung abgelegt'),
     fehler:         t('reservation.status.error', 'Fehler beim Versand'),
     abgebrochen:    t('reservation.status.cancelled', 'Abgebrochen'),
@@ -87,7 +113,7 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
     const win = openPdfWindow()
     setBusy('preview'); setMsg(null)
     try {
-      const r = await reservationCall<{ pdf_base64: string; buyers: ReservationBuyer[]; reasons: string[] }>({ action: 'preview', deal_id: dealId, buyers: edited })
+      const r = await reservationCall<{ pdf_base64: string; buyers: ReservationBuyer[]; reasons: string[] }>({ action: 'preview', deal_id: dealId, buyers: edited, contract })
       showPdf(win, r.pdf_base64)
       if (!manual) setBuyers(r.buyers)
       if (r.reasons.length) setMsg({ ok: false, text: r.reasons.join(' · ') })
@@ -99,11 +125,14 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
 
   const send = async (test: boolean) => {
     if (!test && !window.confirm(t('reservation.confirmSend', 'Reservierungsvertrag jetzt an den Bauträger schicken?'))) return
+    // Zwei-Parteien: neu senden macht vorhandene Unterschriften ungültig
+    const force = !test && !!two?.parts.length
+    if (force && !window.confirm(t('reservation.confirmResign', 'Achtung: Es liegen schon Unterschriften vor ({{names}}). Neu senden macht sie ungültig, alle müssen noch einmal unterschreiben. Wirklich neu senden?', { names: two!.parts.map(p => p.name).join(', ') }))) return
     setBusy(test ? 'test' : 'send'); setMsg(null)
     try {
-      const r = await reservationCall<{ ok: boolean; errors: string[] }>({ action: 'send', deal_id: dealId, test, buyers: edited })
+      const r = await reservationCall<{ ok: boolean; errors: string[] }>({ action: 'send', deal_id: dealId, test, buyers: edited, contract, force })
       setMsg(r.errors.length
-        ? { ok: false, text: r.errors.join(' · ') }
+        ? { ok: false, text: two ? t('reservation.sentOpen', 'Raus. Noch offen, wird automatisch wiederholt: {{list}}', { list: r.errors.join(' · ') }) : r.errors.join(' · ') }
         : { ok: true, text: test ? t('reservation.testSent', 'Test ging an dich (Mail + WhatsApp).') : t('reservation.sentOk', 'Vertrag ist an den Bauträger raus.') })
       setEditing(false)
       if (!test) setManual(false)
@@ -142,17 +171,28 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
           {t('reservation.sentAt', 'Geschickt am')} {fmtDate(row.sent_at)}{row.sent_to?.length ? ` · ${row.sent_to.join(', ')}` : ''}
         </p>
       )}
-      {row?.status === 'gesendet' && (
+      {two && row?.status === 'gesendet' && (
+        <div className="bg-white rounded-lg p-3 space-y-1 text-xs text-gray-700">
+          <p>{vendorParts.length >= two.vendor_signers.length ? '✅' : '⏳'} <b>{t('reservation.twoVendor', 'Bauträger')}:</b> {vendorParts.length ? vendorParts.map(p => `${p.name} ${fmtDate(p.at)}`).join(' · ') : t('reservation.twoVendorOpen', 'noch nicht unterschrieben')}</p>
+          <p>{row.buyer_signed_at ? '✅' : '⏳'} <b>{t('reservation.twoBuyer', 'Kunde')}:</b> {buyerParts.length ? buyerParts.map(p => `${p.name} ${fmtDate(p.at)}`).join(' · ') : (row.link_delivery?.['mail:buyer']?.at || row.link_delivery?.['wa:buyer']?.at ? t('reservation.twoBuyerSent', 'Link ist raus, noch nicht unterschrieben') : t('reservation.twoBuyerWait', 'bekommt seinen Link, sobald der Bauträger unterschrieben hat'))}</p>
+          {row.sign_token && <button onClick={() => copyLink(`${window.location.origin}/sign/r/${row.sign_token}`)} className="text-orange-600 hover:underline block">🔗 {t('reservation.copyLink', 'Unterschriftslink für den Bauträger kopieren')}</button>}
+          {row.buyer_sign_token && vendorParts.length >= two.vendor_signers.length && <button onClick={() => copyLink(`${window.location.origin}/sign/k/${row.buyer_sign_token}`)} className="text-orange-600 hover:underline block">🔗 {t('reservation.copyBuyerLink', 'Unterschriftslink für den Kunden kopieren')}</button>}
+        </div>
+      )}
+      {two && row?.status === 'unterschrieben' && row.completed_at && (
+        <p className="text-xs text-green-700">✍️ {t('reservation.twoDone', 'Von beiden Seiten unterschrieben')} · {fmtDate(row.completed_at)} · {two.parts.map(p => p.name).join(', ')}</p>
+      )}
+      {!two && row?.status === 'gesendet' && (
         <p className="text-xs text-gray-500">
           {t('reservation.waitingSigned', 'Wartet auf die digitale Unterschrift des Bauträgers (Link per WhatsApp + Mail). Danach liegt der Vertrag automatisch im Drive-Ordner und an der Wohnung unter Verträge.')}
         </p>
       )}
-      {row?.status === 'unterschrieben' && row.seller_signer_name && row.seller_signed_at && (
+      {!two && row?.status === 'unterschrieben' && row.seller_signer_name && row.seller_signed_at && (
         <p className="text-xs text-green-700">
           ✍️ {t('reservation.signedBy', 'Unterschrieben von')} {row.seller_signer_name} · {fmtDate(row.seller_signed_at)}
         </p>
       )}
-      {row?.sign_token && row.status !== 'unterschrieben' && (
+      {!two && row?.sign_token && row.status !== 'unterschrieben' && (
         <button onClick={() => { navigator.clipboard?.writeText(`${window.location.origin}/sign/r/${row.sign_token}`).then(() => setMsg({ ok: true, text: t('reservation.linkCopied', 'Unterschriftslink kopiert') })).catch(() => setMsg({ ok: false, text: `${window.location.origin}/sign/r/${row.sign_token}` })) }}
           className="text-xs text-orange-600 hover:underline">
           🔗 {t('reservation.copyLink', 'Unterschriftslink für den Bauträger kopieren')}
@@ -169,12 +209,35 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
           {editing ? (
             <>
               {buyers.map((b, i) => (
-                <div key={i} className="grid grid-cols-[1fr_9rem_auto] gap-1.5 items-center">
+                <div key={i} className="space-y-1.5">
+                <div className="grid grid-cols-[1fr_9rem_auto] gap-1.5 items-center">
                   <input value={b.full_name} className={inputCls} placeholder={t('reservation.name', 'Vor- und Nachname')}
                     onChange={e => { setManual(true); setBuyers(bs => bs.map((x, j) => j === i ? { ...x, full_name: e.target.value } : x)) }} />
                   <input value={b.document_number} className={`${inputCls} font-mono`} placeholder={t('reservation.number', 'Passnummer')}
                     onChange={e => { setManual(true); setBuyers(bs => bs.map((x, j) => j === i ? { ...x, document_number: e.target.value } : x)) }} />
                   <button onClick={() => { setManual(true); setBuyers(bs => bs.filter((_, j) => j !== i)) }} className="text-gray-400 hover:text-red-500 text-sm px-1">✕</button>
+                </div>
+                {/* Zwei-Parteien-Vertrag: wir füllen alles aus, der Kunde sieht den Vertrag erst nach dem Bauträger */}
+                {two && (
+                  <div className="grid grid-cols-2 gap-1.5 pb-2 border-b border-gray-100">
+                    <select value={b.salutation ?? ''} className={inputCls} onChange={e => { setManual(true); setBuyers(bs => bs.map((x, j) => j === i ? { ...x, salutation: e.target.value } : x)) }}>
+                      <option value="">{t('reservation.salutation', 'Anrede')}</option>
+                      <option value="MR.">MR.</option><option value="MRS.">MRS.</option><option value="MS.">MS.</option>
+                    </select>
+                    <select value={b.document_type === 'id_card' ? 'id_card' : 'passport'} className={inputCls} onChange={e => { setManual(true); setBuyers(bs => bs.map((x, j) => j === i ? { ...x, document_type: e.target.value } : x)) }}>
+                      <option value="passport">{t('reservation.docPassport', 'Reisepass')}</option>
+                      <option value="id_card">{t('reservation.docIdCard', 'Personalausweis')}</option>
+                    </select>
+                    <input value={b.nationality ?? ''} className={inputCls} placeholder={t('reservation.nationality', 'Staatsangehörigkeit, z. B. German')}
+                      onChange={e => { setManual(true); setBuyers(bs => bs.map((x, j) => j === i ? { ...x, nationality: e.target.value } : x)) }} />
+                    <input value={b.phone ?? ''} className={inputCls} placeholder={i === 0 ? t('reservation.phoneLead', 'Telefon (leer = aus dem CRM)') : t('reservation.phone', 'Telefon')}
+                      onChange={e => { setManual(true); setBuyers(bs => bs.map((x, j) => j === i ? { ...x, phone: e.target.value } : x)) }} />
+                    <input value={b.address ?? ''} className={`${inputCls} col-span-2`} placeholder={t('reservation.address', 'Adresse: Straße, PLZ Ort, Land')}
+                      onChange={e => { setManual(true); setBuyers(bs => bs.map((x, j) => j === i ? { ...x, address: e.target.value } : x)) }} />
+                    <input value={b.email ?? ''} className={`${inputCls} col-span-2`} placeholder={i === 0 ? t('reservation.emailLead', 'E-Mail (leer = aus dem CRM)') : t('reservation.email', 'E-Mail')}
+                      onChange={e => { setManual(true); setBuyers(bs => bs.map((x, j) => j === i ? { ...x, email: e.target.value } : x)) }} />
+                  </div>
+                )}
                 </div>
               ))}
               <button onClick={() => { setManual(true); setBuyers(bs => [...bs, { full_name: '', document_number: '' }]) }}
@@ -186,6 +249,21 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
               {b.file_name && <span className="text-[11px] text-gray-400"> · {b.file_name}</span>}
             </p>
           ))}
+        </div>
+      )}
+
+      {two && (
+        <div className="bg-white rounded-lg p-3 space-y-1.5">
+          <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('reservation.contractTitle', 'Vertragswerte')}</p>
+          <div className="grid grid-cols-2 gap-1.5">
+            <label className="text-xs text-gray-600">{t('reservation.netPrice', 'Nettopreis in Euro')}
+              <input value={netPrice} inputMode="decimal" onChange={e => setNetPrice(e.target.value)} className={`${inputCls} mt-0.5`} />
+            </label>
+            <label className="text-xs text-gray-600">{t('reservation.titleDeed', 'Betrag (g) bei Besitzurkunde, Euro netto')}
+              <input value={titleDeed} inputMode="decimal" onChange={e => setTitleDeed(e.target.value)} className={`${inputCls} mt-0.5`} />
+            </label>
+          </div>
+          <p className="text-[11px] text-gray-400">{t('reservation.contractHint', 'Alle Teilbeträge rechnet das System aus dem Nettopreis. Kontrolle über die Vorschau.')}</p>
         </div>
       )}
 

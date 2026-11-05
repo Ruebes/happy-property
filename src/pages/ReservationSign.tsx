@@ -5,10 +5,13 @@ import { supabase } from '../lib/supabase'
 import { showPdf } from '../lib/reservationAgreement'
 import { processSealImage } from '../lib/sealImage'
 import SignaturePad, { type SignaturePadHandle } from '../components/SignaturePad'
+import TwoPartySign, { type TwoPartyView } from '../components/TwoPartySign'
 
 // Öffentliche Unterschriftsseite für den Bauträger (kein Login, nur Token):
 //   /sign/r/:token  Reservierungsvertrag (Edge reservation-agreement sign_view / sign_submit)
 //   /sign/d/:token  weiteres Dokument, z. B. Spezifikation (doc_view / doc_submit)
+//   /sign/k/:token  Kundenseite beim Zwei-Parteien-Vertrag (Flora Panorama, buyer_view / buyer_submit)
+// Beim Zwei-Parteien-Vertrag zeigen /sign/k und /sign/r die eigene Seite TwoPartySign.
 // Sprache = Sprache des Empfängers aus dem CRM (nicht die des Browsers). Unterschrift mit dem
 // Finger + Name in Druckbuchstaben; Ort und Datum setzt das System. Firmenstempel wählbar,
 // neues Stempelfoto wird für alle weiteren Dokumente dieses Bauträgers gespeichert.
@@ -29,7 +32,7 @@ interface InputDef { key: string; label: string; hint: string | null; required: 
 type Phase = 'loading' | 'ready' | 'sending' | 'done' | 'not_found' | 'error'
 // Druckbuchstaben wie auf dem Server: nur lateinische Schrift (die PDF-Schrift kann nichts anderes)
 const NAME_RE = /^[A-ZÀ-ÖØ-ÞĀ-ſ][A-ZÀ-ÖØ-ÞĀ-ſ .'-]*[A-ZÀ-ÖØ-ÞĀ-ſ.]$/
-type Mode = 'reservation' | 'document'
+type Mode = 'reservation' | 'document' | 'buyer'
 
 async function call<T>(body: Record<string, unknown>): Promise<T> {
   const { data, error } = await supabase.functions.invoke('reservation-agreement', { body })
@@ -70,7 +73,7 @@ export default function ReservationSign({ mode = 'reservation' }: { mode?: Mode 
   const t = useMemo(() => i18n.getFixedT(view?.lang ?? 'en'), [view, i18n])
   const onInk = useCallback((v: boolean) => setHasInk(v), [])
   const onInk2 = useCallback((v: boolean) => setHasInk2(v), [])
-  const viewAction = mode === 'document' ? 'doc_view' : 'sign_view'
+  const viewAction = mode === 'document' ? 'doc_view' : mode === 'buyer' ? 'buyer_view' : 'sign_view'
   const submitAction = mode === 'document' ? 'doc_submit' : 'sign_submit'
 
   useEffect(() => {
@@ -159,6 +162,8 @@ export default function ReservationSign({ mode = 'reservation' }: { mode?: Mode 
       </p>
     </div>
   )
+
+  if ((view as unknown as TwoPartyView).two_party && token) return <TwoPartySign token={token} initial={view as unknown as TwoPartyView} />
 
   const f = view.fields
   return (

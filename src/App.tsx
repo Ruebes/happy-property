@@ -214,6 +214,7 @@ export default function App() {
             {/* Reservierungsvertrag digital unterschreiben (Bauträger, per Token, kein Login) */}
             <Route path="/sign/r/:token" element={<ReservationSign />} />
             <Route path="/sign/d/:token" element={<ReservationSign mode="document" />} />
+            <Route path="/sign/k/:token" element={<ReservationSign mode="buyer" />} />
             <Route path="/set-password" element={<SetPassword />} />
             {/* Öffentliches Sales-Deck (per Token, kein Login) */}
             <Route path="/termin" element={<Funnel />} />

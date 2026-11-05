@@ -633,6 +633,11 @@ export interface ReservationBuyer {
   expiry_date?:    string
   file_id?:        string
   file_name?:      string
+  // Nur Zwei-Parteien-Vertrag (Flora Panorama): Angaben, die nicht im Ausweis stehen
+  salutation?:     string
+  address?:        string
+  phone?:          string
+  email?:          string
 }
 export interface ReservationAgreement {
   id:               string
@@ -652,6 +657,14 @@ export interface ReservationAgreement {
   seller_signed_at: string | null
   seller_signer_name: string | null
   special_terms?:   { de: string; en: string } | null   // Sondervereinbarung: Svens Text + Übersetzung im Vertrag
+  // Zwei-Parteien-Vertrag: Kundenlink /sign/k/<token>, Preis und Betrag (g) je Vertrag
+  buyer_sign_token?: string | null
+  buyer_signed_at?:  string | null
+  completed_at?:     string | null
+  sign_round?:       number
+  contract?:         { net_price?: number | null; title_deed_amount?: number | null } | null
+  link_delivery?:    Record<string, { at?: string; err?: string; next?: string }> | null
+  final_delivery?:   Record<string, { at?: string; err?: string; next?: string }> | null
   created_at:       string
   updated_at:       string
 }
