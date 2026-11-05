@@ -84,7 +84,7 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
       .catch(() => setMsg({ ok: false, text: url }))
   }
   const statusLabel: Record<string, string> = {
-    wartet_ausweis: t('reservation.status.waiting', 'Wartet auf Ausweis'),
+    wartet_ausweis: two ? t('reservation.status.waitingData', 'Wartet auf Ausweis und Adresse') : t('reservation.status.waiting', 'Wartet auf Ausweis'),
     pruefen:        t('reservation.status.review', 'Bitte prüfen'),
     gesendet:       two ? t('reservation.status.twoRunning', 'Unterschriften laufen') : t('reservation.status.sent', 'An Bauträger geschickt'),
     unterschrieben: t('reservation.status.signed', 'Unterschrieben, an der Wohnung abgelegt'),
@@ -170,6 +170,22 @@ export default function ReservationAgreementCard({ dealId }: { dealId: string })
         <p className="text-xs text-green-700">
           {t('reservation.sentAt', 'Geschickt am')} {fmtDate(row.sent_at)}{row.sent_to?.length ? ` · ${row.sent_to.join(', ')}` : ''}
         </p>
+      )}
+      {two && row?.address_token && (
+        <div className="bg-white rounded-lg p-3 space-y-1 text-xs text-gray-700">
+          <p>{row.customer_data?.at ? '✅' : '⏳'} <b>{t('reservation.customerData', 'Adresse vom Kunden')}:</b> {row.customer_data?.at
+            ? `${fmtDate(row.customer_data.at)}: ${[row.customer_data.street, `${row.customer_data.postal_code ?? ''} ${row.customer_data.city ?? ''}`.trim(), row.customer_data.country_code || row.customer_data.country_other].filter(Boolean).join(', ')}${row.customer_data.second ? ` · ${t('reservation.customerSecond', 'Zweiter Käufer')}: ${row.customer_data.second.first_name} ${row.customer_data.second.last_name}` : ''}`
+            : t('reservation.customerDataOpen', 'noch nicht eingetragen')}</p>
+          {!row.customer_data?.at && <button onClick={() => copyLink(`${window.location.origin}/sign/a/${row.address_token}`)} className="text-orange-600 hover:underline block">🔗 {t('reservation.copyAddressLink', 'Adresslink für den Kunden kopieren')}</button>}
+        </div>
+      )}
+      {two && !!row?.auto_check?.points?.length && (
+        <details className="bg-white rounded-lg p-3 text-xs text-gray-700">
+          <summary className="cursor-pointer">{row.auto_check.ok ? '✅' : '⚠️'} {t('reservation.autoCheck', 'Prüfung vor dem Versand')} · {row.auto_check.at ? fmtDate(row.auto_check.at) : ''}</summary>
+          <div className="mt-2 space-y-1">
+            {row.auto_check.points.map(p => <p key={p.key}>{p.ok ? '✓' : '✗'} {p.text}</p>)}
+          </div>
+        </details>
       )}
       {two && row?.status === 'gesendet' && (
         <div className="bg-white rounded-lg p-3 space-y-1 text-xs text-gray-700">

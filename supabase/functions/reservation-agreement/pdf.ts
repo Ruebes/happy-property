@@ -24,6 +24,8 @@ export interface TemplateRow {
     only_project_id?: string; only_units?: string[]
     /** Zwei-Parteien-Ablauf: Unterzeichner des Bauträgers, Mindestzahl, Standard für Betrag (g), eigener Stempel */
     vendor_signers?: VendorSigner[]; vendor_min_signers?: number; title_deed_amount?: number; seal_path?: string
+    // Wohnungen mit kundenbezogenen Preisen: gehen nur mit von Hand eingetragenem Preis automatisch raus
+    manual_units?: string[]
   } | null
 }
 

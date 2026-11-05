@@ -173,7 +173,7 @@ export default function LeadDetail() {
   const [leadForm, setLeadForm] = useState({
     first_name: '', last_name: '', email: '', phone: '', whatsapp: '',
     alt_emails: '', alt_phones: '',
-    country: '', source: 'sonstiges', language: 'de', notes: '', assigned_to: '',
+    country: '', street: '', postal_code: '', city: '', source: 'sonstiges', language: 'de', notes: '', assigned_to: '',
   })
   const [savingLead, setSavingLead] = useState(false)
 
@@ -1530,6 +1530,9 @@ export default function LeadDetail() {
       alt_emails:  (lead.alt_emails ?? []).join(', '),
       alt_phones:  (lead.alt_phones ?? []).join(', '),
       country:     lead.country     ?? '',
+      street:      lead.street      ?? '',
+      postal_code: lead.postal_code ?? '',
+      city:        lead.city        ?? '',
       source:      lead.source,
       language:    lead.language,
       notes:       lead.notes       ?? '',
@@ -1551,6 +1554,9 @@ export default function LeadDetail() {
         alt_emails:  leadForm.alt_emails.split(',').map(x => x.trim().toLowerCase()).filter(Boolean),
         alt_phones:  leadForm.alt_phones.split(',').map(x => x.replace(/[^\d+]/g, '')).filter(Boolean),
         country:     leadForm.country.trim()   || null,
+        street:      leadForm.street.trim()    || null,
+        postal_code: leadForm.postal_code.trim() || null,
+        city:        leadForm.city.trim()      || null,
         source:      leadForm.source,
         language:    leadForm.language,
         notes:       leadForm.notes.trim()     || null,
@@ -3010,6 +3016,12 @@ export default function LeadDetail() {
                           <dd className="text-gray-900">{lead.whatsapp}</dd>
                         </div>
                       )}
+                      {(lead.street || lead.city) && (
+                        <div className="flex gap-2">
+                          <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.lead.address', 'Adresse')}</dt>
+                          <dd className="text-gray-900">{[lead.street, [lead.postal_code, lead.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')}</dd>
+                        </div>
+                      )}
                       {lead.country && (
                         <div className="flex gap-2">
                           <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.country', 'Land')}</dt>
@@ -3138,6 +3150,32 @@ export default function LeadDetail() {
                             onChange={e => setLeadForm(f => ({ ...f, alt_phones: e.target.value }))}
                             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
                             placeholder="+49 …, +357 …"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">{t('crm.lead.street', 'Straße und Hausnummer')}</label>
+                        <input
+                          value={leadForm.street}
+                          onChange={e => setLeadForm(f => ({ ...f, street: e.target.value }))}
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
+                        />
+                      </div>
+                      <div className="grid grid-cols-[6rem_1fr] gap-2">
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">{t('crm.lead.postalCode', 'PLZ')}</label>
+                          <input
+                            value={leadForm.postal_code}
+                            onChange={e => setLeadForm(f => ({ ...f, postal_code: e.target.value }))}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">{t('crm.lead.city', 'Ort')}</label>
+                          <input
+                            value={leadForm.city}
+                            onChange={e => setLeadForm(f => ({ ...f, city: e.target.value }))}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
                           />
                         </div>
                       </div>

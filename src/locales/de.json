@@ -75,7 +75,8 @@
       "cancelled": "Abgebrochen",
       "signed": "Unterschrieben, an der Wohnung abgelegt",
       "notStarted": "Startet mit Phase Reservierung",
-      "twoRunning": "Unterschriften laufen"
+      "twoRunning": "Unterschriften laufen",
+      "waitingData": "Wartet auf Ausweis und Adresse"
     },
     "modeTest": "Testmodus",
     "modeOff": "Aus",
@@ -123,7 +124,12 @@
     "titleDeed": "Betrag (g) bei Besitzurkunde, Euro netto",
     "contractHint": "Alle Teilbeträge rechnet das System aus dem Nettopreis. Kontrolle über die Vorschau.",
     "confirmResign": "Achtung: Es liegen schon Unterschriften vor ({{names}}). Neu senden macht sie ungültig, alle müssen noch einmal unterschreiben. Wirklich neu senden?",
-    "sentOpen": "Raus. Noch offen, wird automatisch wiederholt: {{list}}"
+    "sentOpen": "Raus. Noch offen, wird automatisch wiederholt: {{list}}",
+    "customerData": "Adresse vom Kunden",
+    "customerDataOpen": "noch nicht eingetragen",
+    "copyAddressLink": "Adresslink für den Kunden kopieren",
+    "autoCheck": "Prüfung vor dem Versand",
+    "customerSecond": "Zweiter Käufer"
   },
   "reservationTpl": {
     "title": "Reservierungsvorlage",
@@ -2099,7 +2105,11 @@
       "ratedBad": "👎 Als schwacher Lead vermerkt.",
       "ratedGoodSubject": "👍 Guter Lead",
       "ratedBadSubject": "👎 Schlechter Lead",
-      "dupWarn": "Achtung: Es gibt schon einen Kontakt mit gleichem Namen, gleicher E-Mail oder Nummer: {{names}}. Trotzdem anlegen?"
+      "dupWarn": "Achtung: Es gibt schon einen Kontakt mit gleichem Namen, gleicher E-Mail oder Nummer: {{names}}. Trotzdem anlegen?",
+      "address": "Adresse",
+      "street": "Straße und Hausnummer",
+      "postalCode": "PLZ",
+      "city": "Ort"
     },
     "sources": {
       "meta": "META Werbung",
@@ -12013,5 +12023,38 @@
     "completeVendor": "Der fertige Vertrag kommt per E-Mail und WhatsApp.",
     "bankTitle": "Bankverbindung für die Anzahlung",
     "vendorFirst": "Der Bauträger muss zuerst unterschreiben."
+  },
+  "reservationAddress": {
+    "title": "Deine Angaben für den Reservierungsvertrag",
+    "intro": "Hallo {{name}}, Name und Ausweisnummer übernehmen wir aus deinem Ausweis. Deine Adresse steht dort nicht, deshalb brauchen wir sie von dir. Sie kommt genau so in den Vertrag, wie du sie hier einträgst.",
+    "street": "Straße und Hausnummer",
+    "postal": "PLZ",
+    "city": "Ort",
+    "country": "Land",
+    "choose": "Bitte wählen",
+    "otherCountry": "Anderes Land",
+    "countryName": "Land, bitte auf Englisch",
+    "phone": "Telefon",
+    "email": "E-Mail",
+    "mr": "Herr",
+    "mrs": "Frau",
+    "secondAsk": "Ich kaufe zusammen mit einer zweiten Person",
+    "secondHint": "Bitte lade auch den Ausweis der zweiten Person in deinen Ordner hoch.",
+    "firstName": "Vorname",
+    "lastName": "Nachname",
+    "sameAddress": "Gleiche Adresse wie oben",
+    "submit": "Angaben senden",
+    "errRequired": "Bitte ausfüllen",
+    "errHouseNumber": "Bitte mit Hausnummer",
+    "errPostal": "Bitte die PLZ prüfen",
+    "errInvalid": "Bitte diese Angabe prüfen",
+    "errSummary": "Bitte prüfe die markierten Felder.",
+    "test": "Test: Es wird nichts im CRM gespeichert.",
+    "notFound": "Dieser Link ist nicht gültig. Bitte melde dich bei Happy Property.",
+    "error": "Da ist etwas schiefgegangen. Bitte versuche es in einer Minute noch einmal.",
+    "closed": "Danke, wir haben schon alles, was wir für deinen Vertrag brauchen.",
+    "doneTitle": "Danke dir!",
+    "doneText": "Deine Angaben sind da. Sobald auch dein Ausweis in deinem Ordner liegt, bereiten wir deinen Reservierungsvertrag vor. Zuerst unterschreibt der Bauträger, danach bekommst du deinen Link zum Unterschreiben.",
+    "toFolder": "Ausweis in deinen Ordner hochladen"
   }
 }

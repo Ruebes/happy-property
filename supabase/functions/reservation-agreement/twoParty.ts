@@ -2,8 +2,9 @@
 // Vordruck von Aaron). Anders als bei Mito unterschreibt hier auch der Kunde, und zwar als Zweiter,
 // weil die Anzahlung hoch ist:
 //
-//   1. Sven füllt den Vertrag im CRM vollständig aus und sendet. Nur der Bauträger bekommt seinen
-//      Link /sign/r/<token>, die Direktoren unterschreiben einzeln, auch nacheinander.
+//   1. Der Vertrag wird aus Ausweis und den Angaben des Kunden gefüllt (customerData.ts). Besteht er
+//      die Prüfung (floraCheck.ts), geht er von selbst raus, sonst drückt Sven im CRM auf Senden.
+//      Nur der Bauträger bekommt seinen Link /sign/r/<token>, die Direktoren unterschreiben einzeln.
 //   2. Hat der Bauträger unterschrieben, geht der Link /sign/k/<token> an den Kunden. In der
 //      Ruhezeit wartet die Nachricht bis zum Morgen. Vorher zeigt der Kundenlink nichts zum Unterschreiben.
 //   3. Mit der Unterschrift des Kunden setzt das System Datum und alle Unterschriften in ein PDF,
@@ -23,6 +24,7 @@ import { inRuhezeit, zeitzoneFuer } from '../_shared/ruhezeit.ts'
 import { renderAgreement, type AgreementFields } from './pdf.ts'
 import { cyprusDate, euro, floraAmounts, type FloraBuyer, type FloraFields, type FloraPart, type VendorSigner } from './pdfFlora.ts'
 import { uploadToken, uploadFile } from './drive.ts'
+import type { AutoCheck } from './floraCheck.ts'
 import { pngFromInput, clientIp, sealDataUrl, MAX_SEAL_BYTES } from './seal.ts'
 import { cleanSignature, placeOf, sha256Hex } from './sign.ts'
 import {
@@ -105,7 +107,7 @@ export function nationalityEn(raw: string): string {
 // ── Vertragswerte aufbauen ───────────────────────────────────────────────────
 const num = (v: number | null | undefined) => v == null ? '' : String(Number(v)).replace('.', ',')
 
-function floraBuyers(ctx: Ctx, buyers: Buyer[]): FloraBuyer[] {
+export function floraBuyers(ctx: Ctx, buyers: Buyer[]): FloraBuyer[] {
   return buyers.map((b, i) => ({
     key: `b${i}`,
     salutation: ['MR.', 'MRS.', 'MS.'].includes(b.salutation ?? '') ? b.salutation! : '',
@@ -555,7 +557,7 @@ async function giveUpNotice(sb: SupabaseClient, row: AgreementRow, ctx: Ctx, key
 }
 
 /** Sven drückt „Senden": neue Runde, neue Links, zuerst an den Bauträger. Alte Unterschriften gelten für den neuen Stand nicht. */
-export async function floraSend(sb: SupabaseClient, row: AgreementRow, ctx: Ctx, pdf: Uint8Array, fields: AgreementFields, buyers: Buyer[], test: boolean): Promise<Record<string, unknown>> {
+export async function floraSend(sb: SupabaseClient, row: AgreementRow, ctx: Ctx, pdf: Uint8Array, fields: AgreementFields, buyers: Buyer[], test: boolean, report?: AutoCheck | null): Promise<Record<string, unknown>> {
   const buyerLang: Lang = await resolveLang(sb, { email: ctx.lead.email, phone: customerPhone(ctx), lead_id: ctx.lead.id })
   const now = new Date().toISOString()
   if (test) {
@@ -579,14 +581,16 @@ export async function floraSend(sb: SupabaseClient, row: AgreementRow, ctx: Ctx,
     buyer_signed_at: null, seller_signed_at: null, seller_signer_name: null, seller_sign_meta: null, completed_at: null, finalizing_at: null,
     signed_pdf_path: null, signed_file_id: null, unit_document_id: null, link_delivery: null, final_delivery: null, final_sent_at: null,
     pdf_path: draftPath, sent_at: now, sent_to: ctx.devEmails, review_reason: null, error: null, updated_at: now,
-  }).eq('id', row.id).select('*').single()
+  }).eq('id', row.id).eq('sign_round', row.sign_round ?? 0).select('*').maybeSingle()
   if (error) throw new Error(`Versand vorbereiten: ${error.message}`)
+  // Die Runde hat sich inzwischen geändert: jemand anderes hat schon gesendet, also nicht ein zweites Mal
+  if (!data) return { ok: false, test: false, sent_to: [], errors: ['Der Vertrag wurde gerade schon gesendet. Bitte neu laden.'], sign_link: null }
   const fresh = data as AgreementRow
   const errors = await deliverLinks(sb, fresh, false, true, true)
   const unitLabel = `Flora Panorama ${ctx.unit.unit_number}`
   await invoke(sb, 'send-email', {
     to: SVEN_MAIL, subject: `Reservierung ${unitLabel}: an ${ctx.developerName} geschickt`,
-    html: `<p>Der Reservierungsvertrag ${esc(unitLabel)} (${esc(leadName(ctx.lead))}) ist zur Unterschrift an ${esc(ctx.devEmails.join(', '))} gegangen. Der Kunde bekommt seinen Link, sobald der Bauträger unterschrieben hat.</p>${errors.length ? `<p>Noch nicht zugestellt, wird automatisch wiederholt: ${esc(errors.join('; '))}</p>` : ''}${button(`${CRM_LEAD}${ctx.lead.id}`, 'Kunde im CRM')}`,
+    html: `<p>Der Reservierungsvertrag ${esc(unitLabel)} (${esc(leadName(ctx.lead))}) ist ${report ? 'automatisch ' : ''}zur Unterschrift an ${esc(ctx.devEmails.join(', '))} gegangen. Der Kunde bekommt seinen Link, sobald der Bauträger unterschrieben hat.</p>${report ? `<p><b>Vor dem Versand geprüft:</b><br>${report.points.map(x => `✓ ${esc(x.text)}`).join('<br>')}</p>` : ''}${errors.length ? `<p>Noch nicht zugestellt, wird automatisch wiederholt: ${esc(errors.join('; '))}</p>` : ''}${button(`${CRM_LEAD}${ctx.lead.id}`, 'Kunde im CRM')}`,
     attachment: attach(fileNameFor(ctx), pdf), auto: true, lang: 'de', already_translated: true,
   })
   await sb.from('activities').insert({

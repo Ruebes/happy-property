@@ -70,6 +70,74 @@ function b64(bytes: Uint8Array): string {
   return btoa(bin)
 }
 
+// ── Zweite, unabhängige Lesung (Flora-Automatik) ─────────────────────────────
+// Bekommt bewusst nichts aus der ersten Lesung zu sehen, sonst bestätigt sie nur, was sie erwartet.
+export interface IdReread {
+  surname: string
+  given_names: string
+  visual_document_number: string
+  mrz_lines: string[]
+  nationality: string
+  date_of_birth: string
+  expiry_date: string
+}
+
+const REREAD_TOOL = {
+  name: 'record_id_reading',
+  description: 'Record exactly what is printed on each identity document in the file.',
+  strict: true,
+  input_schema: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['documents'],
+    properties: {
+      documents: {
+        type: 'array',
+        description: 'One entry per identity document side visible in the file. Empty if the file shows no identity document.',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['surname', 'given_names', 'visual_document_number', 'mrz_lines', 'nationality', 'date_of_birth', 'expiry_date'],
+          properties: {
+            surname: { type: 'string', description: 'Surname in Latin letters as printed in the visual zone. Empty string if this side does not show it.' },
+            given_names: { type: 'string', description: 'All given names in Latin letters as printed. Empty string if this side does not show them.' },
+            visual_document_number: { type: 'string', description: 'Document number as printed in the visual zone, without spaces. Empty string if this side does not show it or a character is unclear.' },
+            mrz_lines: {
+              type: 'array', items: { type: 'string' },
+              description: 'The machine readable zone (the OCR lines with < characters), one string per line, copied character by character including every <. Do not correct anything. Empty array if no machine readable zone is visible or it is not fully readable.',
+            },
+            nationality: { type: 'string', description: 'Nationality as printed. Empty string if not shown.' },
+            date_of_birth: { type: 'string', description: 'YYYY-MM-DD or empty string.' },
+            expiry_date: { type: 'string', description: 'YYYY-MM-DD or empty string.' },
+          },
+        },
+      },
+    },
+  },
+}
+
+/** Liest den Ausweis ein zweites Mal Zeichen für Zeichen. null = Prüfung nicht möglich, später erneut. */
+export async function rereadId(bytes: Uint8Array, mime: string, fileName: string): Promise<IdReread[] | null> {
+  const block = mime === 'application/pdf'
+    ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64(bytes) } }
+    : { type: 'image', source: { type: 'base64', media_type: mime, data: b64(bytes) } }
+  const res = await callAnthropic(Deno.env.get('ANTHROPIC_API_KEY') ?? '', {
+    model: 'claude-opus-5-5',
+    fallbackModels: ['claude-sonnet-4-6'],
+    max_tokens: 8000,
+    label: 'reservation-zweitlesung',
+    system: 'You transcribe identity documents for a legal contract. Copy what is printed, character by character. '
+      + 'Never guess, never correct and never complete anything: if a character is not clearly readable, leave that field empty. '
+      + 'Always answer by calling the tool record_id_reading exactly once.',
+    messages: [{ role: 'user', content: [block, { type: 'text', text: `File name: ${fileName}\nCall record_id_reading with the result.` }] }],
+    tools: [REREAD_TOOL],
+    tool_choice: { type: 'auto' },
+  })
+  if (!res.ok) { console.error('[reservation-agreement] Zweitlesung', fileName, res.error); return null }
+  const out = toolInput<{ documents: IdReread[] }>(res)
+  return Array.isArray(out?.documents) ? out.documents : null
+}
+
 /** Prüft eine Datei. Rückgabe null = Prüfung nicht möglich (nächste Runde erneut versuchen). */
 export async function checkFile(bytes: Uint8Array, mime: string, fileName: string): Promise<FileCheck | null> {
   const isPdf = mime === 'application/pdf'

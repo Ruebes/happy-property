@@ -33,6 +33,9 @@ export interface Lead {
   alt_emails:        string[]        // weitere E-Mail-Adressen (Haupt = email)
   alt_phones:        string[]        // weitere Telefonnummern (Haupt = phone/whatsapp)
   country:           string | null
+  street?:           string | null   // Meldeadresse, trägt der Kunde beim Reservierungsvertrag selbst ein
+  postal_code?:      string | null
+  city?:             string | null
   language:          'de' | 'en'
   source:            LeadSource
   status:            LeadStatus
@@ -665,6 +668,10 @@ export interface ReservationAgreement {
   contract?:         { net_price?: number | null; title_deed_amount?: number | null } | null
   link_delivery?:    Record<string, { at?: string; err?: string; next?: string }> | null
   final_delivery?:   Record<string, { at?: string; err?: string; next?: string }> | null
+  // Flora-Automatik: Adresse vom Kunden (Link /sign/a/<token>) und Bericht der Prüfung vor dem Versand
+  address_token?:    string | null
+  customer_data?:    { at?: string; street?: string; postal_code?: string; city?: string; country_code?: string; country_other?: string; second?: { first_name?: string; last_name?: string } | null } | null
+  auto_check?:       { at?: string; ok?: boolean; points?: Array<{ key: string; ok: boolean; text: string }>; reasons?: string[] } | null
   created_at:       string
   updated_at:       string
 }

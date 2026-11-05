@@ -38,6 +38,7 @@
 // Zwei-Parteien-Ablauf (Vorlage layout 'flora', twoParty.ts): sign_view / sign_submit verzweigen dorthin, dazu öffentlich
 //   { action:'buyer_view', token }                         Kundenseite /sign/k/:token
 //   { action:'buyer_submit', token, signer_key, signature } Kunde unterschreibt
+//   { action:'address_view' | 'address_submit', token, ... } Kunde trägt Adresse ein, Seite /sign/a/:token (customerData.ts)
 //
 // Admin weitere: doc_create {deal_id, file_base64, file_name, title?, test?} (docsign.ts),
 //                seal_get | seal_set {png} | seal_delete  {developer_id} (seal.ts)
@@ -48,13 +49,16 @@ import { gateCaller } from '../_shared/callerGate.ts'
 import { lotteBild } from '../_shared/lotte.ts'
 import { resolveLang } from '../_shared/recipientLang.ts'
 import { saToken, listTree, download, thumbnail, uploadToken, uploadFile, type DriveFile } from './drive.ts'
-import { checkFile, type FileCheck, type IdPerson } from './ausweis.ts'
+import { checkFile, rereadId, type FileCheck, type IdPerson } from './ausweis.ts'
 import { renderAgreement, type AgreementFields, type PropertyKind, type TemplateRow } from './pdf.ts'
 import { signView, signSubmit } from './sign.ts'
 import { docCreate, docView, docSubmit, docQueueSweep } from './docsign.ts'
 import { loadSeal, saveSeal, removeSeal, sealDataUrl, pngFromInput, MAX_SEAL_BYTES } from './seal.ts'
 import { specialTermsEn, type SpecialTerms } from './terms.ts'
 import { buyerView, findBuyerRow, floraFieldsFor, FLORA_SAMPLE, floraSend, floraWarnings, loadParts, tpSubmit, twoPartySweep } from './twoParty.ts'
+import { addressSubmit, addressView, floraWaitingFor, withCustomerData, type CustomerData } from './customerData.ts'
+import { floraAutoCheck, type AutoCheck } from './floraCheck.ts'
+import { parseMrz } from './mrz.ts'
 import { SB_URL } from '../_shared/sbUrl.ts'
 
 const CORS = {
@@ -81,6 +85,7 @@ const MAX_IMAGE_BYTES = 3_700_000           // Bilder darüber (Base64 > 5 MB) l
 const SWEEP_BUDGET_MS = 300_000             // ein Sweep-Lauf bearbeitet nur so lange Verträge
 const SEND_PHASES = ['reservierung']        // nur in dieser Phase geht ein Vertrag AUTOMATISCH raus
 const MAX_ATTEMPTS = 3
+const STALL_MS = 48 * 3600e3                // Flora: so lange warten, bis Sven hört, dass der Kunde noch nicht geliefert hat
 const AI_MIME = /^(application\/pdf|image\/(jpeg|png|webp|gif))$/
 const DEAD_PHASES = ['deal_verloren', 'archiviert']
 // Bild zur WhatsApp an den Bauträger (Higgsfield, Unterlagen auf dem Schreibtisch). Ohne Bild
@@ -131,6 +136,8 @@ export interface AgreementRow {
   link_delivery: Record<string, { at?: string; tries?: number; next?: string; err?: string; gave_up?: boolean }> | null
   final_delivery: Record<string, { at?: string; tries?: number; next?: string; err?: string; gave_up?: boolean }> | null
   final_sent_at: string | null
+  // Flora-Automatik: Adresse vom Kunden (Seite /sign/a/<address_token>) und Bericht der Prüfung vor dem Versand
+  address_token: string | null; customer_data: CustomerData | null; auto_check: AutoCheck | null
 }
 export interface Ctx {
   /** reservation_notes = Sondervereinbarungen, von Sven auf Deutsch bei der Wohnungsauswahl */
@@ -522,7 +529,7 @@ function signedAgreementOf(checked: Record<string, CheckedFile>, ctx: Ctx, row: 
   return hits[0] ?? null
 }
 
-async function sendOut(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array, fields: AgreementFields, buyers: Buyer[], test: boolean): Promise<Record<string, unknown>> {
+async function sendOut(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array, fields: AgreementFields, buyers: Buyer[], test: boolean, report?: AutoCheck | null): Promise<Record<string, unknown>> {
   // Versand-Sperre: Sweep und Knopf im CRM dürfen nie gleichzeitig senden (läuft nach 10 Min ab)
   if (!test) {
     const stale = new Date(Date.now() - 10 * 60_000).toISOString()
@@ -530,12 +537,12 @@ async function sendOut(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array,
       .eq('id', row.id).or(`sending_at.is.null,sending_at.lt.${stale}`).select('id')
     if (!claim?.length) throw new Error('Der Vertrag wird gerade schon gesendet. Bitte in ein paar Minuten nachsehen.')
   }
-  try { return await sendOutLocked(sb, row, ctx, pdf, fields, buyers, test) }
+  try { return await sendOutLocked(sb, row, ctx, pdf, fields, buyers, test, report) }
   finally { if (!test) await sb.from('reservation_agreements').update({ sending_at: null }).eq('id', row.id) }
 }
 
-async function sendOutLocked(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array, fields: AgreementFields, buyers: Buyer[], test: boolean): Promise<Record<string, unknown>> {
-  if (ctx.template.layout === 'flora') return await floraSend(sb, row, ctx, pdf, fields, buyers, test)
+async function sendOutLocked(sb: Client, row: AgreementRow, ctx: Ctx, pdf: Uint8Array, fields: AgreementFields, buyers: Buyer[], test: boolean, report?: AutoCheck | null): Promise<Record<string, unknown>> {
+  if (ctx.template.layout === 'flora') return await floraSend(sb, row, ctx, pdf, fields, buyers, test, report)
   const fname = fileNameFor(ctx)
   // Mail-Anhang ohne Leerzeichen: denomailer kürzt Namen mit Leerzeichen sonst auf das erste Wort.
   const attachment = { filename: fname.replace(/\s*-\s*/g, '_').replace(/\s+/g, '_'), content_base64: b64(pdf), content_type: 'application/pdf' }
@@ -732,6 +739,8 @@ async function processRow(sb: Client, initial: AgreementRow, m: Mode): Promise<R
   // Automatisch nur in der Phase Reservierung (Deal zurückgeschoben = nichts senden)
   if (!SEND_PHASES.includes(ctx.deal.phase)) return { deal: row.deal_id, wartet: `Phase ${ctx.deal.phase}` }
   const retrying = Object.values(scan.checked).some(c => (c.failed ?? 0) > 0 && (c.failed ?? 0) < MAX_ATTEMPTS)
+  const flora = ctx.template.layout === 'flora'
+  if (flora && !buyers.length) await stallNotice(sb, row, kunde, ctx, 'Der Ausweis fehlt noch')
   if (!buyers.length || scan.pending || retrying) return { deal: row.deal_id, wartet: scan.pending || retrying ? 'weitere Dateien in Prüfung' : 'kein Ausweis' }
   if (lastIdAt && Date.now() - Date.parse(lastIdAt) < QUIET_MIN * 60_000) return { deal: row.deal_id, wartet: 'weitere Ausweise abwarten' }
 
@@ -743,12 +752,31 @@ async function processRow(sb: Client, initial: AgreementRow, m: Mode): Promise<R
 
   const terms = await specialTermsEn(sb, row.id, row.special_terms, ctx.deal.reservation_notes)
   // Zwei-Parteien: von Hand Eingetragenes (Adresse, Anrede usw.) bleibt, der Ausweis ergänzt es nur
-  const list = ctx.template.layout === 'flora' ? mergeBuyers(row, buyers, scan.checked) : buyers
+  const list = flora ? withCustomerData(mergeBuyers(row, buyers, scan.checked), row, ctx) : buyers
+  // Flora: Fehlt noch etwas vom Kunden, wird gewartet, statt Sven zu beschäftigen
+  const waiting = flora ? floraWaitingFor(list, row, ctx) : null
+  if (waiting) {
+    await stallNotice(sb, row, kunde, ctx, waiting)
+    return { deal: row.deal_id, wartet: waiting }
+  }
   const { fields, problems } = fieldsFor(ctx, list, terms, row)
   const reasons = gate(ctx, list, problems, scan.checked, minors)
   let pdf: Uint8Array
   try { pdf = await renderAgreement(ctx.template, fields) }
   catch (e) { reasons.push(`PDF: ${(e as Error).message}`); pdf = new Uint8Array() }
+
+  // Flora: Der Vertrag geht nur ohne Sven raus, wenn jeder Wert aus einer zweiten Quelle bestätigt ist
+  let report: AutoCheck | null = null
+  if (flora && !reasons.length) {
+    report = await floraAutoCheck(sb, row, ctx, fields, list, pdf, scan.checked)
+    const tries = (row.auto_check?.tries ?? 0) + 1
+    await sb.from('reservation_agreements').update({ auto_check: { ...report, tries }, updated_at: new Date().toISOString() }).eq('id', row.id)
+    if (report.retry && tries < MAX_ATTEMPTS) return { deal: row.deal_id, wartet: 'Zweite Ausweislesung wird wiederholt' }
+    reasons.push(...report.reasons)
+    // Die Prüfung dauert: Sven kann inzwischen von Hand gesendet haben
+    const { data: now } = await sb.from('reservation_agreements').select('status').eq('id', row.id).maybeSingle()
+    if ((now as { status?: string } | null)?.status !== row.status) return { deal: row.deal_id, skipped: 'Stand geändert' }
+  }
 
   if (reasons.length || m === 'test') {
     const reason = m === 'test' && !reasons.length ? 'Testmodus: Vertrag ist fertig, ging nur an Sven' : reasons.join(' · ')
@@ -765,7 +793,14 @@ async function processRow(sb: Client, initial: AgreementRow, m: Mode): Promise<R
     await sb.from('reservation_agreements').update({ sven_notified_at: new Date().toISOString() }).eq('id', row.id)
     return { deal: row.deal_id, pruefen: reason }
   }
-  return { deal: row.deal_id, ...(await sendOut(sb, row, ctx, pdf, fields, list, false)) }
+  return { deal: row.deal_id, ...(await sendOut(sb, row, ctx, pdf, fields, list, false, report)) }
+}
+
+/** Flora: Der Kunde liefert nicht. Sven erfährt das einmal, automatisch nachgefasst wird nicht. */
+async function stallNotice(sb: Client, row: AgreementRow, kunde: string, ctx: Ctx, what: string): Promise<void> {
+  if (row.sven_notified_at || Date.now() - Date.parse(row.created_at) < STALL_MS) return
+  await whatsappSven(sb, `🐾 Reservierung ${kunde}: ${what}, seit zwei Tagen ist nichts gekommen. Magst du nachfassen? Den Link für die Adresse findest du im CRM beim Kunden:\n${CRM_LEAD}${ctx.lead.id}`)
+  await sb.from('reservation_agreements').update({ sven_notified_at: new Date().toISOString() }).eq('id', row.id)
 }
 
 /** Digital unterschrieben, aber der Drive-Upload ging schief: erneut versuchen (bis 7 Tage). */
@@ -853,7 +888,7 @@ async function rowFor(sb: Client, dealId: string, ctx: Ctx): Promise<AgreementRo
       data: null, template_snapshot: null, review_reason: null, error: null, sent_at: null, sent_to: null,
       seller_signed_at: null, seller_signer_name: null, seller_sign_meta: null, signed_pdf_path: null, signed_file_id: null,
       buyer_sign_token: null, contract: null, buyer_signed_at: null, completed_at: null, finalizing_at: null,
-      link_delivery: null, final_delivery: null, final_sent_at: null, unit_document_id: null,
+      link_delivery: null, final_delivery: null, final_sent_at: null, unit_document_id: null, auto_check: null,
       updated_at: new Date().toISOString(),
     }).eq('id', existing.id).select('*').single()
     if (error) throw new Error(error.message)
@@ -898,7 +933,7 @@ Deno.serve(async (req) => {
   // Öffentliche Unterschriftsseite: nur mit gültigem Token, kein Login (sign.ts prüft alles)
   if (req.method === 'POST') {
     const peek = await req.clone().json().catch(() => ({})) as Record<string, unknown>
-    if (['sign_view', 'sign_submit', 'doc_view', 'doc_submit', 'buyer_view', 'buyer_submit'].includes(String(peek.action))) {
+    if (['sign_view', 'sign_submit', 'doc_view', 'doc_submit', 'buyer_view', 'buyer_submit', 'address_view', 'address_submit'].includes(String(peek.action))) {
       const sbPub = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
       try {
         const res = peek.action === 'sign_view' ? await signView(sbPub, peek)
@@ -906,6 +941,8 @@ Deno.serve(async (req) => {
           : peek.action === 'doc_view' ? await docView(sbPub, peek)
           : peek.action === 'buyer_view' ? await buyerView(sbPub, peek)
           : peek.action === 'buyer_submit' ? await buyerSubmit(sbPub, peek, req)
+          : peek.action === 'address_view' ? await addressView(sbPub, peek)
+          : peek.action === 'address_submit' ? await addressSubmit(sbPub, peek, req)
           : await docSubmit(sbPub, peek, req)
         return json(res.body, res.status)
       } catch (e) {
@@ -949,6 +986,17 @@ Deno.serve(async (req) => {
       const bytes = new Uint8Array(bin.length)
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
       return json({ ok: true, result: await checkFile(bytes, String(body.mime ?? 'application/pdf'), String(body.name ?? 'datei')) })
+    }
+
+    if (action === 'check_id') {
+      // Diagnose: Zweitlesung eines Ausweises samt Prüfziffern (nichts wird gespeichert)
+      const data = String(body.base64 ?? '')
+      if (!data) return json({ error: 'base64 fehlt' }, 400)
+      const bin = atob(data)
+      const bytes = new Uint8Array(bin.length)
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+      const reads = await rereadId(bytes, String(body.mime ?? 'image/png'), String(body.name ?? 'datei'))
+      return json({ ok: true, reads: reads?.map(r => ({ ...r, mrz: r.mrz_lines?.length ? parseMrz(r.mrz_lines) : null })) ?? null })
     }
 
     // Firmenstempel des Bauträgers (CRM: Vorlage → Firmenstempel)
@@ -1032,6 +1080,7 @@ Deno.serve(async (req) => {
         buyers = mergeBuyers(row, found.buyers, checked)
         minors = found.minors
       }
+      if (two) buyers = withCustomerData(buyers, row, ctx)
       const terms = await specialTermsEn(sb, row.id, row.special_terms, ctx.deal.reservation_notes)
       const { fields, problems } = fieldsFor(ctx, buyers, terms, row)
       const reasons = [...gate(ctx, buyers, problems, checked, minors), ...(two ? floraWarnings(ctx) : [])]

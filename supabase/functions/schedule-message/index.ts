@@ -26,6 +26,45 @@ const eur = (n: number | null | undefined): string =>
   n != null ? new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n) : ''
 
 // Platzhalter ersetzen; unbekannte/leere → '–'
+// Flora Panorama: Der Kunde trägt seine Adresse selbst ein (Sven 5.11.2026). Die Vorlagen der Regel
+// gelten für alle Bauträger, deshalb wird die Frage nur hier und nur bei Flora eingesetzt.
+// deno-lint-ignore no-explicit-any
+async function floraAddressLink(sb: any, dealId: string, leadId: string, unitId: string, templateId: string): Promise<string> {
+  const base = 'https://portal.happy-property.com/sign/a/'
+  const load = async () => (await sb.from('reservation_agreements').select('id, status, address_token, customer_data').eq('deal_id', dealId).maybeSingle()).data as { id: string; status: string; address_token: string | null; customer_data: { at?: string } | null } | null
+  let row = await load()
+  // Schon geantwortet oder schon unterwegs: nicht noch einmal fragen
+  if (row?.customer_data?.at || ['gesendet', 'unterschrieben'].includes(row?.status ?? '')) return ''
+  if (row?.address_token) return base + row.address_token
+  const token = Array.from(crypto.getRandomValues(new Uint8Array(18)), x => x.toString(16).padStart(2, '0')).join('')
+  if (!row) {
+    const { error } = await sb.from('reservation_agreements').insert({ deal_id: dealId, lead_id: leadId, unit_id: unitId, template_id: templateId, address_token: token })
+    if (!error) return base + token
+    // Der Sweep kann die Zeile im selben Moment angelegt haben
+    row = await load()
+    if (!row) { console.error('[schedule-message] Adresslink', error.message); return '' }
+    if (row.address_token) return base + row.address_token
+  }
+  const { error } = await sb.from('reservation_agreements').update({ address_token: token }).eq('id', row.id)
+  if (error) { console.error('[schedule-message] Adresslink', error.message); return '' }
+  return base + token
+}
+
+function floraAskAddressMail(html: string, link: string): string {
+  const block = `<p style="margin:0 0 20px 0;font-size:15px;line-height:1.8;color:#444444;">Beim Personalausweis bitte Vorder- und R&uuml;ckseite hochladen.</p>`
+    + `<p style="margin:0 0 28px 0;font-size:15px;line-height:1.8;color:#444444;">F&uuml;r den Vertrag brauchen wir au&szlig;erdem deine <strong>Meldeadresse</strong>. Trag sie bitte kurz hier ein, das dauert keine Minute:</p>`
+    + `<table cellpadding="0" cellspacing="0" border="0" style="margin-bottom:36px;"><tr><td style="background-color:#ff795d;border-radius:2px;"><a href="${link}" style="display:inline-block;padding:15px 40px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;letter-spacing:0.5px;">Adresse eintragen &rarr;</a></td></tr></table>`
+  const at = html.search(/<p [^>]*>Sobald die Unterlagen/)
+  if (at >= 0) return html.slice(0, at) + block + html.slice(at)
+  return html.includes('</body>') ? html.replace('</body>', `${block}</body>`) : html + block
+}
+
+function floraAskAddressWa(text: string, link: string): string {
+  const block = `Beim Personalausweis bitte Vorder- und Rückseite hochladen.\n\nFür den Vertrag brauchen wir außerdem deine Meldeadresse. Trag sie bitte kurz hier ein, das dauert keine Minute:\n${link}`
+  const anchor = 'Sobald sie da ist, kümmern wir uns um den Rest.'
+  return text.includes(anchor) ? text.replace(anchor, `${block}\n\nSobald beides da ist, kümmern wir uns um den Rest.`) : `${text}\n\n${block}`
+}
+
 function substitute(template: string, data: Record<string, string>): string {
   let result = template
   for (const [key, value] of Object.entries(data)) {
@@ -160,6 +199,7 @@ Deno.serve(async (req: Request) => {
     // Bauträger mit Reservierungsvorlage (z. B. Mito, 15.10.): den Vertrag füllt das System
     // selbst aus, sobald der Ausweis im Drive-Ordner liegt (Edge reservation-agreement).
     let unitDevHasResTemplate = false
+    let floraAdresse = ''
     if (dealData?.unit_id) {
       const { data: unit } = await supabase.from('crm_project_units')
         .select('unit_number, price_net, price_gross, vat_rate, project_id, crm_projects(name, developer)').eq('id', dealData.unit_id).maybeSingle()
@@ -191,7 +231,7 @@ Deno.serve(async (req: Request) => {
               .select('email').eq('developer_id', devId).eq('drive_access', true)
             unitDevEmails = ((withDrive ?? []) as { email?: string | null }[]).map(x => (x.email ?? '').trim()).filter(Boolean)
             const { data: resTpl } = await supabase.from('reservation_templates')
-              .select('id, extra').eq('developer_id', devId).eq('is_active', true).limit(1).maybeSingle()
+              .select('id, extra, layout').eq('developer_id', devId).eq('is_active', true).limit(1).maybeSingle()
             // Vorlage kann auf einzelne Wohnungen begrenzt sein (Flora Panorama: nur die Angebotsapartments)
             const resX = (resTpl as { extra?: { only_project_id?: string; only_units?: string[] } } | null)?.extra
             const resInScope = !resX?.only_project_id || (resX.only_project_id === (unit as { project_id?: string }).project_id && (!resX.only_units?.length || resX.only_units.includes(unitNumber)))
@@ -199,6 +239,9 @@ Deno.serve(async (req: Request) => {
             const { data: resMode } = await supabase.from('crm_settings').select('value').eq('key', 'reservation_agreement_mode').maybeSingle()
             const modeOn = String((resMode as { value?: unknown } | null)?.value ?? '').replace(/"/g, '').trim() === 'on'
             unitDevHasResTemplate = !!resTpl && modeOn && resInScope
+            if (unitDevHasResTemplate && event_type === 'reservierung' && deal_id && (resTpl as { layout?: string }).layout === 'flora') {
+              floraAdresse = await floraAddressLink(supabase, deal_id, lead_id, dealData.unit_id, (resTpl as { id: string }).id)
+            }
           }
         }
       }
@@ -432,6 +475,11 @@ Deno.serve(async (req: Request) => {
           emailBody += `<div style="font-family:Arial,sans-serif;font-size:15px;color:#374151;margin-top:16px;padding-top:12px;border-top:1px solid #e5e7eb;white-space:pre-wrap"><strong>Bemerkung zum Kunden:</strong><br>${finNotes.replace(/</g, '&lt;')}</div>`
         }
         if (waText && !waText.includes(finNotes)) waText += `\n\nBemerkung zum Kunden:\n${finNotes}`
+      }
+      if (floraAdresse && rule.recipient === 'client') {
+        if (emailBody) emailBody = floraAskAddressMail(emailBody, floraAdresse)
+        if (emailSubject) emailSubject = emailSubject.replace('Nur noch dein Ausweis fehlt', 'Nur noch Ausweis und Adresse fehlen')
+        if (waText) waText = floraAskAddressWa(waText, floraAdresse)
       }
       const hasEmail = !!(emailSubject && emailBody), hasWa = !!waText
       if (!hasEmail && !hasWa) { skipped++; continue }

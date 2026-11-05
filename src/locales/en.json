@@ -75,7 +75,8 @@
       "cancelled": "Cancelled",
       "signed": "Signed, filed with the unit",
       "notStarted": "Starts with stage Reservation",
-      "twoRunning": "Signatures in progress"
+      "twoRunning": "Signatures in progress",
+      "waitingData": "Waiting for ID and address"
     },
     "modeTest": "Test mode",
     "modeOff": "Off",
@@ -123,7 +124,12 @@
     "titleDeed": "Amount (g) at title deed, net euros",
     "contractHint": "The system calculates all instalments from the net price. Check them in the preview.",
     "confirmResign": "Warning: signatures already exist ({{names}}). Sending again voids them and everyone has to sign again. Really send again?",
-    "sentOpen": "Sent. Still open, retried automatically: {{list}}"
+    "sentOpen": "Sent. Still open, retried automatically: {{list}}",
+    "customerData": "Address from customer",
+    "customerDataOpen": "not entered yet",
+    "copyAddressLink": "Copy address link for the customer",
+    "autoCheck": "Check before sending",
+    "customerSecond": "Second buyer"
   },
   "reservationTpl": {
     "title": "Reservation template",
@@ -2099,7 +2105,11 @@
       "ratedBad": "👎 Noted as a weak lead.",
       "ratedGoodSubject": "👍 Good lead",
       "ratedBadSubject": "👎 Weak lead",
-      "dupWarn": "Careful: a contact with the same name, email or number already exists: {{names}}. Create anyway?"
+      "dupWarn": "Careful: a contact with the same name, email or number already exists: {{names}}. Create anyway?",
+      "address": "Address",
+      "street": "Street and house number",
+      "postalCode": "Postal code",
+      "city": "City"
     },
     "sources": {
       "meta": "META Ads",
@@ -12221,5 +12231,38 @@
     "completeVendor": "The final agreement comes by email and WhatsApp.",
     "bankTitle": "Bank details for the deposit",
     "vendorFirst": "The developer has to sign first."
+  },
+  "reservationAddress": {
+    "title": "Your details for the reservation agreement",
+    "intro": "Hi {{name}}, your name and ID number come from your ID. Your address is not on it, so we need it from you. It will appear in the agreement exactly as you enter it.",
+    "street": "Street and house number",
+    "postal": "Postal code",
+    "city": "City",
+    "country": "Country",
+    "choose": "Please choose",
+    "otherCountry": "Other country",
+    "countryName": "Country, in English please",
+    "phone": "Phone",
+    "email": "Email",
+    "mr": "Mr.",
+    "mrs": "Mrs.",
+    "secondAsk": "I am buying together with a second person",
+    "secondHint": "Please also upload the ID of the second person to your folder.",
+    "firstName": "First name",
+    "lastName": "Last name",
+    "sameAddress": "Same address as above",
+    "submit": "Send details",
+    "errRequired": "Please fill in",
+    "errHouseNumber": "Please include the house number",
+    "errPostal": "Please check the postal code",
+    "errInvalid": "Please check this entry",
+    "errSummary": "Please check the marked fields.",
+    "test": "Test: nothing is saved in the CRM.",
+    "notFound": "This link is not valid. Please contact Happy Property.",
+    "error": "Something went wrong. Please try again in a minute.",
+    "closed": "Thank you, we already have everything we need for your agreement.",
+    "doneTitle": "Thank you!",
+    "doneText": "We have your details. As soon as your ID is in your folder too, we will prepare your reservation agreement. First the developer signs, then you receive your link to sign.",
+    "toFolder": "Upload your ID to your folder"
   }
 }
