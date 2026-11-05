@@ -45,6 +45,9 @@ const STOP_PATTERNS: RegExp[] = [
   /leave\s+me\s+alone/i,
   /do\s*n('|o)?t\s+contact/i,
   /stop\s+contacting/i,
+  // Vertipper am Handy (Renate Zimmer, 5.11.2026: „Dtop"): nur als ganze Nachricht
+  // und nur mit einer Nachbartaste des S. „Top" (Lob) fällt bewusst nicht darunter.
+  /^\W*[adweqxyz]topp?\W*$/i,
 ]
 export function detectsStopIntent(text: string): boolean {
   return STOP_PATTERNS.some((re) => re.test(text))
@@ -81,6 +84,28 @@ async function logUnknown(sb: SupabaseClient, ev: WaEvent, direction: 'inbound' 
     whatsapp_message_id: ev.uid ? String(ev.uid) : null,
   })
   if (error && error.code !== '23505') console.warn(`[${tag}] unbekannte Nummer:`, error.message)
+}
+
+/**
+ * STOPP einer Nummer ohne Lead: Abonnenten dieser Nummer abmelden und ihre offenen
+ * Nachrichten stornieren. Vorher landete die Antwort nur im Posteingang, der Abonnent
+ * blieb angemeldet (Stephan Weiland, 5.11.2026). Der Klaviyo-Import enthält
+ * Telefon-Dubletten, deshalb alle Zeilen der Nummer. Liefert den DB-Fehler oder null.
+ */
+async function abonnentAbmelden(sb: SupabaseClient, digits: string, text: string, tag: string): Promise<string | null> {
+  const { data: subs, error: sErr } = await sb.from('newsletter_subscribers').select('id')
+    .ilike('phone', `%${digits.slice(-8)}`).is('optout_at', null).limit(20)
+  if (sErr) return sErr.message
+  const ids = ((subs ?? []) as { id: string }[]).map(s => s.id)
+  if (!ids.length) return null
+  const { error: uErr } = await sb.from('newsletter_subscribers').update({ optout_at: new Date().toISOString() }).in('id', ids)
+  if (uErr) return uErr.message
+  const { error: cErr } = await sb.from('scheduled_messages')
+    .update({ status: 'cancelled', error_message: `STOPP per WhatsApp: ${text.slice(0, 100)}` })
+    .in('subscriber_id', ids).eq('status', 'pending')
+  if (cErr) console.warn(`[${tag}] Storno nach STOPP:`, cErr.message)
+  console.log(`[${tag}] STOPP: ${ids.length} Abonnent(en) abgemeldet`)
+  return null
 }
 
 export type WaOutcome = 'dupe' | 'outbound' | 'ignored' | 'no-lead' | 'processed' | 'error'
@@ -186,6 +211,12 @@ export async function processWaEvent(sb: SupabaseClient, ev: WaEvent, tag: strin
   }
 
   if (!lead) {
+    // STOPP ohne Lead: vielleicht ein Abonnent. Ein Fehler hier darf die Nachricht
+    // nicht aus dem Posteingang halten, er wird erst am Ende gemeldet.
+    const stopErr = digits.length >= 7 && !ev.mediaOnly && detectsStopIntent(text)
+      ? await abonnentAbmelden(sb, digits, text, tag)
+      : null
+    if (stopErr) console.error(`[${tag}] STOPP-Abmeldung fehlgeschlagen:`, stopErr)
     // Kein Lead, vielleicht ein Newsletter-Abonnent, der auf die WhatsApp-Fassung
     // mit seiner neuen Mailadresse antwortet (waMailUpdate.ts).
     if (digits.length >= 7 && !ev.mediaOnly && !detectsStopIntent(text)) {
@@ -202,7 +233,7 @@ export async function processWaEvent(sb: SupabaseClient, ev: WaEvent, tag: strin
     if (!ev.mediaOnly && !detectsStopIntent(text) && APPT_HINT.test(text)) {
       await callBot('engage_unknown', null, text, tag, { phone: ev.phone, push_name: ev.pushName ?? null })
     }
-    return { outcome: 'no-lead' }
+    return stopErr ? { outcome: 'error', error: stopErr } : { outcome: 'no-lead' }
   }
 
   await sb.from('activities').insert({

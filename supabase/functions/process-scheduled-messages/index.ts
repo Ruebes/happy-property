@@ -29,7 +29,8 @@ import { buildMimeContent } from '../_shared/mimeBody.ts'
 import { withSocialFooter } from '../_shared/socialFooter.ts'
 import { buildIcs, toB64 } from '../_shared/ics.ts'
 import { bookingUrl } from '../_shared/bookingLink.ts'
-import { isHardSmtpBounce, recordBounce } from '../_shared/emailBounce.ts'
+import { bounceKey, isHardSmtpBounce, loadBouncedKeys, recordBounce } from '../_shared/emailBounce.ts'
+import { ladeWaLimitStand, waLimitGrund, waLimitNochmal, type WaLimitGrund, type WaLimitStand } from '../_shared/waLimit.ts'
 import { isOptedOut, loadNewsletterOptoutKeys, type OptoutKeys } from '../_shared/newsletterOptout.ts'
 import { NO_WHATSAPP_RE, markWaUnreachable, clearWaUnreachable } from '../_shared/phonePlausible.ts'
 import { inRuhezeit, ruhezeitZiel, uhrzeit, zeitzoneFuer } from '../_shared/ruhezeit.ts'
@@ -650,6 +651,11 @@ Deno.serve(async (req: Request) => {
     const refiredLeads = new Set<string>()
     // Newsletter-Abmeldungen ueber Lead/Abonnent hinweg, einmal je Lauf geladen.
     let optoutKeys: OptoutKeys | null = null
+    // Bremse für WhatsApp-Wellen (waLimit.ts): Stand einmal je Lauf laden, Entscheidung
+    // je Empfänger merken, damit weitere Teile einer Nachricht dem ersten Teil folgen.
+    let waLimitStand: WaLimitStand | null = null
+    const waLimitJe = new Map<string, WaLimitGrund | null>()
+    let bouncedKeys: Set<string> | null = null
 
     // ── Schritt 2: Jede Nachricht senden ─────────────────────────────────────
     for (const msg of messages as {
@@ -672,6 +678,8 @@ Deno.serve(async (req: Request) => {
       subscriber_id: string | null
       // Bisherige Wiederholungen (TimelinesAI-Kontingent, siehe unten).
       retry_count:   number | null
+      // Nummer des Teils einer mehrteiligen WhatsApp (0, 1, 2 ...).
+      wa_part?:      number | null
     }[]) {
       // Jede Nachricht in ihrem eigenen Fehler-Netz: ein unerwarteter Fehler
       // (Netzwerk, Übersetzung, DB) darf NUR diese eine Nachricht kippen. Vorher riss
@@ -688,6 +696,7 @@ Deno.serve(async (req: Request) => {
         let waAccountGone = false
         let waSent = false
         let mailLimitHit = false
+        let waLimit: WaLimitGrund | null = null
         const retryCount = msg.retry_count ?? 0
 
         // ── Ruhezeit (Sven 30.10.26): Kunden bekommen zwischen 21 und 8 Uhr ihrer
@@ -1070,7 +1079,23 @@ Deno.serve(async (req: Request) => {
         if ((msg.type === 'whatsapp' || msg.type === 'both') && msg.whatsapp_text) {
           const phone = rcpt.phone
           if (phone) {
-            if (waApiKey && waSender) {
+            // ── Bremse für WhatsApp-Wellen (waLimit.ts) ───────────────────────────
+            if (msg.event_type === 'newsletter' && waApiKey && waSender) {
+              const wer = msg.subscriber_id ?? msg.lead_id ?? msg.id
+              if (waLimitJe.has(wer)) {
+                waLimit = waLimitJe.get(wer) ?? null
+              } else {
+                waLimitStand ??= await ladeWaLimitStand(supabase)
+                waLimit = waLimitGrund(waLimitStand)
+                waLimitJe.set(wer, waLimit)
+                if (!waLimit) { waLimitStand.lauf++; waLimitStand.stunde++; waLimitStand.tag++ }
+              }
+            }
+            if (waLimit) {
+              console.warn(`[process-scheduled] WhatsApp-Limit (${waLimit}): ${msg.id}`)
+              if (emailSent) errors.push('WhatsApp-Limit erreicht, nur per Mail gesendet')
+              else success = false
+            } else if (waApiKey && waSender) {
               try {
                 await sendWhatsApp({
                   supabase,
@@ -1156,6 +1181,28 @@ Deno.serve(async (req: Request) => {
           console.error(`[process-scheduled] Retry-Update fehlgeschlagen (${msg.id}):`, rqErr.message)
         }
 
+        // ── WhatsApp-Limit erreicht und noch keine Mail raus ──────────────
+        // Mit zustellbarer Adresse geht der Text gleich unten als Mail raus. Mehrteilige
+        // Nachrichten und Empfänger ohne zustellbare Adresse warten stattdessen auf den
+        // nächsten freien Platz: Genau sie bekommen den Newsletter ja per WhatsApp, weil
+        // ihre Mail nicht ankommt.
+        if (waLimit && !emailSent) {
+          const mailGeht = msg.type === 'whatsapp' && msg.wa_part == null && !!rcpt.email && !!smtpUser && !!smtpPass
+            && !(bouncedKeys ??= await loadBouncedKeys(supabase)).has(bounceKey(rcpt.email))
+          if (!mailGeht) {
+            const next = waLimitNochmal(waLimit, msg.wa_part)
+            await supabase.from('scheduled_messages').update({
+              status:        'pending',
+              scheduled_at:  next.toISOString(),
+              // Die Mail ist gescheitert oder fehlt: nur noch die WhatsApp nachholen.
+              ...(msg.type === 'both' ? { type: 'whatsapp' } : {}),
+              error_message: `WhatsApp-Limit erreicht (${waLimit}), neuer Versuch um ${next.toISOString().slice(11, 16)} UTC`,
+            }).eq('id', msg.id)
+            processed.push({ id: msg.id, result: `wa_limit:${waLimit}` })
+            continue
+          }
+        }
+
         // ── WhatsApp unzustellbar → derselbe Text als Mail ────────────────
         // Erst hier, nach dem Wiederholungsplan: Kontingent und getrenntes Konto
         // sind voruebergehend, da wird spaeter nochmal per WhatsApp versucht.
@@ -1174,7 +1221,7 @@ Deno.serve(async (req: Request) => {
               smtpUser, smtpPass,
             })
             success = true
-            errors.push('WhatsApp nicht zustellbar — als Mail gesendet')
+            errors.push(waLimit ? 'WhatsApp-Limit erreicht, als Mail gesendet' : 'WhatsApp nicht zustellbar — als Mail gesendet')
             await logActivity(supabase, {
               lead_id: msg.lead_id,
               deal_id: msg.deal_id,
