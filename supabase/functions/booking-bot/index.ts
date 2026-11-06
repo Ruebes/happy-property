@@ -41,6 +41,7 @@ import {
 import { antwortSprache, dauerhaftEnglisch, spracheErkennen, sprachNotiz, SPRACH_BETREFF, type Sprache } from '../_shared/kundenSprache.ts'
 import { ruhezeitZiel } from '../_shared/ruhezeit.ts'
 import { SB_URL } from '../_shared/sbUrl.ts'
+import { NO_WHATSAPP_RE } from '../_shared/phonePlausible.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -475,6 +476,25 @@ async function setConv(admin: SupabaseClient, id: string, patch: Record<string, 
   await admin.from('booking_conversations').update(patch).eq('id', id)
 }
 
+// Versand gescheitert: Der Kunde hat nichts bekommen, also darf kein Gespräch so tun,
+// als warte es auf seine Antwort (Sperre 5.11.2026). Sonst gilt sein nächstes „Ja" für
+// Zeiten, die er nie gesehen hat, und die Wiederholung überspringt sich selbst als
+// „aktives Gespräch". Neu angelegt: wieder weg. Schon vorhanden: zurück auf den Stand davor.
+// Steht es nicht mehr auf awaiting_choice, hat sich inzwischen etwas getan: nichts anfassen.
+// Ausnahme Nummer ohne WhatsApp: Von dort kann keine Antwort kommen, und das Gespräch
+// bleibt wie bisher als Merker stehen, sonst plant jede Deck-Ansicht einen neuen Start
+// und der Kunde bekommt jedes Mal Lottes Ersatz-Mail.
+async function versandGescheitert(admin: SupabaseClient, fehler: unknown, id: string | null | undefined, vorher?: Record<string, unknown>): Promise<void> {
+  if (!id || NO_WHATSAPP_RE.test(fehler instanceof Error ? fehler.message : String(fehler))) return
+  try {
+    const gespraech = admin.from('booking_conversations')
+    const { error } = vorher
+      ? await gespraech.update(vorher).eq('id', id).eq('state', 'awaiting_choice')
+      : await gespraech.delete().eq('id', id).eq('state', 'awaiting_choice')
+    if (error) console.warn('[booking-bot] Gespräch zurücknehmen:', error.message)
+  } catch (e) { console.warn('[booking-bot] Gespräch zurücknehmen:', e) }
+}
+
 // Terminart erfragen (nach fixiertem Slot)
 async function askType(admin: SupabaseClient, convId: string, phone: string, leadId: string, name: string | null, slot: Slot) {
   const msg = `Super, ${first(name) || 'gerne'}! Ich trage dir ${slot.label} Uhr ein. 🙂\n\nLieber ein kurzes Telefonat über WhatsApp oder einen Zoom-Call?`
@@ -770,9 +790,9 @@ async function handleNudge(admin: SupabaseClient, leadId: string, stage: number,
   }
   if (await recentlyAcqMessaged(admin, leadId)) return json({ ok: true, skipped: 'recent_acquisition_wa' })
   // Irgendein aktives Gespräch des Leads (egal welche Quelle) → kein Doppel-Messaging.
-  const { data: conv } = await admin.from('booking_conversations').select('id, state, created_at')
+  const { data: conv } = await admin.from('booking_conversations').select('id, state, created_at, proposed_slots, last_message, expires_at, snoozed_until, attempts')
     .eq('lead_id', leadId).not('state', 'in', '(booked,handoff,expired)').order('created_at', { ascending: false }).limit(1).maybeSingle()
-  const c = conv as null | { id: string; state: string; created_at: string }
+  const c = conv as null | { id: string; state: string; created_at: string; proposed_slots: Slot[] | null; last_message: string | null; expires_at: string; snoozed_until: string | null; attempts: number }
   // Wiedervorlage nach einer Bedenkzeit: das Gespraech schlaeft und muss GEWECKT
   // werden. Ohne diesen Zweig faellt es durch beide Filter darunter (state ist nicht
   // awaiting_choice, und der Kunde HAT ja geantwortet) und der Bot meldet sich nie
@@ -803,9 +823,21 @@ async function handleNudge(admin: SupabaseClient, leadId: string, stage: number,
   const intro = fillName((introOverride && introOverride.trim()) ? introOverride : await botText(admin, keys, 'Hi {{vorname}}, wollen wir kurz sprechen? Ich hätte zwei Zeiten frei:'), l.first_name)
   const msg = buildProposal(intro, slots, isFinal)
   const expires = new Date(Date.now() + 4 * 24 * 3600e3).toISOString()   // rollend, damit späte Antworten greifen
+  let neuId: string | null = null
   if (c) await setConv(admin, c.id, { proposed_slots: slots, last_message: msg, expires_at: expires })
-  else await admin.from('booking_conversations').insert({ lead_id: leadId, source, state: 'awaiting_choice', proposed_slots: slots, last_message: msg, expires_at: expires })
-  await sendWa(phone, msg, SVEN_QUELLEN.includes(source)); await logWa(admin, leadId, msg, 'outbound')
+  else {
+    const { data: neu } = await admin.from('booking_conversations').insert({ lead_id: leadId, source, state: 'awaiting_choice', proposed_slots: slots, last_message: msg, expires_at: expires }).select('id').single()
+    neuId = (neu as { id: string } | null)?.id ?? null
+  }
+  try {
+    await sendWa(phone, msg, SVEN_QUELLEN.includes(source))
+  } catch (e) {
+    // c.state ist der Stand vor dem Wecken: eine Wiedervorlage schläft danach weiter
+    // und wird beim nächsten Versuch wieder geweckt.
+    await versandGescheitert(admin, e, c?.id ?? neuId, c ? { state: c.state, snoozed_until: c.snoozed_until, attempts: c.attempts, proposed_slots: c.proposed_slots, last_message: c.last_message, expires_at: c.expires_at } : undefined)
+    throw e
+  }
+  await logWa(admin, leadId, msg, 'outbound')
   return json({ ok: true, nudged: stage, source })
 }
 
@@ -865,7 +897,13 @@ async function handleStart(admin: SupabaseClient, leadId: string, dealId: string
     .insert({ lead_id: leadId, deal_id: dealId, source, state: 'awaiting_choice', proposed_slots: slots, last_message: msg,
               ...(source === 'no_show' ? { expires_at: new Date(Date.now() + 16 * 24 * 3600e3).toISOString() } : {}) })
     .select('id').single()
-  await sendWa(phone, msg, SVEN_QUELLEN.includes(source)); await logWa(admin, leadId, msg, 'outbound')
+  try {
+    await sendWa(phone, msg, SVEN_QUELLEN.includes(source))
+  } catch (e) {
+    await versandGescheitert(admin, e, (conv as { id: string } | null)?.id)
+    throw e
+  }
+  await logWa(admin, leadId, msg, 'outbound')
 
   // No-Show: 5 weitere Nudge-Stufen planen (Tag 1/2/3/5/14). process-scheduled-messages
   // ruft dafür booking-bot nudge; buchen/Opt-Out storniert sie automatisch (Trigger).

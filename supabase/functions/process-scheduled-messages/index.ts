@@ -19,7 +19,7 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { isCronCall } from '../_shared/callerAuth.ts'
-import { getWaProvider, evoConfig, EVO_DISCONNECTED_RE } from '../_shared/waProvider.ts'
+import { getWaProvider, evoConfig, waGetrennt } from '../_shared/waProvider.ts'
 import { lotteBild } from '../_shared/lotte.ts'
 import { translateOutbound } from '../_shared/translate.ts'
 import { SMTPClient }   from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
@@ -742,15 +742,36 @@ Deno.serve(async (req: Request) => {
           // wird ein nie gesendeter Nudge still als „sent" markiert (z.B. Lead ohne
           // Telefonnummer → Kunde bekommt nie eine WhatsApp, und niemand sieht es).
           let botSkip: string | null = null
+          let botFehler = ''
           try {
             const br = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
               method: 'POST',
               headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
               body: JSON.stringify(botBody),
             })
-            const bj = await br.json().catch(() => ({})) as { skipped?: string }
+            const bj = await br.json().catch(() => ({})) as { skipped?: string; error?: string }
             botSkip = br.ok ? (bj.skipped ?? null) : 'error'
+            botFehler = br.ok ? '' : String(bj.error ?? '')
           } catch (e) { console.warn('[process-scheduled] bot_nudge Fehler:', e); botSkip = 'error' }
+
+          // WhatsApp-Nummer getrennt: vorübergehend, also wie jede andere Zeile wiederholen
+          // (retryPlan unten) statt gleich aufzugeben. Sperre 5.11.2026: Nudges gingen sofort
+          // auf failed. Steht vor dem Mail-Ersatz, der gilt erst nach der letzten Wiederholung.
+          if (botSkip === 'error' && waGetrennt(botFehler) && retryCount < ACCOUNT_MAX_RETRIES) {
+            const next = new Date(Date.now() + ACCOUNT_RETRY_MIN * 60000).toISOString()
+            const { error: rqErr } = await supabase.from('scheduled_messages').update({
+              status:        'pending',
+              scheduled_at:  next,
+              retry_count:   retryCount + 1,
+              error_message: `WhatsApp-Nummer auf dem eigenen Server nicht verbunden (Pairing-Code neu eingeben) - Wiederholung ${retryCount + 1}/${ACCOUNT_MAX_RETRIES} um ${next.slice(11, 16)} UTC`,
+            }).eq('id', msg.id)
+            if (!rqErr) {
+              console.warn(`[process-scheduled] account: Bot-Zeile ${msg.id} neu geplant (${retryCount + 1}/${ACCOUNT_MAX_RETRIES}) auf ${next}`)
+              processed.push({ id: msg.id, result: 'retry:account' })
+              continue
+            }
+            console.error(`[process-scheduled] Retry-Update fehlgeschlagen (${msg.id}):`, rqErr.message)
+          }
 
           // no_phone/no_slots/error = echtes Problem → failed + Grund (sichtbar im Postausgang).
           // disabled/optout/has_appointment/engaged/engaged_or_closed = gewollt kein Versand → skipped.
@@ -786,10 +807,11 @@ Deno.serve(async (req: Request) => {
             await supabase.from('scheduled_messages').update({ status: 'failed', error_message: reason, sent_at: new Date().toISOString() }).eq('id', msg.id)
             processed.push({ id: msg.id, result: `bot_failed:${botSkip}` })
           } else if (botSkip) {
-            await supabase.from('scheduled_messages').update({ status: 'skipped', sent_at: new Date().toISOString() }).eq('id', msg.id)
+            // error_message: null räumt den Hinweis einer früheren Wiederholung weg.
+            await supabase.from('scheduled_messages').update({ status: 'skipped', sent_at: new Date().toISOString(), error_message: null }).eq('id', msg.id)
             processed.push({ id: msg.id, result: `bot_skipped:${botSkip}` })
           } else {
-            await supabase.from('scheduled_messages').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', msg.id)
+            await supabase.from('scheduled_messages').update({ status: 'sent', sent_at: new Date().toISOString(), error_message: null }).eq('id', msg.id)
             processed.push({ id: msg.id, result: `bot_${isStart ? 'start' : 'nudge'}:${msg.bot_nudge_stage}` })
           }
           continue
@@ -922,7 +944,14 @@ Deno.serve(async (req: Request) => {
         }
 
         // ── Flow-Builder: Wenn/Dann-Bedingung (E-Mail geöffnet?) zur SENDEZEIT ──
-        const seqCond = (msg as { seq_condition?: { kind?: string; negate?: boolean; token?: string } | null }).seq_condition
+        const seqCond = (msg as { seq_condition?: { kind?: string; negate?: boolean; token?: string; bis?: string } | null }).seq_condition
+        // Nachgeholte Anmeldebestätigung (masterclass-register): nach dem Start der
+        // Masterclass ergibt „du bist dabei“ keinen Sinn mehr.
+        if (seqCond?.kind === 'nur_bis' && seqCond.bis && Date.now() >= new Date(seqCond.bis).getTime()) {
+          await supabase.from('scheduled_messages').update({ status: 'skipped', sent_at: new Date().toISOString(), error_message: 'Zu spät: der Anlass hat schon begonnen' }).eq('id', msg.id)
+          processed.push({ id: msg.id, result: 'skipped:nur_bis' })
+          continue
+        }
         // Deck-Erinnerung (funnel-api, event_type deck_reminder): nur, wenn das Deck seit der
         // Planung nicht geöffnet wurde und der Kunde nicht schon selbst geschrieben hat.
         if (seqCond?.kind === 'deck_not_viewed' && msg.lead_id) {
@@ -1127,7 +1156,7 @@ Deno.serve(async (req: Request) => {
                 if (NO_WHATSAPP_RE.test(errMsg)) { try { await markWaUnreachable(supabase, phone, errMsg) } catch { /* egal */ } }
                 waQuotaHit = /quota_exceeded|mass sending quota/i.test(errMsg)
                 // TimelinesAI: "Whatsapp account not found" / Evolution: Instanz getrennt.
-                waAccountGone = /whatsapp account not found/i.test(errMsg) || EVO_DISCONNECTED_RE.test(errMsg)
+                waAccountGone = waGetrennt(errMsg)
               }
             } else {
               console.warn(`[process-scheduled] WhatsApp (${waProvider}) nicht konfiguriert – simulierter WA an ${phone}`)

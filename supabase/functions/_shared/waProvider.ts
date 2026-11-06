@@ -132,3 +132,10 @@ export function evoErrorText(status: number, data: unknown): string {
 // Erkennungsmuster fuer "Konto/Instanz nicht verbunden" - gleiche Rolle wie
 // TimelinesAIs "Whatsapp account not found" (Retry im Scheduler + Alarm-Mail).
 export const EVO_DISCONNECTED_RE = /nicht verbunden|not connected|connection closed|instanz getrennt/i
+
+// Nummer gerade getrennt, egal welcher Versandweg es meldet. Vorübergehend: Nach dem
+// Neuverbinden geht dieselbe Nachricht durch, also wiederholen statt aufgeben.
+export function waGetrennt(fehler: string | null | undefined): boolean {
+  const t = String(fehler ?? '')
+  return /whatsapp account not found/i.test(t) || EVO_DISCONNECTED_RE.test(t)
+}

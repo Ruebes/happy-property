@@ -740,7 +740,7 @@ Deno.serve(async (req) => {
     // das aus, als haette der Kunde die interne Nachricht bekommen (Sven 26.8.,
     // Fall Holger Rumiantcev an Burkhard Bade). Gesendet wurde immer korrekt an
     // den Empfaenger, nur das Protokoll war irrefuehrend.
-    if (lead_id) {
+    if (lead_id && okResults.length > 0) {
       let anKunde = true
       try {
         // NUR die am Lead gespeicherten Nummern zaehlen als "der Kunde". lead_data
@@ -756,13 +756,40 @@ Deno.serve(async (req) => {
         const ziele = okResults.map(r => tail(String((r as { phone?: string }).phone ?? ''))).filter(x => x.length === 9)
         if (kunde.length && ziele.length) anKunde = ziele.some(z => kunde.includes(z))
       } catch { /* im Zweifel als Kundennachricht protokollieren */ }
-      const empfaenger = recipients.map(r => r.name).filter(Boolean).join(', ')
+      // Nur wer die Nachricht wirklich bekommen hat, die anderen stehen in der Notiz unten.
+      const erreicht = okResults.map(r => (r as { phone?: string }).phone)
+      const empfaenger = recipients.filter(r => erreicht.includes(r.phone)).map(r => r.name).filter(Boolean).join(', ')
       await supabase.from('activities').insert({
         lead_id,
         type:         'whatsapp',
         direction:    'outbound',
         subject:      anKunde ? `WhatsApp: ${event_type}` : `Intern an ${empfaenger || 'Partner'} (nicht an den Kunden)`,
         content:      docs.length ? `${message}\n\n${docs.map(d => `\u{1F4CE} ${d.name}`).join('\n')}` : message,
+        completed_at: new Date().toISOString(),
+        auto:         auto === true,
+      })
+    }
+
+    // Ein Fehlversuch darf nie wie eine gesendete WhatsApp aussehen (Sperre 5.11.2026:
+    // sechs Masterclass-Bestätigungen standen als gesendet im CRM, raus ging keine).
+    // Posteingang, Termin-Bot und Partner-Meldungen lesen type 'whatsapp' als „ging raus".
+    // Deshalb steht ein Fehlversuch als Notiz in der Akte. Der Text selbst beginnt mit
+    // NICHT gesendet, weil ai-draft-reply Notizen ohne Betreff liest. Eine fehlende
+    // Kontaktkarte zählt hier nicht, der Text ist dann ja angekommen.
+    const nichtRaus = (results as Array<{ phone?: string; ok?: boolean; contact_card?: boolean; status?: number; data?: { error?: string } | null; part?: number; parts?: number }>)
+      .filter(r => !r.ok && !r.contact_card)
+    if (lead_id && nichtRaus.length > 0) {
+      const zeilen = nichtRaus.map(r => {
+        const wer = recipients.find(x => x.phone === r.phone)?.name || 'Empfänger'
+        const teile = (r.part ?? 1) > 1 ? ` (nur ${(r.part ?? 1) - 1} von ${r.parts} Teilen sind raus)` : ''
+        return `${wer}${teile}: ${r.data?.error ?? `Fehler HTTP ${r.status ?? '?'}`}`
+      })
+      await supabase.from('activities').insert({
+        lead_id,
+        type:         'note',
+        direction:    'outbound',
+        subject:      `⚠️ WhatsApp NICHT gesendet: ${event_type}`,
+        content:      `NICHT gesendet, diese WhatsApp ist nicht (vollständig) angekommen.\n${zeilen.join('\n')}\n\nGeplanter Text:\n${message}`,
         completed_at: new Date().toISOString(),
         auto:         auto === true,
       })

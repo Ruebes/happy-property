@@ -13,6 +13,8 @@
 //      alle nur per Mail. Sven, 5.11.2026: nach der WhatsApp-Sperre keine Wellen mehr.
 //      Die Abstände passen zum Mail-Budget von rund 50 je Stunde (eine Mail mit Fehler
 //      450 kommt erst 60 Minuten später nochmal, also womöglich nach dem Start).
+//   5. WhatsApp-Nummer gerade getrennt: Bestätigung als scheduled_messages-Zeile
+//      nachholen (bestaetigungNachholen), statt sie zu verlieren.
 //
 // GET ?ics=<event> liefert die Kalenderdatei (Apple/Outlook-Desktop).
 //
@@ -23,6 +25,7 @@ import { buildIcs, toB64 } from '../_shared/ics.ts'
 import { CI } from '../_shared/brand.ts'
 import { ermittleHerkunft, mitHerkunft } from '../_shared/herkunft.ts'
 import { SB_URL } from '../_shared/sbUrl.ts'
+import { waGetrennt } from '../_shared/waProvider.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -218,6 +221,40 @@ async function upsertLead(sb: SupabaseClient, p: { first: string; last: string; 
   return leadId
 }
 
+// ── Bestätigung nachholen, wenn die WhatsApp-Nummer gerade getrennt ist ──────
+// Sperre 5.11.2026: sechs Bestätigungen gingen verloren, weil dieser Weg keine
+// Wiederholung kennt. Die Zeile läuft durch den normalen Scheduler:
+//   event_type newsletter  Bremse (waLimit.ts), Abmelde-Prüfung, STOPP storniert sie
+//   wa_part 0              beim Limit warten statt den Text als zweite Mail zu schicken,
+//                          die Bestätigungsmail ist ja schon raus
+//   +30 Minuten            gilt nicht als Sofort-Nachricht, also greift die Ruhezeit
+//   subscriber_id          geht an die im Formular angegebene Nummer
+//   lead_id                nach dem Versand steht die WhatsApp in der Kundenakte
+//   nur_bis                „du bist dabei“ ergibt nach dem Start keinen Sinn mehr
+const NACHHOLEN_MIN = 30   // wie ACCOUNT_RETRY_MIN im Scheduler
+async function bestaetigungNachholen(sb: SupabaseClient, p: { subId: string | null; leadId: string | null; text: string; bild: string | null; bis: string }): Promise<void> {
+  if (!p.subId && !p.leadId) return
+  const wann = new Date(Date.now() + NACHHOLEN_MIN * 60_000)
+  if (wann.getTime() >= new Date(p.bis).getTime()) return
+  // Doppelte Anmeldung während der Trennung: keine zweite Zeile mit demselben Text.
+  let offen = sb.from('scheduled_messages').select('id').eq('status', 'pending').eq('event_type', 'newsletter').eq('type', 'whatsapp').eq('whatsapp_text', p.text).limit(1)
+  offen = p.subId ? offen.eq('subscriber_id', p.subId) : offen.eq('lead_id', p.leadId!)
+  const { data: schon } = await offen
+  if (schon?.length) return
+  const { error } = await sb.from('scheduled_messages').insert({
+    subscriber_id: p.subId, lead_id: p.leadId, type: 'whatsapp', event_type: 'newsletter', status: 'pending',
+    scheduled_at: wann.toISOString(), whatsapp_text: p.text, whatsapp_image_url: p.bild, wa_part: 0,
+    seq_condition: { kind: 'nur_bis', bis: p.bis },
+  })
+  if (error) { console.error('[masterclass-register] Bestätigung nachholen:', error.message); return }
+  // Damit niemand die Bestätigung von Hand nachschickt.
+  if (p.leadId) await sb.from('activities').insert({
+    lead_id: p.leadId, type: 'note', direction: 'outbound', auto: true, completed_at: new Date().toISOString(),
+    subject: '🔁 WhatsApp-Bestätigung wird automatisch wiederholt',
+    content: 'Die WhatsApp-Nummer ist gerade getrennt. Die Masterclass-Bestätigung wird wiederholt, sobald sie wieder verbunden ist. Bitte nicht von Hand nachschicken.',
+  })
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
   const url = new URL(req.url)
@@ -317,13 +354,21 @@ Deno.serve(async (req) => {
     attachment: { filename: `masterclass-${key}.ics`, content_base64: toB64(icsFor(key, ev)), content_type: 'text/calendar' },
   }) })
   if (!mailRes.ok) console.error('[masterclass-register] send-email:', mailRes.status, await mailRes.text())
+  let waNachholen = false
   if (phone) {
     const waRes = await fetch(`${base}/send-whatsapp`, { method: 'POST', headers: auth, body: JSON.stringify({
       event_type: 'masterclass_confirmation', lead_id: leadId, auto: true, lang: 'de', already_translated: true,
       lead_data: { lead_name: `${first} ${last}`, lead_phone: phone, lead_email: email }, override_text: conf.wa,
       ...(ev.waImage ? { file_url: ev.waImage, file_name: 'Masterclass-Zoom-Zugang.jpg' } : {}),
     }) })
-    if (!waRes.ok) console.error('[masterclass-register] send-whatsapp:', waRes.status, await waRes.text())
+    // send-whatsapp antwortet auch bei einem Fehlversand mit HTTP 200 und success:false.
+    const waText = await waRes.text()
+    let waJson: { success?: boolean; error?: string } | null = null
+    try { waJson = JSON.parse(waText) } catch { /* Fehlerseite statt JSON */ }
+    if (waJson?.success !== true) {
+      console.error('[masterclass-register] send-whatsapp:', waRes.status, waText.slice(0, 500))
+      waNachholen = waGetrennt(waJson?.error)
+    }
   }
 
   // ── 4. Erinnerungen (feste Zeiten) ─────────────────────────────────────────
@@ -354,6 +399,10 @@ Deno.serve(async (req) => {
       if (error) console.error('[masterclass-register] reminders:', error.message)
     }
   }
+
+  // ── 5. WhatsApp-Bestätigung nachholen ──────────────────────────────────────
+  // Erst hier: Schritt 4 löscht offene Newsletter-Zeilen des Abonnenten im Zeitfenster.
+  if (waNachholen && conf.wa) await bestaetigungNachholen(sb, { subId, leadId, text: conf.wa, bild: ev.waImage ?? null, bis: ev.startIso })
 
   const thanks = new URL(ev.thanksUrl)
   thanks.searchParams.set('v', first)
