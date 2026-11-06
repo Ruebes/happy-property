@@ -97,13 +97,17 @@ async function ensureAffiliate(sb: SupabaseClient, row: ReviewRow): Promise<stri
       let img = `${base}/storage/v1/object/public/${HAPPY_LOTTE}`
       const head = await fetch(img, { method: 'HEAD' }).catch(() => null)
       if (!head?.ok) img = `${base}/storage/v1/object/public/Assets/wa/lotte1.jpg`
-      await sb.functions.invoke('send-whatsapp', { body: {
+      const { data: waRes, error: waErr } = await sb.functions.invoke('send-whatsapp', { body: {
         event_type: 'affiliate_link',
         override_text: text, already_translated: true, lang: row.language,
         lead_id: row.lead_id ?? undefined,
         lead_data: { lead_name: row.recipient_name, lead_phone: phone },
         file_url: img, file_name: 'Happy_Lotte.jpg',
       } })
+      // send-whatsapp meldet einen Fehlversand auch als HTTP 200 mit success:false.
+      // Nur melden: Der Kunde sieht den Link auf der Danke-Seite, die Abgabe darf daran nicht hängen.
+      const w = waRes as { success?: boolean; error?: string } | null
+      if (waErr || w?.success === false) console.warn('[review-api] Empfehlungs-WhatsApp nicht zugestellt:', row.id, waErr?.message ?? w?.error)
     }
     return url
   } catch (e) {

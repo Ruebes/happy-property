@@ -26,11 +26,17 @@ const subst = (s: string, v: Record<string, string>): string =>
   Object.entries(v).reduce((acc, [k, val]) => acc.split(`{{${k}}}`).join(val || '–'), s).replace(/\{\{[^}]+\}\}/g, '–')
 const textToHtml = (s: string) => `<div style="font-family:Arial,sans-serif;font-size:15px;color:#374151;white-space:pre-wrap">${s.replace(/</g, '&lt;')}</div>`
 
-async function callFn(fn: string, body: Record<string, unknown>): Promise<void> {
-  await fetch(`${SUPABASE_URL}/functions/v1/${fn}`, {
+// true = wirklich raus. send-whatsapp meldet einen Fehlversand auch als HTTP 200 mit success:false.
+async function callFn(fn: string, body: Record<string, unknown>): Promise<boolean> {
+  const r = await fetch(`${SUPABASE_URL}/functions/v1/${fn}`, {
     method: 'POST', headers: { Authorization: `Bearer ${SERVICE_ROLE}`, apikey: SERVICE_ROLE, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-  }).catch(() => {})
+  }).catch(() => null)
+  if (!r) return false
+  const d = await r.json().catch(() => null) as { success?: boolean; error?: string } | null
+  const ok = r.ok && d?.success !== false
+  if (!ok) console.warn(`[recurring-followups] ${fn} nicht zugestellt:`, r.status, d?.error)
+  return ok
 }
 
 Deno.serve(async (req: Request) => {
@@ -66,13 +72,18 @@ Deno.serve(async (req: Request) => {
         body:    mt ? (mt.html_body ? subst(mt.html_body, vars) : textToHtml(subst(mt.body ?? '', vars))) : null,
         whatsapp: wt ? subst(wt.message_template ?? '', vars) : null,
       }, lang)
+      let versucht = false, raus = false
       if (mt && l.email) {
-        await callFn('send-email', { already_translated: true, to: l.email, subject: tr.subject ?? '', html: tr.body ?? '', lead_id: d.lead_id, lang })
+        versucht = true
+        raus = await callFn('send-email', { already_translated: true, to: l.email, subject: tr.subject ?? '', html: tr.body ?? '', lead_id: d.lead_id, lang })
       }
       if (wt && phone && tr.whatsapp) {
+        versucht = true
         // Geht automatisch an einen Kunden (Deal in 'hold') → Lotte als Absenderin.
-        await callFn('send-whatsapp', { already_translated: true, event_type: 'hold_reengagement', override_text: tr.whatsapp, lead_id: d.lead_id, lead_data: { lead_name: vars.name, lead_phone: phone }, persona_image: lotteBild() })
+        raus = await callFn('send-whatsapp', { already_translated: true, event_type: 'hold_reengagement', override_text: tr.whatsapp, lead_id: d.lead_id, lead_data: { lead_name: vars.name, lead_phone: phone }, persona_image: lotteBild() }) || raus
       }
+      // Ging gar nichts raus, bleibt der Takt stehen: Der nächste Lauf versucht es neu, nicht erst in 6 Wochen.
+      if (versucht && !raus) continue
       await supabase.from('deals').update({ last_hold_msg_at: new Date(now).toISOString() }).eq('id', d.id)
       holdSent++
     }
@@ -91,7 +102,9 @@ Deno.serve(async (req: Request) => {
         const dateStr = d.handover_at ? new Date(d.handover_at).toLocaleDateString('de-DE') : ''
         const msg = `Hallo Burkhard, am ${dateStr} habe ich dir ${ln} uebergeben. Gib mir bitte mal den aktuellen Stand bei dem Kunden durch.`
         if (dry_run) { pingSent++; continue }
-        await callFn('send-whatsapp', { event_type: 'handover_status', override_text: msg, lead_id: d.lead_id, lead_data: { lead_name: 'Burkhard', lead_phone: bkPhone } })
+        const ok = await callFn('send-whatsapp', { event_type: 'handover_status', override_text: msg, lead_id: d.lead_id, lead_data: { lead_name: 'Burkhard', lead_phone: bkPhone } })
+        // Nicht raus: Der nächste Lauf fragt erneut, nicht erst in 5 Wochen.
+        if (!ok) continue
         await supabase.from('deals').update({ last_handover_ping_at: new Date(now).toISOString() }).eq('id', d.id)
         pingSent++
       }

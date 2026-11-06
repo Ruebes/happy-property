@@ -135,7 +135,9 @@ Deno.serve(async (req) => {
       await sb.from('activities').insert({
         lead_id: leadId, type: 'note', direction: 'outbound', auto: true,
         subject: `Partner-Akte für ${partnerName} aktiviert`,
-        content: `Akten-Link an ${partnerName} (${wa}) geschickt: ${url}`,
+        content: waOk
+          ? `Akten-Link an ${partnerName} (${wa}) geschickt: ${url}`
+          : `Akten-Link an ${partnerName} (${wa}) NICHT zugestellt, die WhatsApp ist gescheitert. Link von Hand schicken: ${url}`,
         completed_at: new Date().toISOString(),
       }).then(({ error }) => { if (error) console.warn('[partner-akte] activity log:', error.message) })
 

@@ -256,7 +256,7 @@ Deno.serve(async (req) => {
           + `hier ist Lotte - ich habe dir gerade unsere Rechnung ${invoiceNumber} über ${eur(total_gross)} per Mail geschickt. Hier ist sie auch direkt als PDF.\n\n`
           + `Zahlbar bis ${dDate(dueStr)} (Verwendungszweck: ${invoiceNumber}).\n\nLiebe Grüße, Lotte 🐾`
         try {
-          await fetch(`${SUPABASE_URL}/functions/v1/send-whatsapp`, {
+          const waRes = await fetch(`${SUPABASE_URL}/functions/v1/send-whatsapp`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${SERVICE_ROLE}`, apikey: SERVICE_ROLE, 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -266,7 +266,11 @@ Deno.serve(async (req) => {
               file_url: `${pdfUrl}?v=${Date.now()}`, file_name: `${invoiceNumber}.pdf`,
             }),
           })
-          console.log(`[generate-invoice] Rechnungs-WhatsApp an ${waPhone} gesendet`)
+          // send-whatsapp meldet einen Fehlversand auch als HTTP 200 mit success:false.
+          // Nur das Protokoll: Die Mail ist der Hauptweg, `sent` hängt allein an ihr.
+          const wa = await waRes.json().catch(() => null) as { success?: boolean; error?: string } | null
+          if (waRes.ok && wa?.success !== false) console.log(`[generate-invoice] Rechnungs-WhatsApp an ${waPhone} gesendet`)
+          else console.warn(`[generate-invoice] Rechnungs-WhatsApp an ${waPhone} nicht zugestellt:`, waRes.status, wa?.error)
         } catch (e) { console.warn('[generate-invoice] Rechnungs-WhatsApp fehlgeschlagen:', e) }
       }
     }

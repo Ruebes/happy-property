@@ -61,12 +61,14 @@ export async function notifyIfToday(admin: SupabaseClient, dates: Array<string |
       console.warn('[notifyToday] keine Empfaengernummer hinterlegt — nicht gesendet')
       return { sent: false, reason: 'keine_nummer' }
     }
-    const { error } = await admin.functions.invoke('send-whatsapp', { body: {
+    const { data, error } = await admin.functions.invoke('send-whatsapp', { body: {
       event_type: 'sven_heute', override_text: text,
       lead_data: { lead_name: 'Sven', lead_phone: phone },
       // KEIN lead_id: sonst landet die interne Meldung in der Kundenakte.
     } })
-    if (error) { console.warn('[notifyToday] Versand fehlgeschlagen:', error); return { sent: false, reason: 'versand_fehler' } }
+    // send-whatsapp meldet einen Fehlversand auch als HTTP 200 mit success:false.
+    const w = data as { success?: boolean; error?: string } | null
+    if (error || w?.success === false) { console.warn('[notifyToday] Versand fehlgeschlagen:', error ?? w?.error); return { sent: false, reason: 'versand_fehler' } }
     return { sent: true }
   } catch (e) {
     // Eine fehlgeschlagene Benachrichtigung darf niemals die Buchung kippen.

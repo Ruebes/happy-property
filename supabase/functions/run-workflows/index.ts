@@ -141,7 +141,7 @@ Deno.serve(async (req) => {
               await sb.from('funnel_workflow_runs').update({ current_node_id: node.id, next_due_at: ziel.toISOString(), context: ctx, updated_at: new Date().toISOString() }).eq('id', run.id)
               waited = true; break
             }
-            const okSend = await sendNode(sb, run, node, ctx, p)
+            const okSend = await sendNode(sb, run, node, ctx, p, out.errors)
             if (node.type === 'email' && okSend) out.sent_email++
             if (node.type === 'whatsapp' && okSend) out.sent_wa++
             curId = nextId(graph, node.id)
@@ -203,7 +203,7 @@ async function loadPerson(sb: SupabaseClient, run: Run): Promise<Person | null> 
 }
 
 // ── Sende-Knoten (E-Mail / WhatsApp) ────────────────────────────────────────
-async function sendNode(sb: SupabaseClient, _run: Run, node: GNode, _ctx: Record<string, unknown>, p: Person | null): Promise<boolean> {
+async function sendNode(sb: SupabaseClient, run: Run, node: GNode, _ctx: Record<string, unknown>, p: Person | null, errors: string[]): Promise<boolean> {
   if (!p) return false
   if (p.optout) return false   // Opt-out respektieren
   const vars = { vorname: p.first, nachname: p.last, name: `${p.first} ${p.last}`.trim(), termin_buchen: bookingUrl(p.bookingToken), buchungs_link: bookingUrl(p.bookingToken) }
@@ -223,11 +223,20 @@ async function sendNode(sb: SupabaseClient, _run: Run, node: GNode, _ctx: Record
   if (!p.phone) return false
   const text = sub(String(d.text ?? ''), vars)
   if (!text.trim()) return false
-  const { error } = await sb.functions.invoke('send-whatsapp', { body: {
+  const { data, error } = await sb.functions.invoke('send-whatsapp', { body: {
     event_type: 'workflow', override_text: text,
     lead_data: { lead_name: vars.name || vars.vorname, lead_phone: p.phone }, ...(p.leadId ? { lead_id: p.leadId } : {}),
   } })
-  return !error
+  // send-whatsapp meldet einen Fehlversand auch als HTTP 200 mit success:false.
+  const w = data as { success?: boolean; error?: string } | null
+  const fehler = error?.message ?? (w?.success === false ? (w.error ?? 'success=false') : null)
+  if (!fehler) return true
+  // Als gescheitert melden. Der Lauf geht weiter wie bei jedem anderen nicht gesendeten Knoten.
+  const msg = `WhatsApp-Knoten ${node.id}: ${fehler}`.slice(0, 300)
+  console.warn('[run-workflows]', run.id, msg)
+  errors.push(`${run.id}: ${msg}`)
+  await sb.from('funnel_workflow_runs').update({ last_error: msg, updated_at: new Date().toISOString() }).eq('id', run.id)
+  return false
 }
 
 // ── Listen-Update-Knoten ────────────────────────────────────────────────────

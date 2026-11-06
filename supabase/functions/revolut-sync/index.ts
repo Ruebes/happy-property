@@ -640,11 +640,14 @@ Deno.serve(async (req: Request) => {
           const waText = de_
             ? `Hallo${first ? ' ' + first : ''} 🐾\n\ngute Nachrichten aus der Buchhaltung: Sven hat deine Rechnung gerade bezahlt.\n\n${p.title.slice(0, 120)}\nBetrag: ${amountStr}\n\nDas Geld ist unterwegs zu dir. Danke für deine Arbeit!\n\nLiebe Grüße, Lotte 🐾`
             : `Hi${first ? ' ' + first : ''} 🐾\n\nGood news from bookkeeping: Sven has just paid your invoice.\n\n${p.title.slice(0, 120)}\nAmount: ${amountStr}\n\nThe money is on its way to you. Thanks for your work!\n\nBest, Lotte 🐾`
-          await supabase.functions.invoke('send-whatsapp', { body: {
+          const { data: waRes, error: waErr } = await supabase.functions.invoke('send-whatsapp', { body: {
             event_type: 'payment_sent', override_text: waText,
             lead_data: { lead_name: first || benName, lead_phone: tel },
             persona_image: `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/Assets/wa/lotte-payment.jpg`,
           } })
+          // send-whatsapp meldet einen Fehlversand auch als HTTP 200 mit success:false.
+          const w = waRes as { success?: boolean; error?: string } | null
+          if (waErr || w?.success === false) throw new Error(waErr?.message ?? w?.error ?? 'nicht zugestellt')
           console.log(`[revolut-sync] Zahlungs-WhatsApp an ${tel} gesendet`)
           waInfo = 'ok'
         } else {

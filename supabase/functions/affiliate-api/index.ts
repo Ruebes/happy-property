@@ -361,11 +361,12 @@ async function reserveDocNo(sb: SupabaseClient, payoutId: string): Promise<strin
 
 async function sendWhatsApp(sb: SupabaseClient, aff: Affiliate, eventType: string, text: string): Promise<boolean> {
   if (!aff.whatsapp) return false
-  const { error } = await sb.functions.invoke('send-whatsapp', {
+  const { data, error } = await sb.functions.invoke('send-whatsapp', {
     body: { event_type: eventType, override_text: text, already_translated: true, lang: 'de', lead_data: { lead_name: aff.name, lead_phone: aff.whatsapp } },
     headers: { Authorization: `Bearer ${SERVICE_ROLE}` },
   })
-  return !error
+  // send-whatsapp meldet einen Fehlversand auch als HTTP 200 mit success:false.
+  return !error && (data as { success?: boolean } | null)?.success !== false
 }
 
 async function sendMail(to: string, subject: string, html: string, attachment?: { filename: string; content_base64: string; content_type: string }): Promise<boolean> {

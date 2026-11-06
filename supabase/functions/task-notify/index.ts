@@ -31,6 +31,18 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 const PUBLIC_BASE = Deno.env.get('PUBLIC_SITE_URL') ?? 'https://portal.happy-property.com'
 const esc = (s: string) => s.replace(/</g, '&lt;')
 
+// send-whatsapp meldet einen Fehlversand auch als HTTP 200 mit success:false,
+// functions.invoke sieht das nicht als error. null = ging raus.
+function waFehler(r: { data?: unknown; error?: unknown }): unknown {
+  if (r.error) return r.error
+  const d = r.data as { success?: boolean; error?: string } | null | undefined
+  return d?.success === false ? (d.error ?? 'success=false') : null
+}
+
+// Der Sweep läuft alle 5 Minuten. Nach 24 Stunden ist Schluss, sonst versucht er eine
+// Nummer ohne WhatsApp endlos. Gleiche Frist wie der Nachrichten-Sweep.
+const zuAltFuerNeuversuch = (completedAt: string | null) => !!completedAt && Date.now() - Date.parse(completedAt) > 24 * 3600_000
+
 interface Assignee {
   id: string; task_id: string; profile_id: string | null
   ext_name: string | null; ext_email: string | null; ext_phone: string | null
@@ -248,27 +260,33 @@ async function deliver(supabase: SupabaseClient, a: Assignee, task: Task, kind: 
     await supabase.functions.invoke('send-email', { body: { already_translated: true, to: email, subject, from_name: LOTTE_FROM, html: tr.body ?? mailHtml(first, introMailX, task, link, bossImg, contacts, parent), lang } })
       .catch((e: unknown) => console.warn('[task-notify] mail:', e))
   }
+  let waOk = false
   if (wantWa && phone) {
-    await supabase.functions.invoke('send-whatsapp', { body: { already_translated: true,
+    const fehler = waFehler(await supabase.functions.invoke('send-whatsapp', { body: { already_translated: true,
       event_type: `task_${kind}`, override_text: tr.whatsapp ?? waText(introWaX, task, link, contacts, parent),
       lead_data: { lead_name: name || 'Empfänger', lead_phone: phone },
       persona_image: bossImg,   // Lotte als Chefin
-    } }).catch((e: unknown) => console.warn('[task-notify] whatsapp:', e))
+    } }).catch((e: unknown) => ({ data: null, error: e })))
+    if (fehler) console.warn('[task-notify] whatsapp:', fehler)
+    else waOk = true
   }
-  await supabase.from('crm_task_assignees').update({ last_reminded_at: new Date().toISOString() }).eq('id', a.id)
-  return { assignee: a.id, mail: wantMail, whatsapp: wantWa, lang, contacts: contacts.length }
+  // War WhatsApp der einzige Kanal und ging nicht raus, bleibt der Stempel leer: Die nächste
+  // Erinnerung holt es nach, sonst sperrt die 20-Stunden-Grenze sie womöglich einen Tag länger.
+  if (!wantWa || waOk || wantMail) await supabase.from('crm_task_assignees').update({ last_reminded_at: new Date().toISOString() }).eq('id', a.id)
+  return { assignee: a.id, mail: wantMail, whatsapp: waOk, lang, contacts: contacts.length }
 }
 
 // ── Fertigmeldung an einen EXTERNEN Aufgabengeber (persönlicher Link) ────────
 // Gleicher Riegel wie bei Teilaufgaben (done_notified_at, Compare-and-Swap), gleiche
 // Aufrufer (In-App, Token-Link, Sweep). Sprache aus ext_creator.lang.
-async function notifyExtCreatorDone(supabase: SupabaseClient, task: { id: string; title: string; ext_creator: ExtCreator | null; done_notified_at: string | null }) {
+async function notifyExtCreatorDone(supabase: SupabaseClient, task: { id: string; title: string; ext_creator: ExtCreator | null; done_notified_at: string | null; completed_at: string | null }) {
   const c = task.ext_creator!
   const { data: claimed } = await supabase.from('crm_tasks')
     .update({ done_notified_at: new Date().toISOString() })
     .eq('id', task.id).is('done_notified_at', null).select('id')
   if (!claimed || claimed.length === 0) return { skipped: 'bereits_gemeldet' }
   const release = async (why: unknown) => {
+    if (zuAltFuerNeuversuch(task.completed_at)) { console.warn('[task-notify] Versand (extern) aufgegeben, älter als 24 Stunden:', task.id, why); return }
     console.warn('[task-notify] Versand (extern) fehlgeschlagen, Meldung bleibt offen:', why)
     await supabase.from('crm_tasks').update({ done_notified_at: null }).eq('id', task.id)
   }
@@ -280,15 +298,17 @@ async function notifyExtCreatorDone(supabase: SupabaseClient, task: { id: string
     : `✅ Erledigt!\n\nHallo ${first} 🐾\n\nSven hat deine Aufgabe erledigt:\n\n*${task.title}*\n\nLiebe Grüße\nLotte 🐾`
   const phone = (c.phone ?? '').trim()
   let via = 'keiner'
+  let waFail: unknown = null
   if (phone) {
-    const { error: waErr } = await supabase.functions.invoke('send-whatsapp', { body: { already_translated: true,
+    waFail = waFehler(await supabase.functions.invoke('send-whatsapp', { body: { already_translated: true,
       event_type: 'task_done_ext', override_text: waText,
       lead_data: { lead_name: c.name || 'Gast', lead_phone: phone },
       persona_image: await lotteBossBild(supabase),
-    } }).catch((e: unknown) => ({ error: e }))
-    if (waErr) { await release(waErr); return { skipped: 'versand_fehlgeschlagen' } }
-    via = 'whatsapp'
-  } else if (c.email) {
+    } }).catch((e: unknown) => ({ data: null, error: e })))
+    if (waFail) console.warn('[task-notify] Fertigmeldung (extern): WhatsApp gescheitert:', waFail)
+    else via = 'whatsapp'
+  }
+  if (via === 'keiner' && c.email) {
     const { error: mailErr } = await supabase.functions.invoke('send-email', { body: { already_translated: true,
       to: c.email, from_name: en ? "Lotte · Sven's personal assistant" : 'Lotte · Assistentin von Sven', lang: en ? 'en' : 'de', auto: true,
       subject: en ? `Done: ${safeTitle}` : `Erledigt: ${safeTitle}`,
@@ -304,6 +324,7 @@ async function notifyExtCreatorDone(supabase: SupabaseClient, task: { id: string
     if (mailErr) { await release(mailErr); return { skipped: 'versand_fehlgeschlagen' } }
     via = 'mail'
   }
+  if (via === 'keiner' && waFail) { await release(waFail); return { skipped: 'versand_fehlgeschlagen' } }
   console.log(`[task-notify] Externe Aufgabe ${task.id} erledigt → Meldung an ${c.name} via ${via}`)
   return { notified: true, via, external: true }
 }
@@ -316,9 +337,9 @@ async function notifyExtCreatorDone(supabase: SupabaseClient, task: { id: string
 // zurück und hört auf.
 async function notifySubtaskDone(supabase: SupabaseClient, taskId: string) {
   const { data: t } = await supabase.from('crm_tasks')
-    .select('id, title, description, parent_task_id, created_by, completed_by, status, done_notified_at, ext_creator')
+    .select('id, title, description, parent_task_id, created_by, completed_by, status, done_notified_at, ext_creator, completed_at')
     .eq('id', taskId).maybeSingle()
-  const task = t as { id: string; title: string; parent_task_id: string | null; created_by: string; completed_by: string | null; status: string; done_notified_at: string | null; ext_creator: ExtCreator | null } | null
+  const task = t as { id: string; title: string; parent_task_id: string | null; created_by: string; completed_by: string | null; status: string; done_notified_at: string | null; ext_creator: ExtCreator | null; completed_at: string | null } | null
   if (!task) return { skipped: 'not_found' }
   if (task.status !== 'erledigt') return { skipped: 'nicht_erledigt' }
   // Von außen gestellte Aufgabe (persönlicher Link): Rückmeldung an den externen Absender.
@@ -364,25 +385,28 @@ async function notifySubtaskDone(supabase: SupabaseClient, taskId: string) {
   // sitzt bewusst VOR dem Versand (gegen Doppelmeldungen), und der Versand kann
   // scheitern, ohne dass es jemand merkt.
   const release = async (why: unknown) => {
+    if (zuAltFuerNeuversuch(task.completed_at)) { console.warn('[task-notify] Versand aufgegeben, älter als 24 Stunden:', task.id, why); return }
     console.warn('[task-notify] Versand fehlgeschlagen, Meldung bleibt offen:', why)
     await supabase.from('crm_tasks').update({ done_notified_at: null }).eq('id', task.id)
   }
 
   let via = 'keiner'
+  let waFail: unknown = null
   if (phone) {
     // Nummer VOR dem Aufruf pruefen: send-whatsapp nutzt ??, ein Leerstring wuerde
     // die Empfaengeraufloesung kippen statt sauber abzubrechen.
-    const { error: waErr } = await supabase.functions.invoke('send-whatsapp', { body: { already_translated: true,
+    waFail = waFehler(await supabase.functions.invoke('send-whatsapp', { body: { already_translated: true,
       event_type: 'subtask_done', override_text: `${waText}\n\nLiebe Grüße\nLotte 🐾`,
       lead_data: { lead_name: g.full_name ?? 'Team', lead_phone: phone },
       persona_image: await lotteBossBild(supabase),   // Lotte meldet zurück
       // KEIN lead_id: sonst landet die interne Meldung in einer Kundenakte.
-    } }).catch((e: unknown) => ({ error: e }))
-    if (waErr) { await release(waErr); return { skipped: 'versand_fehlgeschlagen' } }
-    via = 'whatsapp'
-  } else if (g.email) {
+    } }).catch((e: unknown) => ({ data: null, error: e })))
+    if (waFail) console.warn('[task-notify] Teilaufgabe: WhatsApp gescheitert, Mail als Ersatz:', waFail)
+    else via = 'whatsapp'
+  }
+  if (via === 'keiner' && g.email) {
     // Rueckfallebene, damit die Meldung nicht still verschwindet, wenn im Profil
-    // keine Telefonnummer hinterlegt ist.
+    // keine Telefonnummer hinterlegt ist oder WhatsApp gerade scheitert.
     const { error: mailErr } = await supabase.functions.invoke('send-email', { body: { already_translated: true,
       // Zeilenumbrueche aus dem Titel raus: der Betreff geht ungeprueft in den
       // Mail-Header, ein CR/LF darin waere eine Header-Injektion.
@@ -394,12 +418,13 @@ async function notifySubtaskDone(supabase: SupabaseClient, taskId: string) {
           <p style="font-size:16px;font-weight:600;color:#111827;margin:0;">${esc(task.title)}</p>
           ${parentTtl ? `<p style="color:#6b7280;font-size:13px;margin:6px 0 0;">zu: ${esc(parentTtl)}</p>` : ''}
         </div>
-        <p style="font-size:13px;color:#6b7280;">Trage im Profil eine Telefonnummer ein, dann kommt diese Meldung künftig per WhatsApp.</p>
+        ${phone ? '' : '<p style="font-size:13px;color:#6b7280;">Trage im Profil eine Telefonnummer ein, dann kommt diese Meldung künftig per WhatsApp.</p>'}
       </div>`,
     } }).catch((e: unknown) => ({ error: e }))
     if (mailErr) { await release(mailErr); return { skipped: 'versand_fehlgeschlagen' } }
     via = 'mail'
   }
+  if (via === 'keiner' && waFail) { await release(waFail); return { skipped: 'versand_fehlgeschlagen' } }
   console.log(`[task-notify] Teilaufgabe ${task.id} erledigt → Meldung an ${task.created_by} via ${via}`)
   return { notified: true, via }
 }
@@ -490,14 +515,14 @@ async function notifyMessage(supabase: SupabaseClient, messageId: string) {
 
     const phone = (p.phone ?? '').trim()
     if (phone) {
-      const { error } = await supabase.functions.invoke('send-whatsapp', { body: { already_translated: true,
+      const fehler = waFehler(await supabase.functions.invoke('send-whatsapp', { body: { already_translated: true,
         event_type: 'task_message', override_text: tr.whatsapp ?? waDe,
         lead_data: { lead_name: p.full_name ?? 'Team', lead_phone: phone },
         persona_image: bossImg,
         // KEIN lead_id: interne Meldung, darf in keiner Kundenakte landen.
-      } }).catch((e: unknown) => ({ error: e }))
-      if (!error) { out[p.id] = 'whatsapp'; continue }
-      console.warn('[task-notify] message WhatsApp fehlgeschlagen, Mail als Ersatz:', error)
+      } }).catch((e: unknown) => ({ data: null, error: e })))
+      if (!fehler) { out[p.id] = 'whatsapp'; continue }
+      console.warn('[task-notify] message WhatsApp fehlgeschlagen, Mail als Ersatz:', fehler)
     }
     if (p.email) {
       const { error } = await supabase.functions.invoke('send-email', { body: { already_translated: true,

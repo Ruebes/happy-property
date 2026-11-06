@@ -12,6 +12,7 @@
     "check:functions": "tsc -p supabase/functions/tsconfig.shared.json && tsc -p supabase/functions/tsconfig.guards.json",
     "verify:gate": "node scripts/verify-deck-gate.mjs",
     "verify:autofix": "node scripts/verify-deck-autofix.mjs",
+    "postverify:wa": "node scripts/verify-wa-aufrufer.mjs",
     "verify:nav": "node scripts/verify-nav.mjs",
     "verify:links": "node scripts/verify-entity-links.mjs",
     "verify:meta": "node scripts/verify-meta-spec.mjs",

@@ -68,7 +68,10 @@ export async function maybeUpdateEmailFromWa(
         lead_data: { lead_name: vorname || 'Kontakt', lead_phone: phone },
       }),
     })
-    if (!res.ok) console.warn(`[${tag}] Danke-WhatsApp:`, res.status, (await res.text()).slice(0, 200))
+    // send-whatsapp meldet einen Fehlversand auch als HTTP 200 mit success:false. Die Adresse
+    // ist da schon gespeichert, das Danke ist reine Höflichkeit: nur melden, Ergebnis bleibt true.
+    const antwort = await res.json().catch(() => null) as { success?: boolean } | null
+    if (!res.ok || antwort?.success === false) console.warn(`[${tag}] Danke-WhatsApp:`, res.status, JSON.stringify(antwort).slice(0, 200))
     console.log(`[${tag}] Mailadresse aktualisiert (${tabelle} ${id})`)
     return true
   } catch (e) {
