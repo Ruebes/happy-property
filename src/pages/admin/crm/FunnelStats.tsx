@@ -19,6 +19,10 @@ interface FunnelStatsData {
   steps: Record<string, number>
   answers: Record<string, Array<{ answer: string; n: number }>>
   sources: Array<{ source: string; sessions: number; leads: number; bookings: number }>
+  // Eingabefehler im Kontaktformular, über alle Fragebögen: Feld → Anzahl Sitzungen
+  contact_errors?: Record<string, number>
+  contact_error_sessions?: number
+  contact_error_recovered?: number
 }
 
 type Period = 'week' | 'month' | 'year' | 'all' | 'custom'
@@ -267,6 +271,32 @@ export default function FunnelStats() {
                 })}
               </div>
               <p className="text-[11px] text-gray-400 mt-3">{t('crm.funnel.funnelHint', 'Rote Zahl = Absprünge gegenüber dem vorherigen Schritt. Prozent = Anteil der Seitenaufrufe.')}</p>
+            </div>
+
+            {/* Eingabefehler im Kontaktformular: nur das Feld, nie der Inhalt */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+              <h2 className="text-sm font-semibold text-gray-700 mb-1">{t('crm.funnel.errorsTitle', 'Eingabefehler im Kontaktformular')}</h2>
+              <p className="text-[11px] text-gray-400 mb-3">{t('crm.funnel.errorsHint', 'Gemessen seit 6.11.2026, über alle Fragebögen. Erfasst wird nur das Feld, nie der Inhalt.')}</p>
+              {(stats.contact_error_sessions ?? 0) === 0 ? (
+                <p className="text-sm text-gray-500">{t('crm.funnel.errorsNone', 'Im Zeitraum keine Eingabefehler.')}</p>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {[
+                      { key: 'first_name', label: t('crm.funnel.errors.firstName', 'Vorname fehlt') },
+                      { key: 'email', label: t('crm.funnel.errors.email', 'E-Mail ungültig') },
+                      { key: 'phone', label: t('crm.funnel.errors.phone', 'Telefon ungültig') },
+                      { key: 'server', label: t('crm.funnel.errors.server', 'Technischer Fehler') },
+                    ].map(f => (
+                      <div key={f.key} className="rounded-xl border border-gray-100 p-3">
+                        <p className="text-xl font-bold text-gray-900">{stats.contact_errors?.[f.key] ?? 0}</p>
+                        <p className="text-xs text-gray-500">{f.label}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-3">{t('crm.funnel.errorsSummary', '{{n}} Besucher hatten mindestens einen Fehler, {{m}} davon haben danach erfolgreich abgeschickt.', { n: stats.contact_error_sessions ?? 0, m: stats.contact_error_recovered ?? 0 })}</p>
+                </>
+              )}
             </div>
 
             {/* Antworten je Frage */}

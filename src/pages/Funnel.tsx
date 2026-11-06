@@ -359,9 +359,11 @@ export default function Funnel() {
     setError('')
     const email = contact.email.trim()
     const phone = contact.phone.replace(/[^\d+]/g, '')
-    if (!contact.first_name.trim()) { setError(t('funnel.err_first_name', 'Bitte gib deinen Vornamen an.')); return }
-    if (!/^\S+@\S+\.\S+$/.test(email)) { setError(t('funnel.err_email', 'Bitte prüfe deine E-Mail-Adresse.')); return }
-    if (phone.length < 8) { setError(t('funnel.err_phone', 'Bitte prüfe deine Telefonnummer.')); return }
+    // Eingabefehler messen: nur welches Feld, nie der Inhalt.
+    const eingabeFehler = (feld: string) => { void track(QUESTIONS.length + 1, 'contact_error', feld) }
+    if (!contact.first_name.trim()) { eingabeFehler('first_name'); setError(t('funnel.err_first_name', 'Bitte gib deinen Vornamen an.')); return }
+    if (!/^\S+@\S+\.\S+$/.test(email)) { eingabeFehler('email'); setError(t('funnel.err_email', 'Bitte prüfe deine E-Mail-Adresse.')); return }
+    if (phone.length < 8) { eingabeFehler('phone'); setError(t('funnel.err_phone', 'Bitte prüfe deine Telefonnummer.')); return }
     setBusy(true)
     const leadEventUuid = neueEventUuid()
     try {
@@ -378,9 +380,15 @@ export default function Funnel() {
       // Schnellbuchung: Terminart + Slot stehen schon → jetzt verbindlich buchen.
       if (rebook && slot) { await performBooking(slot); return }
       // Weg B: Unterlagen statt Termin (funnel-api verschickt das Deck)
-      if (INFO) { setPhase('unterlagen'); return }
+      if (INFO) {
+        setPhase('unterlagen')
+        // Web-Analytics: Besucher-Typ „Unterlagen angefordert" (fire-and-forget).
+        try { (window as unknown as { hpwa?: (c: string, n: string) => void }).hpwa?.('event', 'unterlagen_done') } catch { /* Tracking darf nie blocken */ }
+        return
+      }
       setPhase('meeting_type')
     } catch {
+      eingabeFehler('server')
       setError(t('funnel.err_generic', 'Das hat leider nicht geklappt. Bitte versuche es noch einmal.'))
     } finally { setBusy(false) }
   }
