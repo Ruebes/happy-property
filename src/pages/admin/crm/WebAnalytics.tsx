@@ -27,7 +27,10 @@ interface SessionRow {
   lead_id: string | null; started_at: string; duration_s: number
   pageviews: number; clicks: number; max_scroll_pct: number; has_replay: boolean
   leads?: { first_name: string | null; last_name: string | null } | null
+  segment?: string
 }
+// Zeile aus hp_wa_session_list: Lead-Name flach statt verschachtelt
+type SessionListRow = Omit<SessionRow, 'leads'> & { lead_first_name: string | null; lead_last_name: string | null }
 interface EventRow {
   type: string; path: string | null; ts: string
   x: number | null; y: number | null; selector: string | null; txt: string | null
@@ -39,17 +42,22 @@ interface ScrollDepth { sessions: number; p25: number; p50: number; p75: number;
 type Period = 'today' | 'yesterday' | 'week' | 'month' | 'quarter' | 'custom'
 type Tab = 'overview' | 'heatmap' | 'visitors'
 
-// ── Besucher-Typen (Heuristik aus hp_wa_segments, Regeln in der Migration) ───
-type Segment = 'gebucht' | 'funnel_abbruch' | 'interessent' | 'expose_jaeger' | 'kurzbesucher' | 'absprung'
+// ── Besucher-Typen (Regeln stehen in der Migration 20261106180000_wa_besucher_typen) ───
+type Segment = 'gebucht' | 'unterlagen' | 'funnel_gestartet' | 'funnel_gesehen' | 'masterclass' | 'interessent_neu' | 'interessent_bekannt' | 'expose_jaeger' | 'kurzbesucher' | 'absprung'
 const SEGMENTS: { id: Segment; icon: string; label: string; desc: string; color: string }[] = [
-  { id: 'gebucht',        icon: '✅', label: 'Termin gebucht',      desc: 'Haben über den Funnel gebucht', color: '#1f9d55' },
-  { id: 'funnel_abbruch', icon: '🚪', label: 'Funnel abgebrochen',  desc: 'Waren im Termin-Funnel, haben nicht gebucht', color: '#d97706' },
-  { id: 'interessent',    icon: '📖', label: 'Echte Interessenten', desc: 'Über 1 Min. aktiv, mehrere Seiten oder tief gescrollt — aber kein Termin', color: '#ff795d' },
-  { id: 'expose_jaeger',  icon: '🏠', label: 'Exposé-Jäger',        desc: 'Nur Objekte/Rechner/Exposés angesehen, unter 2 Min.', color: '#6366f1' },
-  { id: 'kurzbesucher',   icon: '👀', label: 'Kurzbesucher',        desc: 'Kurz umgesehen, wenig gelesen', color: '#9ca3af' },
-  { id: 'absprung',       icon: '💨', label: 'Sofort weg',          desc: 'Direkt wieder abgesprungen', color: '#d1d5db' },
+  { id: 'gebucht',             icon: '✅', label: 'Termin gebucht',         desc: 'Haben über den Funnel gebucht', color: '#1f9d55' },
+  { id: 'unterlagen',          icon: '📬', label: 'Unterlagen angefordert', desc: 'Haben im Funnel Unterlagen statt eines Termins angefordert', color: '#0d9488' },
+  { id: 'funnel_gestartet',    icon: '🚪', label: 'Gestartet, abgebrochen', desc: 'Haben den Funnel begonnen, aber nichts abgeschickt', color: '#d97706' },
+  { id: 'funnel_gesehen',      icon: '👁️', label: 'Nur Startseite gesehen', desc: 'Waren auf der Funnel-Startseite und haben nichts angeklickt', color: '#a78bfa' },
+  { id: 'masterclass',         icon: '🎓', label: 'Masterclass-Seiten',     desc: 'Waren auf einer Masterclass-Seite (nicht im Funnel)', color: '#0ea5e9' },
+  { id: 'interessent_neu',     icon: '📖', label: 'Interessenten, neu',     desc: 'Unbekannt: über 1 Min. aktiv, mehrere Seiten oder tief gescrollt, oder über 2 Min. auf Objekten', color: '#ff795d' },
+  { id: 'interessent_bekannt', icon: '👤', label: 'Interessenten, bekannt', desc: 'Bekannter Kontakt: über 1 Min. aktiv, mehrere Seiten oder tief gescrollt, oder über 2 Min. auf Objekten', color: '#e11d48' },
+  { id: 'expose_jaeger',       icon: '🏠', label: 'Exposé-Jäger',           desc: 'Unbekannt: nur Projekte, Rechner oder Exposés angesehen, unter 2 Min.', color: '#6366f1' },
+  { id: 'kurzbesucher',        icon: '👀', label: 'Kurzbesucher',           desc: 'Kurz umgesehen, wenig gelesen', color: '#9ca3af' },
+  { id: 'absprung',            icon: '💨', label: 'Sofort weg',             desc: 'Direkt wieder abgesprungen', color: '#d1d5db' },
 ]
 const segMeta = (id: string) => SEGMENTS.find(s => s.id === id)
+const SESSION_LIST_LIMIT = 200
 
 function periodRange(p: Period, from: string, to: string): { from: Date; to: Date } {
   const now = new Date()
@@ -308,8 +316,9 @@ export default function WebAnalytics() {
   const [onlyLeads, setOnlyLeads] = useState(false)
   const [onlyReplay, setOnlyReplay] = useState(false)
   const [selected, setSelected] = useState<SessionRow | null>(null)
-  // Besucher-Typen: session_id → Segment (gleicher Zeitraum/Site-Filter)
-  const [segments, setSegments] = useState<Record<string, Segment>>({})
+  // Besucher-Typen: Anzahl je Typ, serverseitig gezählt (ein Aufruf liefert höchstens
+  // 1.000 Zeilen, Zählen im Browser wäre also falsch). Gleicher Zeitraum/Site-Filter.
+  const [segCounts, setSegCounts] = useState<Partial<Record<Segment, number>>>({})
   const [segFilter, setSegFilter] = useState<Segment | ''>('')
 
   // ── Übersicht laden ────────────────────────────────────────────────────────
@@ -325,7 +334,7 @@ export default function WebAnalytics() {
         supabase.rpc('hp_wa_sources', p),
         supabase.rpc('hp_wa_devices', p),
         supabase.rpc('hp_wa_sites', { p_from: from.toISOString(), p_to: to.toISOString() }),
-        supabase.rpc('hp_wa_segments', p),
+        supabase.rpc('hp_wa_segment_counts', p),
       ])
       setKpis((k.data as Kpis) ?? null)
       setDaily((d.data as DailyRow[]) ?? [])
@@ -333,9 +342,9 @@ export default function WebAnalytics() {
       setSources((so.data as SourceRow[]) ?? [])
       setDevices((de.data as DeviceRow[]) ?? [])
       setSites((si.data as SiteRow[]) ?? [])
-      const segMap: Record<string, Segment> = {}
-      for (const row of ((sg.data as { session_id: string; segment: Segment }[]) ?? [])) segMap[row.session_id] = row.segment
-      setSegments(segMap)
+      const counts: Partial<Record<Segment, number>> = {}
+      for (const row of ((sg.data as { segment: Segment; n: number }[]) ?? [])) counts[row.segment] = Number(row.n)
+      setSegCounts(counts)
     } catch (err) {
       console.error('[WebAnalytics] fetchOverview:', err)
       setKpis(null); setDaily([]); setPages([]); setSources([]); setDevices([])
@@ -450,26 +459,24 @@ export default function WebAnalytics() {
     setLoading(true)
     try {
       const { from, to } = periodRange(period, customFrom, customTo)
-      let q = supabase.from('web_sessions')
-        .select('id, visitor_id, site, entry_path, referrer, utm, device, browser, os, lead_id, started_at, duration_s, pageviews, clicks, max_scroll_pct, has_replay, leads(first_name, last_name)')
-        .eq('is_bot', false)
-        .gte('started_at', from.toISOString())
-        .lt('started_at', to.toISOString())
-        .order('started_at', { ascending: false })
-        .limit(200)
-      if (site) q = q.eq('site', site)
-      if (onlyLeads) q = q.not('lead_id', 'is', null)
-      if (onlyReplay) q = q.eq('has_replay', true)
-      const { data, error } = await q
+      // Der Typ-Filter läuft auf dem Server: Die neuesten 200 Sitzungen enthalten
+      // von einem Typ sonst nur zufällig ein paar.
+      const { data, error } = await supabase.rpc('hp_wa_session_list', {
+        p_from: from.toISOString(), p_to: to.toISOString(), p_site: site || null,
+        p_segment: segFilter || null, p_only_leads: onlyLeads, p_only_replay: onlyReplay, p_limit: SESSION_LIST_LIMIT,
+      })
       if (error) throw error
-      setSessions((data as unknown as SessionRow[]) ?? [])
+      setSessions(((data as SessionListRow[]) ?? []).map(({ lead_first_name, lead_last_name, ...s }) => ({
+        ...s,
+        leads: lead_first_name || lead_last_name ? { first_name: lead_first_name, last_name: lead_last_name } : null,
+      })))
     } catch (err) {
       console.error('[WebAnalytics] fetchSessions:', err)
       setSessions([])
     } finally {
       setLoading(false)
     }
-  }, [period, customFrom, customTo, site, onlyLeads, onlyReplay])
+  }, [period, customFrom, customTo, site, onlyLeads, onlyReplay, segFilter])
 
   useEffect(() => { if (tab === 'visitors') void fetchSessions() }, [tab, fetchSessions])
 
@@ -489,7 +496,7 @@ export default function WebAnalytics() {
   ]
 
   const maxDaily = Math.max(1, ...daily.map(d => d.sessions))
-  const visibleSessions = segFilter ? sessions.filter(s => segments[s.id] === segFilter) : sessions
+  const segTotal = Object.values(segCounts).reduce((sum, n) => sum + (n ?? 0), 0)
   const sourceOf = (s: SessionRow) => {
     if (s.utm?.utm_source || s.utm?.src) return s.utm.utm_source || s.utm.src
     try { if (s.referrer) return new URL(s.referrer).hostname.replace('www.', '') } catch { /* kaputter Referrer */ }
@@ -569,18 +576,18 @@ export default function WebAnalytics() {
             {/* Besucher-Typen: wer waren die Leute — und wer haette buchen koennen? */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
               <h3 className="text-sm font-semibold text-gray-700 mb-1">{t('crm.webstats.segments', 'Besucher-Typen')}</h3>
-              <p className="text-xs text-gray-400 mb-3">{t('crm.webstats.segmentsHint', 'Automatisch nach Verhalten eingeordnet (Lesezeit, Scrolltiefe, Seiten, Funnel). Klick auf eine Kachel zeigt die einzelnen Besucher.')}</p>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              <p className="text-xs text-gray-400 mb-3">{t('crm.webstats.segmentsHintNeu', 'Jede Sitzung zählt genau einmal, nach Verhalten eingeordnet. Klick auf eine Kachel zeigt die einzelnen Besucher. „Unterlagen angefordert“ ist bis zum 6.11.2026 aus Klicks geschätzt.')}</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
                 {SEGMENTS.map(sg => {
-                  const n = Object.values(segments).filter(v => v === sg.id).length
-                  const total = Object.keys(segments).length || 1
+                  const n = segCounts[sg.id] ?? 0
+                  const total = segTotal || 1
                   return (
                     <button key={sg.id} title={sg.desc}
                       onClick={() => { setSegFilter(sg.id); setTab('visitors') }}
                       className="text-left rounded-xl border p-3 hover:shadow-md transition-shadow"
                       style={{ borderColor: n ? sg.color : '#e5e7eb', backgroundColor: n ? `${sg.color}12` : '#fafafa' }}>
                       <div className="text-lg">{sg.icon}</div>
-                      <div className="text-xl font-bold text-gray-900">{n}</div>
+                      <div className="text-xl font-bold text-gray-900">{fmtNum(n)}</div>
                       <div className="text-[11px] leading-tight text-gray-600">{sg.label}</div>
                       <div className="text-[10px] text-gray-400">{Math.round((n / total) * 100)}%</div>
                     </button>
@@ -765,12 +772,15 @@ export default function WebAnalytics() {
                 <input type="checkbox" checked={onlyReplay} onChange={e => setOnlyReplay(e.target.checked)} className="rounded" />
                 {t('crm.webstats.onlyReplay', 'Nur mit Replay')}
               </label>
+              {sessions.length >= SESSION_LIST_LIMIT && (
+                <span className="text-xs text-gray-400">{t('crm.webstats.listLimit', 'Zeigt die neuesten {{n}} Besucher.', { n: SESSION_LIST_LIMIT })}</span>
+              )}
             </div>
             {loading ? (
               <div className="flex justify-center py-16">
                 <div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" />
               </div>
-            ) : visibleSessions.length === 0 ? (
+            ) : sessions.length === 0 ? (
               <p className="text-gray-400 text-center py-16">{segFilter
                 ? t('crm.webstats.noSegmentData', 'Keine Besucher dieses Typs im Zeitraum.')
                 : t('crm.webstats.noData', 'Noch keine Daten — das Tracking sammelt ab jetzt.')}</p>
@@ -791,9 +801,9 @@ export default function WebAnalytics() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {visibleSessions.map(s => {
+                    {sessions.map(s => {
                       const leadName = s.leads ? `${s.leads.first_name ?? ''} ${s.leads.last_name ?? ''}`.trim() : ''
-                      const sm = segMeta(segments[s.id] ?? '')
+                      const sm = segMeta(s.segment ?? '')
                       return (
                         <tr key={s.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => setSelected(s)}>
                           <td className="px-4 py-2.5 text-gray-500 whitespace-nowrap">{new Date(s.started_at).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>

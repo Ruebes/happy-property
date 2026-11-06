@@ -95,12 +95,16 @@ interface ReportData {
 }
 
 const SEGMENT_LABELS: Record<string, { label: string; desc: string }> = {
-  gebucht:        { label: '✅ Termin gebucht',      desc: 'Haben über den Funnel gebucht' },
-  funnel_abbruch: { label: '🚪 Funnel abgebrochen',  desc: 'Waren im Termin-Funnel, haben nicht gebucht' },
-  interessent:    { label: '📖 Echte Interessenten', desc: 'Über 1 Min. aktiv, mehrere Seiten oder tief gescrollt — kein Termin' },
-  expose_jaeger:  { label: '🏠 Exposé-Jäger',        desc: 'Nur Objekte/Rechner/Exposés angesehen, unter 2 Min.' },
-  kurzbesucher:   { label: '👀 Kurzbesucher',        desc: 'Kurz umgesehen, wenig gelesen' },
-  absprung:       { label: '💨 Sofort weg',          desc: 'Direkt wieder abgesprungen' },
+  gebucht:             { label: '✅ Termin gebucht',         desc: 'Haben über den Funnel gebucht' },
+  unterlagen:          { label: '📬 Unterlagen angefordert', desc: 'Haben im Funnel Unterlagen statt eines Termins angefordert' },
+  funnel_gestartet:    { label: '🚪 Gestartet, abgebrochen', desc: 'Haben den Funnel begonnen, aber nichts abgeschickt' },
+  funnel_gesehen:      { label: '👁️ Nur Startseite gesehen', desc: 'Waren auf der Funnel-Startseite und haben nichts angeklickt' },
+  masterclass:         { label: '🎓 Masterclass-Seiten',     desc: 'Waren auf einer Masterclass-Seite (nicht im Funnel)' },
+  interessent_neu:     { label: '📖 Interessenten, neu',     desc: 'Unbekannt: über 1 Min. aktiv, mehrere Seiten oder tief gescrollt, oder über 2 Min. auf Objekten' },
+  interessent_bekannt: { label: '👤 Interessenten, bekannt', desc: 'Bekannter Kontakt: über 1 Min. aktiv, mehrere Seiten oder tief gescrollt, oder über 2 Min. auf Objekten' },
+  expose_jaeger:       { label: '🏠 Exposé-Jäger',           desc: 'Unbekannt: nur Projekte, Rechner oder Exposés angesehen, unter 2 Min.' },
+  kurzbesucher:        { label: '👀 Kurzbesucher',           desc: 'Kurz umgesehen, wenig gelesen' },
+  absprung:            { label: '💨 Sofort weg',             desc: 'Direkt wieder abgesprungen' },
 }
 
 async function collect(supabase: ReturnType<typeof createClient>): Promise<ReportData> {
@@ -153,10 +157,11 @@ async function collect(supabase: ReturnType<typeof createClient>): Promise<Repor
   const trackingSince = firstSess?.length
     ? new Date((firstSess[0] as { started_at: string }).started_at) : null
 
-  const { data: segRows } = await supabase.rpc('hp_wa_segments', p)
+  // Serverseitig gezählt: Ein Aufruf liefert höchstens 1.000 Zeilen.
+  const { data: segRows } = await supabase.rpc('hp_wa_segment_counts', p)
   const segments: Record<string, number> = {}
-  for (const r of ((segRows as { segment: string }[]) ?? [])) {
-    segments[r.segment] = (segments[r.segment] ?? 0) + 1
+  for (const r of ((segRows as { segment: string; n: number }[]) ?? [])) {
+    segments[r.segment] = Number(r.n)
   }
 
   const empty: Kpis = { sessions: 0, visitors: 0, pageviews: 0, clicks: 0, avg_duration_s: 0, bounce_pct: 0, avg_scroll_pct: 0, with_replay: 0 }
@@ -199,7 +204,7 @@ async function analyze(data: ReportData): Promise<Analysis> {
     hinweis: 'Web-KPIs zaehlen erst ab web_tracking_aktiv_seit; Funnel-/Termin-Zahlen decken die volle Woche ab. NICHT direkt vergleichen, wenn der Tracking-Start in der Woche liegt.',
     web: { diese_woche: data.kpis, vorwoche: data.kpisPrev, sites: data.siteKpis, top_seiten: data.pages, quellen: data.sources, geraete: data.devices },
     besucher_typen: data.segments,
-    besucher_typen_legende: 'gebucht=Funnel-Buchung; funnel_abbruch=im /termin-Funnel ohne Buchung; interessent=>60s aktiv + mehrere Seiten/tiefes Scrollen ohne Termin (WICHTIGSTE Zielgruppe fuer Verbesserungen); expose_jaeger=nur Objekt-/Rechner-/Expose-Seiten <2min; kurzbesucher/absprung=kaum Engagement',
+    besucher_typen_legende: 'Jede Sitzung zaehlt genau einmal, in dieser Reihenfolge: gebucht=Funnel-Buchung; unterlagen=hat im Funnel Unterlagen statt Termin angefordert (Flora-Kampagne, das ist gewollt und kein Abbruch); funnel_gestartet=Funnel begonnen, nichts abgeschickt; funnel_gesehen=nur die Funnel-Startseite gesehen, nichts angeklickt (meist Werbeklicks, sagt wenig ueber den Funnel); masterclass=Masterclass-Seiten, eigener Trichter, keine Termin-Zielgruppe; expose_jaeger=unbekannt, nur Projekte/Rechner/Exposes <2min; interessent_neu=unbekannt, >60s aktiv + mehrere Seiten/tiefes Scrollen oder >2min auf Objekten (WICHTIGSTE Zielgruppe fuer Verbesserungen); interessent_bekannt=dasselbe bei bekanntem Kontakt, meist Kunden auf ihrem Deck, keine Neukunden; kurzbesucher/absprung=kaum Engagement. Website und Portal sind getrennte Domains: Wer von der Website in den Funnel wechselt, zaehlt als zwei Sitzungen. Interessenten koennen also per Definition nicht gebucht haben, leite daraus keinen Buchungsfehler ab',
     termin_funnel: { diese_woche: data.funnel, vorwoche: data.funnelPrev },
     termine_gebucht: { diese_woche: data.appointments, vorwoche: data.appointmentsPrev },
     deck_ansichten: data.deckViews,
@@ -366,7 +371,7 @@ function buildHtml(data: ReportData, a: Analysis, kw: number): string {
       ${['Website', 'Besucher', 'Sitzungen', 'Aufrufe', 'Ø Dauer', 'Absprung'].map((h, i) => `<th style="padding:7px 10px;font-size:11px;color:${CI.mute};text-transform:uppercase;text-align:${i ? 'right' : 'left'};border-bottom:2px solid ${CI.line}">${h}</th>`).join('')}
     </tr>${tableRows(siteRows, [1, 2, 3, 4, 5])}</table>`) : ''}
 
-  ${Object.keys(data.segments).length ? card('Besucher-Typen (seit Tracking-Start)',
+  ${Object.keys(data.segments).length ? card('Besucher-Typen (diese Woche)',
     `<table style="width:100%;border-collapse:collapse">${
       Object.entries(data.segments).sort((a, b) => b[1] - a[1]).map(([k, n]) => {
         const m = SEGMENT_LABELS[k] ?? { label: k, desc: '' }
