@@ -2330,8 +2330,11 @@ async function absageVerschieben(admin: SupabaseClient, t: AbsageTermin, leadId:
     if (slot) {
       const ihr = mehrere(text)
       const m = `Kein Problem${vorname ? `, ${vorname}` : ''}! Dann verschieben wir das Treffen im ${CAFE_NAME}. Soll ich ${ihr ? 'euch' : 'dich'} für ${slot.label}, um 10 Uhr eintragen?`
-      await absageGespraech(admin, { lead_id: leadId, deal_id: t.deal_id, source: 'cafe', state: 'awaiting_cafe', proposed_slots: [slot], last_message: m, meeting_type: ihr ? 'cafe_ihr' : 'cafe_du' })
+      // Erst senden, dann das Gespräch (wie cafeNeuerTag): Schlägt der Versand fehl, gilt
+      // ein späteres "Ja" nicht für einen Tag, den der Kunde nie gesehen hat, und ein
+      // offenes Gespräch bleibt, wie es war. Sven bekommt die Aufgabe mit dem Fehlschlag.
       await senden(m)
+      await absageGespraech(admin, { lead_id: leadId, deal_id: t.deal_id, source: 'cafe', state: 'awaiting_cafe', proposed_slots: [slot], last_message: m, meeting_type: ihr ? 'cafe_ihr' : 'cafe_du' })
       await cafeNachfassPlanen(admin, leadId, t.deal_id)
       return `Lotte hat das nächste Café-Treffen angeboten: ${slot.label}, 10 Uhr.`
     }

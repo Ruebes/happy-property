@@ -946,6 +946,58 @@ const cafeZusage = (nummer = TEST_NUMMER) => bot({ action: 'cafe_reaktion', phon
   ok(nachhol().length === 0 && !notiz('🔁') && !notiz('⚠️'), 'verbunden: keine Zeile, keine Notiz')
 }
 
+schreib('\nbooking-bot: Café-Treffen verschieben')
+// Der Kunde will ein Café-Treffen verlegen, Lotte bietet den nächsten Tag an. Nur für
+// diesen Abschnitt gibt es eine KI, sie ordnet jede Nachricht als Verschiebung ein.
+const vorVerschieben = ({ offen = false } = {}) => {
+  start()
+  ENV.ANTHROPIC_API_KEY = 'test-ki'
+  wege['api.anthropic.com'] = () => antwort(200, { content: [{ type: 'tool_use', name: 'emit', input: { art: 'verschieben' } }] })
+  const slot = terminSlot(DREI_TAGE, 'Dienstag, 10.11.')
+  db = neueDb({
+    ...grunddaten(),
+    booking_conversations: offen ? [altesGespraech()] : [],
+    crm_appointments: [{ id: 'cafe-termin', lead_id: LEAD, title: 'Kaffee', type: 'inperson', internal: false, location: 'Café Cultivos, Paphos', timezone: 'Asia/Nicosia', start_time: slot.startIso, end_time: slot.endIso }],
+  })
+  funktionen['send-whatsapp'] = echteSendWhatsapp
+}
+const verschieben = async () => (await bot({ action: 'absage', lead_id: LEAD, text: 'Können wir das Treffen verschieben?' })).json()
+const cafeNachfragen = () => zeilen('scheduled_messages').filter((z) => z.bot_nudge_source === 'cafe' && z.status === 'pending')
+{
+  vorVerschieben()
+  let gespraecheBeimVersand = null
+  evo = () => { gespraecheBeimVersand ??= konv().length; return EVO_OK() }
+  const j = await verschieben()
+  ok(j.handled === 'verschieben' && gespraecheBeimVersand === 0, 'verbunden: Gespräch entsteht erst nach dem Versand')
+  ok(konv().length === 1 && konv()[0].state === 'awaiting_cafe' && konv()[0].source === 'cafe' && konv()[0].proposed_slots.length === 1, 'verbunden: Gespräch wartet auf die Zusage zum neuen Tag')
+  ok(waRaus().length === 1 && waRaus()[0].content.startsWith('Kein Problem') && !!waRaus()[0].whatsapp_message_id, 'verbunden: Angebot im Verlauf, mit ID für eine Reaktion')
+  ok(cafeNachfragen().length === 3, 'verbunden: Nachfragen sind geplant')
+  ok(notiz('🔁 Termin soll')?.content.includes('Lotte hat das nächste Café-Treffen angeboten'), 'verbunden: Akte nennt das Angebot')
+}
+{
+  vorVerschieben()
+  evo = EVO_GETRENNT
+  const j = await verschieben()
+  ok(j.handled === 'verschieben' && j.lotte.includes('fehlgeschlagen'), 'getrennt: Sven erfährt, dass Lottes Antwort nicht rausging')
+  ok(konv().length === 0, 'getrennt: kein Gespräch, das auf eine Antwort wartet')
+  ok(waRaus().length === 0 && cafeNachfragen().length === 0, 'getrennt: nichts im Verlauf, keine Nachfragen')
+  ok(zeile('crm_appointments', (t) => t.id === 'cafe-termin')?.cancel_reported_kind === 'verschieben', 'getrennt: Wunsch bleibt am Termin vermerkt')
+}
+{
+  vorVerschieben({ offen: true })
+  const vorher = JSON.stringify(konv())
+  evo = EVO_GETRENNT
+  await verschieben()
+  ok(JSON.stringify(konv()) === vorher, 'getrennt, offenes Gespräch: bleibt, wie es war')
+}
+{
+  vorVerschieben({ offen: true })
+  await verschieben()
+  const k = konv()
+  ok(k.length === 1 && k[0].id === 'konv-1' && k[0].state === 'awaiting_cafe' && k[0].source === 'cafe' && k[0].attempts === 0, 'verbunden, offenes Gespräch: wird weitergeführt')
+}
+delete ENV.ANTHROPIC_API_KEY
+
 schreib('\nbooking-bot: Übergabe an Sven')
 const notizNachWa = (betreff) => {
   const alle = zeilen('activities')
