@@ -6,9 +6,8 @@
 // Vertrag gehängt. Alle Unterschriften gelten damit für Vertrag und Appendix zusammen.
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { PDFDocument } from 'npm:pdf-lib@1.17.1'
-import { getDocumentProxy } from 'npm:unpdf@0.12.1'
 import { saToken, listTree, download } from './drive.ts'
-import { matchAppendix, contentProblem } from './appendixMatch.ts'
+import { matchAppendix } from './appendixMatch.ts'
 import type { Ctx } from './index.ts'
 
 const BUCKET = 'unit-documents'
@@ -25,16 +24,6 @@ export interface AppendixResult {
 }
 
 const none = (configured: boolean, problems: string[] = []): AppendixResult => ({ configured, bytes: null, files: [], pages: 0, problems })
-
-async function textOf(pdf: Uint8Array): Promise<string> {
-  const proxy = await getDocumentProxy(pdf.slice())
-  let all = ''
-  for (let i = 1; i <= proxy.numPages; i++) {
-    const page = await proxy.getPage(i) as { getTextContent(): Promise<{ items: Array<{ str?: string }> }> }
-    all += (await page.getTextContent()).items.map(x => x.str ?? '').join(' ') + '\n'
-  }
-  return all
-}
 
 /** Appendix der Wohnung aus dem Drive-Ordner holen und zu einem PDF zusammenführen. */
 export async function fetchAppendix(ctx: Ctx): Promise<AppendixResult> {
@@ -60,8 +49,7 @@ export async function fetchAppendix(ctx: Ctx): Promise<AppendixResult> {
       const { bytes } = await download(token, src)
       total += bytes.byteLength
       if (total > MAX_TOTAL) throw new Error('Appendix ist größer als 25 MB')
-      const bad = contentProblem(await textOf(bytes).catch(() => ''), unit)
-      if (bad) problems.push(`${f.name}: ${bad}`)
+      // Der Inhalt wird nicht gelesen: Das Auslesen des Texts sprengte bei 13 Seiten die Rechenzeit der Function (6.11.2026). Es zählt der Dateiname.
       const doc = await PDFDocument.load(bytes)
       // Eine einzige Datei (der Normalfall) bleibt unverändert: Neu-Speichern kostet bei 6 MB viel Rechenzeit
       if (m.matched.length === 1) only = { bytes, pages: doc.getPageCount() }
