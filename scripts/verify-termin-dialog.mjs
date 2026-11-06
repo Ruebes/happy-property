@@ -115,7 +115,6 @@ check(pos('dialogEndet(') < pos("it.intent === 'self_followup'"), 'Prüfung vor 
 check(pos('dialogEndet(') < pos("it.intent === 'defer'"), 'Prüfung vor defer')
 check(pos('dialogEndet(') < pos('// ── Zustandsmaschine'), 'Prüfung vor der Zustandsmaschine')
 const ausstieg = reply.slice(pos('dialogEndet('), pos("it.intent === 'self_followup'"))
-check(/scheduled_messages/.test(ausstieg) && /bot_nudge/.test(ausstieg), 'Ausstieg stoppt geplante Nachfass-Nachrichten')
 check(/handleAnswer\(/.test(ausstieg), 'Ausstieg führt in den Weg ohne Gespräch')
 check(pos('termineVorbei(slots)') > 0 && pos('termineVorbei(slots)') < pos('const m = `Sag mir einfach 1 oder 2'), 'kein vergangener Termin in der Nachfrage')
 check(!/Kein Problem, \$\{first\(name\)/.test(bot), 'Übergabetext: Name darf nicht „ich“ ersetzen')

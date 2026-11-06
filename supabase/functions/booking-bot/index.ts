@@ -1151,12 +1151,6 @@ async function replyRunde(admin: SupabaseClient, c: ReplyConv, leadId: string, t
   // und schweigt bei Bestandskunden, laufendem Kauf und wenn Sven gerade selbst schreibt.
   if (dialogEndet(it, stand, c.state, !!l.profile_id)) {
     await setConv(admin, c.id, { state: 'handoff' })
-    // Geplante Nachfass-Nachrichten stoppen: handleNudge fände kein offenes Gespräch mehr
-    // und würde sonst ein neues eröffnen.
-    try {
-      await admin.from('scheduled_messages').update({ status: 'cancelled' })
-        .eq('lead_id', leadId).eq('status', 'pending').eq('event_type', 'bot_nudge')
-    } catch { /* egal */ }
     try { await admin.from('activities').insert({ lead_id: leadId, type: 'note', direction: 'inbound', subject: '🤐 Termin-Bot: keine Antwort auf die Terminfrage', content: `Der Kunde schrieb: „${text.slice(0, 500)}“\n\n${DIALOG_NOTIZ[stand]} Lotte hat deshalb nicht nachgefragt und das Termin-Gespräch beendet.`, completed_at: new Date().toISOString() }) } catch { /* egal */ }
     return await handleAnswer(admin, leadId, text)
   }
