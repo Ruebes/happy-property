@@ -1568,6 +1568,14 @@ export default function LeadDetail() {
         assigned_to: leadForm.assigned_to      || null,
       }).eq('id', lead.id)
       if (error) throw error
+      // Neue Adresse: bestehenden Drive-Ordner gleich mit ihr teilen, der Drive-Knopf legt nur neue an.
+      // Geht die Freigabe nicht, meldet die Function das Sven, das Speichern hängt nicht davon ab.
+      const mails = (l: string[]) => l.map(x => x.trim().toLowerCase()).filter(Boolean).sort().join()
+      const newMails = [leadForm.email, ...leadForm.alt_emails.split(',')]
+      if (lead.drive_folder_id && mails(newMails) !== mails([lead.email ?? '', ...(lead.alt_emails ?? [])])) {
+        supabase.functions.invoke('create-client-drive-folder', { body: { lead_id: lead.id, extra_emails: [] } })
+          .catch(err => console.error('[LeadDetail] Drive-Freigabe:', err))
+      }
       setEditingLead(false)
       showToast(t('leadDetail.toastMasterDataSaved', '✅ Stammdaten gespeichert'))
       await fetchAll(true)
