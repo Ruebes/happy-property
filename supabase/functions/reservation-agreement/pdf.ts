@@ -28,6 +28,8 @@ export interface TemplateRow {
     manual_units?: string[]
     // Drive-Ordner mit den Appendixen (Flora: Dateiname nennt die Wohnung), hängen hinter dem Vertrag
     appendix_folder_id?: string
+    // Käufer und Bauträger unterschreiben gleichzeitig: beide Links gehen zusammen raus (Flora Panorama, Aaron hat abgesegnet)
+    parallel_sign?: boolean
     // Weitere WhatsApp-Empfänger des Unterschriftslinks an den Bauträger (zusätzlich zum Kontakt aus crm_developer_contacts)
     link_wa_also?: Array<{ name: string; phone: string; lang?: 'de' | 'en' }>
   } | null

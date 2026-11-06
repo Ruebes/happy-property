@@ -42,6 +42,11 @@ type Res = { status: number; body: Record<string, unknown> }
  * als Datei, der Kunde zusätzlich im Drive-Ordner. Die Texte nennen dann keinen Anhang mehr.
  */
 const MAIL_PDF_MAX_B64 = 3_000_000
+/** Sven 6.11.2026: Mit Appendix dauert das Öffnen der Unterschriftsseite, das steht in jeder WhatsApp mit Link. */
+const LOAD_HINT = {
+  de: 'Hinweis: Die Seite braucht beim Öffnen etwas länger (bis zu 20 Sekunden), bitte nicht mehrfach neu laden.',
+  en: 'Note: the page takes a bit longer to open (up to 20 seconds), please do not reload it.',
+}
 const NO_ATTACHMENT: Array<[string, string]> = [
   ['anbei der ausgefüllte Reservierungsvertrag', 'hier der ausgefüllte Reservierungsvertrag'],
   ['please find attached the filled-in reservation agreement', 'here is the filled-in reservation agreement'],
@@ -353,7 +358,7 @@ export async function tpView(sb: SupabaseClient, hit: Hit): Promise<Res> {
       price_text: p.fields.price_text, deposit_text: p.fields.deposit_text, non_refundable_text: NON_REFUNDABLE,
       deposit: am ? euro(am.a) : null, deposit_pay_text: depositPay(fl.net_price, side === 'buyer' ? p.buyerLang : p.lang), special_terms: p.fields.special_terms ?? null,
       // Kundenlink vor der Unterschrift des Bauträgers: noch nichts zu tun
-      waiting_vendor: side === 'buyer' && !sideDone(p, parts, 'vendor'),
+      waiting_vendor: side === 'buyer' && !isParallel(p) && !sideDone(p, parts, 'vendor'),
       signers: signersOf(p, side).map(s => ({ key: s.key, name: s.name, signed: !!signed(s.key, side), signed_at: signed(s.key, side)?.created_at ?? null })),
       min_signers: side === 'vendor' ? vendorMin(p) : signersOf(p, 'buyer').length,
       own_done: sideDone(p, parts, side), other_done: sideDone(p, parts, side === 'buyer' ? 'vendor' : 'buyer'),
@@ -374,7 +379,7 @@ export async function tpSubmit(sb: SupabaseClient, hit: Hit, body: Record<string
   const { row, side, test } = hit
   const p = payloadOf(hit)
   if (!p?.fields.flora) return { status: 404, body: { error: 'not_found' } }
-  if (side === 'buyer' && !sideDone(p, await loadParts(sb, row.id, p.round), 'vendor')) return { status: 409, body: { error: 'vendor_first' } }
+  if (side === 'buyer' && !isParallel(p) && !sideDone(p, await loadParts(sb, row.id, p.round), 'vendor')) return { status: 409, body: { error: 'vendor_first' } }
   const key = String(body.signer_key ?? '')
   const signer = signersOf(p, side).find(s => s.key === key)
   if (!signer) return { status: 400, body: { error: 'invalid_signer' } }
@@ -497,7 +502,11 @@ async function claimSending(sb: SupabaseClient, id: string): Promise<boolean> {
 }
 const releaseSending = (sb: SupabaseClient, id: string) => sb.from('reservation_agreements').update({ sending_at: null }).eq('id', id)
 
+/** Vorlage extra.parallel_sign: Käufer und Bauträger bekommen ihren Link gleichzeitig (Sven 6.11.2026, Aaron hat die Reservierung abgesegnet). */
+const isParallel = (p: Pick<Payload, 'template'>) => !!p.template.extra?.parallel_sign
+
 function linkTargets(sb: SupabaseClient, row: AgreementRow, ctx: Ctx, p: Payload, test: boolean, vendorDone: boolean, buyerDone: boolean, draft: () => Promise<Uint8Array>): Target[] {
+  const par = isParallel(p)
   const fl = p.fields.flora!
   const out: Target[] = []
   const prefix = test ? 'TEST · ' : ''
@@ -518,8 +527,8 @@ function linkTargets(sb: SupabaseClient, row: AgreementRow, ctx: Ctx, p: Payload
         send: async () => invoke(sb, 'send-email', {
           to, subject: `${prefix}${ML === 'de' ? 'Reservierungsvertrag' : 'Reservation agreement'} Flora Panorama ${unit} - ${names}`,
           html: ML === 'de'
-            ? `<p>Hallo ${esc(ctx.developerName)}-Team,</p><p>anbei der ausgefüllte Reservierungsvertrag für <b>Flora Panorama, Apartment ${esc(unit)}</b> (${esc(names)}). Bitte prüfen und direkt am Handy unterschreiben. Es unterschreiben ${esc(signers)}, das geht auch nacheinander über denselben Link.</p><p>Kaufpreis: ${esc(p.fields.price_text)}<br>Anzahlung: ${esc(p.fields.deposit_text)}</p>${p.fields.special_terms ? `<p><b>Special agreement:</b> ${esc(p.fields.special_terms)}</p>` : ''}${button(link, 'Vertrag unterschreiben')}<p>Danach geht der Vertrag an den Kunden zur Unterschrift. Wenn beide Seiten unterschrieben haben, bekommen beide das fertige PDF per E-Mail und WhatsApp.</p><p>Vielen Dank!<br>Sven &middot; Happy Property</p>`
-            : `<p>Dear ${esc(ctx.developerName)} team,</p><p>please find attached the filled-in reservation agreement for <b>Flora Panorama, apartment ${esc(unit)}</b> (${esc(names)}). Please check it and sign it right on your phone. ${esc(signers)} sign, which also works one after the other through the same link.</p><p>Purchase price: ${esc(p.fields.price_text)}<br>Deposit: ${esc(p.fields.deposit_text)}</p>${p.fields.special_terms ? `<p><b>Special agreement:</b> ${esc(p.fields.special_terms)}</p>` : ''}${button(link, 'Sign the agreement')}<p>The agreement then goes to the client for signature. Once both sides have signed, both receive the final PDF by email and WhatsApp.</p><p>Thank you very much!<br>Sven &middot; Happy Property</p>`,
+            ? `<p>Hallo ${esc(ctx.developerName)}-Team,</p><p>anbei der ausgefüllte Reservierungsvertrag für <b>Flora Panorama, Apartment ${esc(unit)}</b> (${esc(names)}). Bitte prüfen und direkt am Handy unterschreiben. Es unterschreiben ${esc(signers)}, das geht auch nacheinander über denselben Link.</p><p>Kaufpreis: ${esc(p.fields.price_text)}<br>Anzahlung: ${esc(p.fields.deposit_text)}</p>${p.fields.special_terms ? `<p><b>Special agreement:</b> ${esc(p.fields.special_terms)}</p>` : ''}${button(link, 'Vertrag unterschreiben')}<p>${par ? 'Der Kunde bekommt seinen Link zeitgleich.' : 'Danach geht der Vertrag an den Kunden zur Unterschrift.'} Wenn beide Seiten unterschrieben haben, bekommen beide das fertige PDF per E-Mail und WhatsApp.</p><p>Vielen Dank!<br>Sven &middot; Happy Property</p>`
+            : `<p>Dear ${esc(ctx.developerName)} team,</p><p>please find attached the filled-in reservation agreement for <b>Flora Panorama, apartment ${esc(unit)}</b> (${esc(names)}). Please check it and sign it right on your phone. ${esc(signers)} sign, which also works one after the other through the same link.</p><p>Purchase price: ${esc(p.fields.price_text)}<br>Deposit: ${esc(p.fields.deposit_text)}</p>${p.fields.special_terms ? `<p><b>Special agreement:</b> ${esc(p.fields.special_terms)}</p>` : ''}${button(link, 'Sign the agreement')}<p>${par ? 'The client receives his link at the same time.' : 'The agreement then goes to the client for signature.'} Once both sides have signed, both receive the final PDF by email and WhatsApp.</p><p>Thank you very much!<br>Sven &middot; Happy Property</p>`,
           attachment: attach(fileNameFor(ctx), await draft()), auto: true, lang: ML, already_translated: true,
         }),
       })
@@ -533,8 +542,8 @@ function linkTargets(sb: SupabaseClient, row: AgreementRow, ctx: Ctx, p: Payload
         send: () => invoke(sb, 'send-whatsapp', {
           event_type: 'reservation_agreement', auto: true, lang: WL, already_translated: true,
           override_text: prefix + (WL === 'de'
-            ? `Hallo ${hi}, hier ist Lotte von Happy Property 🐾\n\nDer Reservierungsvertrag für Flora Panorama, Apartment ${unit} (${names}) ist ausgefüllt. Kein Ausdrucken nötig, ${signers} können hier am Handy prüfen und unterschreiben, auch nacheinander:\n${link}\n\nDanach geht er an den Kunden. Danke!`
-            : `Hi ${hi}, Lotte from Happy Property here 🐾\n\nThe reservation agreement for Flora Panorama, apartment ${unit} (${names}) is filled in. No printing needed, ${signers} can check and sign it right here on the phone, also one after the other:\n${link}\n\nIt then goes to the client. Thank you!`),
+            ? `Hallo ${hi}, hier ist Lotte von Happy Property 🐾\n\nDer Reservierungsvertrag für Flora Panorama, Apartment ${unit} (${names}) ist ausgefüllt. Kein Ausdrucken nötig, ${signers} können hier am Handy prüfen und unterschreiben, auch nacheinander:\n${link}\n\n${LOAD_HINT.de}\n\n${par ? 'Der Kunde bekommt seinen Link zeitgleich. Danke!' : 'Danach geht er an den Kunden. Danke!'}`
+            : `Hi ${hi}, Lotte from Happy Property here 🐾\n\nThe reservation agreement for Flora Panorama, apartment ${unit} (${names}) is filled in. No printing needed, ${signers} can check and sign it right here on the phone, also one after the other:\n${link}\n\n${LOAD_HINT.en}\n\n${par ? 'The client receives his link at the same time. Thank you!' : 'It then goes to the client. Thank you!'}`),
           ...(contact?.video ? { file_url: contact.video, file_name: 'reservation.mp4' } : { file_url: DEV_WA_IMAGE, file_name: 'reservation.jpg' }),
           lead_data: test ? { lead_name: 'Sven', lead_phone: SVEN_PHONE } : { lead_name: contact!.name, lead_phone: contact!.phone },
         }),
@@ -550,8 +559,8 @@ function linkTargets(sb: SupabaseClient, row: AgreementRow, ctx: Ctx, p: Payload
         send: () => invoke(sb, 'send-whatsapp', {
           event_type: 'reservation_agreement', auto: true, lang: WL, already_translated: true,
           override_text: WL === 'de'
-            ? `Hallo ${hi}, hier ist Lotte von Happy Property 🐾\n\nDer Reservierungsvertrag für Flora Panorama, Apartment ${unit} (${names}) ist ausgefüllt. Kein Ausdrucken nötig, ${signers} können hier am Handy prüfen und unterschreiben, auch nacheinander:\n${link}\n\nDanach geht er an den Kunden. Danke!`
-            : `Hi ${hi}, Lotte from Happy Property here 🐾\n\nThe reservation agreement for Flora Panorama, apartment ${unit} (${names}) is filled in. No printing needed, ${signers} can check and sign it right here on the phone, also one after the other:\n${link}\n\nIt then goes to the client. Thank you!`,
+            ? `Hallo ${hi}, hier ist Lotte von Happy Property 🐾\n\nDer Reservierungsvertrag für Flora Panorama, Apartment ${unit} (${names}) ist ausgefüllt. Kein Ausdrucken nötig, ${signers} können hier am Handy prüfen und unterschreiben, auch nacheinander:\n${link}\n\n${LOAD_HINT.de}\n\n${par ? 'Der Kunde bekommt seinen Link zeitgleich. Danke!' : 'Danach geht er an den Kunden. Danke!'}`
+            : `Hi ${hi}, Lotte from Happy Property here 🐾\n\nThe reservation agreement for Flora Panorama, apartment ${unit} (${names}) is filled in. No printing needed, ${signers} can check and sign it right here on the phone, also one after the other:\n${link}\n\n${LOAD_HINT.en}\n\n${par ? 'The client receives his link at the same time. Thank you!' : 'It then goes to the client. Thank you!'}`,
           file_url: DEV_WA_IMAGE, file_name: 'reservation.jpg',
           lead_data: { lead_name: w.name, lead_phone: w.phone.trim() },
         }),
@@ -559,8 +568,9 @@ function linkTargets(sb: SupabaseClient, row: AgreementRow, ctx: Ctx, p: Payload
     }
   }
 
-  // Dann der Kunde: sein Link geht erst raus, wenn der Bauträger unterschrieben hat
-  if (buyerToken && vendorDone && !buyerDone) {
+  // Dann der Kunde: sein Link geht erst raus, wenn der Bauträger unterschrieben hat (parallel: gleichzeitig)
+  if (buyerToken && (vendorDone || par) && !buyerDone) {
+    const vNote = vendorDone ? { de: 'der Bauträger hat bereits unterschrieben', en: 'the developer has already signed' } : { de: 'der Bauträger unterschreibt gleichzeitig', en: 'the developer signs at the same time' }
     const link = SIGN_BUYER + buyerToken
     const L = p.buyerLang
     const first = firstName(ctx)
@@ -570,8 +580,8 @@ function linkTargets(sb: SupabaseClient, row: AgreementRow, ctx: Ctx, p: Payload
       send: () => invoke(sb, 'send-email', {
         to: mail, subject: `${prefix}${L === 'de' ? `Dein Reservierungsvertrag Flora Panorama ${unit}` : `Your reservation agreement Flora Panorama ${unit}`}`,
         html: L === 'de'
-          ? `<p>Hallo ${esc(first)},</p><p>dein Reservierungsvertrag für <b>Flora Panorama, Apartment ${esc(unit)}</b> ist fertig, der Bauträger hat bereits unterschrieben. Du kannst ihn jetzt direkt am Handy prüfen und mit dem Finger unterschreiben, drucken ist nicht nötig.</p><p>Kaufpreis: ${esc(p.fields.price_text)}<br>Anzahlung (40 %): ${esc(depositPay(fl.net_price, 'de'))}, fällig innerhalb von 5 Tagen nach der Unterschrift</p>${button(link, 'Vertrag prüfen und unterschreiben')}<p>Sobald du unterschrieben hast, bekommst du den fertigen Vertrag per E-Mail und WhatsApp.</p><p>Viele Grüße<br>Sven &middot; Happy Property</p>`
-          : `<p>Hi ${esc(first)},</p><p>your reservation agreement for <b>Flora Panorama, apartment ${esc(unit)}</b> is ready and the developer has already signed. You can now check it and sign it with your finger right on your phone, no printing needed.</p><p>Purchase price: ${esc(p.fields.price_text)}<br>Deposit (40%): ${esc(depositPay(fl.net_price, 'en'))}, due within 5 days of signing</p>${button(link, 'Check and sign the agreement')}<p>As soon as you have signed, you will receive the final agreement by email and WhatsApp.</p><p>Best regards<br>Sven &middot; Happy Property</p>`,
+          ? `<p>Hallo ${esc(first)},</p><p>dein Reservierungsvertrag für <b>Flora Panorama, Apartment ${esc(unit)}</b> ist fertig, ${vNote.de}. Du kannst ihn jetzt direkt am Handy prüfen und mit dem Finger unterschreiben, drucken ist nicht nötig.</p><p>Kaufpreis: ${esc(p.fields.price_text)}<br>Anzahlung (40 %): ${esc(depositPay(fl.net_price, 'de'))}, fällig innerhalb von 5 Tagen nach der Unterschrift</p>${button(link, 'Vertrag prüfen und unterschreiben')}<p>Sobald du unterschrieben hast, bekommst du den fertigen Vertrag per E-Mail und WhatsApp.</p><p>Viele Grüße<br>Sven &middot; Happy Property</p>`
+          : `<p>Hi ${esc(first)},</p><p>your reservation agreement for <b>Flora Panorama, apartment ${esc(unit)}</b> is ready and ${vNote.en}. You can now check it and sign it with your finger right on your phone, no printing needed.</p><p>Purchase price: ${esc(p.fields.price_text)}<br>Deposit (40%): ${esc(depositPay(fl.net_price, 'en'))}, due within 5 days of signing</p>${button(link, 'Check and sign the agreement')}<p>As soon as you have signed, you will receive the final agreement by email and WhatsApp.</p><p>Best regards<br>Sven &middot; Happy Property</p>`,
         auto: true, lang: L, already_translated: true, ...(test ? {} : { lead_id: ctx.lead.id }),
       }),
     })
@@ -581,8 +591,8 @@ function linkTargets(sb: SupabaseClient, row: AgreementRow, ctx: Ctx, p: Payload
       send: () => invoke(sb, 'send-whatsapp', {
         event_type: 'reservation_agreement', auto: true, lang: L, already_translated: true,
         override_text: prefix + (L === 'de'
-          ? `Hallo ${first} 🐾\n\nhier ist Lotte von Happy Property. Dein Reservierungsvertrag für Flora Panorama, Apartment ${unit} ist fertig, der Bauträger hat bereits unterschrieben. Du kannst ihn jetzt direkt am Handy prüfen und unterschreiben:\n${link}\n\nLiebe Grüße, Lotte`
-          : `Hi ${first} 🐾\n\nLotte from Happy Property here. Your reservation agreement for Flora Panorama, apartment ${unit} is ready and the developer has already signed. You can now check and sign it right on your phone:\n${link}\n\nBest, Lotte`),
+          ? `Hallo ${first} 🐾\n\nhier ist Lotte von Happy Property. Dein Reservierungsvertrag für Flora Panorama, Apartment ${unit} ist fertig, ${vNote.de}. Du kannst ihn jetzt direkt am Handy prüfen und unterschreiben:\n${link}\n\n${LOAD_HINT.de}\n\nLiebe Grüße, Lotte`
+          : `Hi ${first} 🐾\n\nLotte from Happy Property here. Your reservation agreement for Flora Panorama, apartment ${unit} is ready and ${vNote.en}. You can now check and sign it right on your phone:\n${link}\n\n${LOAD_HINT.en}\n\nBest, Lotte`),
         persona_image: lotteBild(), ...(test ? {} : { lead_id: ctx.lead.id }),
         lead_data: test ? { lead_name: 'Sven', lead_phone: SVEN_PHONE } : { lead_name: first || 'Kunde', lead_phone: phone },
       }),
@@ -666,7 +676,8 @@ export async function floraSend(sb: SupabaseClient, row: AgreementRow, ctx: Ctx,
   // Die Runde hat sich inzwischen geändert: jemand anderes hat schon gesendet, also nicht ein zweites Mal
   if (!data) return { ok: false, test: false, sent_to: [], errors: ['Der Vertrag wurde gerade schon gesendet. Bitte neu laden.'], sign_link: null }
   const fresh = data as AgreementRow
-  const errors = await deliverLinks(sb, fresh, false, true, true)
+  // Kundenlinks (parallel) halten die Ruhezeit ein, die der Bauträger nicht betrifft
+  const errors = await deliverLinks(sb, fresh, false, false, true)
   const unitLabel = `Flora Panorama ${ctx.unit.unit_number}`
   await invoke(sb, 'send-email', {
     to: SVEN_MAIL, subject: `Reservierung ${unitLabel}: an ${ctx.developerName} geschickt`,
