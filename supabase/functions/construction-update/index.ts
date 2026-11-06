@@ -316,6 +316,18 @@ Deno.serve(async (req) => {
           const d1 = r1.data as { success?: boolean; error?: string } | null
           if (r1.error) throw new Error(r1.error.message)
           if (d1 && d1.success === false) throw new Error(d1.error || 'WhatsApp nicht gesendet')
+          // In die Kundenakte: Ohne diesen Eintrag wussten weder CRM-Verlauf noch Lotte, dass
+          // die Fotos rausgegangen sind (Thorsten Brendel, 6.11.). Darf den Versand nie stören.
+          if (!test) {
+            try {
+              const { data: treffer } = await sb.rpc('find_leads_by_phone_suffix', { suffix: r.phone.replace(/\D/g, '').slice(-8) })
+              const leadId = ((treffer ?? []) as { id: string }[])[0]?.id
+              if (leadId) await sb.from('activities').insert({
+                lead_id: leadId, type: 'whatsapp', direction: 'outbound', subject: 'WhatsApp: construction_update',
+                content: `${waText}\n\n📸 ${photoUrls.length} Baustellenfotos`, completed_at: new Date().toISOString(), auto: true,
+              })
+            } catch (e) { console.warn('[construction-update] Akteneintrag:', e) }
+          }
           for (let i = 0; i < photoUrls.length; i++) {
             const cap = i === 0
               ? (de ? `📸 Frisch von der Baustelle: ${projName}` : `📸 Fresh from the site: ${projName}`)

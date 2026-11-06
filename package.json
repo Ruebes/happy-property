@@ -18,7 +18,7 @@
     "verify:meta": "node scripts/verify-meta-spec.mjs",
     "verify:werbe": "node scripts/verify-werbe-mathe.mjs && node scripts/verify-werbe-regeln.mjs",
     "verify:absage": "node scripts/verify-absage.mjs",
-    "verify:lotte": "node scripts/verify-lotte-regeln.mjs",
+    "verify:lotte": "node scripts/verify-lotte-regeln.mjs && node scripts/verify-termin-dialog.mjs",
     "verify:wa": "node scripts/verify-wa-regeln.mjs && node scripts/verify-wa-getrennt.mjs",
     "verify:tippgeber": "node scripts/verify-tippgeber-prozent.mjs"
   },
