@@ -485,6 +485,23 @@ function linkTargets(sb: SupabaseClient, row: AgreementRow, ctx: Ctx, p: Payload
         }),
       })
     }
+    // Der Link geht IMMER auch an die weiteren Empfänger der Vorlage (Sven 6.11.2026: Aaron und Marco)
+    if (!test) for (const w of p.template.extra?.link_wa_also ?? []) {
+      if (!w.phone?.trim() || w.phone.trim() === ctx.devPhone?.phone) continue
+      const WL: Lang = w.lang === 'de' ? 'de' : 'en'
+      const hi = w.name.split(' ')[0]
+      out.push({
+        key: `wa:vendor:${w.phone.replace(/\D/g, '')}`,
+        send: () => invoke(sb, 'send-whatsapp', {
+          event_type: 'reservation_agreement', auto: true, lang: WL, already_translated: true,
+          override_text: WL === 'de'
+            ? `Hallo ${hi}, hier ist Lotte von Happy Property 🐾\n\nDer Reservierungsvertrag für Flora Panorama, Apartment ${unit} (${names}) ist ausgefüllt. Kein Ausdrucken nötig, ${signers} können hier am Handy prüfen und unterschreiben, auch nacheinander:\n${link}\n\nDanach geht er an den Kunden. Danke!`
+            : `Hi ${hi}, Lotte from Happy Property here 🐾\n\nThe reservation agreement for Flora Panorama, apartment ${unit} (${names}) is filled in. No printing needed, ${signers} can check and sign it right here on the phone, also one after the other:\n${link}\n\nIt then goes to the client. Thank you!`,
+          file_url: DEV_WA_IMAGE, file_name: 'reservation.jpg',
+          lead_data: { lead_name: w.name, lead_phone: w.phone.trim() },
+        }),
+      })
+    }
   }
 
   // Dann der Kunde: sein Link geht erst raus, wenn der Bauträger unterschrieben hat

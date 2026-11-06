@@ -26,6 +26,8 @@ export interface TemplateRow {
     vendor_signers?: VendorSigner[]; vendor_min_signers?: number; title_deed_amount?: number; seal_path?: string
     // Wohnungen mit kundenbezogenen Preisen: gehen nur mit von Hand eingetragenem Preis automatisch raus
     manual_units?: string[]
+    // Weitere WhatsApp-Empfänger des Unterschriftslinks an den Bauträger (zusätzlich zum Kontakt aus crm_developer_contacts)
+    link_wa_also?: Array<{ name: string; phone: string; lang?: 'de' | 'en' }>
   } | null
 }
 
