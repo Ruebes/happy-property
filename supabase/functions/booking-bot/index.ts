@@ -39,9 +39,10 @@ import {
   type LotteRegel, type EinheitFrei, type DeckZeile, type OutboxZeile, type SichtZeile, type VersandZeile, type ProjektFrei, type BautraegerProjekt,
 } from '../_shared/lotteRegeln.ts'
 import { antwortSprache, dauerhaftEnglisch, spracheErkennen, sprachNotiz, SPRACH_BETREFF, type Sprache } from '../_shared/kundenSprache.ts'
-import { ruhezeitZiel } from '../_shared/ruhezeit.ts'
+import { ruhezeitZiel, zeitzoneFuer } from '../_shared/ruhezeit.ts'
 import { SB_URL } from '../_shared/sbUrl.ts'
 import { NO_WHATSAPP_RE } from '../_shared/phonePlausible.ts'
+import { waGetrennt } from '../_shared/waProvider.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -495,6 +496,41 @@ async function versandGescheitert(admin: SupabaseClient, fehler: unknown, id: st
   } catch (e) { console.warn('[booking-bot] Gespräch zurücknehmen:', e) }
 }
 
+// Terminbestätigung nachholen (Sperre 5.11.2026): Der Termin steht, nur die WhatsApp kam
+// nicht an. Die Buchung bleibt, und der Text läuft durch den normalen Scheduler:
+//   event_type termin_gebucht  keine Bremse (die gilt nur für Newsletter) und keine
+//                              Newsletter-Abmeldung; eine Terminänderung in Kalender oder
+//                              Kundenportal storniert die Zeile, eine Kundenantwort nicht
+//   has_appointment, nur_bis   entfällt, wenn der Termin weg oder schon vorbei ist
+//   +30 Minuten                gilt nicht als Sofort-Nachricht, also greift die Ruhezeit
+// Nur bei getrennter Nummer. Andere Fehler (Nummer ohne WhatsApp, Server nicht erreichbar,
+// dann kann der Text sogar angekommen sein) wiederholt niemand, dann bestätigt Sven selbst.
+// Wirft nicht weiter: Für den Aufrufer (Kundenantwort, Sweep) ist die Buchung gelungen.
+const NACHHOLEN_MIN = 30   // wie ACCOUNT_RETRY_MIN im Scheduler
+async function bestaetigungNachholen(admin: SupabaseClient, fehler: unknown, p: { leadId: string; dealId: string | null; text: string; slot: Slot; zone: string }): Promise<void> {
+  const grund = fehler instanceof Error ? fehler.message : String(fehler)
+  console.warn('[booking-bot] Terminbestätigung nicht gesendet:', grund)
+  const frueh = new Date(Date.now() + NACHHOLEN_MIN * 60_000)
+  const wann = ruhezeitZiel(frueh, frueh, p.zone) ?? frueh
+  let nachgeholt = false
+  if (waGetrennt(grund) && wann.getTime() < Date.parse(p.slot.startIso)) {
+    try {
+      const { error } = await admin.from('scheduled_messages').insert({
+        lead_id: p.leadId, deal_id: p.dealId, type: 'whatsapp', event_type: 'termin_gebucht', status: 'pending', recipient: 'client',
+        scheduled_at: wann.toISOString(), whatsapp_text: withSignoff(p.text),
+        appointment_condition: 'has_appointment', seq_condition: { kind: 'nur_bis', bis: p.slot.startIso },
+      })
+      if (error) console.error('[booking-bot] Bestätigung nachholen:', error.message)
+      nachgeholt = !error
+    } catch (e) { console.error('[booking-bot] Bestätigung nachholen:', e) }
+  }
+  // Der Text beginnt mit NICHT gesendet, weil ai-draft-reply Notizen ohne Betreff liest.
+  const notiz = nachgeholt
+    ? { subject: '🔁 Terminbestätigung wird automatisch wiederholt', content: `Die WhatsApp-Nummer ist gerade getrennt. Die Bestätigung für ${p.slot.label} wird wiederholt, sobald sie wieder verbunden ist. Bitte nicht von Hand nachschicken.` }
+    : { subject: '⚠️ Terminbestätigung NICHT gesendet', content: `NICHT gesendet: Der Versand der Bestätigung für ${p.slot.label} ist gescheitert, der Termin steht trotzdem. Bitte im Chat prüfen und persönlich bestätigen.\nGrund: ${grund.slice(0, 300)}\n\nGeplanter Text:\n${withSignoff(p.text)}` }
+  try { await admin.from('activities').insert({ lead_id: p.leadId, type: 'note', direction: 'outbound', auto: true, completed_at: new Date().toISOString(), ...notiz }) } catch { /* egal */ }
+}
+
 // Terminart erfragen (nach fixiertem Slot)
 async function askType(admin: SupabaseClient, convId: string, phone: string, leadId: string, name: string | null, slot: Slot) {
   const msg = `Super, ${first(name) || 'gerne'}! Ich trage dir ${slot.label} Uhr ein. 🙂\n\nLieber ein kurzes Telefonat über WhatsApp oder einen Zoom-Call?`
@@ -592,8 +628,11 @@ async function book(admin: SupabaseClient, conv: { id: string; lead_id: string; 
     console.error('[booking-bot] Termin-Insert fehlgeschlagen:', apptErr?.message)
     const m = `Ups — beim Eintragen ist mir gerade ein technischer Fehler passiert 😕 Ich gebe das direkt an Sven, er bestätigt dir ${slot.label} Uhr gleich persönlich.`
     await setConv(admin, conv.id, { state: 'handoff', chosen_slot: slot, meeting_type: type, last_message: m })
-    await sendWa(phone, m); await logWa(admin, conv.lead_id, m, 'outbound')
-    try { await admin.from('activities').insert({ lead_id: conv.lead_id, type: 'note', direction: 'inbound', subject: '⚠️ Termin-Bot: Buchung fehlgeschlagen', content: `Termin ${slot.label} (${typeLabel}) konnte nicht gespeichert werden: ${apptErr?.message}. Bitte manuell eintragen.`, completed_at: new Date().toISOString() }) } catch { /* egal */ }
+    // finally: Die Notiz ist der einzige Hinweis für Sven, auch wenn der Versand scheitert.
+    try { await sendWa(phone, m); await logWa(admin, conv.lead_id, m, 'outbound') }
+    finally {
+      try { await admin.from('activities').insert({ lead_id: conv.lead_id, type: 'note', direction: 'inbound', subject: '⚠️ Termin-Bot: Buchung fehlgeschlagen', content: `Termin ${slot.label} (${typeLabel}) konnte nicht gespeichert werden: ${apptErr?.message}. Bitte manuell eintragen.`, completed_at: new Date().toISOString() }) } catch { /* egal */ }
+    }
     return
   }
 
@@ -638,15 +677,19 @@ async function book(admin: SupabaseClient, conv: { id: string; lead_id: string; 
     ? `Perfekt${name ? `, ${name}` : ''}! ✅ Dein Zoom-Termin mit Sven steht: ${slot.label} Uhr (deutsche Zeit).${zoomLink ? `\n\nZoom-Link: ${zoomLink}` : '\n\nDen Zoom-Link schicke ich dir rechtzeitig vorher.'}${lead.email ? '\n\nEine Bestätigung mit Kalender-Eintrag ist auch per Mail unterwegs.' : ''}\n\nBis dann! Liebe Grüße, Lotte 🐾`
     : `Perfekt${name ? `, ${name}` : ''}! ✅ Dein Termin mit Sven steht: ${slot.label} Uhr (deutsche Zeit). Er ruft dich dann über WhatsApp an.${lead.email ? '\n\nEine Bestätigung mit Kalender-Eintrag ist auch per Mail unterwegs.' : ''}\n\nBis dann! Liebe Grüße, Lotte 🐾`
   await setConv(admin, conv.id, { state: 'booked', meeting_type: type, last_message: confirm })
-  await sendWa(phone, confirm); await logWa(admin, conv.lead_id, confirm, 'outbound')
+  try { await sendWa(phone, confirm); await logWa(admin, conv.lead_id, confirm, 'outbound') }
+  catch (e) { await bestaetigungNachholen(admin, e, { leadId: conv.lead_id, dealId, text: confirm, slot, zone: zeitzoneFuer(phone) }) }
 }
 
 // Übergabe an Sven (Notbremse)
 async function handoff(admin: SupabaseClient, convId: string, phone: string, leadId: string, name: string | null) {
   const msg = `Kein Problem, ${first(name) || 'ich'} melde das direkt an Sven weiter — er kommt gleich persönlich auf dich zu und findet mit dir einen passenden Termin. 🙂`
   await setConv(admin, convId, { state: 'handoff', last_message: msg })
-  await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound')
-  try { await admin.from('activities').insert({ lead_id: leadId, type: 'note', direction: 'inbound', subject: '⚠️ Termin-Bot: Übergabe', content: 'Der Terminbot kam nicht weiter — bitte persönlich einen Termin mit dem Kunden finden.', completed_at: new Date().toISOString() }) } catch { /* egal */ }
+  // finally: Die Notiz ist der einzige Hinweis für Sven, auch wenn der Versand scheitert.
+  try { await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound') }
+  finally {
+    try { await admin.from('activities').insert({ lead_id: leadId, type: 'note', direction: 'inbound', subject: '⚠️ Termin-Bot: Übergabe', content: 'Der Terminbot kam nicht weiter — bitte persönlich einen Termin mit dem Kunden finden.', completed_at: new Date().toISOString() }) } catch { /* egal */ }
+  }
 }
 
 // ── Proaktive Vorschläge: 2 Slots, 2 VERSCHIEDENE Tage, 1× vormittags + 1× nachmittags ──
@@ -1494,8 +1537,11 @@ Gib NUR das Tool emit zurück.`
 async function cafeAnSven(admin: SupabaseClient, convId: string, phone: string, leadId: string, name: string | null, grund: string): Promise<Response> {
   const msg = `Danke dir${first(name) ? `, ${first(name)}` : ''}! Das gebe ich direkt an Sven weiter, er meldet sich persönlich bei dir. 🙂`
   await setConv(admin, convId, { state: 'handoff', last_message: msg })
-  await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound')
-  try { await admin.from('activities').insert({ lead_id: leadId, type: 'note', direction: 'inbound', subject: '⚠️ Lotte: Café-Treffen an Sven', content: grund, completed_at: new Date().toISOString() }) } catch { /* egal */ }
+  // finally: Die Notiz ist der einzige Hinweis für Sven, auch wenn der Versand scheitert.
+  try { await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound') }
+  finally {
+    try { await admin.from('activities').insert({ lead_id: leadId, type: 'note', direction: 'inbound', subject: '⚠️ Lotte: Café-Treffen an Sven', content: grund, completed_at: new Date().toISOString() }) } catch { /* egal */ }
+  }
   return json({ ok: true, handled: 'cafe_handoff' })
 }
 
@@ -1707,7 +1753,10 @@ async function cafeBuchen(admin: SupabaseClient, c: ReplyConv, l: { first_name: 
   void notifyIfToday(admin, [slot.startIso], `📅 Café-Treffen HEUTE um 10:00\n\n${name || 'Kunde'}${phone ? `\n${phone}` : ''}\n${CAFE_NAME}\n\n(von Lotte gebucht)`)
   const msg = `Super, ist eingetragen ✅\n\n${slot.label}, 10 Uhr (Zypern-Zeit)\n${CAFE_NAME}, Innenstadt Paphos\n${CAFE_LINK}\n\nSven freut sich auf ${ihr ? 'euch' : 'dich'}!`
   await setConv(admin, c.id, { state: 'booked', meeting_type: 'inperson', chosen_slot: slot, last_message: msg })
-  await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound')
+  // Hier gibt es keine Vorlage und keine Mail, diese WhatsApp ist die einzige Bestätigung.
+  // Zypern-Zeit statt Vorwahl: 9 Uhr in Deutschland ist im Café schon 10 Uhr.
+  try { await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound') }
+  catch (e) { await bestaetigungNachholen(admin, e, { leadId, dealId: c.deal_id, text: msg, slot, zone: CY }) }
   return json({ ok: true, handled: 'cafe_gebucht', slot: slot.label })
 }
 

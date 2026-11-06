@@ -1,9 +1,10 @@
 // Tests für den WhatsApp-Versand bei getrennter Nummer (Sperre vom 5.11.2026).
 //
-// Startet die echten Edge Functions send-whatsapp, masterclass-register, booking-bot und
-// process-scheduled-messages offline und spielt die Fälle durch. Nachgebaut sind nur Deno,
-// Datenbank, Uhr und Netz; der eigene WhatsApp-Server antwortet wahlweise „Connection
-// Closed". Es geht nichts raus, jede Adresse ist erfunden und fetch ist ersetzt.
+// Startet die echten Edge Functions send-whatsapp, masterclass-register, booking-bot,
+// schedule-message und process-scheduled-messages offline und spielt die Fälle durch.
+// Nachgebaut sind nur Deno, Datenbank, Uhr und Netz; der eigene WhatsApp-Server antwortet
+// wahlweise „Connection Closed". Es geht nichts raus, jede Adresse ist erfunden und fetch
+// ist ersetzt.
 //
 // Ausführen:
 //   node scripts/verify-wa-getrennt.mjs
@@ -60,6 +61,7 @@ globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (f) => { geladen = f } }
 const VORGABEN = {
   scheduled_messages: { retry_count: 0, recipient: 'client' },
   booking_conversations: { attempts: 0 },
+  crm_appointments: { internal: false },
 }
 const kopie = (x) => JSON.parse(JSON.stringify(x))
 let funktionen = {}  // Edge Functions hinter functions.invoke
@@ -144,6 +146,7 @@ function neueDb(start = {}) {
     tabellen: t,
     from,
     rpc: async (f, a) => {
+      if (f === 'find_leads_by_phone_suffix') return { data: (t.leads ?? []).filter((l) => String(l.whatsapp || l.phone).replace(/\D/g, '').endsWith(a.suffix)).map((l) => ({ id: l.id })), error: null }
       if (f !== 'claim_scheduled_messages') return { data: null, error: null }
       const faellig = (t.scheduled_messages ??= [])
         .filter((r) => r.status === 'pending' && EchtDate.parse(r.scheduled_at) <= jetzt)
@@ -190,6 +193,7 @@ const hSend = (await lade('send-whatsapp/index.ts', 'send-whatsapp')).handler
 const hAnmeldung = (await lade('masterclass-register/index.ts', 'masterclass-register')).handler
 const hBot = (await lade('booking-bot/index.ts', 'booking-bot')).handler
 const hPlaner = (await lade('process-scheduled-messages/index.ts', 'process-scheduled-messages')).handler
+const hSchedule = (await lade('schedule-message/index.ts', 'schedule-message')).handler
 if (!process.env.WA_TEST_LOG) console.log = console.warn = console.error = () => {}
 
 // ── Netz ─────────────────────────────────────────────────────────────────────
@@ -223,12 +227,13 @@ const start = (daten = grunddaten()) => {
   db = neueDb(daten); evo = EVO_OK; evoAufrufe = []; netzLog = []; wege = {}; funktionen = {}; mails.length = 0; jetzt = TAGSUEBER
 }
 const aufruf = (h, body, kopf = { apikey: KEY }) => h(new Request('https://fn.test/', { method: 'POST', headers: { 'Content-Type': 'application/json', ...kopf }, body: JSON.stringify(body) }))
-// send-whatsapp hinter functions.invoke: wie supabase-js, Fehlerstatus kommt als error.
-const echteSendWhatsapp = async (body) => {
-  const r = await aufruf(hSend, body)
+// Echte Function hinter functions.invoke: wie supabase-js, Fehlerstatus kommt als error.
+const echteFunktion = (h) => async (body) => {
+  const r = await aufruf(h, body)
   const data = await r.json()
   return r.ok ? { data, error: null } : { data: null, error: new Error(data.error ?? `HTTP ${r.status}`) }
 }
+const echteSendWhatsapp = echteFunktion(hSend)
 
 // ── Fehlertexte ──────────────────────────────────────────────────────────────
 schreib('Erkennung der Trennung')
@@ -635,6 +640,374 @@ const abos = (n) => Array.from({ length: n }, (_, i) => ({ id: `abo-${i}`, email
   const j = await planer()
   ok(j.details?.[0]?.result === 'wa_limit:tag' && gesendet.length === 0 && mails.length === 0, 'Bremse: Tageslimit erreicht, Zeile wartet')
   ok(EchtDate.parse(fertig('welle-0').scheduled_at) === jetzt + 180 * MIN, 'Bremse: neuer Versuch in 3 Stunden')
+}
+
+// ── Terminbestätigung ────────────────────────────────────────────────────────
+schreib('\nbooking-bot: Terminbestätigung, Rückfallweg ohne Vorlagen')
+const DREI_TAGE = 3 * 1440
+const terminSlot = (inMin, label) => ({
+  startIso: new Date(jetzt + inMin * MIN).toISOString(),
+  endIso: new Date(jetzt + (inMin + 30) * MIN).toISOString(),
+  label,
+})
+let mailAufrufe = []
+// Kurz vor der Buchung: Der Slot steht, nur die Terminart ist offen. Ohne Regeln plant die
+// echte schedule-message nichts, also läuft der Rückfallweg.
+const vorBuchung = ({ inMin = DREI_TAGE, um = TAGSUEBER, daten = {} } = {}) => {
+  start()
+  jetzt = um
+  const slot = terminSlot(inMin, 'Dienstag, 10.11. um 15:00')
+  db = neueDb({ ...grunddaten(), ...daten, booking_conversations: [altesGespraech({ state: 'awaiting_type', chosen_slot: slot, proposed_slots: [slot], updated_at: vor(30) })] })
+  funktionen['send-whatsapp'] = echteSendWhatsapp
+  funktionen['schedule-message'] = echteFunktion(hSchedule)
+  mailAufrufe = []
+  funktionen['send-email'] = async (b) => { mailAufrufe.push(b); return { data: { ok: true }, error: null } }
+  return slot
+}
+const buchen = () => bot({ action: 'book_now', lead_id: LEAD })
+const nachhol = () => zeilen('scheduled_messages').filter((z) => z.event_type === 'termin_gebucht')
+const notiz = (anfang) => zeile('activities', (a) => a.type === 'note' && a.subject?.startsWith(anfang))
+const waRaus = () => zeilen('activities').filter((a) => a.type === 'whatsapp' && a.direction !== 'inbound')
+const stundeZypern = (iso) => Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Nicosia', hour: '2-digit', hourCycle: 'h23' }).format(new EchtDate(iso)))
+const ergebnis = (j, id) => j.details?.find((x) => x.id === id)?.result
+{
+  const slot = vorBuchung()
+  evo = EVO_GETRENNT
+  const r = await buchen()
+  ok(r.status === 200 && (await r.json()).ok === true, 'getrennt: Buchung gilt als gelungen')
+  ok(zeilen('crm_appointments').length === 1 && zeilen('crm_appointments')[0].start_time === slot.startIso, 'getrennt: Termin bleibt stehen')
+  ok(konv()[0].state === 'booked', 'getrennt: Gespräch ist gebucht, Buchung wird nicht zurückgenommen')
+  // Neben der Kundenmail läuft hier auch Svens Alarm über send-email.
+  const kundenmail = mailAufrufe.filter((m) => m.to === 'test@example.com')
+  ok(kundenmail.length === 1 && kundenmail[0].attachment?.filename === 'termin.ics', 'getrennt: Mail mit Kalender-Datei geht trotzdem raus')
+  ok(waRaus().length === 0, 'getrennt: nichts als gesendet protokolliert')
+  const [z, ...rest] = nachhol()
+  ok(!!z && rest.length === 0, 'getrennt: genau eine Zeile zum Nachholen')
+  ok(z?.type === 'whatsapp' && z?.status === 'pending' && z?.recipient === 'client' && z?.lead_id === LEAD, 'Zeile: WhatsApp an den Kunden, wartet')
+  ok(EchtDate.parse(z?.scheduled_at) === jetzt + 30 * MIN, 'Zeile: in 30 Minuten, also nicht als Sofort-Nachricht an der Ruhezeit vorbei')
+  ok(z?.whatsapp_text === konv()[0].last_message && (z?.whatsapp_text.match(/Liebe Grüße/g) ?? []).length === 1, 'Zeile: derselbe Text mit einem Gruß')
+  ok(z?.appointment_condition === 'has_appointment' && z?.seq_condition?.kind === 'nur_bis' && z?.seq_condition?.bis === slot.startIso, 'Zeile: gilt nur, solange der Termin steht und noch nicht begonnen hat')
+  ok(notiz('🔁')?.content.includes(slot.label) && notiz('🔁')?.content.includes('nicht von Hand'), 'Akte: Hinweis, dass automatisch wiederholt wird')
+  ok(!notiz('⚠️'), 'Akte: keine Warnung')
+}
+{
+  // Auch hier die Zeile aus der echten Buchung.
+  vorBuchung()
+  evo = EVO_GETRENNT
+  await buchen()
+  const { id, whatsapp_text: text } = nachhol()[0]
+  jetzt += 31 * MIN
+  const j = await planer()
+  ok(ergebnis(j, id) === 'retry:account' && fertig(id).status === 'pending' && fertig(id).retry_count === 1, 'Scheduler, noch getrennt: Wiederholung wie jede andere Zeile')
+  ok(waRaus().length === 0, 'Scheduler, noch getrennt: nichts als gesendet protokolliert')
+  jetzt += 31 * MIN
+  evo = EVO_OK
+  evoAufrufe = []
+  const j2 = await planer()
+  ok(ergebnis(j2, id) === 'sent' && fertig(id).status === 'sent' && fertig(id).error_message === null, 'Scheduler, wieder verbunden: raus')
+  ok(evoAufrufe.length === 1, 'Scheduler, wieder verbunden: genau eine Nachricht')
+  const w = waRaus()
+  ok(w.length === 1 && w[0].subject === 'WhatsApp: termin_gebucht' && w[0].content === text && w[0].lead_id === LEAD, 'Scheduler, wieder verbunden: steht in der Akte')
+  jetzt += 31 * MIN
+  evoAufrufe = []
+  await planer()
+  ok(evoAufrufe.length === 0, 'Scheduler, nächster Lauf: nichts doppelt')
+}
+{
+  vorBuchung()
+  evo = EVO_GETRENNT
+  await buchen()
+  const { id } = nachhol()[0]
+  jetzt = NACHTS
+  evo = EVO_OK
+  evoAufrufe = []
+  const j = await planer()
+  const z = fertig(id)
+  ok(ergebnis(j, id) === 'ruhezeit' && z.status === 'pending' && evoAufrufe.length === 0, 'Scheduler nachts: nichts geht raus')
+  ok(EchtDate.parse(z.scheduled_at) > NACHTS && stundeZypern(z.scheduled_at) >= 8 && stundeZypern(z.scheduled_at) < 10, 'Scheduler nachts: rückt auf den Morgen')
+}
+{
+  // Die Bremse gilt für Wellen. Eine Terminbestätigung zählt nicht mit und wartet nicht.
+  vorBuchung()
+  evo = EVO_GETRENNT
+  await buchen()
+  const { id } = nachhol()[0]
+  for (let i = 0; i < 20; i++) db.tabellen.scheduled_messages.push({ id: `alt-${i}`, type: 'whatsapp', event_type: 'newsletter', status: 'sent', whatsapp_text: 'x', error_message: null, wa_part: 0, sent_at: vor(300), scheduled_at: vor(300), recipient: 'client' })
+  jetzt += 31 * MIN
+  evo = EVO_OK
+  const j = await planer()
+  ok(ergebnis(j, id) === 'sent', 'Bremse: Tageslimit voll, die Bestätigung geht trotzdem raus')
+}
+{
+  const slot = vorBuchung()
+  evo = EVO_GETRENNT
+  await buchen()
+  const { id } = nachhol()[0]
+  jetzt = EchtDate.parse(slot.startIso) + MIN
+  evo = EVO_OK
+  evoAufrufe = []
+  const j = await planer()
+  ok(/^skipped:/.test(ergebnis(j, id)) && fertig(id).status === 'skipped' && evoAufrufe.length === 0, 'Termin hat begonnen: entfällt, nichts geht raus')
+}
+{
+  // Mit einem weiteren Termin hilft has_appointment nicht mehr, dann greift nur_bis.
+  const slot = vorBuchung()
+  evo = EVO_GETRENNT
+  await buchen()
+  const { id } = nachhol()[0]
+  db.tabellen.crm_appointments.push({ id: 'folgetermin', lead_id: LEAD, internal: false, type: 'zoom', start_time: new Date(jetzt + 7 * 1440 * MIN).toISOString(), end_time: new Date(jetzt + 7 * 1440 * MIN + 30 * MIN).toISOString() })
+  jetzt = EchtDate.parse(slot.startIso) + MIN
+  evo = EVO_OK
+  evoAufrufe = []
+  const j = await planer()
+  ok(ergebnis(j, id) === 'skipped:nur_bis' && evoAufrufe.length === 0, 'Termin hat begonnen, Folgetermin steht: entfällt trotzdem')
+}
+for (const [fall, weg] of [
+  ['gelöscht', (t) => { db.tabellen.crm_appointments = db.tabellen.crm_appointments.filter((a) => a !== t) }],
+  ['als Absage gemeldet', (t) => { t.cancel_reported_at = vor(1) }],
+]) {
+  vorBuchung()
+  evo = EVO_GETRENNT
+  await buchen()
+  const { id } = nachhol()[0]
+  weg(db.tabellen.crm_appointments[0])
+  jetzt += 31 * MIN
+  evo = EVO_OK
+  evoAufrufe = []
+  const j = await planer()
+  ok(ergebnis(j, id) === 'skipped:condition' && evoAufrufe.length === 0, `Termin ${fall}: entfällt, nichts geht raus`)
+}
+for (const [fall, machen] of [
+  ['Nummer ohne WhatsApp', () => { evo = EVO_KEIN_WA }],
+  ['Absturz von send-whatsapp', () => { funktionen['send-whatsapp'] = async () => ({ data: null, error: new Error('Edge Function returned a non-2xx status code') }) }],
+  ['Server nicht erreichbar', () => { funktionen['send-whatsapp'] = async () => ({ data: { success: false, error: P.evoErrorText(0, { error: 'timeout' }) }, error: null }) }],
+]) {
+  vorBuchung()
+  machen()
+  const r = await buchen()
+  ok(r.status === 200 && zeilen('crm_appointments').length === 1 && konv()[0].state === 'booked', `${fall}: Buchung bleibt`)
+  ok(nachhol().length === 0 && !notiz('🔁'), `${fall}: keine Wiederholung`)
+  const n = notiz('⚠️ Terminbestätigung NICHT gesendet')
+  ok(n?.content.startsWith('NICHT gesendet') && n.content.includes('persönlich bestätigen') && n.content.includes('Perfekt'), `${fall}: Notiz nennt Aufgabe und geplanten Text`)
+}
+for (const [fall, opt] of [
+  ['20 Minuten vor dem Termin', { inMin: 20 }],
+  ['nachts für 8:30 Uhr am Morgen', { inMin: 8.5 * 60, um: NACHTS }],
+]) {
+  vorBuchung(opt)
+  evo = EVO_GETRENNT
+  await buchen()
+  ok(zeilen('crm_appointments').length === 1 && nachhol().length === 0, `${fall}: zu knapp, keine Zeile`)
+  ok(!!notiz('⚠️ Terminbestätigung NICHT gesendet') && !notiz('🔁'), `${fall}: Notiz statt falschem Versprechen`)
+}
+{
+  vorBuchung({ inMin: 15 * 60, um: NACHTS })
+  evo = EVO_GETRENNT
+  await buchen()
+  const z = nachhol()[0]
+  ok(!!z && stundeZypern(z.scheduled_at) === 9 && !!notiz('🔁'), 'nachts für den Nachmittag: Zeile für etwa 9 Uhr')
+}
+{
+  vorBuchung()
+  evo = EVO_GETRENNT
+  const echt = db.from
+  db.from = (n) => (n === 'scheduled_messages' ? { insert: async () => ({ data: null, error: { message: 'DB weg' } }) } : echt(n))
+  const r = await buchen()
+  ok(r.status === 200 && zeilen('crm_appointments').length === 1, 'Zeile lässt sich nicht anlegen: Buchung bleibt')
+  ok(!!notiz('⚠️ Terminbestätigung NICHT gesendet') && !notiz('🔁'), 'Zeile lässt sich nicht anlegen: Notiz für Sven')
+}
+{
+  vorBuchung()
+  const r = await buchen()
+  ok(r.status === 200 && konv()[0].state === 'booked', 'verbunden: Buchung wie bisher')
+  ok(waRaus().length === 1 && waRaus()[0].subject === 'WhatsApp: Termin-Bot', 'verbunden: Bestätigung steht im Verlauf')
+  ok(nachhol().length === 0 && !notiz('🔁') && !notiz('⚠️'), 'verbunden: keine Zeile, keine Notiz')
+}
+{
+  vorBuchung()
+  evo = EVO_GETRENNT
+  const j = await (await bot({ action: 'sweep' })).json()
+  ok(j.swept === 1 && !!j.results[0].booked && !j.results[0].error, 'Sweep, getrennt: bucht ohne Fehler')
+  ok(zeilen('crm_appointments').length === 1 && nachhol().length === 1, 'Sweep, getrennt: Termin und eine Zeile')
+  const j2 = await (await bot({ action: 'sweep' })).json()
+  ok(j2.swept === 0 && zeilen('crm_appointments').length === 1 && nachhol().length === 1, 'Sweep, nächster Lauf: nichts doppelt')
+}
+
+schreib('\nbooking-bot: Terminbestätigung über die Vorlagen')
+const mitRegel = () => ({
+  automation_rules: [{ id: 'regel-1', event_type: 'termin_gebucht', is_active: true, message_type: 'both', delay_minutes: 0, email_template_id: 'mail-1', whatsapp_event_type: 'termin_wa', recipient: 'client', appointment_condition: 'no_zoom', timing_type: 'after_event' }],
+  email_templates: [{ id: 'mail-1', subject: 'Termin steht', body: 'Hallo {{vorname}}', html_body: null }],
+  whatsapp_templates: [{ event_type: 'termin_wa', active: true, message_template: 'Hallo {{vorname}}, dein Termin steht.', image_url: null }],
+})
+const kundenMails = () => mails.filter((m) => m.subject === 'Termin steht')
+const vorVorlagenBuchung = () => {
+  vorBuchung({ daten: mitRegel() })
+  wege['/functions/v1/process-scheduled-messages'] = (u, init) => hPlaner(new Request(u, init))
+}
+{
+  vorVorlagenBuchung()
+  evo = EVO_GETRENNT
+  const r = await buchen()
+  ok(r.status === 200 && konv()[0].state === 'booked' && zeilen('crm_appointments').length === 1, 'getrennt: Buchung gelingt')
+  const [z, ...rest] = nachhol()
+  ok(!!z && rest.length === 0 && z.rule_id === 'regel-1', 'getrennt: nur die Zeile der Vorlage, keine zweite')
+  ok(kundenMails().length === 1, 'getrennt: Mail ist sofort raus')
+  ok(z?.status === 'pending' && z?.type === 'whatsapp' && z?.retry_count === 1 && EchtDate.parse(z?.scheduled_at) === jetzt + 30 * MIN, 'getrennt: Scheduler wiederholt nur noch die WhatsApp')
+  ok(waRaus().length === 0 && !notiz('🔁') && !notiz('⚠️'), 'getrennt: kein Direktversand, keine Bot-Notiz')
+  jetzt += 31 * MIN
+  evo = EVO_OK
+  const j = await planer()
+  ok(ergebnis(j, z.id) === 'sent' && waRaus().length === 1 && waRaus()[0].subject === 'WhatsApp: termin_gebucht', 'wieder verbunden: Bestätigung kommt nach')
+  ok(kundenMails().length === 1, 'wieder verbunden: keine zweite Mail')
+}
+{
+  vorVorlagenBuchung()
+  evo = EVO_GETRENNT
+  const j = await (await bot({ action: 'sweep' })).json()
+  ok(j.swept === 1 && !!j.results[0].booked && nachhol().length === 1 && nachhol()[0].rule_id === 'regel-1', 'Sweep, getrennt: bucht, Scheduler wiederholt')
+}
+
+schreib('\nbooking-bot: Café-Termin')
+// Lottes Angebot steht im Chat, der Kunde sagt per Reaktion zu.
+const vorCafe = ({ inMin = DREI_TAGE, um = TAGSUEBER, nummer = TEST_NUMMER } = {}) => {
+  start()
+  jetzt = um
+  const slot = terminSlot(inMin, 'Dienstag, 10.11.')
+  const daten = grunddaten()
+  daten.leads[0].phone = daten.leads[0].whatsapp = nummer
+  db = neueDb({
+    ...daten,
+    booking_conversations: [altesGespraech({ source: 'cafe', state: 'awaiting_cafe', proposed_slots: [slot], meeting_type: 'cafe_du', attempts: 0, last_message: 'Soll ich dich eintragen?' })],
+    activities: [{ id: 'angebot', lead_id: LEAD, type: 'whatsapp', direction: 'outbound', auto: true, subject: 'WhatsApp: Termin-Bot', content: 'Soll ich dich eintragen?', whatsapp_message_id: 'WA-ANGEBOT', created_at: vor(60) }],
+  })
+  funktionen['send-whatsapp'] = echteSendWhatsapp
+  return slot
+}
+const cafeZusage = (nummer = TEST_NUMMER) => bot({ action: 'cafe_reaktion', phone: nummer, emoji: '👍', ziel: 'WA-ANGEBOT', uid: 'WA-REAKTION' })
+{
+  const slot = vorCafe()
+  evo = EVO_GETRENNT
+  const r = await cafeZusage()
+  ok(r.status === 200 && (await r.json()).handled === 'cafe_gebucht', 'getrennt: Zusage gilt als gebucht')
+  const t = zeilen('crm_appointments')
+  ok(t.length === 1 && t[0].type === 'inperson' && t[0].start_time === slot.startIso, 'getrennt: Café-Termin bleibt stehen')
+  ok(konv()[0].state === 'booked' && konv()[0].chosen_slot?.startIso === slot.startIso, 'getrennt: Gespräch ist gebucht')
+  const [z, ...rest] = nachhol()
+  ok(!!z && rest.length === 0 && z.type === 'whatsapp' && z.status === 'pending' && EchtDate.parse(z.scheduled_at) === jetzt + 30 * MIN, 'getrennt: eine Zeile in 30 Minuten')
+  ok(z?.whatsapp_text.startsWith('Super, ist eingetragen') && z?.whatsapp_text.includes(slot.label) && /Lotte 🐾$/.test(z?.whatsapp_text), 'Zeile: Bestätigung mit Lottes Gruß wie beim Direktversand')
+  ok(z?.appointment_condition === 'has_appointment' && z?.seq_condition?.bis === slot.startIso, 'Zeile: gilt nur, solange der Termin steht')
+  ok(!!notiz('🔁') && !notiz('⚠️'), 'Akte: Hinweis, dass automatisch wiederholt wird')
+  ok(waRaus().length === 1 && waRaus()[0].id === 'angebot', 'getrennt: nur das Angebot steht als gesendet im Verlauf')
+
+  jetzt += 31 * MIN
+  evo = EVO_OK
+  const j = await planer()
+  ok(ergebnis(j, z.id) === 'sent' && waRaus().length === 2 && waRaus()[1].content === z.whatsapp_text, 'wieder verbunden: Bestätigung raus und in der Akte')
+}
+{
+  vorCafe({ um: NACHTS, inMin: 10 * 60 })
+  evo = EVO_GETRENNT
+  await cafeZusage()
+  const z = nachhol()[0]
+  ok(!!z && stundeZypern(z.scheduled_at) === 9 && EchtDate.parse(z.scheduled_at) < jetzt + 10 * 60 * MIN, 'nachts, Termin um 10 Uhr: Zeile für etwa 9 Uhr, vor dem Treffen')
+}
+{
+  // Deutsche Nummer, der Kunde ist aber in Paphos. Nach Vorwahl käme 9 Uhr erst um 10 Uhr im Café.
+  const nummer = '+49000000000'
+  vorCafe({ um: NACHTS, inMin: 10 * 60, nummer })
+  waAntworten(antwortGetrennt)
+  await cafeZusage(nummer)
+  const z = nachhol()[0]
+  ok(!!z && stundeZypern(z.scheduled_at) === 9, 'deutsche Nummer: geplant nach Zypern-Zeit')
+  if (z) {
+    jetzt = EchtDate.parse(z.scheduled_at) + MIN
+    waAntworten(WA_OK)
+    const j = await planer()
+    ok(ergebnis(j, z.id) === 'sent' && gesendet.length === 1, 'deutsche Nummer: Scheduler sendet vor dem Treffen')
+  }
+}
+{
+  vorCafe({ inMin: 20 })
+  evo = EVO_GETRENNT
+  await cafeZusage()
+  ok(zeilen('crm_appointments').length === 1 && nachhol().length === 0 && !!notiz('⚠️ Terminbestätigung NICHT gesendet'), 'zu knapp vor dem Treffen: keine Zeile, Notiz für Sven')
+}
+{
+  vorCafe()
+  evo = EVO_KEIN_WA
+  const r = await cafeZusage()
+  ok(r.status === 200 && zeilen('crm_appointments').length === 1 && konv()[0].state === 'booked', 'Nummer ohne WhatsApp: Buchung bleibt')
+  ok(nachhol().length === 0 && notiz('⚠️ Terminbestätigung NICHT gesendet')?.content.includes('Super, ist eingetragen'), 'Nummer ohne WhatsApp: Notiz nennt den geplanten Text')
+}
+{
+  vorCafe()
+  const r = await cafeZusage()
+  ok(r.status === 200 && waRaus().length === 2 && waRaus()[1].content.startsWith('Super, ist eingetragen'), 'verbunden: Bestätigung steht im Verlauf')
+  ok(nachhol().length === 0 && !notiz('🔁') && !notiz('⚠️'), 'verbunden: keine Zeile, keine Notiz')
+}
+
+schreib('\nbooking-bot: Übergabe an Sven')
+const notizNachWa = (betreff) => {
+  const alle = zeilen('activities')
+  const n = alle.findIndex((a) => a.subject?.startsWith(betreff))
+  return n > 0 && alle[n - 1].type === 'whatsapp' && alle[n - 1].direction !== 'inbound'
+}
+// Lässt nur das Anlegen des Termins scheitern.
+const terminKaputt = () => {
+  const echt = db.from
+  const fehlt = { data: null, error: { message: 'DB weg' }, select: () => ({ single: async () => ({ data: null, error: { message: 'DB weg' } }) }) }
+  db.from = (n) => {
+    const q = echt(n)
+    return n === 'crm_appointments' ? new Proxy(q, { get: (z, k) => (k === 'insert' ? () => fehlt : z[k]) }) : q
+  }
+}
+// attempts 2: Der Bot versteht ohne KI-Schlüssel nichts mehr und gibt ab.
+const vorUebergabe = () => {
+  start()
+  const a = terminSlot(DREI_TAGE, 'A'), b = terminSlot(DREI_TAGE + 1440, 'B')
+  db = neueDb({ ...grunddaten(), booking_conversations: [altesGespraech({ proposed_slots: [a, b] })] })
+  funktionen['send-whatsapp'] = echteSendWhatsapp
+}
+const unklareAntwort = () => bot({ action: 'reply', lead_id: LEAD, text: 'Hmm' })
+{
+  vorUebergabe()
+  evo = EVO_GETRENNT
+  const r = await unklareAntwort()
+  ok(r.status === 500 && konv()[0].state === 'handoff', 'Terminbot gibt ab, getrennt: Fehler und Übergabe wie bisher')
+  ok(!!notiz('⚠️ Termin-Bot: Übergabe') && waRaus().length === 0, 'Terminbot gibt ab, getrennt: Notiz für Sven bleibt, nichts als gesendet protokolliert')
+}
+{
+  vorUebergabe()
+  const r = await unklareAntwort()
+  ok(r.status === 200 && konv()[0].state === 'handoff' && notizNachWa('⚠️ Termin-Bot: Übergabe'), 'Terminbot gibt ab, verbunden: Reihenfolge im Verlauf wie bisher')
+}
+{
+  vorCafe()
+  evo = EVO_GETRENNT
+  const r = await bot({ action: 'reply', lead_id: LEAD, text: 'Gibt es dort Parkplätze?' })
+  ok(r.status === 500 && konv()[0].state === 'handoff', 'Café-Frage, getrennt: Fehler und Übergabe wie bisher')
+  ok(notiz('⚠️ Lotte: Café-Treffen')?.content.includes('Parkplätze') && waRaus().length === 1, 'Café-Frage, getrennt: Notiz für Sven bleibt')
+}
+{
+  vorCafe()
+  const r = await bot({ action: 'reply', lead_id: LEAD, text: 'Gibt es dort Parkplätze?' })
+  ok(r.status === 200 && konv()[0].state === 'handoff' && notizNachWa('⚠️ Lotte: Café-Treffen'), 'Café-Frage, verbunden: Reihenfolge im Verlauf wie bisher')
+}
+{
+  vorBuchung()
+  terminKaputt()
+  evo = EVO_GETRENNT
+  const r = await buchen()
+  ok(r.status === 500 && konv()[0].state === 'handoff', 'Termin lässt sich nicht speichern, getrennt: Fehler und Übergabe wie bisher')
+  ok(!!notiz('⚠️ Termin-Bot: Buchung fehlgeschlagen') && nachhol().length === 0, 'Termin lässt sich nicht speichern, getrennt: Notiz für Sven bleibt, nichts wird bestätigt')
+}
+{
+  vorCafe()
+  terminKaputt()
+  evo = EVO_GETRENNT
+  const r = await cafeZusage()
+  ok(r.status === 500 && konv()[0].state === 'handoff', 'Café-Termin lässt sich nicht speichern, getrennt: Fehler und Übergabe wie bisher')
+  ok(notiz('⚠️ Lotte: Café-Treffen')?.content.includes('konnte nicht gespeichert') && nachhol().length === 0, 'Café-Termin lässt sich nicht speichern, getrennt: Notiz für Sven bleibt')
 }
 
 if (fehler) { schreib(`\n${fehler} Fehler`); process.exit(1) }
