@@ -10,7 +10,9 @@
 //   POST { action:'sweep' }                   → neue Dateien in ALLEN Kundenordnern
 //                                               erkennen (auch direkt in Drive
 //                                               hochgeladene) und Lotte-WhatsApp an
-//                                               alle mit Ordnerzugriff schicken
+//                                               alle mit Ordnerzugriff schicken;
+//                                               danach offene „Zugriff anfordern“-
+//                                               Anfragen bearbeiten (accessRequests)
 //   POST { action:'test_notify' }             → Beispiel-Meldung NUR an Svens Nummer
 //   POST { action:'status' }                  → ist der Upload-Zugang verbunden?
 //
@@ -30,6 +32,7 @@ import { lotteBild } from '../_shared/lotte.ts'
 import { resolveLang, type Lang } from '../_shared/recipientLang.ts'
 import { isCronCall, safeEqual } from '../_shared/callerAuth.ts'
 import { ladeGesperrte, leadGesperrt, mailGesperrt, normMail, type GesperrteKonten } from '../_shared/kontoSperre.ts'
+import { entscheideAnfrage, meldeSvenEinmal, SUBJECT_ANFRAGE, SUBJECT_FREIGESCHALTET } from '../_shared/driveZugang.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -44,6 +47,8 @@ const MAX_FOLDERS = 60                     // Schutz gegen ausufernde Ordnerbäu
 const BASELINE_HOURS = 24                  // älter beim ersten Sehen → nur merken, nicht melden
 const SETTLE_MINUTES = 2                   // jünger → nächste Runde (Portal-Upload trägt sich selbst ein)
 const MAX_FILES_IN_MESSAGE = 8
+const REQUEST_BUDGET_MS = 60_000           // so lange je Sweep offene Zugriffsanfragen lesen
+const DEAD_PHASES = '(deal_verloren,archiviert)'
 
 type Client = SupabaseClient
 type DriveUser = { displayName?: string; emailAddress?: string }
@@ -75,14 +80,25 @@ async function importPrivateKey(pem: string): Promise<CryptoKey> {
   return crypto.subtle.importKey('pkcs8', der.buffer, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign'])
 }
 let saCache: { token: string; exp: number; email: string } | null = null
+let saWriteCache: { token: string; exp: number; email: string } | null = null
 async function saToken(): Promise<{ token: string; email: string }> {
   if (saCache && saCache.exp > Date.now() + 60_000) return saCache
+  saCache = await mintSaToken('https://www.googleapis.com/auth/drive.readonly')
+  return saCache
+}
+/** Nur zum Freischalten offener Zugriffsanfragen. Alles andere liest. */
+async function saWriteToken(): Promise<{ token: string; email: string }> {
+  if (saWriteCache && saWriteCache.exp > Date.now() + 60_000) return saWriteCache
+  saWriteCache = await mintSaToken('https://www.googleapis.com/auth/drive')
+  return saWriteCache
+}
+async function mintSaToken(scope: string): Promise<{ token: string; exp: number; email: string }> {
   const raw = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_JSON')
   if (!raw) throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON nicht gesetzt')
   const sa = JSON.parse(raw) as { client_email: string; private_key: string }
   const now = Math.floor(Date.now() / 1000)
   const enc = (o: unknown) => b64url(new TextEncoder().encode(JSON.stringify(o)))
-  const unsigned = `${enc({ alg: 'RS256', typ: 'JWT' })}.${enc({ iss: sa.client_email, scope: 'https://www.googleapis.com/auth/drive.readonly', aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 })}`
+  const unsigned = `${enc({ alg: 'RS256', typ: 'JWT' })}.${enc({ iss: sa.client_email, scope, aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 })}`
   const key = await importPrivateKey(sa.private_key)
   const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(unsigned))
   const res = await fetch('https://oauth2.googleapis.com/token', {
@@ -91,8 +107,7 @@ async function saToken(): Promise<{ token: string; email: string }> {
   })
   const data = await res.json() as { access_token?: string; error_description?: string }
   if (!data.access_token) throw new Error(`SA-Token: ${data.error_description ?? 'unbekannt'}`)
-  saCache = { token: data.access_token, exp: Date.now() + 3500_000, email: sa.client_email }
-  return saCache
+  return { token: data.access_token, exp: Date.now() + 3500_000, email: sa.client_email }
 }
 
 // ── Google-Token: Svens Konto (hochladen) ─────────────────────────────────────
@@ -227,7 +242,7 @@ async function leadForProfile(sb: Client, p: Profile, authEmail: string): Promis
 async function ensureFolder(sb: Client, lead: LeadRow): Promise<LeadRow> {
   if (lead.drive_folder_id) return lead
   const { data, error } = await sb.functions.invoke('create-client-drive-folder', {
-    body: { lead_id: lead.id, extra_emails: [] },
+    body: { lead_id: lead.id, extra_emails: [], no_warn: true },   // Portal-Kunden laden über „Meine Dateien“ hoch
     headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` },
   })
   const d = (data ?? {}) as { ok?: boolean; folder_id?: string; folder_url?: string; error?: string }
@@ -423,7 +438,72 @@ async function sweep(sb: Client): Promise<Record<string, unknown>> {
       summary.push({ lead: leadName(lead), error: (e as Error).message })
     }
   }
-  return { ok: true, leads: (leads ?? []).length, scanned, baseline, fresh, summary }
+  // Eigener Schritt: Ein Fehler hier darf die Datei-Meldungen oben nicht beeinflussen
+  const access = await accessRequests(sb, (leads ?? []) as LeadRow[])
+    .catch(e => { console.error('[owner-drive] Zugriffsanfragen', (e as Error).message); return { error: (e as Error).message } })
+  return { ok: true, leads: (leads ?? []).length, scanned, baseline, fresh, summary, access }
+}
+
+// ── Offene Zugriffsanfragen („Zugriff anfordern“ im Drive) ────────────────────
+// Die Ordner gehören dem Service-Account, die Anfrage erreicht also niemanden (siehe _shared/driveZugang.ts).
+// Adresse des Kunden mit lebendem Deal: freischalten, Google sagt dem Kunden Bescheid. Sonst fragt
+// Sven, einmal je Adresse. Trägt er sie im CRM ein, schaltet der nächste Lauf sie frei.
+async function accessRequests(sb: Client, leads: LeadRow[]): Promise<Record<string, unknown>> {
+  const started = Date.now()
+  const { token } = await saToken()
+  const gesperrte: GesperrteKonten = await ladeGesperrte(sb)   // wirft bei Lesefehler: dann niemanden freischalten
+  let open = 0, accepted = 0, asked = 0, skipped = 0
+  for (const lead of leads) {
+    if (Date.now() - started > REQUEST_BUDGET_MS) { skipped = leads.length - leads.indexOf(lead); break }
+    try {
+      const res = await driveGet<{ accessProposals?: Array<{ proposalId?: string; requesterEmailAddress?: string }> }>(token,
+        `https://www.googleapis.com/drive/v3/files/${lead.drive_folder_id}/accessproposals?pageSize=20`)
+      for (const p of res.accessProposals ?? []) {
+        open++
+        const von = (p.requesterEmailAddress ?? '').trim()
+        if (!p.proposalId || !von) continue
+        const { data: deals, error: dealErr } = await sb.from('deals').select('id').eq('lead_id', lead.id).not('phase', 'in', DEAD_PHASES).limit(1)
+        if (dealErr) throw new Error(`Deals: ${dealErr.message}`)
+        const entscheidung = entscheideAnfrage({
+          anfrage: von, email: lead.email, altEmails: lead.alt_emails, lebenderDeal: (deals ?? []).length > 0,
+          gesperrt: leadGesperrt(gesperrte, lead) || mailGesperrt(gesperrte, von, lead),
+        })
+        const name = leadName(lead)
+        if (entscheidung === 'freischalten') {
+          const { token: write } = await saWriteToken()
+          const r = await fetch(`https://www.googleapis.com/drive/v3/files/${lead.drive_folder_id}/accessproposals/${encodeURIComponent(p.proposalId)}:resolve`, {
+            method: 'POST', headers: { Authorization: `Bearer ${write}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'ACCEPT', role: ['writer'], sendNotification: true }),
+          })
+          if (!r.ok) {
+            const e = await r.json().catch(() => ({})) as { error?: { message?: string } }
+            throw new Error(`Freischalten ${r.status}: ${e.error?.message ?? 'Fehler'}`)
+          }
+          accepted++
+          const { error: actErr } = await sb.from('activities').insert({
+            lead_id: lead.id, type: 'note', direction: 'inbound', auto: true, subject: SUBJECT_FREIGESCHALTET,
+            content: `${von} hat im Drive „Zugriff anfordern“ geklickt. Die Adresse gehört zum Kunden, Schreibrecht auf den Kundenordner ist erteilt.`,
+            completed_at: new Date().toISOString(),
+          })
+          if (actErr) console.warn('[owner-drive] activity:', actErr.message)
+          continue
+        }
+        const hinweis = entscheidung === 'gesperrt'
+          ? 'Der Kunde ist gesperrt, die Anfrage bleibt zu.'
+          : entscheidung === 'deal_zu'
+            ? 'Die Adresse gehört zum Kunden, sein Deal ist aber abgeschlossen oder verloren. Deshalb nicht automatisch freigeschaltet.'
+            : 'Ist das der Kunde? Dann trag die Adresse im CRM unter „Weitere E-Mails“ ein, sie wird dann innerhalb von 5 Minuten freigeschaltet. Sonst nichts tun, die Anfrage bleibt einfach liegen.'
+        const gemeldet = await meldeSvenEinmal(sb, {
+          leadId: lead.id, subject: SUBJECT_ANFRAGE, key: von,
+          text: `🔑 Zugriffsanfrage auf den Drive-Ordner von ${name}\n\nVon: ${von}\n\n${hinweis}`,
+        })
+        if (gemeldet) asked++
+      }
+    } catch (e) {
+      console.warn('[owner-drive] Zugriffsanfragen', leadName(lead), (e as Error).message)
+    }
+  }
+  return { open, accepted, asked, skipped }
 }
 
 // ── HTTP ──────────────────────────────────────────────────────────────────────

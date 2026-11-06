@@ -7,8 +7,11 @@
 // Parent: GOOGLE_DRIVE_PARENT_FOLDER_ID (Secret) → sonst crm_settings → sonst Default.
 // Der Service Account muss EDITOR auf dem Parent-Ordner sein.
 //
-// Body:   { lead_id, extra_emails?: string[] }
-// Antwort:{ ok, folder_id, folder_url, existing, customer_blocked }
+// Body:   { lead_id, extra_emails?: string[], no_warn?: boolean }
+// Antwort:{ ok, folder_id, folder_url, existing, customer_blocked, customer_access }
+// customer_access = mindestens eine Adresse des Kunden (Haupt- oder Zweit-Adresse) ist freigegeben.
+// Ist es keine, erfährt Sven das einmal je Adressen-Stand (_shared/driveZugang.ts). no_warn: Portal,
+// dort lädt der Kunde über „Meine Dateien“ hoch und braucht keine Freigabe.
 // Gesperrte Kunden (_shared/kontoSperre.ts) bekommen keine Freigabe, Sven und der
 // Google-Owner weiterhin. Eine bestehende Freigabe wird hier nicht entzogen.
 //
@@ -22,6 +25,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { authorizeCaller, safeEqual } from '../_shared/callerAuth.ts'
 import { ladeGesperrte, leadGesperrt, mailGesperrt } from '../_shared/kontoSperre.ts'
+import { meldeSvenEinmal, SUBJECT_ZUGANG_FEHLT, textZugangFehlt } from '../_shared/driveZugang.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -87,7 +91,7 @@ Deno.serve(async (req) => {
     if (caller instanceof Response) return caller
   }
   try {
-    const { lead_id, extra_emails } = await req.json() as { lead_id?: string; extra_emails?: string[] }
+    const { lead_id, extra_emails, no_warn } = await req.json() as { lead_id?: string; extra_emails?: string[]; no_warn?: boolean }
     if (!lead_id) return json({ error: 'lead_id fehlt' }, 400)
 
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
@@ -134,7 +138,8 @@ Deno.serve(async (req) => {
 
     // 2) Schreibrechte verteilen (ohne Benachrichtigungsmail — Sven entscheidet, wann der Kunde informiert wird)
     // Kunde + Google-Owner (happypropertycyprus@gmail.com) + Sven + zusätzliche Empfänger
-    const emails = Array.from(new Set([lead.email, OWNER_EMAIL, 'sven@happy-property.com', ...(Array.isArray(extra_emails) ? extra_emails : [])]
+    const kundenMails = [lead.email, ...((lead.alt_emails ?? []) as string[])].map(e => (e ?? '').trim()).filter(isEmail)
+    const emails = Array.from(new Set([...kundenMails, OWNER_EMAIL, 'sven@happy-property.com', ...(Array.isArray(extra_emails) ? extra_emails : [])]
       .map(e => (e ?? '').trim()).filter(isEmail)))
       .filter(e => !mailGesperrt(gesperrte, e, lead))
     const shared: string[] = []
@@ -155,7 +160,15 @@ Deno.serve(async (req) => {
     const { error: upErr } = await supabase.from('leads').update({ drive_folder_id: folderId, drive_folder_url: folderUrl }).eq('id', lead_id)
     if (upErr) return json({ error: `Speichern am Lead fehlgeschlagen: ${upErr.message}`, folder_id: folderId, folder_url: folderUrl }, 500)
 
-    return json({ ok: true, folder_id: folderId, folder_url: folderUrl, existing, shared, shareErrors, customer_blocked: kundeGesperrt })
+    // 4) Kommt der Kunde selbst rein? Wenn nicht, geht der Link in seiner Nachricht bei ihm nicht auf.
+    const customerAccess = kundenMails.some(e => shared.includes(e))
+    if (!customerAccess && !kundeGesperrt && no_warn !== true) {
+      const name = [lead.first_name, lead.last_name].map(x => (x ?? '').trim()).filter(Boolean).join(' ') || lead.email || 'Kunde'
+      await meldeSvenEinmal(supabase, { leadId: lead_id, subject: SUBJECT_ZUGANG_FEHLT, ...textZugangFehlt(name, kundenMails, shareErrors) })
+        .catch(e => console.error('[create-client-drive-folder] Meldung an Sven', (e as Error).message))
+    }
+
+    return json({ ok: true, folder_id: folderId, folder_url: folderUrl, existing, shared, shareErrors, customer_blocked: kundeGesperrt, customer_access: customerAccess })
   } catch (err) {
     return json({ error: (err as Error).message }, 500)
   }

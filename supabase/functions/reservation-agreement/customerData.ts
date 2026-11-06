@@ -94,12 +94,12 @@ async function isOpen(sb: SupabaseClient, row: AgreementRow): Promise<boolean> {
 }
 
 interface LeadRow {
-  id: string; first_name: string | null; email: string | null; phone: string | null; whatsapp: string | null
+  id: string; first_name: string | null; email: string | null; alt_emails: string[] | null; phone: string | null; whatsapp: string | null
   street: string | null; postal_code: string | null; city: string | null; country: string | null
   drive_folder_url: string | null; drive_folder_id: string | null
 }
 async function loadLead(sb: SupabaseClient, id: string): Promise<LeadRow | null> {
-  const { data } = await sb.from('leads').select('id, first_name, email, phone, whatsapp, street, postal_code, city, country, drive_folder_url, drive_folder_id').eq('id', id).maybeSingle()
+  const { data } = await sb.from('leads').select('id, first_name, email, alt_emails, phone, whatsapp, street, postal_code, city, country, drive_folder_url, drive_folder_id').eq('id', id).maybeSingle()
   return data as LeadRow | null
 }
 function countryCodeFrom(raw: string | null): string {
@@ -171,11 +171,23 @@ export async function addressSubmit(sb: SupabaseClient, body: Record<string, unk
   // Ins CRM: Adresse immer (kommt frisch vom Kunden), Telefon und E-Mail nur, wenn dort nichts steht,
   // denn über diese beiden läuft die ganze Kommunikation und die Zuordnung des Kunden.
   const lead = await loadLead(sb, hit.row.lead_id)
-  const patch: Record<string, string> = { street: main.street, postal_code: main.postal_code, city: main.city, country: countryDe(main) }
+  const patch: Record<string, string | string[]> = { street: main.street, postal_code: main.postal_code, city: main.city, country: countryDe(main) }
   if (lead && !lead.email?.trim()) patch.email = main.email
   if (lead && !lead.whatsapp?.trim() && !lead.phone?.trim()) patch.phone = main.phone
+  // Andere Adresse als im CRM: Das Hauptfeld bleibt, sie kommt zu den Zweit-Adressen. Der Drive-Ordner soll
+  // auch mit ihr aufgehen (Frank Roeding 6.11.2026: Firmenmail im CRM ohne Google-Konto, hier sein Google-Konto).
+  const bekannt = [lead?.email, ...(lead?.alt_emails ?? [])].map(m => (m ?? '').trim().toLowerCase())
+  if (lead?.email?.trim() && !bekannt.includes(main.email)) patch.alt_emails = [...(lead.alt_emails ?? []), main.email]
   const { error: leadErr } = await sb.from('leads').update(patch).eq('id', hit.row.lead_id)
   if (leadErr) console.error('[reservation-agreement] Adresse ins CRM', leadErr.message)
+  else if (lead?.drive_folder_id && (patch.email || patch.alt_emails)) {
+    // Nur die Freigabe, die Antwort an den Kunden hängt nicht davon ab
+    const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    await sb.functions.invoke('create-client-drive-folder', {
+      body: { lead_id: hit.row.lead_id, extra_emails: [] },
+      headers: { Authorization: `Bearer ${key}`, apikey: key },
+    }).catch(e => console.error('[reservation-agreement] Drive-Freigabe', (e as Error).message))
+  }
   await sb.from('activities').insert({
     lead_id: hit.row.lead_id, deal_id: hit.row.deal_id, type: 'note', direction: 'inbound', auto: true,
     subject: 'Reservierung: Adresse vom Kunden eingetragen', content: `Der Kunde hat seine Angaben für den Reservierungsvertrag eingetragen: ${addressLine(main)}${second ? `. Zweiter Käufer: ${second.first_name} ${second.last_name}` : ''}.`,
