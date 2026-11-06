@@ -22,10 +22,12 @@ const AUTH_TIMEOUT_MS = 15_000   // gesunder Refresh <3s → 15s fängt nur echt
 // nachweislich länger als 20 s brauchen (Edge-Log 9/2026): compose-deck-mail
 // 23-27 s (zwei Claude-Aufrufe), generate-deck ohne background 80-128 s
 // (Newsletter-Master-Deck). Mit 20 s brach der Browser ab und die KI-Begleitmail
-// kam nie an. Für sie gilt das Gateway-Limit von 150 s; alle übrigen Functions,
-// REST, Storage und Auth behalten ihre Limits.
+// kam nie an. send-email übersetzt für englische Empfänger per Claude, das dauerte
+// am 6.11.2026 20,2 s: Der Browser meldete bei 20 s „konnte NICHT gesendet werden“,
+// die Mail ging trotzdem raus. Für sie gilt das Gateway-Limit von 150 s; alle
+// übrigen Functions, REST, Storage und Auth behalten ihre Limits.
 const LONG_FUNCTION_TIMEOUT_MS = 150_000
-const LONG_FUNCTION_URL = /\/functions\/v1\/(compose-deck-mail|generate-deck)(?:[/?]|$)/
+const LONG_FUNCTION_URL = /\/functions\/v1\/(compose-deck-mail|generate-deck|send-email)(?:[/?]|$)/
 
 function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = typeof input === 'string' ? input
