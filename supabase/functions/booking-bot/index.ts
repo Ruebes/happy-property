@@ -2312,13 +2312,28 @@ async function absageStumm(admin: SupabaseClient, leadId: string, l: AbsageLead 
   return ''
 }
 
-/** Termin-Gespräch für die Verschiebung eröffnen (ein offenes wird weitergeführt). */
-async function absageGespraech(admin: SupabaseClient, row: Record<string, unknown> & { lead_id: string }): Promise<void> {
-  const { data: offen } = await admin.from('booking_conversations').select('id').eq('lead_id', row.lead_id)
+/**
+ * Termin-Gespräch für die Verschiebung eröffnen (ein offenes wird weitergeführt). Mit `senden`
+ * (Telefon/Zoom) geht Lottes Vorschlag erst raus, wenn das Gespräch steht: dialogStandLesen
+ * zählt nur, was ab seinem Anlegen gesendet wurde. Scheitert der Versand, gilt wieder der
+ * Stand davor, ein späteres "Ja" bucht also nichts, was der Kunde nie gesehen hat.
+ */
+async function absageGespraech(admin: SupabaseClient, row: Record<string, unknown> & { lead_id: string }, senden?: () => Promise<void>): Promise<void> {
+  const { data: offen } = await admin.from('booking_conversations').select('id, deal_id, source, state, proposed_slots, chosen_slot, meeting_type, attempts, last_message, expires_at').eq('lead_id', row.lead_id)
     .not('state', 'in', '(booked,handoff,expired)').order('created_at', { ascending: false }).limit(1).maybeSingle()
   const voll = { ...row, attempts: 0, chosen_slot: null, expires_at: new Date(Date.now() + 4 * 24 * 3600e3).toISOString() }
-  if (offen) await setConv(admin, (offen as { id: string }).id, voll)
-  else await admin.from('booking_conversations').insert(voll)
+  let id: string | undefined, vorher: Record<string, unknown> | undefined
+  if (offen) {
+    ({ id, ...vorher } = offen as { id: string } & Record<string, unknown>)
+    await setConv(admin, id, voll)
+  } else {
+    const { data: neu } = await admin.from('booking_conversations').insert(voll).select('id').single()
+    id = (neu as { id: string } | null)?.id
+  }
+  try { await senden?.() } catch (e) {
+    await versandGescheitert(admin, e, id, vorher)
+    throw e
+  }
 }
 
 /** Lottes Antwort auf einen Verschiebe-Wunsch. Gibt zurück, was sie getan hat (für Sven). */
@@ -2346,8 +2361,7 @@ async function absageVerschieben(admin: SupabaseClient, t: AbsageTermin, leadId:
     if (!slots.length) slots = await computeSlotsAmPm(admin)
     if (slots.length) {
       const m = buildProposal(lotteVerschiebenIntro(vorname, wann), slots, false)
-      await absageGespraech(admin, { lead_id: leadId, deal_id: t.deal_id, source: 'verschieben', state: 'awaiting_choice', proposed_slots: slots, last_message: m })
-      await senden(m)
+      await absageGespraech(admin, { lead_id: leadId, deal_id: t.deal_id, source: 'verschieben', state: 'awaiting_choice', proposed_slots: slots, last_message: m }, () => senden(m))
       return `Lotte hat neue Zeiten angeboten: ${slots.map(s => `${s.label} Uhr`).join(' oder ')} (deutsche Zeit). Wählt der Kunde eine, bucht Lotte einen NEUEN Termin, den alten bitte löschen.`
     }
   }

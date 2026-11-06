@@ -1002,7 +1002,7 @@ schreib('\nbooking-bot: Übergabe an Sven')
 const notizNachWa = (betreff) => {
   const alle = zeilen('activities')
   const n = alle.findIndex((a) => a.subject?.startsWith(betreff))
-  return n > 0 && alle[n - 1].type === 'whatsapp' && alle[n - 1].direction !== 'inbound'
+  return n > 0 && alle[n - 1].type === 'whatsapp' && alle[n - 1].direction !== 'inbound' && alle[n - 1].id !== 'vorschlag'
 }
 // Lässt nur das Anlegen des Termins scheitern.
 const terminKaputt = () => {
@@ -1017,7 +1017,12 @@ const terminKaputt = () => {
 const vorUebergabe = () => {
   start()
   const a = terminSlot(DREI_TAGE, 'A'), b = terminSlot(DREI_TAGE + 1440, 'B')
-  db = neueDb({ ...grunddaten(), booking_conversations: [altesGespraech({ proposed_slots: [a, b] })] })
+  // Lottes Vorschlag steht im Verlauf: Sonst gälte das Gespräch als nicht zugestellt.
+  db = neueDb({
+    ...grunddaten(),
+    booking_conversations: [altesGespraech({ proposed_slots: [a, b] })],
+    activities: [{ id: 'vorschlag', lead_id: LEAD, type: 'whatsapp', direction: 'outbound', auto: true, subject: 'WhatsApp: Termin-Bot', content: 'alter Vorschlag', created_at: vor(30) }],
+  })
   funktionen['send-whatsapp'] = echteSendWhatsapp
 }
 const unklareAntwort = () => bot({ action: 'reply', lead_id: LEAD, text: 'Hmm' })
@@ -1026,7 +1031,7 @@ const unklareAntwort = () => bot({ action: 'reply', lead_id: LEAD, text: 'Hmm' }
   evo = EVO_GETRENNT
   const r = await unklareAntwort()
   ok(r.status === 500 && konv()[0].state === 'handoff', 'Terminbot gibt ab, getrennt: Fehler und Übergabe wie bisher')
-  ok(!!notiz('⚠️ Termin-Bot: Übergabe') && waRaus().length === 0, 'Terminbot gibt ab, getrennt: Notiz für Sven bleibt, nichts als gesendet protokolliert')
+  ok(!!notiz('⚠️ Termin-Bot: Übergabe') && waRaus().length === 1 && waRaus()[0].id === 'vorschlag', 'Terminbot gibt ab, getrennt: Notiz für Sven bleibt, nichts als gesendet protokolliert')
 }
 {
   vorUebergabe()
@@ -1061,6 +1066,78 @@ const unklareAntwort = () => bot({ action: 'reply', lead_id: LEAD, text: 'Hmm' }
   ok(r.status === 500 && konv()[0].state === 'handoff', 'Café-Termin lässt sich nicht speichern, getrennt: Fehler und Übergabe wie bisher')
   ok(notiz('⚠️ Lotte: Café-Treffen')?.content.includes('konnte nicht gespeichert') && nachhol().length === 0, 'Café-Termin lässt sich nicht speichern, getrennt: Notiz für Sven bleibt')
 }
+
+schreib('\nbooking-bot: Telefon oder Zoom verschieben')
+// Der Kunde will ein Telefonat verlegen, Lotte bietet freie Zeiten an. Kommt das nicht an,
+// darf sein nächstes "Ja" nichts buchen, was er nie gesehen hat. Nur dieser Abschnitt braucht
+// die KI: Ihre Antwort kommt aus dem nachgebauten Netz.
+const vorTelefonVerschieben = (gespraech) => {
+  start()
+  const beginn = terminSlot(DREI_TAGE, 'alter Termin').startIso
+  db = neueDb({
+    ...grunddaten(),
+    booking_conversations: gespraech ? [gespraech] : [],
+    crm_appointments: [{ id: 'telefon-termin', lead_id: LEAD, internal: false, title: 'Telefonat', type: 'phone', location: null, start_time: beginn, end_time: new Date(EchtDate.parse(beginn) + 60 * MIN).toISOString(), timezone: 'Asia/Nicosia', attendees: [], deal_id: null }],
+  })
+  funktionen['send-whatsapp'] = echteSendWhatsapp
+  ENV.ANTHROPIC_API_KEY = 'test-ki'
+  wege['api.anthropic.com'] = () => antwort(200, { content: [{ type: 'tool_use', name: 'emit', input: { art: 'verschieben', intent: 'ja' } }], stop_reason: 'tool_use' })
+}
+const telefonVerschieben = async () => (await bot({ action: 'absage', lead_id: LEAD, text: 'Ich muss den Termin leider verschieben' })).json()
+const altesTelefonAngebot = (extra) => altesGespraech({ deal_id: 'deal-alt', source: 'cafe', proposed_slots: [terminSlot(DREI_TAGE + 1440, 'alter Vorschlag')], chosen_slot: null, meeting_type: 'cafe_du', ...extra })
+const wieVorher = (k, alt) => ['deal_id', 'source', 'state', 'proposed_slots', 'chosen_slot', 'meeting_type', 'attempts', 'last_message', 'expires_at'].every((f) => JSON.stringify(k[f]) === JSON.stringify(alt[f]))
+{
+  vorTelefonVerschieben()
+  evo = EVO_GETRENNT
+  const d = await telefonVerschieben()
+  ok(d.handled === 'verschieben' && d.lotte.includes('fehlgeschlagen'), 'Telefon, getrennt: Sven erfährt, dass Lottes Antwort nicht rausging')
+  ok(konv().length === 0, 'Telefon, getrennt: kein Gespräch, das auf eine Antwort wartet')
+  ok(waRaus().length === 0, 'Telefon, getrennt: nichts im Verlauf')
+  ok(zeile('crm_appointments', (t) => t.id === 'telefon-termin')?.cancel_reported_kind === 'verschieben', 'Telefon, getrennt: Wunsch bleibt am Termin vermerkt')
+  evo = EVO_OK
+  await bot({ action: 'reply', lead_id: LEAD, text: 'Ja' })
+  ok(zeilen('crm_appointments').length === 1 && waRaus().length === 0, 'Telefon, getrennt: Ein späteres Ja bucht nichts und bekommt keine Bestätigung')
+}
+for (const stand of ['awaiting_choice', 'awaiting_cafe']) {
+  const alt = altesTelefonAngebot({ state: stand })
+  vorTelefonVerschieben(alt)
+  evo = EVO_GETRENNT
+  const d = await telefonVerschieben()
+  ok(d.lotte.includes('fehlgeschlagen') && konv().length === 1 && wieVorher(konv()[0], alt), `Telefon, getrennt, offenes Gespräch ${stand}: bleibt, wie es war`)
+}
+{
+  // Antwortet der Kunde, während der Versand scheitert, bleibt seine Antwort stehen.
+  vorTelefonVerschieben()
+  funktionen['send-whatsapp'] = async () => {
+    db.tabellen.booking_conversations[0].state = 'booked'
+    return { data: antwortGetrennt, error: null }
+  }
+  await telefonVerschieben()
+  ok(konv().length === 1 && konv()[0].state === 'booked', 'Telefon, Gespräch inzwischen weiter: wird nicht zurückgenommen')
+}
+{
+  vorTelefonVerschieben(altesTelefonAngebot({ state: 'snoozed', snoozed_until: vor(5) }))
+  let beimSenden = null
+  funktionen['send-whatsapp'] = async (body) => {
+    beimSenden = konv()[0].state
+    return echteSendWhatsapp(body)
+  }
+  const d = await telefonVerschieben()
+  const k = konv()[0]
+  ok(d.handled === 'verschieben' && !d.lotte.includes('fehlgeschlagen') && k.state === 'awaiting_choice' && k.attempts === 0 && k.chosen_slot === null, 'Telefon, verbunden: Angebot steht')
+  // dialogStandLesen zählt nur Nachrichten ab dem Anlegen des Gesprächs.
+  ok(beimSenden === 'awaiting_choice', 'Telefon, verbunden: Gespräch steht schon beim Senden')
+  ok(waRaus().length === 1 && !!waRaus()[0].whatsapp_message_id && waRaus()[0].content.includes('Lotte'), 'Telefon, verbunden: im Verlauf, mit ID für eine Reaktion')
+}
+{
+  // Der ganze Weg: Telefonat verschoben, Kunde wählt den ersten Vorschlag.
+  vorTelefonVerschieben()
+  await telefonVerschieben()
+  wege['api.anthropic.com'] = () => antwort(200, { content: [{ type: 'tool_use', name: 'emit_intent', input: { intent: 'pick_slot', pick_index: 0 } }], stop_reason: 'tool_use' })
+  const r = await bot({ action: 'reply', lead_id: LEAD, text: 'Die erste Zeit passt' })
+  ok(r.status === 200 && konv()[0].state === 'awaiting_type', 'Telefon, verbunden: Die Wahl des Kunden gilt als Antwort auf Lottes Frage')
+}
+delete ENV.ANTHROPIC_API_KEY
 
 if (fehler) { schreib(`\n${fehler} Fehler`); process.exit(1) }
 schreib('\nAlles ok')
