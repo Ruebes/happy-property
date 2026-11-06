@@ -286,6 +286,28 @@ async function renderRound(sb: SupabaseClient, p: Payload, parts: PartRow[], com
   return await appendPdf(contract, ap)
 }
 
+/**
+ * Vertrag samt Appendix zusammenzusetzen dauert bei 13 Seiten Anhang rund 30 Sekunden. Jeder Aufruf der
+ * Unterschriftsseite hätte das neu getan. Der gerenderte Stand wird deshalb abgelegt, der Schlüssel
+ * ändert sich mit jeder Unterschrift, mit den Vertragswerten und mit der Vorlage.
+ */
+async function renderCached(sb: SupabaseClient, agreementId: string, p: Payload, parts: PartRow[], complete: boolean): Promise<Uint8Array> {
+  const key = (await sha256Hex(new TextEncoder().encode(JSON.stringify([p.fields, p.template, parts.map(x => x.id), complete])))).slice(0, 32)
+  const path = `reservation-sign/${agreementId}/${p.round}/view-${key}.pdf`
+  const hit = await storageBytes(sb, BUCKET, path)
+  if (hit) return hit
+  const pdf = await renderRound(sb, p, parts, complete)
+  const { error } = await sb.storage.from(BUCKET).upload(path, pdf, { contentType: 'application/pdf', upsert: false })
+  if (error && !/exist|duplicate/i.test(error.message)) console.warn('[two-party] Stand merken:', error.message)
+  return pdf
+}
+/** Im Hintergrund vorrechnen, damit der Nächste, der den Link öffnet, nicht wartet. */
+function warm(job: Promise<unknown>) {
+  const work = job.catch(e => console.warn('[two-party] Vorrechnen:', (e as Error).message))
+  const rt = (globalThis as { EdgeRuntime?: { waitUntil(p: Promise<unknown>): void } }).EdgeRuntime
+  if (rt) rt.waitUntil(work)
+}
+
 // Stempel der Vertragspartei (COMPOSITIVA), getrennt vom CRM-Bauträger EMMETRE: andere EMMETRE-
 // Dokumente sollen ihn nicht bekommen. Er liegt deshalb an der Vorlage, nicht am Bauträger.
 async function loadVendorSeal(sb: SupabaseClient, templateId: string): Promise<Uint8Array | null> {
@@ -311,7 +333,7 @@ export async function tpView(sb: SupabaseClient, hit: Hit): Promise<Res> {
   const complete = sideDone(p, parts, 'buyer') && sideDone(p, parts, 'vendor')
   const fl = p.fields.flora
   const finalPdf = complete && !test && row.signed_pdf_path ? await storageBytes(sb, BUCKET, row.signed_pdf_path) : null
-  const pdf = finalPdf ?? await renderRound(sb, p, parts, complete)
+  const pdf = finalPdf ?? await renderCached(sb, row.id, p, parts, complete)
   const signed = (key: string, s: Side) => parts.find(x => x.side === s && x.signer_key === key)
   let bank: unknown = null
   if (complete && side === 'buyer') {
@@ -395,6 +417,8 @@ export async function tpSubmit(sb: SupabaseClient, hit: Hit, body: Record<string
 
   const parts = await loadParts(sb, row.id, p.round)
   const buyerDone = sideDone(p, parts, 'buyer'), vendorDone = sideDone(p, parts, 'vendor')
+  // Der nächste, der den Link öffnet, soll nicht 30 Sekunden warten
+  if (!(buyerDone && vendorDone)) warm(renderCached(sb, row.id, p, parts, false))
   const now = new Date().toISOString()
   if (!test) {
     const who = parts.filter(x => x.side === 'vendor').map(x => x.name).join(' & ')
@@ -576,7 +600,7 @@ export async function deliverLinks(sb: SupabaseClient, row: AgreementRow, test: 
   let pdf: Uint8Array | null = null
   const parts = await loadParts(sb, row.id, p.round)
   const vendorDone = sideDone(p, parts, 'vendor'), buyerDone = sideDone(p, parts, 'buyer')
-  const draft = async () => pdf ??= await renderRound(sb, p, [], false)
+  const draft = async () => pdf ??= await renderCached(sb, row.id, p, [], false)
   const targets = linkTargets(sb, row, ctx, p, test, vendorDone, buyerDone, draft)
   if (test) {
     const r = await runTargets(row.test_payload?.link_delivery ?? null, targets, true)

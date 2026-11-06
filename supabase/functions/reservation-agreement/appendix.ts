@@ -53,6 +53,7 @@ export async function fetchAppendix(ctx: Ctx): Promise<AppendixResult> {
       return none(true, problems)
     }
     const out = await PDFDocument.create()
+    let only: { bytes: Uint8Array; pages: number } | null = null
     let total = 0
     for (const f of m.matched) {
       const src = all.find(x => x.id === f.id)!
@@ -62,8 +63,11 @@ export async function fetchAppendix(ctx: Ctx): Promise<AppendixResult> {
       const bad = contentProblem(await textOf(bytes).catch(() => ''), unit)
       if (bad) problems.push(`${f.name}: ${bad}`)
       const doc = await PDFDocument.load(bytes)
-      for (const page of await out.copyPages(doc, doc.getPageIndices())) out.addPage(page)
+      // Eine einzige Datei (der Normalfall) bleibt unverändert: Neu-Speichern kostet bei 6 MB viel Rechenzeit
+      if (m.matched.length === 1) only = { bytes, pages: doc.getPageCount() }
+      else for (const page of await out.copyPages(doc, doc.getPageIndices())) out.addPage(page)
     }
+    if (only) return { configured: true, bytes: only.bytes, files: m.matched.map(f => f.name), pages: only.pages, problems }
     const merged = await out.save()
     return { configured: true, bytes: merged, files: m.matched.map(f => f.name), pages: out.getPageCount(), problems }
   } catch (e) {
