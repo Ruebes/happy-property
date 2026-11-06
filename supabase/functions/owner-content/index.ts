@@ -103,9 +103,10 @@ Deno.serve(async (req) => {
       const { data: claimed } = await sb.from('crm_tasks').update({ bug_done_notified_at: new Date().toISOString() })
         .eq('id', task.id).is('bug_done_notified_at', null).select('id')
       if (!claimed || !claimed.length) return json({ skipped: 'bereits_gemeldet' })
-      const { data: rp } = await sb.from('profiles').select('full_name, email, phone, language').eq('id', task.reporter_profile_id).maybeSingle()
-      const rep = rp as { full_name: string | null; email: string | null; phone: string | null; language: string | null } | null
+      const { data: rp } = await sb.from('profiles').select('full_name, email, phone, language, is_active').eq('id', task.reporter_profile_id).maybeSingle()
+      const rep = rp as { full_name: string | null; email: string | null; phone: string | null; language: string | null; is_active: boolean | null } | null
       if (!rep) return json({ skipped: 'melder_fehlt' })
+      if (rep.is_active === false) return json({ skipped: 'melder_gesperrt' })
       const de_ = rep.language !== 'en'
       const first = (rep.full_name ?? '').split(' ')[0] || (de_ ? 'Hallo' : 'Hi')
       const cleanTitle = task.title.replace(/^🐞\s*/, '')
@@ -239,14 +240,14 @@ Antworte NUR als JSON: {"de": "...", "en": "..."}`
         ...((co ?? []) as Array<{ profile_id: string }>).map(c => c.profile_id),
       ])]
       if (empfIds.length) {
-        const { data: pr } = await sb.from('profiles').select('id, full_name, email, phone, language').in('id', empfIds)
+        const { data: pr } = await sb.from('profiles').select('id, full_name, email, phone, language').in('id', empfIds).eq('is_active', true)
         owners = (pr ?? []) as typeof owners
       }
     } else {
-      const { data: prs } = await sb.from('profiles').select('id, full_name, email, phone, language').eq('role', 'eigentuemer')
+      const { data: prs } = await sb.from('profiles').select('id, full_name, email, phone, language').eq('role', 'eigentuemer').eq('is_active', true)
       owners = (prs ?? []) as typeof owners
     }
-    if (!owners.length) return json({ error: 'Keine Eigentümer gefunden (Wohnung ohne Portal-Zugang?)' }, 400)
+    if (!owners.length) return json({ error: 'Keine aktiven Eigentümer gefunden (Wohnung ohne Portal-Zugang oder Konto gesperrt?)' }, 400)
 
     // Telefon-Fallback: Lead mit gleicher Mail
     const recipients: Recipient[] = []

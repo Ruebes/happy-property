@@ -5,6 +5,7 @@ import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { unitGross, unitNet } from '../../../lib/price'
 import { useAuth } from '../../../lib/auth'
+import { fnErrorMessage } from '../../../lib/fnError'
 import type { Lead, Deal, Activity, EmailTemplate, DealPhase, DealProject, ScheduledMessage, CrmProject, CrmProjectUnit, CrmUnitDocument, UnitDocType, AiReplyExample, BusinessContact, DeveloperContact } from '../../../lib/crmTypes'
 import { PHASE_ICONS, SOURCE_BADGE_STYLE, PHASE_WEBHOOK_EVENTS, adChannelLabel } from '../../../lib/crmTypes'
 import ProjectSelectionModal from '../../../components/crm/ProjectSelectionModal'
@@ -706,8 +707,12 @@ export default function LeadDetail() {
   }, [])
 
   // ── E-Mail-Benachrichtigung beim Upload ──────────────────────────────────────
-  const notifyCustomerUpload = (fileName: string, kind: 'Dokument' | 'Bild') => {
+  const notifyCustomerUpload = async (fileName: string, kind: 'Dokument' | 'Bild') => {
     if (!lead?.email) return
+    // Gesperrte Kunden bekommen keine Portal-Mail. Scheitert die Prüfung, lieber keine Mail.
+    const { data: gesperrt, error: sperrFehler } = await supabase.rpc('lead_konto_gesperrt', { p_lead_id: lead.id })
+    if (sperrFehler) console.warn('[LeadDetail] Sperr-Prüfung:', sperrFehler.message)
+    if (sperrFehler || gesperrt) return
     const firstName = lead.first_name
     const kindLabel = kind === 'Bild' ? t('leadDetail.uploadMailKindImage', 'Bild') : t('leadDetail.uploadMailKindDocument', 'Dokument')
     supabase.functions.invoke('send-email', {
@@ -1855,7 +1860,7 @@ export default function LeadDetail() {
             setShowNewOwnerPwModal(true)
             setCustomerHasAccess(true)
           } else {
-            const errMsg = data?.error ?? fnError?.message ?? t('leadDetail.genericError', 'Fehler')
+            const errMsg = data?.error ?? (fnError ? await fnErrorMessage(fnError) : t('leadDetail.genericError', 'Fehler'))
             console.error('[LeadDetail] Auto-create eigentuemer:', errMsg)
             showToast(`⚠️ ${t('leadDetail.ownerCreateFailed', 'Eigentümer-Account konnte nicht angelegt werden')}: ${errMsg}`)
           }
@@ -2166,7 +2171,7 @@ export default function LeadDetail() {
       const { data, error: fnError } = await supabase.functions.invoke('create-eigentuemer-access', {
         body: { email: lead.email, full_name: fullName },
       })
-      if (fnError || data?.error) throw new Error(data?.error ?? fnError?.message ?? t('leadDetail.genericError', 'Fehler'))
+      if (fnError || data?.error) throw new Error(data?.error ?? (fnError ? await fnErrorMessage(fnError) : t('leadDetail.genericError', 'Fehler')))
       await supabase.from('activities').insert({
         lead_id:      id,
         deal_id:      deal?.id ?? null,
@@ -2204,7 +2209,7 @@ export default function LeadDetail() {
       const { data, error: fnError } = await supabase.functions.invoke('create-eigentuemer-access', {
         body: { email: lead.email, full_name: fullName },
       })
-      if (fnError || data?.error) throw new Error(data?.error ?? fnError?.message ?? t('leadDetail.genericError', 'Fehler'))
+      if (fnError || data?.error) throw new Error(data?.error ?? (fnError ? await fnErrorMessage(fnError) : t('leadDetail.genericError', 'Fehler')))
 
       await supabase.from('activities').insert({
         lead_id:      id,

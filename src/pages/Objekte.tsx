@@ -10,6 +10,7 @@ import { useDateFormat } from '../lib/date'
 import { CustomSelect } from '../components/CustomSelect'
 import { renderPortalAccessEmail } from '../lib/welcomeEmail'
 import { detachPropertyFromOwner, detachConfirmText } from '../lib/detachProperty'
+import { fnErrorMessage } from '../lib/fnError'
 
 // ── Types ──────────────────────────────────────────────────────
 interface Property {
@@ -702,7 +703,7 @@ export default function Objekte() {
       })
 
       if (fnError || data?.error) {
-        const msg = data?.error ?? fnError?.message ?? t('objekte.unknownError', 'Unbekannter Fehler')
+        const msg = data?.error ?? (fnError ? await fnErrorMessage(fnError) : t('objekte.unknownError', 'Unbekannter Fehler'))
         setOwnerModalError(
           msg.includes('already') || msg.includes('exists')
             ? t('properties.ownerModal.errorExists')

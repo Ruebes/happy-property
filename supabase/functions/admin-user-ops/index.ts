@@ -8,6 +8,7 @@
 //   reset_password → Neues Passwort setzen, zurückgeben
 //                    (optional sendEmail:true → Zugangsdaten per E-Mail an den Nutzer)
 //   list_auth_ids  → Liste aller Auth-User-IDs (für Orphan-Cleanup)
+//   set_blocked    → Konto sperren (Auth-Bann + Sitzungen beenden) oder entsperren
 //
 // Deployment:
 //   supabase functions deploy admin-user-ops --no-verify-jwt
@@ -21,6 +22,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { SMTPClient }   from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
 import { encodeMimeSubject } from '../_shared/mimeSubject.ts'
 import { buildMimeContent } from '../_shared/mimeBody.ts'
+import { kontoGesperrtAntwort, zugangGesperrt } from '../_shared/kontoSperre.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -171,11 +173,13 @@ Deno.serve(async (req: Request) => {
     const authHeader = req.headers.get('Authorization') ?? ''
     const jwt = authHeader.replace(/^Bearer\s+/i, '')
     // Interner Aufruf mit Service-Role-Key ist erlaubt (Automationen).
+    let callerId: string | null = null
     if (jwt !== serviceRoleKey) {
       const caller = jwt
         ? (await createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY') ?? '').auth.getUser(jwt)).data.user
         : null
       if (!caller) return json({ error: 'Nicht autorisiert' }, 401)
+      callerId = caller.id
       const { data: callerProfile } = await admin.from('profiles').select('role').eq('id', caller.id).maybeSingle()
       const callerRole = (callerProfile as { role?: string } | null)?.role ?? ''
       const allowed = callerRole === 'admin' || (action === 'invite_feriengast' && callerRole === 'verwalter')
@@ -203,6 +207,11 @@ Deno.serve(async (req: Request) => {
       const acct = await resolveAccount(admin, email, 'id, role')
       if (acct.mismatch) return json(mismatchResponse(email), 409)
       const existingProfile = acct.profile
+
+      // Gesperrt: kein neues Passwort, kein Konto neben dem gesperrten, is_active bleibt.
+      if (await zugangGesperrt(admin, email, (existingProfile as { id: string } | null)?.id)) {
+        return json(kontoGesperrtAntwort(email), 409)
+      }
 
       let userId: string
 
@@ -310,6 +319,12 @@ Deno.serve(async (req: Request) => {
       const { userId, sendEmail } = body
       if (!userId) return json({ error: 'userId erforderlich' }, 400)
 
+      const { data: konto, error: kontoErr } = await admin
+        .from('profiles').select('email, is_active').eq('id', userId).maybeSingle()
+      if (kontoErr) throw new Error(kontoErr.message)
+      const gesperrt = konto as { email: string | null; is_active: boolean | null } | null
+      if (gesperrt?.is_active === false) return json(kontoGesperrtAntwort(gesperrt.email ?? userId), 409)
+
       const password = generatePassword()
       const { error } = await admin.auth.admin.updateUserById(userId, {
         password,
@@ -333,6 +348,29 @@ Deno.serve(async (req: Request) => {
       }
 
       return json({ success: true, password, emailed })
+    }
+
+    // ── SPERREN / ENTSPERREN ────────────────────────────────────────────────────
+    // profiles.is_active allein sperrt nichts: weder auth.tsx noch RLS prüfen das Feld.
+    // Wirksam sind Auth-Bann und beendete Sitzungen. is_active ist die Wahrheit für die
+    // Nutzer-Liste und die Automatiken (_shared/kontoSperre.ts) und wird deshalb zuletzt
+    // geschrieben: Scheitert ein Schritt davor, zeigt die Liste den alten Stand und ein
+    // erneuter Klick holt alles nach.
+    if (action === 'set_blocked') {
+      const { userId, blocked } = body
+      if (!userId || typeof blocked !== 'boolean') return json({ error: 'userId und blocked erforderlich' }, 400)
+      if (callerId && userId === callerId) return json({ error: 'Du kannst dich nicht selbst sperren.', code: 'SELBST' }, 400)
+
+      const { error: banErr } = await admin.auth.admin.updateUserById(userId, { ban_duration: blocked ? '876000h' : 'none' })
+      if (banErr) throw new Error(banErr.message)
+      if (blocked) {
+        const { error: sessErr } = await admin.rpc('revoke_user_sessions', { p_user_id: userId })
+        if (sessErr) throw new Error(`Bann gesetzt, Sitzungen nicht beendet: ${sessErr.message}`)
+      }
+      const { error: profErr } = await admin.from('profiles').update({ is_active: !blocked }).eq('id', userId)
+      if (profErr) throw new Error(profErr.message)
+
+      return json({ success: true, blocked })
     }
 
     // ── LIST AUTH IDS (für Orphan-Cleanup) ──────────────────────────────────────

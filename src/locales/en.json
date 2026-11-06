@@ -1508,12 +1508,17 @@
       "confirm": "Delete permanently",
       "changeOwner": "Change owner →"
     },
+    "block": {
+      "cannotSelf": "You cannot block yourself.",
+      "confirmBlock": "Really block {{name}}?\n\nThis person can no longer sign in, starting now. An open session ends within one hour at the latest. They will get no new Drive access, no Lotte notifications and no portal emails.\n\nExisting Drive access and links to decks or invoices stay in place, you have to remove those by hand.",
+      "confirmUnblock": "Unblock {{name}}?\n\nThis person can then sign in again with their existing password."
+    },
     "success": {
       "created": "User created – invitation email sent.",
       "updated": "User saved.",
       "deleted": "User has been deleted.",
-      "deactivated": "User has been deactivated.",
-      "activated": "User has been activated.",
+      "deactivated": "User has been blocked.",
+      "activated": "User has been unblocked.",
       "passwordReset": "Password has been reset."
     },
     "errors": {

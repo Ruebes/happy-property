@@ -9,11 +9,12 @@ import type { CrmProject, CrmProjectUnit } from '../../lib/crmTypes'
 import { CustomSelect } from '../../components/CustomSelect'
 import { renderPortalAccessEmail } from '../../lib/welcomeEmail'
 import { detachPropertyFromOwner, detachConfirmText, dealInPortal, fetchUnitPropertyId } from '../../lib/detachProperty'
+import { fnErrorMessage } from '../../lib/fnError'
 
 // Hilfsfunktion: alle Admin-Operationen laufen als Edge Function (kein Service-Key im Browser)
 async function adminUserOp<T = unknown>(body: Record<string, unknown>): Promise<T> {
   const { data, error } = await supabase.functions.invoke('admin-user-ops', { body })
-  if (error) throw new Error(error.message)
+  if (error) throw new Error(await fnErrorMessage(error))
   if (data?.error) throw new Error(data.error)
   return data as T
 }
@@ -614,14 +615,18 @@ export default function AdminUsers() {
   // ── Toggle active ────────────────────────────────────────
   async function handleToggleActive(u: UserProfile) {
     const next = !u.is_active
-    const { error } = await supabase
-      .from('profiles')
-      .update({ is_active: next })
-      .eq('id', u.id)
-    if (!error) {
+    if (u.id === profile?.id) { setToast(t('users.block.cannotSelf')); return }
+    const frage = next
+      ? t('users.block.confirmUnblock', { name: u.full_name })
+      : t('users.block.confirmBlock', { name: u.full_name })
+    if (!window.confirm(frage)) return
+    try {
+      await adminUserOp({ action: 'set_blocked', userId: u.id, blocked: !next })
       setToast(next ? t('users.success.activated') : t('users.success.deactivated'))
-      fetchUsers()
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : t('errors.saveFailed'))
     }
+    fetchUsers()
   }
 
   // ── Delete user ──────────────────────────────────────────

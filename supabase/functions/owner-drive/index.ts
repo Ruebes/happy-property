@@ -29,6 +29,7 @@ import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { lotteBild } from '../_shared/lotte.ts'
 import { resolveLang, type Lang } from '../_shared/recipientLang.ts'
 import { isCronCall, safeEqual } from '../_shared/callerAuth.ts'
+import { ladeGesperrte, leadGesperrt, mailGesperrt, normMail, type GesperrteKonten } from '../_shared/kontoSperre.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -52,7 +53,7 @@ interface DriveFile {
   owners?: DriveUser[]; lastModifyingUser?: DriveUser
 }
 interface ListedFile extends DriveFile { path: string }
-interface LeadRow { id: string; first_name: string | null; last_name: string | null; email: string | null; alt_emails: string[] | null; phone: string | null; whatsapp: string | null; drive_folder_id: string | null; drive_folder_url: string | null }
+interface LeadRow { id: string; profile_id: string | null; first_name: string | null; last_name: string | null; email: string | null; alt_emails: string[] | null; phone: string | null; whatsapp: string | null; drive_folder_id: string | null; drive_folder_url: string | null }
 interface Profile { id: string; role: string | null; full_name: string | null; email: string | null; phone: string | null; language: string | null }
 interface NewFile { file_id: string; name: string; web_view_link: string | null; uploader_name: string; uploader_email: string | null }
 interface Recipient { name: string; phone: string; email: string | null; lang: Lang }
@@ -198,7 +199,7 @@ async function caller(req: Request, sb: Client): Promise<{ service: boolean; pro
   return { service: false, profile: (prof as Profile | null), authEmail: lower(data?.user?.email) }
 }
 const isStaff = (p: Profile | null) => ['admin', 'verwalter', 'mitarbeiter'].includes(p?.role ?? '')
-const LEAD_COLS = 'id, first_name, last_name, email, alt_emails, phone, whatsapp, drive_folder_id, drive_folder_url'
+const LEAD_COLS = 'id, profile_id, first_name, last_name, email, alt_emails, phone, whatsapp, drive_folder_id, drive_folder_url'
 
 /** Lead des eingeloggten Eigentümers: zuerst über profile_id, sonst über die
  *  im Login bestätigte E-Mail (authEmail, NICHT profiles.email). */
@@ -276,9 +277,23 @@ async function recipientsFor(sb: Client, lead: LeadRow, excludeEmails: string[])
   if (lower(lead.email)) emails.add(lower(lead.email))
   for (const e of excludeEmails.map(lower).filter(Boolean)) emails.delete(e)
 
+  // Gesperrte Konten bekommen keine Meldung, auch wenn ihre Drive-Freigabe noch besteht.
+  // Ist die Sperrliste nicht lesbar, fällt der Kunde aus dieser Runde; der Lauf darf daran
+  // nicht scheitern und andere Empfänger bekommen ihre Meldung.
+  let gesperrte: GesperrteKonten | null = null
+  try { gesperrte = await ladeGesperrte(sb) } catch (e) { console.warn('[owner-drive]', (e as Error).message) }
+  const kundenMails = [lead.email, ...(lead.alt_emails ?? [])].map(normMail)
+  for (const e of [...emails]) {
+    if (gesperrte ? mailGesperrt(gesperrte, e, lead) : kundenMails.includes(normMail(e))) emails.delete(e)
+  }
+
   const list: Recipient[] = []
   const unresolved: string[] = []
   const seenPhones = new Set<string>()
+  // Auch über eine dritte Adresse derselben Person darf nichts an die Nummer des Kunden gehen.
+  if (!gesperrte || leadGesperrt(gesperrte, lead)) {
+    for (const p of [lead.whatsapp, lead.phone]) if (p) seenPhones.add(tail(p))
+  }
   for (const email of emails) {
     const c = email === lower(lead.email)
       ? { name: leadName(lead), phone: lead.whatsapp || lead.phone || null }

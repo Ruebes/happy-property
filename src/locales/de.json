@@ -1508,12 +1508,17 @@
       "confirm": "Endgültig löschen",
       "changeOwner": "Eigentümer ändern →"
     },
+    "block": {
+      "cannotSelf": "Du kannst dich nicht selbst sperren.",
+      "confirmBlock": "{{name}} wirklich sperren?\n\nDie Person kann sich ab sofort nicht mehr anmelden, eine offene Sitzung endet spätestens nach einer Stunde. Sie bekommt keine neue Drive-Freigabe, keine Lotte-Meldung und keine Portal-Mails mehr.\n\nEine schon bestehende Drive-Freigabe und Links zu Decks oder Rechnungen bleiben bestehen, die musst du von Hand entfernen.",
+      "confirmUnblock": "{{name}} wieder freischalten?\n\nDie Person kann sich danach wieder mit ihrem bisherigen Passwort anmelden."
+    },
     "success": {
       "created": "Nutzer angelegt – Einladungs-E-Mail wurde versendet.",
       "updated": "Nutzer gespeichert.",
       "deleted": "Nutzer wurde gelöscht.",
-      "deactivated": "Nutzer wurde deaktiviert.",
-      "activated": "Nutzer wurde aktiviert.",
+      "deactivated": "Nutzer wurde gesperrt.",
+      "activated": "Nutzer wurde wieder freigeschaltet.",
       "passwordReset": "Passwort wurde zurückgesetzt."
     },
     "errors": {

@@ -8,7 +8,9 @@
 // Der Service Account muss EDITOR auf dem Parent-Ordner sein.
 //
 // Body:   { lead_id, extra_emails?: string[] }
-// Antwort:{ ok, folder_id, folder_url, existing }
+// Antwort:{ ok, folder_id, folder_url, existing, customer_blocked }
+// Gesperrte Kunden (_shared/kontoSperre.ts) bekommen keine Freigabe, Sven und der
+// Google-Owner weiterhin. Eine bestehende Freigabe wird hier nicht entzogen.
 //
 // Zugriff (Sicherheits-Audit 30.9.2026): System-Aufrufe mit dem Service-Key
 // (schedule-message, owner-drive) oder eingeloggte Admins/Verwalter/Mitarbeiter
@@ -19,6 +21,7 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { authorizeCaller, safeEqual } from '../_shared/callerAuth.ts'
+import { ladeGesperrte, leadGesperrt, mailGesperrt } from '../_shared/kontoSperre.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -89,9 +92,13 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
     const { data: lead, error: leadErr } = await supabase
-      .from('leads').select('id, first_name, last_name, email, drive_folder_id, drive_folder_url').eq('id', lead_id).maybeSingle()
+      .from('leads').select('id, first_name, last_name, email, alt_emails, profile_id, drive_folder_id, drive_folder_url').eq('id', lead_id).maybeSingle()
     if (leadErr) return json({ error: `Lead: ${leadErr.message}` }, 500)
     if (!lead) return json({ error: 'Lead nicht gefunden' }, 404)
+
+    const gesperrte = await ladeGesperrte(supabase)
+    const kundeGesperrt = leadGesperrt(gesperrte, lead)
+    if (kundeGesperrt) console.warn(`[create-client-drive-folder] Kunde ${lead_id} gesperrt, keine Freigabe an ihn`)
 
     const token = await getWriteToken()
     let folderId  = lead.drive_folder_id as string | null
@@ -129,6 +136,7 @@ Deno.serve(async (req) => {
     // Kunde + Google-Owner (happypropertycyprus@gmail.com) + Sven + zusätzliche Empfänger
     const emails = Array.from(new Set([lead.email, OWNER_EMAIL, 'sven@happy-property.com', ...(Array.isArray(extra_emails) ? extra_emails : [])]
       .map(e => (e ?? '').trim()).filter(isEmail)))
+      .filter(e => !mailGesperrt(gesperrte, e, lead))
     const shared: string[] = []
     const shareErrors: Record<string, string> = {}
     for (const email of emails) {
@@ -147,7 +155,7 @@ Deno.serve(async (req) => {
     const { error: upErr } = await supabase.from('leads').update({ drive_folder_id: folderId, drive_folder_url: folderUrl }).eq('id', lead_id)
     if (upErr) return json({ error: `Speichern am Lead fehlgeschlagen: ${upErr.message}`, folder_id: folderId, folder_url: folderUrl }, 500)
 
-    return json({ ok: true, folder_id: folderId, folder_url: folderUrl, existing, shared, shareErrors })
+    return json({ ok: true, folder_id: folderId, folder_url: folderUrl, existing, shared, shareErrors, customer_blocked: kundeGesperrt })
   } catch (err) {
     return json({ error: (err as Error).message }, 500)
   }

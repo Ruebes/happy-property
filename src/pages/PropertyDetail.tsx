@@ -9,6 +9,7 @@ import { unitGross, unitNet, unitVatAmount, withVat } from '../lib/price'
 import { useAuth } from '../lib/auth'
 import { useDateFormat } from '../lib/date'
 import { detachPropertyFromOwner, detachConfirmText } from '../lib/detachProperty'
+import { fnErrorMessage } from '../lib/fnError'
 import type { CrmUnitPayment, CrmUnitDocument, ConstructionPhoto, CrmProjectUnit } from '../lib/crmTypes'
 
 // ── Types ──────────────────────────────────────────────────────
@@ -710,7 +711,7 @@ export default function PropertyDetail() {
   // Angeklickte Teil-Wohnung — zeigt ihre eigenen Daten im Modal.
   const [subUnitOpen,       setSubUnitOpen]       = useState<CrmProjectUnit | null>(null)
   // Mit-Eigentuemer: eingeladene Personen mit denselben Rechten wie der Eigentuemer.
-  const [coOwners,          setCoOwners]          = useState<Array<{ id: string; profile_id: string; profile: { full_name: string | null; email: string } | null }>>([])
+  const [coOwners,          setCoOwners]          = useState<Array<{ id: string; profile_id: string; profile: { full_name: string | null; email: string; is_active: boolean | null } | null }>>([])
   const [inviteOpen,        setInviteOpen]        = useState(false)
   const [inviteForm,        setInviteForm]        = useState({ name: '', email: '' })
   const [inviteBusy,        setInviteBusy]        = useState(false)
@@ -933,7 +934,7 @@ export default function PropertyDetail() {
     if (!id) return
     const { data, error } = await supabase
       .from('property_co_owners')
-      .select('id, profile_id, profile:profile_id(full_name, email)')
+      .select('id, profile_id, profile:profile_id(full_name, email, is_active)')
       .eq('property_id', id)
       .order('created_at')
     if (error) { console.error('[PropertyDetail] Mit-Eigentuemer:', error); return }
@@ -952,7 +953,7 @@ export default function PropertyDetail() {
         body: { property_id: id, email, full_name: inviteForm.name.trim() },
       })
       const antwort = data as { error?: string; status?: string } | null
-      const fehler = error?.message ?? antwort?.error
+      const fehler = error ? await fnErrorMessage(error) : antwort?.error
       if (fehler) { setToast({ msg: fehler, type: 'error' }); return }
       setToast({ msg: t('propertyDetail.access.invited', 'Person freigeschaltet. Sie hat eine E-Mail bekommen.') })
       setInviteOpen(false)
@@ -3357,12 +3358,13 @@ export default function PropertyDetail() {
   // ── Eigentümer per E-Mail benachrichtigen ─────────────
   async function notifyOwner(fileName: string, kind: 'Dokument' | 'Bild' | 'Baustellenfoto') {
     // Empfaenger: der Eigentuemer UND alle eingeladenen Mit-Eigentuemer. Wer
-    // selbst hochgeladen hat, bekommt keine Mail ueber die eigene Aktion.
+    // selbst hochgeladen hat, bekommt keine Mail ueber die eigene Aktion. Gesperrte
+    // Konten bekommen keine Portal-Mail.
     const owner = property?.owner
     const empfaenger = [
-      ...(owner?.email ? [{ id: property?.owner_id ?? null, email: owner.email, full_name: owner.full_name, language: owner.language }] : []),
+      ...(owner?.email && owner.is_active !== false ? [{ id: property?.owner_id ?? null, email: owner.email, full_name: owner.full_name, language: owner.language }] : []),
       ...coOwners
-        .filter(co => co.profile?.email)
+        .filter(co => co.profile?.email && co.profile.is_active !== false)
         .map(co => ({ id: co.profile_id, email: co.profile!.email, full_name: co.profile!.full_name, language: null as string | null })),
     ].filter(e => e.id !== profile?.id)
     // Dateiname escapen — er landet sonst roh im HTML der Mail

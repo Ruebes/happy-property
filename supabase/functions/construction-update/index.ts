@@ -27,6 +27,7 @@
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { lotteBild } from '../_shared/lotte.ts'
 import { authorizeCaller, safeEqual } from '../_shared/callerAuth.ts'
+import { ladeGesperrte, leadGesperrt } from '../_shared/kontoSperre.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -127,6 +128,10 @@ Deno.serve(async (req) => {
     if (!project) return json({ error: 'Projekt nicht gefunden' }, 404)
     const projName = project.name
 
+    // Gesperrte Kunden bekommen kein Update. Vor dem Claim laden: Scheitert das Lesen,
+    // bleiben die Fotos ungemeldet und der nächste Lauf holt sie nach.
+    const gesperrte = await ladeGesperrte(sb)
+
     // Fotos bestimmen: test/all_photos → alle (bis Deckel); scharf-normal → NUR
     // NEUE atomar claimen. Bei all_photos-Scharfversand alle als gemeldet stempeln.
     let photos: ConPhoto[] = []
@@ -178,7 +183,7 @@ Deno.serve(async (req) => {
         ...((coOwners ?? []) as Array<{ profile_id: string }>).map(c => c.profile_id),
       ])]
       if (ownerIds.length) {
-        const { data: profs } = await sb.from('profiles').select('full_name, email, phone, language').in('id', ownerIds)
+        const { data: profs } = await sb.from('profiles').select('full_name, email, phone, language').in('id', ownerIds).eq('is_active', true)
         ownerProfiles.push(...((profs ?? []) as typeof ownerProfiles))
       }
     }
@@ -221,10 +226,10 @@ Deno.serve(async (req) => {
       for (const id of deckOnly) if (!buyerElsewhere.has(id)) leadIds.add(id)
     }
 
-    let leadRows: Array<{ id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; whatsapp: string | null; language: string | null; newsletter_optout_at: string | null }> = []
+    let leadRows: Array<{ id: string; profile_id: string | null; first_name: string | null; last_name: string | null; email: string | null; alt_emails: string[] | null; phone: string | null; whatsapp: string | null; language: string | null; newsletter_optout_at: string | null }> = []
     if (leadIds.size) {
-      const { data: ls } = await sb.from('leads').select('id, first_name, last_name, email, phone, whatsapp, language, newsletter_optout_at').in('id', [...leadIds])
-      leadRows = (ls ?? []) as typeof leadRows
+      const { data: ls } = await sb.from('leads').select('id, profile_id, first_name, last_name, email, alt_emails, phone, whatsapp, language, newsletter_optout_at').in('id', [...leadIds])
+      leadRows = ((ls ?? []) as typeof leadRows).filter(l => !leadGesperrt(gesperrte, l))
     }
 
     // Dedup je Kontakt (E-Mail bevorzugt, sonst Telefon). Eigentümer zuerst.

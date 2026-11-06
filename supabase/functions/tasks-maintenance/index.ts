@@ -79,10 +79,13 @@ Deno.serve(async (req) => {
     // 3) Leere Eigentümer-Portale (Svens Karteileichen-Regel): Warnung nach
     //    3 + 5 Monaten (Lotte-Mail), Löschung nach 6 Monaten — aber nie, wenn
     //    der Kunde noch einen aktiven Deal hat (Wohnung kommt dann ja noch).
+    //    Gesperrte Konten bleiben außen vor: keine Mail, und die Löschung würde die
+    //    Sperre mit entfernen.
     let warned = 0, deletedAccounts = 0
     const { data: ownersRaw } = await sb.from('profiles')
       .select('id, full_name, email, language, created_at, portal_warned_3m_at, portal_warned_5m_at')
       .eq('role', 'eigentuemer')
+      .eq('is_active', true)
     for (const o of ((ownersRaw ?? []) as Array<{ id: string; full_name: string | null; email: string | null; language: string | null; created_at: string; portal_warned_3m_at: string | null; portal_warned_5m_at: string | null }>)) {
       const { count } = await sb.from('properties').select('id', { count: 'exact', head: true }).eq('owner_id', o.id)
       if ((count ?? 0) > 0) continue

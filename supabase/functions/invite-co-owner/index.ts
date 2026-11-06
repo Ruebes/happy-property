@@ -33,8 +33,14 @@ const json = (b: unknown, s = 200) =>
 const APP_URL = Deno.env.get('APP_URL') ?? 'https://portal.happy-property.com'
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
-type Profil = { id: string; email: string; full_name: string | null; role: string; language: string | null }
+type Profil = { id: string; email: string; full_name: string | null; role: string; language: string | null; is_active?: boolean | null }
 type Admin = ReturnType<typeof createClient>
+
+// Bewusst ohne das Wort „gesperrt": Die Antwort kann bei einem anderen Kunden landen.
+const keineFreischaltung = (email: string) => ({
+  error: `Für ${email} ist keine Freischaltung möglich. Bitte Happy Property kontaktieren.`,
+  code: 'KEINE_FREISCHALTUNG',
+})
 
 // Profil zur Adresse suchen (Groß/Klein egal). '_' ist in ILIKE ein Platzhalter
 // und wird maskiert; bei ZWEI Treffern ist die Zuordnung mehrdeutig (profiles.email
@@ -117,7 +123,7 @@ Deno.serve(async (req: Request) => {
     const authUser = await findAuthUserByEmail(admin, email)
     if (authUser) {
       const { data: byId } = await admin.from('profiles')
-        .select('id, email, full_name, role, language').eq('id', authUser.id).maybeSingle()
+        .select('id, email, full_name, role, language, is_active').eq('id', authUser.id).maybeSingle()
       const p = byId as Profil | null
       if (p) profil = { ...p, email }   // Einladung geht an die eingegebene (Login-)Adresse
     } else {
@@ -142,7 +148,8 @@ Deno.serve(async (req: Request) => {
         headers: { Authorization: `Bearer ${service}`, apikey: service, 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, full_name: (full_name ?? '').trim() || email }),
       })
-      const out = await res.json().catch(() => ({})) as { error?: string; userId?: string }
+      const out = await res.json().catch(() => ({})) as { error?: string; userId?: string; code?: string }
+      if (out.code === 'KONTO_GESPERRT') return json(keineFreischaltung(email), 409)
       if (!res.ok) return json({ error: `Zugang konnte nicht angelegt werden: ${out.error ?? res.status}` }, 502)
       const { data: neu } = out.userId
         ? await admin.from('profiles').select('id, email, full_name, role, language').eq('id', out.userId).maybeSingle()
@@ -150,6 +157,8 @@ Deno.serve(async (req: Request) => {
       profil = neu as Profil | null
       if (!profil) return json({ error: 'Konto wurde angelegt, konnte aber nicht gefunden werden' }, 500)
       status = 'neu'
+    } else if (profil.is_active === false) {
+      return json(keineFreischaltung(email), 409)
     } else if (profil.role !== 'eigentuemer') {
       // Bestehendes Konto mit anderer Rolle (admin, verwalter, mitarbeiter, kunde):
       // NICHT anfassen. Eine Einladung würde Rolle und Passwort überschreiben und
@@ -202,9 +211,9 @@ Deno.serve(async (req: Request) => {
     // Hat Sven freigeschaltet, erfährt der Eigentümer davon: er soll wissen, wer
     // Zugriff auf seine Unterlagen hat.
     if (prop.owner_id && prop.owner_id !== callerId) {
-      const { data: ownerProf } = await admin.from('profiles').select('email, full_name').eq('id', prop.owner_id).maybeSingle()
-      const op = ownerProf as { email?: string; full_name?: string } | null
-      if (op?.email) {
+      const { data: ownerProf } = await admin.from('profiles').select('email, full_name, is_active').eq('id', prop.owner_id).maybeSingle()
+      const op = ownerProf as { email?: string; full_name?: string; is_active?: boolean | null } | null
+      if (op?.email && op.is_active !== false) {
         await sendMail(
           op.email,
           `Neuer Zugriff auf ${wohnung}`,

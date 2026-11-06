@@ -19,6 +19,7 @@ import { encodeMimeSubject } from '../_shared/mimeSubject.ts'
 import { buildMimeContent } from '../_shared/mimeBody.ts'
 import { SOCIAL_FOOTER_HTML, socialFooterHtml, uspBoxHtml } from '../_shared/socialFooter.ts'
 import { lotteBild } from '../_shared/lotte.ts'
+import { kontoGesperrtAntwort, zugangGesperrt } from '../_shared/kontoSperre.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -264,6 +265,13 @@ Deno.serve(async (req: Request) => {
 
     // Prüfen ob User bereits existiert (paginiert — findet auch Nutzer > Seite 1)
     const existingUser = await findAuthUserByEmail(adminClient, email)
+
+    // Gesperrtes Konto: kein neues Passwort, kein is_active=true, keine Mail.
+    if (await zugangGesperrt(adminClient, email, existingUser?.id)) {
+      console.warn('[create-eigentuemer-access] Abgebrochen: Konto gesperrt')
+      return new Response(JSON.stringify(kontoGesperrtAntwort(email)),
+        { status: 409, headers: { ...CORS, 'Content-Type': 'application/json' } })
+    }
 
     // Bestehendes Konto mit ANDERER Rolle (admin, verwalter, mitarbeiter, funnel,
     // feriengast) niemals anfassen: sonst würden Passwort und Rolle überschrieben

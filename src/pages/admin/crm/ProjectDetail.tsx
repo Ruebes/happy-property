@@ -6,6 +6,7 @@ import { supabase } from '../../../lib/supabase'
 import { unitGross, unitNet } from '../../../lib/price'
 import { useAuth } from '../../../lib/auth'
 import { dealInPortal, fetchUnitPropertyId, isForeignOwnedProperty, leadProfileIds } from '../../../lib/detachProperty'
+import { fnErrorMessage } from '../../../lib/fnError'
 import type {
   CrmProject, CrmProjectUnit, CrmUnitDocument, CrmUnitPayment,
   UnitType, UnitStatus,
@@ -449,10 +450,14 @@ export default function ProjectDetail() {
 
   // ── E-Mail-Benachrichtigung beim Upload ──────────────────────────────────────
   async function notifyCustomerUpload(
-    email: string, firstName: string,
+    leadId: string, email: string, firstName: string,
     fileName: string, kind: 'Dokument' | 'Bild' | 'Baustellenfoto',
   ) {
     try {
+      // Gesperrte Kunden bekommen keine Portal-Mail. Scheitert die Prüfung, lieber keine Mail.
+      const { data: gesperrt, error: sperrFehler } = await supabase.rpc('lead_konto_gesperrt', { p_lead_id: leadId })
+      if (sperrFehler) console.warn('[ProjectDetail] Sperr-Prüfung:', sperrFehler.message)
+      if (sperrFehler || gesperrt) return
       await supabase.functions.invoke('send-email', {
         body: {
           to:      email,
@@ -735,7 +740,7 @@ export default function ProjectDetail() {
       // E-Mail an Kunden senden
       const customer = unitLeadMap[unitId]
       if (customer?.email) {
-        void notifyCustomerUpload(customer.email, customer.first_name, `${newUrls.length} neues Bild${newUrls.length > 1 ? 'er' : ''}`, 'Bild')
+        void notifyCustomerUpload(customer.id, customer.email, customer.first_name, `${newUrls.length} neues Bild${newUrls.length > 1 ? 'er' : ''}`, 'Bild')
       }
     } catch (err) {
       showToast(`❌ ${err instanceof Error ? err.message : t('errors.generic')}`)
@@ -1019,7 +1024,7 @@ export default function ProjectDetail() {
       const { error } = await supabase.functions.invoke('create-eigentuemer-access', {
         body: { email: email.trim(), full_name: name.trim() },
       })
-      if (error) throw error
+      if (error) throw new Error(await fnErrorMessage(error))
       setPortalSuccess(true)
       setPortalEmail('')
       setPortalName('')
@@ -1066,7 +1071,7 @@ export default function ProjectDetail() {
       // E-Mail an Kunden senden
       const customer = unitLeadMap[editUnit.id]
       if (customer?.email) {
-        void notifyCustomerUpload(customer.email, customer.first_name, docForm.name.trim() || pendingFile.name, 'Dokument')
+        void notifyCustomerUpload(customer.id, customer.email, customer.first_name, docForm.name.trim() || pendingFile.name, 'Dokument')
       }
     } catch (err) {
       console.error('[ProjectDetail] Upload error:', err)
