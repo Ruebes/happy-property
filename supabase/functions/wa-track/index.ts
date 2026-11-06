@@ -170,7 +170,9 @@ function selPath(el){
 }
 addEventListener('click',function(e){
   var el=e.target && e.target.closest ? (e.target.closest('a,button,[role=button],input,select,label')||e.target) : e.target;
-  var txt=(el&&(el.innerText||el.value||'')||'').trim().slice(0,60);
+  // Formularfelder: Nur der Ort des Klicks zaehlt, nie der Inhalt (Name, Mail, Telefon).
+  var tag=el&&el.tagName, feld=tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'||(el&&el.isContentEditable);
+  var txt=feld?'':((el&&el.innerText)||'').trim().slice(0,60);
   push({ t:'click', p:path, x:Math.round(e.pageX), y:Math.round(e.pageY),
     vw:innerWidth, vh:innerHeight, dh:docH(), sel:el?selPath(el):null, txt:txt||null });
 },true);
@@ -268,6 +270,21 @@ interface SessionInfo {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+// Klicktexte sind Knopf-Beschriftungen, nie Eingaben. Bis 6.11.2026 hat der Tracker den
+// Inhalt angeklickter Formularfelder mitgeschickt. Die Prüfung steht auch hier, weil alte
+// Tracker noch eine Weile im Browser-Cache liegen und ein Text auf der Seite (etwa die
+// eigene Adresse im Kundenportal) ebenfalls Personendaten enthalten kann.
+const FELD_SELECTOR_RE = /(?:^|>)(?:input|textarea|select)(?:[.#][^>]*)?$/i
+const MAIL_RE = /[^\s@]+@[^\s@]+\.[^\s@]+/
+const TELEFON_RE = /\+?\d[\d\s()./-]{6,}\d/
+function klickText(selector: string | null | undefined, txt: string | null | undefined): string | null {
+  const text = txt?.slice(0, 100) ?? null
+  if (!text) return null
+  if (selector && FELD_SELECTOR_RE.test(selector)) return null
+  if (MAIL_RE.test(text) || TELEFON_RE.test(text)) return null
+  return text
+}
+
 async function handleBatch(session: SessionInfo, events: TrackEvent[], ua: string): Promise<void> {
   if (!session?.id || !UUID_RE.test(session.id) || !session.site) return
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
@@ -322,7 +339,8 @@ async function handleBatch(session: SessionInfo, events: TrackEvent[], ua: strin
         x: e.x ?? null, y: e.y ?? null,
         vw: e.vw ?? null, vh: e.vh ?? null, dh: e.dh ?? null,
         selector: e.sel?.slice(0, 300) ?? null,
-        txt: e.txt?.slice(0, 100) ?? null,
+        // Custom-Events tragen hier ihren Namen, nur Klicks werden geprüft.
+        txt: e.t === 'click' ? klickText(e.sel, e.txt) : (e.txt?.slice(0, 100) ?? null),
         meta: e.meta ?? null,
       }))
     const { error: evErr } = await supabase.from('web_events').insert(rows)
