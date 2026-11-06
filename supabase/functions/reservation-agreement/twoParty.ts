@@ -24,6 +24,7 @@ import { inRuhezeit, zeitzoneFuer } from '../_shared/ruhezeit.ts'
 import { renderAgreement, type AgreementFields } from './pdf.ts'
 import { cyprusDate, euro, floraAmounts, type FloraBuyer, type FloraFields, type FloraPart, type VendorSigner } from './pdfFlora.ts'
 import { uploadToken, uploadFile } from './drive.ts'
+import { appendPdf, fetchAppendix, storeAppendix } from './appendix.ts'
 import type { AutoCheck } from './floraCheck.ts'
 import { pngFromInput, clientIp, sealDataUrl, MAX_SEAL_BYTES } from './seal.ts'
 import { cleanSignature, placeOf, sha256Hex } from './sign.ts'
@@ -252,7 +253,13 @@ async function renderRound(sb: SupabaseClient, p: Payload, parts: PartRow[], com
   }
   const sealPath = parts.find(x => x.meta?.seal_path)?.meta.seal_path as string | undefined
   const seal = sealPath ? await storageBytes(sb, BUCKET, sealPath) : null
-  return await renderAgreement(p.template, p.fields, undefined, { parts: flParts, seal, date: complete && parts.length ? lastSignature(parts) : null })
+  const contract = await renderAgreement(p.template, p.fields, undefined, { parts: flParts, seal, date: complete && parts.length ? lastSignature(parts) : null })
+  // Der Appendix der Wohnung hängt hinter dem Vertrag, damit die Unterschriften beides abdecken
+  const apPath = p.fields.flora?.appendix_path
+  if (!apPath) return contract
+  const ap = await storageBytes(sb, BUCKET, apPath)
+  if (!ap) throw new Error('Appendix fehlt im Speicher')
+  return await appendPdf(contract, ap)
 }
 
 // Stempel der Vertragspartei (COMPOSITIVA), getrennt vom CRM-Bauträger EMMETRE: andere EMMETRE-
@@ -575,6 +582,14 @@ async function giveUpNotice(sb: SupabaseClient, row: AgreementRow, ctx: Ctx, key
 
 /** Sven drückt „Senden": neue Runde, neue Links, zuerst an den Bauträger. Alte Unterschriften gelten für den neuen Stand nicht. */
 export async function floraSend(sb: SupabaseClient, row: AgreementRow, ctx: Ctx, pdf: Uint8Array, fields: AgreementFields, buyers: Buyer[], test: boolean, report?: AutoCheck | null): Promise<Record<string, unknown>> {
+  // Appendix der verkauften Wohnung dazu. Fehlt er, geht der Vertrag nicht raus (Sven 6.11.2026: immer die richtige Wohnung).
+  const ap = await fetchAppendix(ctx)
+  if (ap.problems.length) throw new Error(ap.problems.join(' · '))
+  if (ap.bytes && fields.flora) {
+    const apPath = await storeAppendix(sb, ctx.unit.id, ap.bytes)
+    fields = { ...fields, flora: { ...fields.flora, appendix_path: apPath, appendix_files: ap.files, appendix_pages: ap.pages } }
+    pdf = await appendPdf(pdf, ap.bytes)
+  }
   const buyerLang: Lang = await resolveLang(sb, { email: ctx.lead.email, phone: customerPhone(ctx), lead_id: ctx.lead.id })
   const now = new Date().toISOString()
   if (test) {
@@ -662,7 +677,7 @@ export async function finalize(sb: SupabaseClient, id: string, customerSignedLas
     const { data: doc, error } = await sb.from('crm_unit_documents').insert({
       unit_id: ctx.unit.id, project_id: ctx.project.id, name: `Reservation ${ctx.project.name} ${ctx.unit.unit_number}`,
       file_path: path, file_name: fname, file_size: pdf.byteLength, doc_type: 'sonstiges',
-      notes: `Reservierungsvereinbarung, digital unterschrieben von ${buyerNames} und ${vendorNames} (${p.template.company_name}) am ${dateStr}`,
+      notes: `Reservierungsvereinbarung${p.fields.flora?.appendix_pages ? ` mit Appendix (${p.fields.flora.appendix_pages} Seiten)` : ''}, digital unterschrieben von ${buyerNames} und ${vendorNames} (${p.template.company_name}) am ${dateStr}`,
     }).select('id').single()
     if (error) throw new Error(`Ablage an der Wohnung: ${error.message}`)
     docId = (doc as { id: string }).id

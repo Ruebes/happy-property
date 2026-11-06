@@ -17,6 +17,7 @@ import { euro, floraAmounts, type FloraFields } from './pdfFlora.ts'
 import type { AgreementFields } from './pdf.ts'
 import { norm, type AgreementRow, type Buyer, type Ctx } from './index.ts'
 import { nationalityEn } from './twoParty.ts'
+import { fetchAppendix } from './appendix.ts'
 
 export interface CheckPoint { key: string; ok: boolean; text: string }
 export interface AutoCheck { at: string; ok: boolean; points: CheckPoint[]; reasons: string[]; retry?: boolean; tries?: number }
@@ -174,6 +175,10 @@ export async function floraAutoCheck(sb: SupabaseClient, row: AgreementRow, ctx:
     ...(bank.iban || bank.account_number ? [] : ['In der Vorlage fehlen die Bankdaten, der Kunde wüsste nicht, wohin er die Anzahlung überweist']),
     ...(x.vendor_signers?.length ? [] : ['In der Vorlage fehlen die Unterzeichner des Bauträgers']),
   ], 'Vorlage vollständig, Bankdaten vorhanden')
+
+  // Appendix: gehört zur Wohnung dieses Vertrags und liegt im Drive-Ordner
+  const apx = await fetchAppendix(ctx)
+  add('appendix', apx.problems, apx.configured ? `Appendix für ${ctx.unit.unit_number} gefunden: ${apx.files.join(', ')} (${apx.pages} Seiten)` : 'Kein Appendix-Ordner in der Vorlage hinterlegt')
 
   // Preis: Sonderpreise stehen nicht an der Wohnung, sondern im Deck des Kunden
   const pricing: string[] = []

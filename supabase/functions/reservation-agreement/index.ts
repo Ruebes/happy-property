@@ -58,6 +58,7 @@ import { specialTermsEn, type SpecialTerms } from './terms.ts'
 import { buyerView, findBuyerRow, floraFieldsFor, FLORA_SAMPLE, floraSend, floraWarnings, loadParts, tpSubmit, twoPartySweep } from './twoParty.ts'
 import { addressSubmit, addressView, floraWaitingFor, withCustomerData, type CustomerData } from './customerData.ts'
 import { floraAutoCheck, type AutoCheck } from './floraCheck.ts'
+import { appendPdf, fetchAppendix } from './appendix.ts'
 import { parseMrz } from './mrz.ts'
 import { SB_URL } from '../_shared/sbUrl.ts'
 
@@ -1086,7 +1087,11 @@ Deno.serve(async (req) => {
       const reasons = [...gate(ctx, buyers, problems, checked, minors), ...(two ? floraWarnings(ctx) : [])]
       const pdf = await renderAgreement(ctx.template, fields)
       // Vorschau ändert den Vertrag NICHT: row.data ist das, was der Bauträger unterschreibt.
-      if (action === 'preview') return json({ ok: true, pdf_base64: b64(pdf), fields, buyers, reasons })
+      if (action === 'preview') {
+        // Die Vorschau zeigt den Appendix der Wohnung mit; fehlt er, steht das bei den Hinweisen
+        const ap = two ? await fetchAppendix(ctx) : null
+        return json({ ok: true, pdf_base64: b64(ap?.bytes ? await appendPdf(pdf, ap.bytes) : pdf), fields, buyers, reasons: [...reasons, ...(ap?.problems ?? [])] })
+      }
       // send: Sven hat geprüft. Harte Hindernisse bleiben harte Hindernisse.
       const hard = [...problems, ...(buyers.length ? [] : ['Keine Käufer']), ...buyers.filter(b => !b.document_number).map(b => `Nummer fehlt bei ${b.full_name}`), ...(ctx.devEmails.length ? [] : ['Keine E-Mail beim Bauträger'])]
       if (hard.length) return json({ error: hard.join(' · ') }, 400)

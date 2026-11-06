@@ -14,6 +14,8 @@ export interface FloraFields {
   buyers: FloraBuyer[]
   unit: string; type_label: string; fee_label: string; fee_amount: string; enclosed: string; covered: string
   net_price: number | null; title_deed: number | null
+  /** Appendix der Wohnung, zum Senden festgehalten (Pfad im Speicher), hängt hinter dem Vertrag */
+  appendix_path?: string; appendix_files?: string[]; appendix_pages?: number
 }
 export interface FloraPart {
   side: 'buyer' | 'vendor'; key: string; name: string; png: Uint8Array; signedAtUtc: string
