@@ -4,7 +4,9 @@ import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
 
 // Öffentliche Seite /sign/a/:token (kein Login, nur Token): Der Kunde trägt für seinen
-// Reservierungsvertrag die Angaben ein, die nicht im Ausweis stehen (Flora Panorama).
+// Reservierungsvertrag die Angaben ein, die nicht im Ausweis stehen (Flora Panorama),
+// und lädt danach seinen Ausweis hoch. Kein Google-Konto nötig, die Datei geht über den
+// Server in seinen Drive-Ordner.
 // Sprache = Sprache des Kunden aus dem CRM. Die Regeln prüft der Server (customerData.ts).
 
 interface Person {
@@ -14,10 +16,15 @@ interface Person {
 interface Second extends Person { first_name: string; last_name: string; same_address: boolean }
 interface View {
   closed: boolean; test?: boolean; lang: 'de' | 'en'; first_name?: string; submitted?: boolean
-  drive_link?: string | null; prefill?: Person & { second?: Second | null }
+  prefill?: Person & { second?: Second | null }
   countries?: Array<{ code: string; name: string }>
+  have_main?: boolean; have_second?: boolean; uploads?: Upload[]
 }
-type Phase = 'loading' | 'form' | 'sending' | 'done' | 'closed' | 'not_found' | 'error'
+type Phase = 'loading' | 'form' | 'sending' | 'ids' | 'done' | 'closed' | 'not_found' | 'error'
+type UploadPerson = 'main' | 'second'
+type UploadDoc = 'id_card' | 'passport'
+type UploadSide = 'front' | 'back' | 'page'
+interface Upload { person: string; doc: string; side: string }
 
 const EMPTY: Person = { salutation: '', street: '', postal_code: '', city: '', country_code: '', country_other: '', phone: '', email: '' }
 const OTHER = 'OTHER'
@@ -34,6 +41,105 @@ async function call<T>(body: Record<string, unknown>): Promise<T> {
   return data as T
 }
 
+const SIDES: Record<UploadDoc, UploadSide[]> = { id_card: ['front', 'back'], passport: ['page'] }
+const MAX_BYTES = 10 * 1024 * 1024
+const SHRINK_ABOVE = 2_500_000
+
+const toBase64 = (blob: Blob) => new Promise<string>((resolve, reject) => {
+  const r = new FileReader()
+  r.onload = () => resolve(String(r.result).split(',')[1] ?? '')
+  r.onerror = () => reject(r.error)
+  r.readAsDataURL(blob)
+})
+
+/** Handyfotos sind oft riesig: verkleinern, gut lesbar bleibt ein Ausweis auch so. Klappt das nicht, geht das Original. */
+async function shrink(file: File): Promise<Blob> {
+  if (!file.type.startsWith('image/') || (file.size <= SHRINK_ABOVE && /jpe?g|png|webp/.test(file.type))) return file
+  try {
+    const img = await createImageBitmap(file)
+    const scale = Math.min(1, 2600 / Math.max(img.width, img.height))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale)
+    canvas.getContext('2d')?.drawImage(img, 0, 0, canvas.width, canvas.height)
+    const out = await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/jpeg', 0.88))
+    return out && out.size > 0 ? out : file
+  } catch { return file }
+}
+
+function isComplete(uploads: Upload[], person: UploadPerson): boolean {
+  const has = (doc: UploadDoc, side: UploadSide) => uploads.some(u => u.person === person && u.doc === doc && u.side === side)
+  return has('passport', 'page') || (has('id_card', 'front') && has('id_card', 'back'))
+}
+
+function IdCard({ token, person, title, t, uploads, onUploaded, onClosed }: {
+  token?: string; person: UploadPerson; title: string; t: (k: string, d: string) => string
+  uploads: Upload[]; onUploaded: (u: Upload) => void; onClosed: () => void
+}) {
+  const [doc, setDoc] = useState<UploadDoc | null>(() => (uploads.find(u => u.person === person)?.doc as UploadDoc | undefined) ?? null)
+  const [busy, setBusy] = useState<UploadSide | null>(null)
+  const [problem, setProblem] = useState<{ side: UploadSide; code: string; file: File } | null>(null)
+
+  const send = async (side: UploadSide, file: File, force = false) => {
+    if (!doc) return
+    setBusy(side); setProblem(null)
+    try {
+      const blob = await shrink(file)
+      if (blob.size > MAX_BYTES) { setProblem({ side, code: 'too_big', file }); return }
+      await call({ action: 'address_upload', token, person, doc, side, force, base64: await toBase64(blob) })
+      onUploaded({ person, doc, side })
+    } catch (e) {
+      const code = (e as Error).message
+      if (code === 'closed') { onClosed(); return }
+      setProblem({ side, code, file })
+    } finally { setBusy(null) }
+  }
+
+  const problemText = (code: string) => code === 'not_id' ? t('reservationAddress.errNotId', 'This does not look like an ID. Please check the photo and try again.')
+    : code === 'too_big' ? t('reservationAddress.errTooBig', 'This file is too large. Please take a new photo or use a file up to 10 MB.')
+    : code === 'bad_type' ? t('reservationAddress.errType', 'Please upload a photo or a PDF.')
+    : t('reservationAddress.errUpload', 'The upload did not work. Please try again in a minute.')
+  const sideLabel = (s: UploadSide) => s === 'front' ? t('reservationAddress.sideFront', 'Front side')
+    : s === 'back' ? t('reservationAddress.sideBack', 'Back side')
+    : t('reservationAddress.sidePage', 'Page with your photo')
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 space-y-4">
+      <p className="text-base font-semibold text-hp-navy">{title}</p>
+      <div className="grid grid-cols-2 gap-2">
+        {([['id_card', t('reservationAddress.docIdCard', 'ID card (2 sides)')], ['passport', t('reservationAddress.docPassport', 'Passport (1 page)')]] as const).map(([v, label]) => (
+          <button key={v} type="button" onClick={() => { setDoc(v); setProblem(null) }} aria-pressed={doc === v}
+            className={`py-3 px-2 rounded-xl border text-sm font-medium ${doc === v ? 'border-hp-highlight bg-orange-50 text-hp-navy' : 'border-gray-200 text-gray-700'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {doc && SIDES[doc].map(side => {
+        const done = uploads.some(u => u.person === person && u.doc === doc && u.side === side)
+        const bad = problem?.side === side ? problem : null
+        return (
+          <div key={side} className="space-y-2">
+            {done ? (
+              <p className="py-3 px-3 rounded-xl bg-green-50 text-sm text-green-800">✅ {sideLabel(side)}: {t('reservationAddress.uploaded', 'received')}</p>
+            ) : (
+              <label className={`block text-center py-3 px-3 rounded-xl border border-dashed text-sm font-medium ${busy ? 'border-gray-200 text-gray-400' : 'border-gray-300 text-hp-navy cursor-pointer hover:bg-gray-50'}`}>
+                {busy === side ? t('reservationAddress.uploading', 'Uploading, one moment…') : `${sideLabel(side)}: ${t('reservationAddress.pickFile', 'choose photo or file')}`}
+                <input type="file" accept="image/*,application/pdf" className="sr-only" disabled={!!busy}
+                  onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void send(side, f) }} />
+              </label>
+            )}
+            {bad && !done && (
+              <div className="text-xs text-red-600 space-y-1">
+                <p>{problemText(bad.code)}</p>
+                {bad.code === 'not_id' && <button type="button" onClick={() => void send(side, bad.file, true)} className="underline">{t('reservationAddress.useAnyway', 'It is my ID, use it anyway')}</button>}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function ReservationAddress() {
   const { token } = useParams<{ token: string }>()
   const { i18n } = useTranslation()
@@ -43,6 +149,8 @@ export default function ReservationAddress() {
   const [hasSecond, setHasSecond] = useState(false)
   const [second, setSecond] = useState<Second>({ ...EMPTY, first_name: '', last_name: '', same_address: true })
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [uploads, setUploads] = useState<Upload[]>([])
+  const [have, setHave] = useState({ main: false, second: false })
   const t = useMemo(() => i18n.getFixedT(view?.lang ?? 'de'), [view?.lang, i18n])
 
   useEffect(() => {
@@ -53,7 +161,10 @@ export default function ReservationAddress() {
         const { second: s, ...p } = v.prefill ?? { ...EMPTY }
         setMe({ ...EMPTY, ...p, country_code: p.country_code || (p.country_other ? OTHER : '') })
         if (s) { setHasSecond(true); setSecond({ ...s, country_code: s.country_code || (s.country_other ? OTHER : '') }) }
-        setPhase('form')
+        const ups = v.uploads ?? [], h = { main: !!v.have_main, second: !!v.have_second }
+        setUploads(ups); setHave(h)
+        const allThere = (h.main || isComplete(ups, 'main')) && (!s || h.second || isComplete(ups, 'second'))
+        setPhase(!v.submitted ? 'form' : allThere ? 'done' : 'ids')
       })
       .catch(e => setPhase((e as Error).message === 'not_found' ? 'not_found' : 'error'))
   }, [token])
@@ -62,8 +173,10 @@ export default function ReservationAddress() {
     setPhase('sending'); setErrors({})
     const code = (p: Person) => p.country_code === OTHER ? '' : p.country_code
     try {
-      await call({ action: 'address_submit', token, ...me, country_code: code(me), second: hasSecond ? { ...second, country_code: code(second) } : null })
-      setPhase('done')
+      const r = await call<{ have_main?: boolean; have_second?: boolean }>({ action: 'address_submit', token, ...me, country_code: code(me), second: hasSecond ? { ...second, country_code: code(second) } : null })
+      const h = { main: !!r.have_main, second: !!r.have_second }
+      setHave(h)
+      setPhase((h.main || isComplete(uploads, 'main')) && (!hasSecond || h.second || isComplete(uploads, 'second')) ? 'done' : 'ids')
       window.scrollTo(0, 0)
     } catch (e) {
       const err = e as Error & { fields?: Record<string, string> }
@@ -97,14 +210,29 @@ export default function ReservationAddress() {
   if (phase === 'done') return box(
     <div className={card}>
       <p className="text-lg font-semibold text-hp-navy">✅ {t('reservationAddress.doneTitle', 'Thank you!')}</p>
-      <p className="text-sm text-gray-700">{t('reservationAddress.doneText', 'We have your details. As soon as your ID is in your folder too, we will prepare your reservation agreement. First the developer signs, then you receive your link to sign.')}</p>
-      {view?.drive_link && (
-        <a href={view.drive_link} className="block text-center w-full py-3 rounded-xl border border-gray-200 text-sm font-medium text-hp-navy hover:bg-gray-50">
-          {t('reservationAddress.toFolder', 'Upload your ID to your folder')}
-        </a>
-      )}
+      <p className="text-sm text-gray-700">{t('reservationAddress.doneText', 'We have everything. We are now preparing your reservation agreement. First the developer signs, then you receive your link to sign.')}</p>
     </div>
   )
+  if (phase === 'ids') {
+    const addUpload = (u: Upload) => setUploads(x => [...x, u])
+    const mainOk = have.main || isComplete(uploads, 'main')
+    const secondOk = !hasSecond || have.second || isComplete(uploads, 'second')
+    return box(
+      <>
+        <div className={card}>
+          <p className="text-lg font-semibold text-hp-navy">{t('reservationAddress.idTitle', 'Upload your ID')}</p>
+          <p className="text-sm text-gray-600">{t('reservationAddress.idIntro', 'Please choose your document. A clear photo from your phone is enough, you do not need an account.')}</p>
+        </div>
+        {!have.main && <IdCard token={token} person="main" title={t('reservationAddress.idMine', 'Your ID')} t={t} uploads={uploads} onUploaded={addUpload} onClosed={() => setPhase('closed')} />}
+        {hasSecond && !have.second && <IdCard token={token} person="second" title={t('reservationAddress.idOf', 'ID of {{name}}', { name: `${second.first_name} ${second.last_name}` })} t={t} uploads={uploads} onUploaded={addUpload} onClosed={() => setPhase('closed')} />}
+        <button onClick={() => { setPhase('done'); window.scrollTo(0, 0) }} disabled={!mainOk || !secondOk} className="w-full py-3.5 rounded-xl bg-hp-highlight text-white font-semibold disabled:opacity-50">
+          {t('reservationAddress.finish', 'Done')}
+        </button>
+        <p className="text-xs text-gray-500 text-center">{t('reservationAddress.later', 'Not everything at hand? You can continue any time with the same link.')}</p>
+        <button onClick={() => setPhase('form')} className="block mx-auto text-xs text-gray-500 underline">{t('reservationAddress.editDetails', 'Change my address details')}</button>
+      </>
+    )
+  }
 
   const countries = view?.countries ?? []
   const fields = (p: Person, set: (f: Partial<Person>) => void, prefix: string) => (

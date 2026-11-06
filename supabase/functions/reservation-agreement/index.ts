@@ -38,7 +38,7 @@
 // Zwei-Parteien-Ablauf (Vorlage layout 'flora', twoParty.ts): sign_view / sign_submit verzweigen dorthin, dazu öffentlich
 //   { action:'buyer_view', token }                         Kundenseite /sign/k/:token
 //   { action:'buyer_submit', token, signer_key, signature } Kunde unterschreibt
-//   { action:'address_view' | 'address_submit', token, ... } Kunde trägt Adresse ein, Seite /sign/a/:token (customerData.ts)
+//   { action:'address_view' | 'address_submit' | 'address_upload', token, ... } Kunde trägt Adresse ein und lädt den Ausweis hoch, Seite /sign/a/:token (customerData.ts)
 //
 // Admin weitere: doc_create {deal_id, file_base64, file_name, title?, test?} (docsign.ts),
 //                seal_get | seal_set {png} | seal_delete  {developer_id} (seal.ts)
@@ -56,7 +56,7 @@ import { docCreate, docView, docSubmit, docQueueSweep } from './docsign.ts'
 import { loadSeal, saveSeal, removeSeal, sealDataUrl, pngFromInput, MAX_SEAL_BYTES } from './seal.ts'
 import { specialTermsEn, type SpecialTerms } from './terms.ts'
 import { buyerView, findBuyerRow, floraFieldsFor, FLORA_SAMPLE, floraSend, floraWarnings, loadParts, tpSubmit, twoPartySweep } from './twoParty.ts'
-import { addressSubmit, addressView, floraWaitingFor, withCustomerData, type CustomerData } from './customerData.ts'
+import { addressSubmit, addressUpload, addressView, floraWaitingFor, withCustomerData, type CustomerData } from './customerData.ts'
 import { floraAutoCheck, type AutoCheck } from './floraCheck.ts'
 import { appendPdf, fetchAppendix } from './appendix.ts'
 import { parseMrz } from './mrz.ts'
@@ -81,6 +81,7 @@ const WATCH_AFTER_SEND_DAYS = 30     // nach dem Versand auf den unterschriebene
 const SCAN_PARALLEL = 3              // KI-Prüfungen gleichzeitig
 const SCAN_BUDGET_MS = 100_000       // danach keine neue Prüfung mehr starten (Rest im nächsten Lauf)
 const INTERACTIVE_SCAN_MS = 70_000   // Knopf im CRM: Antwort muss vor dem Function-Limit kommen
+const IDS_ON_FILE_SCAN_MS = 25_000   // Vor der Kundennachricht: kurz, die Nachricht soll nicht warten
 const MAX_BYTES = 15 * 1024 * 1024          // PDFs gehen bis hierhin roh an die KI
 const MAX_IMAGE_BYTES = 3_700_000           // Bilder darüber (Base64 > 5 MB) lehnt die API ab → Google-Vorschaubild
 const SWEEP_BUDGET_MS = 300_000             // ein Sweep-Lauf bearbeitet nur so lange Verträge
@@ -301,7 +302,7 @@ function ageYears(dob: string): number | null {
 }
 
 /** Käufer aus allen erkannten Ausweisen, je Person einmal, in Upload-Reihenfolge. Kinder fallen raus. */
-function buyersFrom(checked: Record<string, CheckedFile>): { buyers: Buyer[]; minors: string[]; lastIdAt: string | null } {
+export function buyersFrom(checked: Record<string, CheckedFile>): { buyers: Buyer[]; minors: string[]; lastIdAt: string | null } {
   const out: Buyer[] = []
   const minors: string[] = []
   let lastIdAt: string | null = null
@@ -934,7 +935,7 @@ Deno.serve(async (req) => {
   // Öffentliche Unterschriftsseite: nur mit gültigem Token, kein Login (sign.ts prüft alles)
   if (req.method === 'POST') {
     const peek = await req.clone().json().catch(() => ({})) as Record<string, unknown>
-    if (['sign_view', 'sign_submit', 'doc_view', 'doc_submit', 'buyer_view', 'buyer_submit', 'address_view', 'address_submit'].includes(String(peek.action))) {
+    if (['sign_view', 'sign_submit', 'doc_view', 'doc_submit', 'buyer_view', 'buyer_submit', 'address_view', 'address_submit', 'address_upload'].includes(String(peek.action))) {
       const sbPub = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
       try {
         const res = peek.action === 'sign_view' ? await signView(sbPub, peek)
@@ -944,6 +945,7 @@ Deno.serve(async (req) => {
           : peek.action === 'buyer_submit' ? await buyerSubmit(sbPub, peek, req)
           : peek.action === 'address_view' ? await addressView(sbPub, peek)
           : peek.action === 'address_submit' ? await addressSubmit(sbPub, peek, req)
+          : peek.action === 'address_upload' ? await addressUpload(sbPub, peek, req)
           : await docSubmit(sbPub, peek, req)
         return json(res.body, res.status)
       } catch (e) {
@@ -1033,6 +1035,17 @@ Deno.serve(async (req) => {
 
     const dealId = String(body.deal_id ?? '')
     if (!dealId) return json({ error: 'deal_id fehlt' }, 400)
+
+    // Vor der Nachricht an den Kunden (schedule-message): Liegt schon ein Ausweis im Ordner? Dann fragen wir nicht danach.
+    if (action === 'ids_on_file') {
+      const { data } = await sb.from('reservation_agreements').select('*').eq('deal_id', dealId).maybeSingle()
+      const r = data as AgreementRow | null
+      if (!r) return json({ ok: true, has_id: false })
+      const c = await loadCtx(sb, dealId, r.template_snapshot)
+      if ('error' in c) return json({ ok: true, has_id: false })
+      const scan = await scanFolder(sb, r, c, IDS_ON_FILE_SCAN_MS)
+      return json({ ok: true, has_id: buyersFrom(scan.checked).buyers.length > 0, pending: scan.pending })
+    }
 
     if (action === 'status') {
       const { data } = await sb.from('reservation_agreements').select('*').eq('deal_id', dealId).maybeSingle()

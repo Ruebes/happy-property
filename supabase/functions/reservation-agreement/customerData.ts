@@ -2,10 +2,14 @@
 // Seite /sign/a/:token, kein Login, nur Token. Der Link steht in der Nachricht, die bei Phase
 // Reservierung rausgeht (schedule-message). Die Adresse landet im Vertrag und beim Kunden im CRM.
 // Von Sven im CRM Eingetragenes hat Vorrang, der Kunde füllt nur Lücken.
+// Den Ausweis lädt der Kunde auf derselben Seite hoch (Sven 6.11.2026): Er braucht kein Google-Konto,
+// jede Mail-Adresse geht. Die Datei landet in seinem Drive-Ordner, der Sweep liest sie wie jede andere.
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { resolveLang } from '../_shared/recipientLang.ts'
 import { clientIp } from './seal.ts'
-import { norm, type AgreementRow, type Buyer, type Ctx } from './index.ts'
+import { buyersFrom, norm, whatsappSven, type AgreementRow, type Buyer, type Ctx } from './index.ts'
+import { checkFile } from './ausweis.ts'
+import { uploadFile, uploadToken } from './drive.ts'
 import { floraBuyers } from './twoParty.ts'
 
 type Res = { status: number; body: Record<string, unknown> }
@@ -94,12 +98,119 @@ async function isOpen(sb: SupabaseClient, row: AgreementRow): Promise<boolean> {
 }
 
 interface LeadRow {
-  id: string; first_name: string | null; email: string | null; alt_emails: string[] | null; phone: string | null; whatsapp: string | null
+  id: string; first_name: string | null; last_name: string | null; email: string | null; alt_emails: string[] | null; phone: string | null; whatsapp: string | null
   street: string | null; postal_code: string | null; city: string | null; country: string | null
   drive_folder_url: string | null; drive_folder_id: string | null
 }
+// ── Ausweis ──────────────────────────────────────────────────────────────────
+type UploadPerson = 'main' | 'second'
+type UploadDoc = 'id_card' | 'passport'
+type UploadSide = 'front' | 'back' | 'page'
+const SIDES: Record<UploadDoc, UploadSide[]> = { id_card: ['front', 'back'], passport: ['page'] }
+const DOC_LABEL: Record<UploadDoc, string> = { id_card: 'Personalausweis', passport: 'Reisepass' }
+const SIDE_LABEL: Record<UploadSide, string> = { front: 'Vorderseite', back: 'Rückseite', page: '' }
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+const MAX_UPLOADS_PER_LEAD = 30
+const UPLOAD_SOURCE = 'ausweis_seite'
+// Bis hierhin geht die Datei direkt an die KI (index.ts MAX_IMAGE_BYTES, MAX_BYTES)
+const AI_IMAGE_BYTES = 3_700_000, AI_PDF_BYTES = 15 * 1024 * 1024
+
+/** Dateityp aus den ersten Bytes, nie aus den Angaben des Browsers. */
+function sniff(b: Uint8Array): { mime: string; ext: string } | null {
+  const ascii = (from: number, to: number) => String.fromCharCode(...b.subarray(from, to))
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return { mime: 'image/jpeg', ext: 'jpg' }
+  if (b[0] === 0x89 && ascii(1, 4) === 'PNG') return { mime: 'image/png', ext: 'png' }
+  if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return { mime: 'image/webp', ext: 'webp' }
+  if (ascii(0, 5) === '%PDF-') return { mime: 'application/pdf', ext: 'pdf' }
+  if (ascii(4, 8) === 'ftyp' && ['heic', 'heix', 'hevc', 'heif', 'mif1', 'msf1'].includes(ascii(8, 12))) return { mime: 'image/heic', ext: 'heic' }
+  return null
+}
+
+/** Welche Ausweise schon erkannt sind. Jeder erkannte Ausweis zählt, auch aus einem früheren Kauf (Sven 6.11.2026). */
+function idState(row: Pick<AgreementRow, 'checked_files'>, second: Pick<CustomerSecond, 'first_name' | 'last_name'> | null | undefined) {
+  const { buyers } = buyersFrom(row.checked_files ?? {})
+  if (!second) return { have_main: buyers.length > 0, have_second: false }
+  const isSecond = (b: Buyer) => sameName(b.full_name, second.first_name, second.last_name)
+  return { have_main: buyers.some(b => !isSecond(b)), have_second: buyers.some(isSecond) }
+}
+
+// Die Zuordnung (Person, Dokument, Seite) steht in path: Die Seite zeigt damit auch nach dem Neuladen, was schon da ist.
+async function pageUploads(sb: SupabaseClient, leadId: string): Promise<Array<{ person: string; doc: string; side: string }>> {
+  const { data } = await sb.from('drive_folder_files').select('path').eq('lead_id', leadId).eq('source', UPLOAD_SOURCE).limit(MAX_UPLOADS_PER_LEAD)
+  return ((data ?? []) as Array<{ path: string | null }>).flatMap(r => {
+    const [person, doc, side] = (r.path ?? '').split(':')
+    return person && doc && side ? [{ person, doc, side }] : []
+  })
+}
+
+export async function addressUpload(sb: SupabaseClient, body: Record<string, unknown>, _req: Request): Promise<Res> {
+  const hit = await findRow(sb, body.token)
+  if (!hit) return { status: 404, body: { error: 'not_found' } }
+  if (!hit.test && !await isOpen(sb, hit.row)) return { status: 409, body: { error: 'closed' } }
+  const person = String(body.person) as UploadPerson, doc = String(body.doc) as UploadDoc, side = String(body.side) as UploadSide
+  if (!['main', 'second'].includes(person) || !SIDES[doc]?.includes(side)) return { status: 400, body: { error: 'invalid' } }
+  const saved = (hit.test ? (hit.row.test_payload as { customer_data?: CustomerData } | null)?.customer_data : hit.row.customer_data) ?? null
+  if (person === 'second' && !saved?.second) return { status: 400, body: { error: 'invalid' } }
+
+  const raw = String(body.base64 ?? '')
+  if (!raw) return { status: 400, body: { error: 'invalid' } }
+  if (raw.length > Math.ceil(MAX_UPLOAD_BYTES * 4 / 3) + 4) return { status: 413, body: { error: 'too_big' } }
+  let bytes: Uint8Array
+  try { bytes = Uint8Array.from(atob(raw), c => c.charCodeAt(0)) } catch { return { status: 400, body: { error: 'invalid' } } }
+  const type = sniff(bytes)
+  if (!type) return { status: 415, body: { error: 'bad_type' } }
+
+  const lead = await loadLead(sb, hit.row.lead_id)
+  if (!lead) return { status: 404, body: { error: 'not_found' } }
+  const mainName = [lead.first_name, lead.last_name].map(x => (x ?? '').trim()).filter(Boolean).join(' ') || 'Kunde'
+  const who = person === 'second' ? `${saved!.second!.first_name} ${saved!.second!.last_name}` : mainName
+  const fileName = [DOC_LABEL[doc], who, SIDE_LABEL[side]].filter(Boolean).join(' ').replace(/[\/:*?"<>|]+/g, ' ') + `.${type.ext}`
+
+  // Offensichtlich kein Ausweis: gleich sagen, nicht erst nach Stunden. Die KI kann irren, deshalb darf der Kunde übergehen (force).
+  const aiCan = type.mime === 'application/pdf' ? bytes.byteLength <= AI_PDF_BYTES : type.mime !== 'image/heic' && bytes.byteLength <= AI_IMAGE_BYTES
+  if (!body.force && aiCan) {
+    const res = await checkFile(bytes, type.mime, fileName).catch(e => { console.error('[reservation-agreement] Ausweis-Vorprüfung', (e as Error).message); return null })
+    if (res && res.kind !== 'identity_document') return { status: 422, body: { error: 'not_id' } }
+  }
+  if (hit.test) return { status: 200, body: { ok: true, test: true } }
+
+  const { count } = await sb.from('drive_folder_files').select('file_id', { count: 'exact', head: true }).eq('lead_id', lead.id).eq('source', UPLOAD_SOURCE)
+  if ((count ?? 0) >= MAX_UPLOADS_PER_LEAD) return { status: 429, body: { error: 'too_many' } }
+
+  try {
+    let folderId = lead.drive_folder_id
+    if (!folderId) {
+      const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+      await sb.functions.invoke('create-client-drive-folder', { body: { lead_id: lead.id, extra_emails: [] }, headers: { Authorization: `Bearer ${key}`, apikey: key } })
+      folderId = (await loadLead(sb, lead.id))?.drive_folder_id ?? null
+    }
+    if (!folderId) throw new Error('Kundenordner fehlt')
+    const token = await uploadToken(sb)
+    if (!token) throw new Error('Drive-Upload nicht verbunden')
+    const up = await uploadFile(token, folderId, fileName, type.mime, bytes)
+    const now = new Date().toISOString()
+    // Eingetragen, damit die Drive-Meldung nicht „hochgeladen von Sven" sagt (die Datei gehört technisch Svens Konto)
+    const { error } = await sb.from('drive_folder_files').upsert({
+      file_id: up.id, lead_id: lead.id, folder_id: folderId, name: up.name, mime_type: up.mimeType, size_bytes: bytes.byteLength,
+      web_view_link: up.webViewLink ?? null, path: `${person}:${doc}:${side}`, uploader_name: who, uploader_email: lead.email, source: UPLOAD_SOURCE,
+      created_time: up.createdTime ?? now, notified_at: now,
+    }, { onConflict: 'file_id' })
+    if (error) console.error('[reservation-agreement] drive_folder_files', error.message)
+    await sb.from('activities').insert({
+      lead_id: lead.id, deal_id: hit.row.deal_id, type: 'note', direction: 'inbound', auto: true,
+      subject: 'Reservierung: Ausweis vom Kunden hochgeladen', content: `Über die Reservierungsseite in den Drive-Ordner hochgeladen: ${fileName}`, completed_at: now,
+    })
+    return { status: 200, body: { ok: true } }
+  } catch (e) {
+    const why = (e as Error).message
+    console.error('[reservation-agreement] Ausweis-Upload', why)
+    await whatsappSven(sb, `Reservierung: Ausweis-Upload von ${mainName} ging nicht in den Drive-Ordner. Grund: ${why.slice(0, 160)}`).catch(() => null)
+    return { status: 503, body: { error: 'upload_failed' } }
+  }
+}
+
 async function loadLead(sb: SupabaseClient, id: string): Promise<LeadRow | null> {
-  const { data } = await sb.from('leads').select('id, first_name, email, alt_emails, phone, whatsapp, street, postal_code, city, country, drive_folder_url, drive_folder_id').eq('id', id).maybeSingle()
+  const { data } = await sb.from('leads').select('id, first_name, last_name, email, alt_emails, phone, whatsapp, street, postal_code, city, country, drive_folder_url, drive_folder_id').eq('id', id).maybeSingle()
   return data as LeadRow | null
 }
 function countryCodeFrom(raw: string | null): string {
@@ -126,7 +237,7 @@ export async function addressView(sb: SupabaseClient, body: Record<string, unkno
     status: 200,
     body: {
       ok: true, closed: false, test: hit.test, lang, first_name: (lead.first_name ?? '').trim(), submitted: !!saved?.at,
-      drive_link: lead.drive_folder_url ?? (lead.drive_folder_id ? `https://drive.google.com/drive/folders/${lead.drive_folder_id}` : null),
+      ...idState(hit.row, saved?.second), uploads: hit.test ? [] : await pageUploads(sb, lead.id),
       prefill: saved ? savedPublic : fromLead,
       countries: COUNTRIES.map(c => ({ code: c[0], name: lang === 'de' ? c[2] : c[1] })),
     },
@@ -156,7 +267,7 @@ export async function addressSubmit(sb: SupabaseClient, body: Record<string, unk
   const data: CustomerData = { ...main, second, at: now, ip: clientIp(req), user_agent: (req.headers.get('user-agent') ?? '').slice(0, 300) || null }
   if (hit.test) {
     await sb.from('reservation_agreements').update({ test_payload: { ...hit.row.test_payload, customer_data: data } }).eq('id', hit.row.id)
-    return { status: 200, body: { ok: true, test: true } }
+    return { status: 200, body: { ok: true, test: true, ...idState(hit.row, second) } }
   }
   // Korrigiert der Kunde seine Angaben, ersetzen sie seine alten auch dort, wo sie schon gespeichert waren
   const old = hit.row.customer_data as CustomerData | null
@@ -193,7 +304,7 @@ export async function addressSubmit(sb: SupabaseClient, body: Record<string, unk
     subject: 'Reservierung: Adresse vom Kunden eingetragen', content: `Der Kunde hat seine Angaben für den Reservierungsvertrag eingetragen: ${addressLine(main)}${second ? `. Zweiter Käufer: ${second.first_name} ${second.last_name}` : ''}.`,
     completed_at: now,
   })
-  return { status: 200, body: { ok: true } }
+  return { status: 200, body: { ok: true, ...idState(hit.row, second) } }
 }
 
 // ── Vertrag ──────────────────────────────────────────────────────────────────

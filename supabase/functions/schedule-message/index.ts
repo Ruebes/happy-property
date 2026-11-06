@@ -26,43 +26,87 @@ const eur = (n: number | null | undefined): string =>
   n != null ? new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n) : ''
 
 // Platzhalter ersetzen; unbekannte/leere → '–'
-// Flora Panorama: Der Kunde trägt seine Adresse selbst ein (Sven 5.11.2026). Die Vorlagen der Regel
-// gelten für alle Bauträger, deshalb wird die Frage nur hier und nur bei Flora eingesetzt.
+// Flora Panorama: Ausweis und Adresse gibt der Kunde auf einer Seite ohne Login an (Sven 5.11. und 6.11.2026).
+// Die Vorlagen der Regel gelten für alle Bauträger, deshalb wird nur hier und nur bei Flora umgeschrieben.
+// Gefragt wird nur, was noch fehlt.
+interface FloraAsk { link: string; needAddress: boolean; needId: boolean }
+
 // deno-lint-ignore no-explicit-any
-async function floraAddressLink(sb: any, dealId: string, leadId: string, unitId: string, templateId: string): Promise<string> {
+async function floraAsk(sb: any, dealId: string, leadId: string, unitId: string, templateId: string): Promise<FloraAsk | null> {
   const base = 'https://portal.happy-property.com/sign/a/'
   const load = async () => (await sb.from('reservation_agreements').select('id, status, address_token, customer_data').eq('deal_id', dealId).maybeSingle()).data as { id: string; status: string; address_token: string | null; customer_data: { at?: string } | null } | null
   let row = await load()
-  // Schon geantwortet oder schon unterwegs: nicht noch einmal fragen
-  if (row?.customer_data?.at || ['gesendet', 'unterschrieben'].includes(row?.status ?? '')) return ''
-  if (row?.address_token) return base + row.address_token
-  const token = Array.from(crypto.getRandomValues(new Uint8Array(18)), x => x.toString(16).padStart(2, '0')).join('')
-  if (!row) {
-    const { error } = await sb.from('reservation_agreements').insert({ deal_id: dealId, lead_id: leadId, unit_id: unitId, template_id: templateId, address_token: token })
-    if (!error) return base + token
-    // Der Sweep kann die Zeile im selben Moment angelegt haben
-    row = await load()
-    if (!row) { console.error('[schedule-message] Adresslink', error.message); return '' }
-    if (row.address_token) return base + row.address_token
+  // Schon unterwegs: nichts mehr fragen
+  if (['gesendet', 'unterschrieben'].includes(row?.status ?? '')) return { link: '', needAddress: false, needId: false }
+  let token = row?.address_token ?? ''
+  if (!token) {
+    token = Array.from(crypto.getRandomValues(new Uint8Array(18)), x => x.toString(16).padStart(2, '0')).join('')
+    if (!row) {
+      const { error } = await sb.from('reservation_agreements').insert({ deal_id: dealId, lead_id: leadId, unit_id: unitId, template_id: templateId, address_token: token })
+      if (error) {
+        // Der Sweep kann die Zeile im selben Moment angelegt haben
+        row = await load()
+        if (!row) { console.error('[schedule-message] Seitenlink', error.message); return null }
+        if (row.address_token) token = row.address_token
+      }
+    }
+    if (row && !row.address_token) {
+      const { error } = await sb.from('reservation_agreements').update({ address_token: token }).eq('id', row.id)
+      if (error) { console.error('[schedule-message] Seitenlink', error.message); return null }
+    }
   }
-  const { error } = await sb.from('reservation_agreements').update({ address_token: token }).eq('id', row.id)
-  if (error) { console.error('[schedule-message] Adresslink', error.message); return '' }
-  return base + token
+  // Ordner lesen: Liegt ein Ausweis schon da, fragen wir nicht danach. Kommt die Antwort nicht rechtzeitig, fragen wir,
+  // die Seite zeigt dem Kunden dann ohnehin, was schon da ist.
+  let hasId = false
+  try {
+    const r = await fetch(`${SUPABASE_URL}/functions/v1/reservation-agreement`, {
+      method: 'POST', headers: { Authorization: `Bearer ${SERVICE_ROLE}`, apikey: SERVICE_ROLE, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'ids_on_file', deal_id: dealId }), signal: AbortSignal.timeout(45_000),
+    })
+    if (r.ok) hasId = !!(await r.json() as { has_id?: boolean }).has_id
+  } catch (e) { console.error('[schedule-message] Ausweis-Prüfung', (e as Error).message) }
+  return { link: base + token, needAddress: !row?.customer_data?.at, needId: !hasId }
 }
 
-function floraAskAddressMail(html: string, link: string): string {
-  const block = `<p style="margin:0 0 20px 0;font-size:15px;line-height:1.8;color:#444444;">Beim Personalausweis bitte Vorder- und R&uuml;ckseite hochladen.</p>`
-    + `<p style="margin:0 0 28px 0;font-size:15px;line-height:1.8;color:#444444;">F&uuml;r den Vertrag brauchen wir au&szlig;erdem deine <strong>Meldeadresse</strong>. Trag sie bitte kurz hier ein, das dauert keine Minute:</p>`
-    + `<table cellpadding="0" cellspacing="0" border="0" style="margin-bottom:36px;"><tr><td style="background-color:#ff795d;border-radius:2px;"><a href="${link}" style="display:inline-block;padding:15px 40px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;letter-spacing:0.5px;">Adresse eintragen &rarr;</a></td></tr></table>`
-  const at = html.search(/<p [^>]*>Sobald die Unterlagen/)
-  if (at >= 0) return html.slice(0, at) + block + html.slice(at)
+function floraSubject(subject: string, ask: FloraAsk): string {
+  const end = ask.needId && ask.needAddress ? 'Nur noch Ausweis und Adresse fehlen'
+    : ask.needId ? 'Nur noch dein Ausweis fehlt'
+    : ask.needAddress ? 'Nur noch deine Adresse fehlt'
+    : 'Deine Reservierung läuft'
+  return subject.replace('Nur noch dein Ausweis fehlt', end)
+}
+
+function floraMail(html: string, ask: FloraAsk): string {
+  const P = '<p style="margin:0 0 28px 0;font-size:15px;line-height:1.8;color:#444444;">'
+  const button = (label: string) => `<table cellpadding="0" cellspacing="0" border="0" style="margin-bottom:36px;"><tr><td style="background-color:#ff795d;border-radius:2px;"><a href="${ask.link}" style="display:inline-block;padding:15px 40px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;letter-spacing:0.5px;">${label} &rarr;</a></td></tr></table>`
+  const ask1 = ask.needId && ask.needAddress
+    ? `F&uuml;r den Vertrag brauchen wir nur noch deinen <strong>Ausweis</strong> und deine <strong>Meldeadresse</strong>. Beides geht auf einer Seite, ohne Anmeldung, in zwei Minuten:</p>${button('Ausweis und Adresse angeben')}${P}Sobald beides da ist, k&uuml;mmern wir uns um den Rest.</p>`
+    : ask.needId
+    ? `F&uuml;r den Vertrag brauchen wir nur noch deinen <strong>Ausweis</strong>. Das geht auf einer Seite, ohne Anmeldung, in einer Minute:</p>${button('Ausweis hochladen')}${P}Sobald er da ist, k&uuml;mmern wir uns um den Rest.</p>`
+    : ask.needAddress
+    ? `Der Ausweis liegt uns schon vor. F&uuml;r den Vertrag brauchen wir nur noch deine <strong>Meldeadresse</strong>. Trag sie bitte kurz hier ein, das dauert keine Minute:</p>${button('Adresse eintragen')}${P}Sobald sie da ist, k&uuml;mmern wir uns um den Rest.</p>`
+    : 'Ausweis und Adresse liegen uns schon vor, du musst nichts weiter tun. Wir bereiten jetzt deinen Reservierungsvertrag vor.</p>'
+  const from = html.indexOf('F&uuml;r die Reservierung')
+  const tail = /<p [^>]*>Sobald die Unterlagen[^<]*<\/p>/.exec(html)
+  if (from >= 0 && tail && tail.index > from) return html.slice(0, from) + ask1 + html.slice(tail.index + tail[0].length)
+  // Vorlage wurde geändert: Frage nur anhängen
+  const block = `${P}${ask1}`
   return html.includes('</body>') ? html.replace('</body>', `${block}</body>`) : html + block
 }
 
-function floraAskAddressWa(text: string, link: string): string {
-  const block = `Beim Personalausweis bitte Vorder- und Rückseite hochladen.\n\nFür den Vertrag brauchen wir außerdem deine Meldeadresse. Trag sie bitte kurz hier ein, das dauert keine Minute:\n${link}`
+function floraWa(text: string, ask: FloraAsk): string {
+  const block = ask.needId && ask.needAddress
+    ? `Für den Vertrag brauchen wir nur noch deinen Ausweis und deine Meldeadresse. Beides geht auf einer Seite, ohne Anmeldung, in zwei Minuten:\n${ask.link}\n\nSobald beides da ist, kümmern wir uns um den Rest.`
+    : ask.needId
+    ? `Für den Vertrag brauchen wir nur noch deinen Ausweis. Das geht auf einer Seite, ohne Anmeldung, in einer Minute:\n${ask.link}\n\nSobald er da ist, kümmern wir uns um den Rest.`
+    : ask.needAddress
+    ? `Der Ausweis liegt uns schon vor. Für den Vertrag brauchen wir nur noch deine Meldeadresse. Trag sie bitte kurz hier ein, das dauert keine Minute:\n${ask.link}\n\nSobald sie da ist, kümmern wir uns um den Rest.`
+    : 'Ausweis und Adresse liegen uns schon vor, du musst nichts weiter tun. Wir bereiten jetzt deinen Reservierungsvertrag vor.'
+  const from = text.indexOf('Für die Reservierung brauchen wir')
   const anchor = 'Sobald sie da ist, kümmern wir uns um den Rest.'
-  return text.includes(anchor) ? text.replace(anchor, `${block}\n\nSobald beides da ist, kümmern wir uns um den Rest.`) : `${text}\n\n${block}`
+  const to = text.indexOf(anchor)
+  if (from >= 0 && to > from) return text.slice(0, from) + block + text.slice(to + anchor.length)
+  return `${text}\n\n${block}`
 }
 
 function substitute(template: string, data: Record<string, string>): string {
@@ -199,7 +243,7 @@ Deno.serve(async (req: Request) => {
     // Bauträger mit Reservierungsvorlage (z. B. Mito, 15.10.): den Vertrag füllt das System
     // selbst aus, sobald der Ausweis im Drive-Ordner liegt (Edge reservation-agreement).
     let unitDevHasResTemplate = false
-    let floraAdresse = ''
+    let floraFrage: FloraAsk | null = null
     if (dealData?.unit_id) {
       const { data: unit } = await supabase.from('crm_project_units')
         .select('unit_number, price_net, price_gross, vat_rate, project_id, crm_projects(name, developer)').eq('id', dealData.unit_id).maybeSingle()
@@ -240,7 +284,7 @@ Deno.serve(async (req: Request) => {
             const modeOn = String((resMode as { value?: unknown } | null)?.value ?? '').replace(/"/g, '').trim() === 'on'
             unitDevHasResTemplate = !!resTpl && modeOn && resInScope
             if (unitDevHasResTemplate && event_type === 'reservierung' && deal_id && (resTpl as { layout?: string }).layout === 'flora') {
-              floraAdresse = await floraAddressLink(supabase, deal_id, lead_id, dealData.unit_id, (resTpl as { id: string }).id)
+              floraFrage = await floraAsk(supabase, deal_id, lead_id, dealData.unit_id, (resTpl as { id: string }).id)
             }
           }
         }
@@ -476,10 +520,10 @@ Deno.serve(async (req: Request) => {
         }
         if (waText && !waText.includes(finNotes)) waText += `\n\nBemerkung zum Kunden:\n${finNotes}`
       }
-      if (floraAdresse && rule.recipient === 'client') {
-        if (emailBody) emailBody = floraAskAddressMail(emailBody, floraAdresse)
-        if (emailSubject) emailSubject = emailSubject.replace('Nur noch dein Ausweis fehlt', 'Nur noch Ausweis und Adresse fehlen')
-        if (waText) waText = floraAskAddressWa(waText, floraAdresse)
+      if (floraFrage && rule.recipient === 'client') {
+        if (emailBody) emailBody = floraMail(emailBody, floraFrage)
+        if (emailSubject) emailSubject = floraSubject(emailSubject, floraFrage)
+        if (waText) waText = floraWa(waText, floraFrage)
       }
       const hasEmail = !!(emailSubject && emailBody), hasWa = !!waText
       if (!hasEmail && !hasWa) { skipped++; continue }
