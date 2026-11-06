@@ -68,6 +68,7 @@ const TRACK_HOSTS = [
 function linkLabel(url: string): string {
   const u = url.toLowerCase()
   if (u.includes('abmelden') || u.includes('unsubscribe')) return ''
+  if (u.includes('/warteliste')) return 'warteliste'
   if (u.includes('immobilienguide') || u.includes('web-reports/immobilienguide')) return 'guide'
   if (u.includes('tippgeber') || u.includes('src=empfehlung') || u.includes('wa.me')) return 'affiliate'
   if (u.includes('/deck/')) return 'immobilie'
@@ -99,6 +100,10 @@ function withTracking(html: string, campaignId: string, ref: string): string {
   return /<\/body>/i.test(out) ? out.replace(/<\/body>/i, `${px}</body>`) : `${out}${px}`
 }
 
+// Warteliste-Link des Empfaengers (/warteliste?l=<lead> bzw. ?s=<abonnent>): gleiche
+// Kennung wie der Abmeldelink. In Vorschau und Testmail ohne Kennung, dann traegt die
+// Seite niemanden ein.
+const wartelisteUrl = (unsubUrl: string): string => unsubUrl.replace('/abmelden', '/warteliste')
 function customEmailHtml(rawHtml: string, first: string, unsubUrl: string, affiliateUrl?: string, terminUrl?: string, campaignId?: string, ref?: string): string {
   // {{tippgeber_link}} = persoenlicher Empfehlungs-Link des Empfaengers; fehlt er
   // (Vorschau/Test), zeigt der Platzhalter auf die allgemeine Termin-Seite.
@@ -106,6 +111,7 @@ function customEmailHtml(rawHtml: string, first: string, unsubUrl: string, affil
   // Fragebogen + Kontaktformular entfallen, es geht direkt zum Kalender.
   let html = personalize(rawHtml, first)
     .split('{{termin_link}}').join(terminUrl ?? `${SITE}/termin?src=newsletter`)
+    .split('{{warteliste_link}}').join(wartelisteUrl(unsubUrl))
     .split('{{abmelden}}').join(unsubUrl)
     // {{tippgeber_share}} = WhatsApp-Weitergabe mit fertigem Text + persoenlichem Link
     // (vor {{tippgeber_link}} ersetzen, der Link steckt URL-kodiert im Share-Text).
@@ -136,6 +142,7 @@ function waNewsletterParts(camp: { whatsapp_body?: string | null }, raw: string,
   const tipp = o.affiliateUrl ?? AFFILIATE_FALLBACK
   const fill = (s: string) => s
     .split('{{termin_link}}').join(o.terminUrl.replace('utm_medium=email', 'utm_medium=whatsapp'))
+    .split('{{warteliste_link}}').join(wartelisteUrl(o.unsubUrl))
     .split('{{abmelden}}').join(o.unsubUrl)
     .split('{{tippgeber_share}}').join(tipp)
     .split('{{tippgeber_link}}').join(tipp)
@@ -717,7 +724,7 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: CORS })
   try {
     const body = await req.json() as {
-      action: 'draft_text' | 'test_mail' | 'launch' | 'status' | 'audience' | 'preview' | 'unsubscribe' | 'add_recipient' | 'add_subscribers' | 'rebuild_pending' | 'whatsapp_nachholen' | 'send_time_preview'
+      action: 'draft_text' | 'test_mail' | 'launch' | 'status' | 'audience' | 'preview' | 'unsubscribe' | 'add_recipient' | 'add_subscribers' | 'rebuild_pending' | 'whatsapp_nachholen' | 'send_time_preview' | 'warteliste'
       dry?: boolean
       lead_id?: string
       deck_token?: string
@@ -729,11 +736,11 @@ Deno.serve(async (req: Request) => {
       units?: Array<{ unit_number?: string; price_net?: number; extras?: string }>
     }
     // Aufrufer-Schutz: 'unsubscribe' bleibt öffentlich (Abmelde-Link /abmelden in
-    // jeder Mail). Alles andere nur für die Newsletter-Seite (Route permission
+    // jeder Mail), ebenso 'warteliste' (Ein-Klick-Link /warteliste). Alles andere nur für die Newsletter-Seite (Route permission
     // funnel: Admin, Verwalter, Rolle funnel, Mitarbeiter mit funnel) und für
     // System-/Handaufrufe mit dem Service-Key (add_recipient, add_subscribers,
     // rebuild_pending).
-    if (body.action !== 'unsubscribe') {
+    if (body.action !== 'unsubscribe' && body.action !== 'warteliste') {
       const denied = await gateCaller(req, 'newsletter-campaign', { service: true, roles: ['admin', 'verwalter', 'funnel'], perms: ['funnel'] }, CORS)
       if (denied) return denied
     }
@@ -841,6 +848,72 @@ Deno.serve(async (req: Request) => {
     // ── Abmelden (öffentlich, per persönlichem Deck-Token aus der Mail) ─────
     // Setzt NUR leads.newsletter_optout_at — Termin-/Transaktionskommunikation
     // läuft weiter (dafür gibt es communication_optouts).
+    // ── warteliste: Ein-Klick-Eintrag aus dem Newsletter (Sven 6.11.26) ──────
+    // Sonderkontingent vergeben, Sven verhandelt um weitere Einheiten. Eintrag =
+    // engagement_events type 'warteliste' + Notiz am Lead + stille Aufgabe an Sven
+    // (ohne Lotte-Meldung, denn er meldet sich erst, wenn eine Einheit frei wird).
+    // An den Kunden geht nichts raus. Virenscanner klicken Links binnen Sekunden nach
+    // Zustellung: Klicks bis 60 s nach dem Versand zaehlen nur als Verdacht, ohne
+    // Aufgabe und ohne Notiz.
+    if (body.action === 'warteliste') {
+      const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      const leadId = (body.lead ?? '').trim()
+      const subId = (body.subscriber ?? '').trim()
+      if (!UUID.test(leadId) && !UUID.test(subId)) return json({ error: 'not_found' }, 404)
+      const istLead = UUID.test(leadId)
+      const { data: pers } = istLead
+        ? await sb.from('leads').select('first_name, last_name, email, phone').eq('id', leadId).maybeSingle()
+        : await sb.from('newsletter_subscribers').select('first_name, last_name, email, phone').eq('id', subId).maybeSingle()
+      const p = pers as { first_name?: string | null; last_name?: string | null; email?: string | null; phone?: string | null } | null
+      if (!p) return json({ error: 'not_found' }, 404)
+      const vorname = (p.first_name ?? '').trim()
+      const terminUrl = await terminUrlFor(sb, { lead_id: istLead ? leadId : null }, 'warteliste')
+      const personFilter = istLead ? { lead_id: leadId } : { subscriber_id: subId }
+
+      const { data: alt } = await sb.from('engagement_events').select('id, meta').eq('type', 'warteliste').match(personFilter).limit(20)
+      if (((alt ?? []) as Array<{ meta?: { verdacht?: boolean } | null }>).some(e => !e.meta?.verdacht)) {
+        return json({ ok: true, schon: true, first_name: vorname, termin_url: terminUrl })
+      }
+      const { data: letzte } = await sb.from('scheduled_messages').select('sent_at, campaign_id')
+        .match(personFilter).eq('event_type', 'newsletter').not('sent_at', 'is', null)
+        .order('sent_at', { ascending: false }).limit(1)
+      const l = (letzte as Array<{ sent_at: string; campaign_id: string | null }> | null)?.[0]
+      const verdacht = !!l && Date.now() - new Date(l.sent_at).getTime() < 60_000
+      const { error: ee } = await sb.from('engagement_events').insert({
+        type: 'warteliste', token: l?.campaign_id ?? null, lead_id: istLead ? leadId : null, subscriber_id: istLead ? null : subId,
+        label: 'sonderkontingent', meta: { verdacht: verdacht || undefined, email: p.email ?? null, phone: p.phone ?? null },
+      })
+      if (ee) return json({ error: ee.message }, 500)
+      if (verdacht) return json({ ok: true, first_name: vorname, termin_url: terminUrl })
+
+      const name = [p.first_name, p.last_name].map(x => (x ?? '').trim()).filter(Boolean).join(' ') || (p.email ?? 'Unbekannt')
+      const text = [
+        `Wer: ${[name, p.email, p.phone].filter(Boolean).join(' · ')}`,
+        'Möchte auf die Warteliste für das Sonderkontingent der Boutique-Anlage in Chloraka (Ein-Klick aus dem Newsletter).',
+        'Nächster Schritt: melden, sobald eine Einheit frei wird. Zugesagt ist nichts.',
+      ].join('\n')
+      const { data: admin } = await sb.from('profiles').select('id').eq('role', 'admin').order('created_at').limit(1).maybeSingle()
+      const adminId = (admin as { id: string } | null)?.id ?? null
+      const heute = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Nicosia' }).format(new Date())
+      const { data: task, error: te } = await sb.from('crm_tasks').insert({
+        title: `📋 Warteliste Sonderkontingent: ${name}`.slice(0, 200), description: text,
+        created_by: adminId, assigned_to: adminId, status: 'offen', due_date: heute,
+        assigned_notified_at: new Date().toISOString(),
+      }).select('id').single()
+      if (te) console.error('[newsletter] warteliste Aufgabe:', te.message)
+      const taskId = (task as { id: string } | null)?.id
+      if (taskId && adminId) await sb.from('crm_task_assignees').insert({ task_id: taskId, profile_id: adminId, channel: 'system' })
+      if (istLead) {
+        if (taskId) await sb.from('crm_task_leads').insert({ task_id: taskId, lead_id: leadId })
+        const { error: ne } = await sb.from('activities').insert({
+          lead_id: leadId, type: 'note', direction: 'inbound', auto: false,
+          subject: '📋 Warteliste Sonderkontingent', content: text, completed_at: new Date().toISOString(),
+        })
+        if (ne) console.warn('[newsletter] warteliste Notiz:', ne.message)
+      }
+      return json({ ok: true, first_name: vorname, termin_url: terminUrl })
+    }
+
     if (body.action === 'unsubscribe') {
       const tok = (body.deck_token ?? '').trim()
       const subId = (body.subscriber ?? '').trim()

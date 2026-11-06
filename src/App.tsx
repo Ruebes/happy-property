@@ -66,6 +66,7 @@ const ThumbnailStudio = lazy(() => import('./pages/admin/crm/ThumbnailStudio'))
 const YouTubeCenter = lazy(() => import('./pages/admin/crm/YouTubeCenter'))
 const TerminVerwalten = lazy(() => import('./pages/TerminVerwalten'))
 const Abmelden = lazy(() => import('./pages/Abmelden'))
+const Warteliste = lazy(() => import('./pages/Warteliste'))
 const Zusage = lazy(() => import('./pages/Zusage'))
 const ShortLink = lazy(() => import('./pages/ShortLink'))
 const RevolutCallback = lazy(() => import('./pages/RevolutCallback'))
@@ -228,6 +229,8 @@ export default function App() {
             <Route path="/termin/verwalten/:token" element={<TerminVerwalten />} />
             {/* Öffentliche Newsletter-Abmeldung (per Token, kein Login) */}
             <Route path="/abmelden" element={<Abmelden />} />
+            {/* Öffentlicher Ein-Klick-Eintrag auf die Warteliste (aus dem Newsletter) */}
+            <Route path="/warteliste" element={<Warteliste />} />
             {/* Öffentliche Termin-Zu-/Absage (per Token, kein Login) */}
             <Route path="/zusage" element={<Zusage />} />
             {/* Kurzlink-Weiterleitung (WhatsApp-taugliche kurze URLs) */}
