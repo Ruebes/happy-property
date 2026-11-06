@@ -29,11 +29,35 @@ import type { AutoCheck } from './floraCheck.ts'
 import { pngFromInput, clientIp, sealDataUrl, MAX_SEAL_BYTES } from './seal.ts'
 import { cleanSignature, placeOf, sha256Hex } from './sign.ts'
 import {
-  b64, esc, invoke, loadCtx, leadName, fileNameFor, markOwnUpload, todayCy, newToken, storePdfDraft,
+  b64, esc, invoke as baseInvoke, loadCtx, leadName, fileNameFor, markOwnUpload, todayCy, newToken, storePdfDraft,
   SVEN_MAIL, SVEN_PHONE, CRM_LEAD, DEV_WA_IMAGE, type AgreementRow, type Buyer, type Ctx, type TemplateDb,
 } from './index.ts'
 
 type Res = { status: number; body: Record<string, unknown> }
+
+/**
+ * Mit Appendix ist das PDF rund 6 MB groß; als Mail-Anhang (Base64 im Funktionsaufruf) sprengt das
+ * send-email (WORKER_RESOURCE_LIMIT, 6.11.2026). Große PDFs gehen deshalb nicht als Anhang mit: Der
+ * Bauträger sieht den Vertrag auf der Unterschriftsseite, alle bekommen das fertige PDF per WhatsApp
+ * als Datei, der Kunde zusätzlich im Drive-Ordner. Die Texte nennen dann keinen Anhang mehr.
+ */
+const MAIL_PDF_MAX_B64 = 3_000_000
+const NO_ATTACHMENT: Array<[string, string]> = [
+  ['anbei der ausgefüllte Reservierungsvertrag', 'hier der ausgefüllte Reservierungsvertrag'],
+  ['please find attached the filled-in reservation agreement', 'here is the filled-in reservation agreement'],
+  ['Du findest ihn im Anhang', 'Das PDF schicken wir dir zusätzlich per WhatsApp'],
+  ['You will find it attached', 'We are also sending you the PDF by WhatsApp'],
+  ['Das PDF ist im Anhang.', 'Das PDF bekommst du per WhatsApp.'],
+  ['The PDF is attached.', 'You will receive the PDF by WhatsApp.'],
+]
+const invoke: typeof baseInvoke = (sb, fn, body) => {
+  const att = (body as { attachment?: { content_base64?: string } | null }).attachment
+  if (fn !== 'send-email' || !att?.content_base64 || att.content_base64.length <= MAIL_PDF_MAX_B64) return baseInvoke(sb, fn, body)
+  let html = String((body as { html?: unknown }).html ?? '')
+  for (const [from, to] of NO_ATTACHMENT) html = html.split(from).join(to)
+  const { attachment: _drop, ...rest } = body as Record<string, unknown>
+  return baseInvoke(sb, fn, { ...rest, html })
+}
 type Side = 'buyer' | 'vendor'
 type Lang = 'de' | 'en'
 export interface PartRow {
