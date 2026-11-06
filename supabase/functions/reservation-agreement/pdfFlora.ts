@@ -287,13 +287,22 @@ export async function renderFlora(t: TemplateRow, f: AgreementFields, sign?: Flo
     }
   }
 
-  // Überschriften und erste Unterschrift bleiben zusammen
-  if (y - 24 - 16 - 30 - 46 - 60 < BOTTOM) newPage()
+  // Der ganze Unterschriftenteil (Überschriften, Direktoren, Käufer) steht auf EINER Seite.
+  // Passt er nicht mehr unter den Text, beginnt er auf einer neuen Seite, die nur die Unterschriften trägt
+  // (Sven 6.11.2026). Nur wenn er auch eine leere Seite sprengt, greift die alte Teilung je Block.
+  const vendors = ((t.extra?.vendor_signers ?? []) as VendorSigner[])
+  const finished = !!sign?.date
+  const shownVendors = vendors.filter(v => !(finished && !partOf('vendor', v.key)))
+  const sigHeight = (runs: FloraRun[], vals: Record<string, string>, part?: FloraPart) =>
+    57 + breakLines(toTokens(runs, vals), X1 - X0, SIZE).length * 13.6 + (part ? 10 : 4) + 4
+  const execNeed = 100
+    + shownVendors.reduce((a, v) => a + sigHeight(VENDOR_BLOCKS[v.key] ?? [{ t: `${t.company_name} signed by ${v.name}` }], fixed, partOf('vendor', v.key)), 0)
+    + 30 + fl.buyers.reduce((a, b) => a + sigHeight(PURCHASER_EXEC, buyerValues(b), partOf('buyer', b.key)), 0)
+  const execOnOnePage = execNeed <= TOP - BOTTOM
+  if (execOnOnePage ? y - execNeed < BOTTOM : y - 24 - 16 - 30 - 46 - 60 < BOTTOM) newPage()
   label('E X E C U T I O N', 12, 18, 18)
   label('THE PARTIES:', 12, 0, 18)
   label('THE VENDORS', 9, 0, 0)
-  const vendors = ((t.extra?.vendor_signers ?? []) as VendorSigner[])
-  const finished = !!sign?.date
   let sealLeft = sign?.seal ?? null
   for (const v of vendors) {
     const part = partOf('vendor', v.key)
@@ -302,7 +311,7 @@ export async function renderFlora(t: TemplateRow, f: AgreementFields, sign?: Flo
     await sigBlock(VENDOR_BLOCKS[v.key] ?? [{ t: `${t.company_name} signed by ${v.name}` }], fixed, part, part ? sealLeft : null)
     if (part) sealLeft = null
   }
-  if (y - 18 - 46 - 50 < BOTTOM) newPage()
+  if (!execOnOnePage && y - 18 - 46 - 50 < BOTTOM) newPage()
   label('THE PROSPECTIVE PURCHASER', 9, 18, 0)
   for (const b of (fl.buyers.length ? fl.buyers : [])) await sigBlock(PURCHASER_EXEC, buyerValues(b), partOf('buyer', b.key))
 
