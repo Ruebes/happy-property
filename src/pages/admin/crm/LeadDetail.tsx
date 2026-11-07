@@ -102,11 +102,14 @@ export default function LeadDetail() {
     }
   }
   const [deal, setDeal] = useState<Deal | null>(null)
-  // Nur Anzeige: gewonnene Käufe, deren Deal archiviert ist (kein aktiver Deal mehr).
-  // Bewusst getrennt von `deal`, damit keine Schreibwege auf den archivierten Deal wirken.
+  // Nur Anzeige: weitere Käufe neben dem gezeigten Deal, abgeschlossen oder laufend ab Reservierung.
+  // Bewusst getrennt von `deal`, damit keine Schreibwege auf diese Deals wirken.
   const [archivedWonDeals, setArchivedWonDeals] = useState<Array<{
     id: string
+    phase: string
+    archived_from_phase: string | null
     property: { id: string; project_name: string; unit_number: string | null } | null
+    unit: { unit_number: string; project: { name: string } | null } | null
   }>>([])
   const [activities, setActivities] = useState<Activity[]>([])
   const [leadTasks, setLeadTasks] = useState<LeadTaskRow[]>([])
@@ -591,16 +594,12 @@ export default function LeadDetail() {
               .eq('id', dealResult.unit_id)
               .maybeSingle()
           : Promise.resolve({ data: null }),
-        // gewonnene, archivierte Käufe (nur wenn kein aktiver Deal da ist, nur lesen)
-        dealResult
-          ? Promise.resolve({ data: [] })
-          : supabase.from('deals')
-              .select('id, property:properties(id, project_name, unit_number)')
-              .eq('lead_id', id)
-              .eq('phase', 'archiviert')
-              .eq('archived_from_phase', 'provision_erhalten')
-              .not('unit_id', 'is', null)
-              .order('created_at', { ascending: false }),
+        // Käufe dieses Kunden (nur lesen); der gezeigte Deal fliegt unten raus
+        supabase.from('deals')
+          .select('id, phase, archived_from_phase, property:properties(id, project_name, unit_number), unit:crm_project_units!deals_unit_id_fkey(unit_number, project:crm_projects(name))')
+          .eq('lead_id', id)
+          .not('unit_id', 'is', null)
+          .order('created_at', { ascending: false }),
       ])
 
       const dp = (dpData ?? []) as unknown as DealProject[]
@@ -611,7 +610,8 @@ export default function LeadDetail() {
       setPortalLoginLog((loginData ?? []) as { id: string; created_at: string }[])
       setUnitDocs((docsData ?? []) as CrmUnitDocument[])
       setUnitImages((unitImgData as { images: string[] } | null)?.images ?? [])
-      setArchivedWonDeals((wonData ?? []) as unknown as typeof archivedWonDeals)
+      setArchivedWonDeals(((wonData ?? []) as unknown as typeof archivedWonDeals)
+        .filter(d => d.id !== dealResult?.id && dealInPortal(d)))
     } catch (err) {
       console.error('[LeadDetail] fetchAll:', err)
     } finally {
@@ -3337,29 +3337,38 @@ export default function LeadDetail() {
                     </div>
                   )}
 
-                  {/* Gewonnene, archivierte Käufe: nur Anzeige mit Link zum Objekt */}
-                  {!deal && archivedWonDeals.length > 0 && (
+                  {/* Weitere Käufe neben dem gezeigten Deal: nur Anzeige mit Link zum Objekt */}
+                  {archivedWonDeals.length > 0 && (
                     <div>
                       <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-                        {t('leadDetail.archivedPurchasesTitle', 'Abgeschlossene Käufe (archiviert)')}
+                        {deal
+                          ? t('leadDetail.otherPurchasesTitle', 'Weitere Käufe')
+                          : t('leadDetail.archivedPurchasesTitle', 'Abgeschlossene Käufe (archiviert)')}
                       </h3>
                       <ul className="space-y-2 text-sm">
-                        {archivedWonDeals.map(d => (
-                          <li key={d.id} className="min-w-0 truncate">
-                            {d.property ? (
-                              <Link to={`/admin/properties/${d.property.id}`} className="text-orange-500 hover:underline">
-                                {d.property.project_name}
-                                {d.property.unit_number ? ` · ${d.property.unit_number}` : ''}
-                              </Link>
-                            ) : (
-                              <span className="text-gray-900">{t('leadDetail.unitHeaderFallback', 'Wohnung')}</span>
-                            )}
-                          </li>
-                        ))}
+                        {archivedWonDeals.map(d => {
+                          const unitLabel = d.unit ? `${d.unit.project?.name ?? ''} · ${d.unit.unit_number}` : t('leadDetail.unitHeaderFallback', 'Wohnung')
+                          const phaseLabel = d.phase === 'archiviert' ? t('crm.phases.provision_erhalten', 'Provision erhalten') : t(`crm.phases.${d.phase}`, d.phase)
+                          return (
+                            <li key={d.id} className="min-w-0 truncate">
+                              {d.property ? (
+                                <Link to={`/admin/properties/${d.property.id}`} className="text-orange-500 hover:underline">
+                                  {d.property.project_name}
+                                  {d.property.unit_number ? ` · ${d.property.unit_number}` : ''}
+                                </Link>
+                              ) : (
+                                <span className="text-gray-900">{unitLabel}</span>
+                              )}
+                              <span className="text-xs text-gray-400"> · {phaseLabel}</span>
+                            </li>
+                          )
+                        })}
                       </ul>
-                      <Link to="/admin/crm/archived" className="inline-block mt-2 text-xs text-gray-500 hover:underline">
-                        → {t('crm.nav.archived', 'Archiviert')}
-                      </Link>
+                      {archivedWonDeals.some(d => d.phase === 'archiviert') && (
+                        <Link to="/admin/crm/archived" className="inline-block mt-2 text-xs text-gray-500 hover:underline">
+                          → {t('crm.nav.archived', 'Archiviert')}
+                        </Link>
+                      )}
                     </div>
                   )}
 
