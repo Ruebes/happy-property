@@ -126,10 +126,11 @@ function altUrl(termin: string): string {
 // Terminseite im Objekt-Design (Sven 7.11.26): Slug der Website-Seite = funnel_projects.slug,
 // außer bei den zwei Seiten, deren Terminvorlage anders heißt. Unbekannter Slug = Standardseite.
 const TERMIN_SLUG_ABWEICHEND: Record<string, string> = { golfresort: 'golfresort-mit-spa', villen: 'villen-mit-meerblick' }
-function terminUrlFuerDeck(seitenUrl?: string): string {
+function mitObjektDesign(termin: string, seitenUrl?: string): string {
   const slug = (seitenUrl ?? '').replace(/\/+$/, '').split('/').pop() ?? ''
   const vorlage = TERMIN_SLUG_ABWEICHEND[slug] ?? slug
-  return vorlage ? `/termin?src=deck&p=${encodeURIComponent(vorlage)}` : '/termin?src=deck'
+  if (!vorlage || !termin.includes('/termin')) return termin
+  return `${termin}${termin.includes('?') ? '&' : '?'}p=${encodeURIComponent(vorlage)}`
 }
 // Besichtigung vor Ort in Paphos (Sven 31.10.26): derselbe Link mit vorgewählter
 // Terminart, der bekannte Kontakt landet direkt im Vor-Ort-Kalender (90 Min).
@@ -1652,7 +1653,7 @@ export default function Deck() {
   const deckUnits = content.blocks.flatMap(b => b.type === 'unit' && !b.sold && b.number?.trim() ? [b.number.trim()] : [])
   const unitCount = content.blocks.filter(b => b.type === 'unit').length
   const openInfo = (nr: string | null) => { setInfoUnit(nr); setInfo(true) }
-  const terminUrl = person?.booking_url ?? terminUrlFuerDeck(page?.url)
+  const terminUrl = mitObjektDesign(person?.booking_url ?? '/termin?src=deck', page?.url)
   const waUrl = `https://wa.me/${WA_NUMBER}?text=${encodeURIComponent(unitNr
     ? t('deck.waTextUnit', 'Hallo Sven, ich habe mir die Wohnung {{nr}} angesehen und hätte eine Frage.', { nr: unitNr })
     : t('deck.waText', 'Hallo Sven, ich habe mir die Wohnung angesehen und hätte eine Frage.'))}`
