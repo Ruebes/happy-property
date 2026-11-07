@@ -2775,6 +2775,12 @@ Deno.serve(async (req) => {
     // detect: seiteneffektfreier Test des Terminwunsch-Erkenners (kein Senden). Mit kontext
     // lassen sich auch vergangene Fälle in ihrer damaligen Lage nachspielen.
     if (body.action === 'detect') return json({ ok: true, detect: await terminWunsch(body.text ?? '', body.kontext ?? null) })
+    // kontext_test: seiteneffektfrei, zeigt die Lage, die Lotte vor einem Vorschlag aus der DB liest, und ihr Urteil.
+    if (body.action === 'kontext_test') {
+      if (!body.lead_id) return json({ error: 'lead_id fehlt' }, 400)
+      const kontext = await terminKontextLesen(admin, body.lead_id, body.text ?? '')
+      return json({ ok: true, kontext, wunsch: kontext?.gleichTermin ? null : await terminWunsch(body.text ?? '', kontext) })
+    }
     // absage_test: seiteneffektfreier Test der Absage-Erkennung (kein Senden, kein DB-Write).
     if (body.action === 'absage_test') return json({ ok: true, vorfilter: koennteAbsageSein(body.text ?? ''), erkennung: await absageErkennen(body.text ?? '', body.termin ?? 'Donnerstag, 5.11., 15:00 Uhr, Zoom-Call', []) })
     // book_now: den in der aktiven Konversation vorgeschlagenen/bestätigten Slot direkt

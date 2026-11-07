@@ -231,6 +231,7 @@ const wunsch = bot.slice(bot.indexOf('async function terminWunsch('), bot.indexO
 check(wunsch.includes('const nachricht = await detectApptRequest(text)\n  if (!nachricht.wants || !kontext) return nachricht\n  return await detectApptRequest(text, kontext)'), 'Der Verlauf bremst nur: ohne Ja aus der Nachricht allein bleibt es beim Nein')
 check(!engage.includes('detectApptRequest(text, kontext)'), 'handleEngage fragt nur über terminWunsch')
 check(bot.includes("detect: await terminWunsch(body.text ?? '', body.kontext ?? null)"), 'Der Test nimmt denselben Weg wie der Betrieb')
+check(bot.includes("await terminKontextLesen(admin, body.lead_id, body.text ?? '')"), 'kontext_test liest die Lage wie der Betrieb')
 check(engage.indexOf("skipped: 'active_conversation'") < engage.indexOf('terminKontextAn(admin)'), 'Kontext erst nach den Sperren lesen')
 check(/kontext\?\.gleichTermin\) \{[\s\S]{0,140}return await handleAnswer\(admin, leadId, text\)/.test(engage), 'Termin gleich: Nachricht läuft wie jede andere ohne Terminwunsch weiter')
 const schalter = bot.slice(bot.indexOf('async function terminKontextAn('), bot.indexOf('// Chat und anstehende Termine'))
