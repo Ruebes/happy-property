@@ -116,3 +116,94 @@ export const DIALOG_NOTIZ: Record<DialogStand, string> = {
   andere_nachricht: 'Nach Lottes Terminfrage ging ihm eine andere automatische Nachricht zu, die Antwort gehört vermutlich dazu.',
   termine_vorbei: 'Die vorgeschlagenen Termine sind schon vorbei.',
 }
+
+// ── Soll überhaupt ein Termin gemacht werden? ──────────────────────────────────
+//
+// Erkan 25.9. und 28.9., Heiko 5.11.2026: Der Termin stand schon und begann in unter einer
+// Stunde. Sven schrieb „Bist du evtl. schon eher erreichbar?“, der Kunde „wir können auch
+// früher telefonieren“, und Lotte schlug zwei Zeiten an anderen Tagen vor. Erkan wählte eine
+// davon: Sein Gespräch rückte so einmal um drei Tage und einmal um einen. Die Erkennung sah nur
+// diese eine Nachricht, nicht den Termin und nicht den Chat davor.
+//
+// Bewusst keine Sperre für Bestandskunden oder laufende Chats. Sven, 7.11.2026: „Wenn jemand
+// einen Termin machen will, soll Lotte fragen, natürlich. Der Bot soll nur den Kontext besser
+// verstehen.“ Von den 10 Vorschlägen aus dem Chat in 60 Tagen gingen 6 an Bestandskunden, und
+// die meisten davon hatten wirklich um ein Gespräch gebeten.
+
+/** Ein Telefonat oder Zoom in dieser Spanne klärt Sven ohnehin selbst, Lotte schlägt nichts vor. */
+const GLEICH_MS = 6 * 3600e3
+const VERLAUF_MAX_ALTER_MS = 14 * 864e5
+const VERLAUF_ZEILEN = 8
+const ZEILE_MAX = 300
+
+export type VerlaufRoh = { direction: string; content: string | null; auto: boolean | null; subject: string | null; created_at: string }
+export type TerminRoh = { art: string; wann: string; titel: string | null; vorOrt: boolean; startIso: string }
+export type TerminKontext = { von: 'kunde' | 'sven' | null; verlauf: string[]; termine: string[]; gleichTermin: boolean }
+
+function spanne(ms: number): string {
+  const min = Math.round(ms / 60000)
+  if (min < 90) return `${min} Min.`
+  const std = Math.round(min / 60)
+  return std < 36 ? `${std} Std.` : `${Math.round(std / 24)} Tagen`
+}
+
+/**
+ * Was Lotte wissen muss, bevor sie Zeiten vorschlägt.
+ * zeilen     WhatsApp-Aktivitäten des Kontakts, neueste zuerst. Die geprüfte Nachricht steht
+ *            schon darin (waInbound schreibt sie vor dem Aufruf): Sie verrät, wer sie geschrieben
+ *            hat, und zählt nicht als Verlauf.
+ * termine    anstehende Termine des Kontakts, noch nicht beendet und nicht abgesagt
+ *
+ * Automatische Nachrichten fehlen im Verlauf absichtlich: Viele davon stehen nur am Kontakt und
+ * gingen an Kollegen („Neue Registrierung“), und die Termine stehen ohnehin unten dabei.
+ */
+export function terminKontext(p: { zeilen: VerlaufRoh[]; termine: TerminRoh[]; text: string; botBetreff: string; jetzt?: number }): TerminKontext {
+  const jetzt = p.jetzt ?? Date.now()
+  const gesucht = p.text.trim()
+  const eigene = p.zeilen.find(z => (z.content ?? '').trim() === gesucht)
+  const von = !eigene ? null : eigene.direction === 'inbound' ? 'kunde' : eigene.auto === false ? 'sven' : null
+  const rolle = (z: VerlaufRoh): string | null => {
+    if (/^(Intern an|Kontakt )/.test(z.subject ?? '')) return null
+    if (z.direction === 'inbound') return 'KUNDE'
+    if (z.auto === false) return 'SVEN'
+    return z.subject === p.botBetreff ? 'LOTTE' : null
+  }
+  const verlauf: string[] = []
+  for (const z of p.zeilen) {
+    if (z === eigene || verlauf.length >= VERLAUF_ZEILEN) continue
+    const wer = rolle(z)
+    const inhalt = (z.content ?? '').replace(/\s+/g, ' ').trim().slice(0, ZEILE_MAX)
+    const alter = jetzt - Date.parse(z.created_at)
+    if (!wer || !inhalt || !(alter <= VERLAUF_MAX_ALTER_MS)) continue
+    verlauf.unshift(`${wer}, ${alter < 120000 ? 'gerade eben' : `vor ${spanne(alter)}`}: ${inhalt}`)
+  }
+  const termine = p.termine.map(t => {
+    const bis = Date.parse(t.startIso) - jetzt
+    const wann = !(bis > 0) ? 'läuft gerade' : `in ${spanne(bis)}`
+    return `${t.art}, ${t.wann} (${wann}${t.titel ? `, „${t.titel}“` : ''})`
+  })
+  return { von, verlauf, termine, gleichTermin: p.termine.some(t => !t.vorOrt && Date.parse(t.startIso) - jetzt <= GLEICH_MS) }
+}
+
+/** Für die KI: die Lage und die Frage, ob Lotte jetzt wirklich neue Zeiten vorschlagen soll. */
+export function kontextBlock(k: TerminKontext): string {
+  const von = k.von === 'sven' ? 'SVEN' : k.von === 'kunde' ? 'dem KUNDEN' : 'dem Kunden oder von Sven (nicht bekannt)'
+  return `LAGE: Die Nachricht stammt von ${von}.
+Anstehende Termine im Kalender: ${k.termine.length ? k.termine.join(' | ') : 'keine'}.
+Chat davor, älteste zuerst:
+${k.verlauf.length ? k.verlauf.join('\n') : '(keine Nachrichten in den letzten 14 Tagen)'}
+
+Bei wants=true schlägt Lotte, Svens Assistentin, SOFORT zwei neue Zeiten vor, frühestens ab morgen. Entscheide aus dieser Lage, ob das gewollt ist.
+wants=false, auch wenn ein Terminwort fällt, wenn:
+- es um einen Termin geht, der schon steht, im Kalender oder im Chat abgemacht: vorziehen, etwas später, „wir haben gleich unseren Zoom“, „bist du schon eher erreichbar?“, „wir können auch früher“, „dann ruf mich gern an“, Rückfragen dazu.
+- Sven ein Gespräch für jetzt, gleich oder heute anbietet oder danach fragt („kannst du in 5 Minuten?“, „soll ich anrufen?“, „heute gegen 12?“), oder der Kunde auf so ein Angebot antwortet. Das klären die beiden direkt.
+- das Terminwort zu etwas anderem gehört („ich brauche noch Zeit“, „wann ist die Übergabe?“).
+wants=true, wenn noch keine Zeit feststeht und jemand ein Gespräch möchte: auch mitten im Chat, auch während Sven mitschreibt, auch bei langjährigen Kunden, auch zusätzlich zu einem anderen Termin („können wir vor der Besichtigung noch telefonieren?“) und auch, wenn Sven es offen vorschlägt („wollen wir mal telefonieren?“, „wann passt es dir?“). Bittet der Kunde klar um ein Gespräch, gilt das vor „im Zweifel false“.`
+}
+
+/**
+ * Für den Termin-Dialog. Grit, 27.10.2026: „eigentlich habe ich einen Termin, Samstag 13.00 Uhr …
+ * steht das?“ Die Abmachung kam aus einem Telefonat und stand nirgends. Lotte las einen Zeitwunsch
+ * und schrieb zweimal, da sei nichts frei, bis Sven dazwischenging.
+ */
+export const ABMACHUNG_REGEL = 'ABMACHUNG: Beruft sich der Kunde auf einen Termin, der aus seiner Sicht schon abgemacht ist ("eigentlich habe ich einen Termin, Samstag 13 Uhr, steht das?", "wir hatten doch Freitag ausgemacht"), dann kennst du diese Abmachung nicht und darfst ihr nicht widersprechen: intent = content, damit Sven das klärt. Das geht dem TERMIN-VORRANG vor.'

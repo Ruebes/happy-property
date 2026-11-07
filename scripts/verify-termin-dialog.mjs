@@ -154,6 +154,89 @@ check(/status: 'pending', scheduled_at: bis/.test(pauseBlock), 'wartende Zeile b
 check(pauseBlock.includes("msg.type !== 'email'"), 'reine Mail wartet nicht, sie stört den WhatsApp-Dialog nicht')
 check(/\.eq\('id', z\.id\)\.eq\('status', 'pending'\)/.test(pauseBlock), 'spätere Stufen rücken nur mit, solange sie pending sind')
 
+// ── Soll überhaupt ein Termin gemacht werden? (Erkan, Heiko) ──
+const J2 = Date.parse('2026-11-05T09:15:20Z')
+const vor = (min) => new Date(J2 - min * 60000).toISOString()
+const zeile = (p) => ({ direction: 'outbound', content: 'x', auto: true, subject: 'WhatsApp: newsletter', created_at: vor(10), ...p })
+const zoom = (minBis, p = {}) => ({ art: 'Zoom-Call', wann: 'Donnerstag, 5.11., 10:00 Uhr', titel: 'Erstgespräch', vorOrt: false, startIso: new Date(J2 + minBis * 60000).toISOString(), ...p })
+const ktx = (p) => D.terminKontext({ zeilen: [], termine: [], text: 'Bist du eher erreichbar?', botBetreff: 'WhatsApp: Termin-Bot', jetzt: J2, ...p })
+
+// Wer hat die geprüfte Nachricht geschrieben? Sie steht schon im Verlauf und zählt dort nicht mit.
+const svenZeile = zeile({ content: ' Bist du eher erreichbar? ', auto: false, subject: 'WhatsApp gesendet', created_at: vor(0) })
+const kundeZeile = zeile({ direction: 'inbound', content: 'Bist du eher erreichbar?', auto: false, subject: 'WhatsApp erhalten', created_at: vor(0) })
+check(ktx({ zeilen: [svenZeile] }).von === 'sven', 'Absender Sven erkannt')
+check(ktx({ zeilen: [svenZeile] }).verlauf.length === 0, 'die geprüfte Nachricht steht nicht im Verlauf')
+check(ktx({ zeilen: [kundeZeile] }).von === 'kunde', 'Absender Kunde erkannt')
+check(ktx({ zeilen: [] }).von === null, 'nicht gefunden: Absender unbekannt')
+check(ktx({ zeilen: [zeile({ content: 'Bist du eher erreichbar?' })] }).von === null, 'automatische Nachricht ist weder Kunde noch Sven')
+check(ktx({ zeilen: [kundeZeile, zeile({ content: 'Bist du eher erreichbar?', auto: false, subject: 'WhatsApp gesendet', created_at: vor(60) })] }).von === 'kunde', 'gleicher Text: die neueste zählt')
+check(ktx({ zeilen: [kundeZeile, zeile({ content: 'Bist du eher erreichbar?', auto: false, subject: 'WhatsApp gesendet', created_at: vor(60) })] }).verlauf.length === 1, 'gleicher Text: nur die neueste fällt aus dem Verlauf')
+
+// Was im Verlauf steht
+const v1 = ktx({ zeilen: [
+  zeile({ direction: 'inbound', content: 'Danke\n\nbis  später', auto: false, created_at: vor(1) }),
+  zeile({ content: 'Dann ruf gern an', auto: false, created_at: vor(45) }),
+  zeile({ content: 'Sag mir 1 oder 2', subject: 'WhatsApp: Termin-Bot', created_at: vor(180) }),
+] }).verlauf
+check(v1.length === 3 && v1[2] === 'KUNDE, gerade eben: Danke bis später', 'neueste zuletzt, Leerraum zusammengezogen')
+check(v1[1] === 'SVEN, vor 45 Min.: Dann ruf gern an', 'Sven mit Alter')
+check(v1[0] === 'LOTTE, vor 3 Std.: Sag mir 1 oder 2', 'Lotte mit Alter')
+check(ktx({ zeilen: [zeile({ content: 'Neue Registrierung' })] }).verlauf.length === 0, 'andere Automatik steht nicht im Verlauf')
+check(ktx({ zeilen: [zeile({ auto: false, subject: 'Intern an Sven (nicht an den Kunden)' })] }).verlauf.length === 0, 'Intern an ... steht nicht im Verlauf')
+check(ktx({ zeilen: [zeile({ auto: false, subject: 'Kontakt weitergeleitet an Henning' })] }).verlauf.length === 0, 'Kontakt weitergeleitet steht nicht im Verlauf')
+check(ktx({ zeilen: [zeile({ auto: false, subject: 'WhatsApp → Walter Huber' })] }).verlauf.length === 1, 'Svens Nachricht aus dem CRM zählt als Sven')
+check(ktx({ zeilen: [zeile({ auto: false, content: '   ' })] }).verlauf.length === 0, 'leere Nachricht fällt weg')
+check(ktx({ zeilen: [zeile({ auto: false, created_at: vor(15 * 1440) })] }).verlauf.length === 0, 'älter als 14 Tage fällt weg')
+check(ktx({ zeilen: [zeile({ auto: false, created_at: 'kaputt' })] }).verlauf.length === 0, 'unlesbares Datum fällt weg')
+check(ktx({ zeilen: [zeile({ auto: false, content: 'y'.repeat(900) })] }).verlauf[0].length < 330, 'lange Nachricht wird gekürzt')
+const zwoelf = Array.from({ length: 12 }, (_, i) => zeile({ auto: false, content: `n${i}`, created_at: vor(i + 5) }))
+const acht = ktx({ zeilen: zwoelf }).verlauf
+check(acht.length === 8 && acht[7].endsWith(': n0') && acht[0].endsWith(': n7'), 'nur die letzten 8, älteste zuerst')
+
+// Termin gleich: Heiko 45 Minuten vorher, Erkan 45 und 30 Minuten vorher
+check(ktx({ termine: [zoom(45)] }).gleichTermin === true, 'Heiko: Zoom in 45 Minuten')
+check(ktx({ termine: [zoom(30, { art: 'Telefonat' })] }).gleichTermin === true, 'Erkan: Telefonat in 30 Minuten')
+check(ktx({ termine: [zoom(-10)] }).gleichTermin === true, 'läuft gerade')
+check(ktx({ termine: [zoom(6 * 60)] }).gleichTermin === true, 'genau 6 Stunden zählen noch')
+check(ktx({ termine: [zoom(6 * 60 + 1)] }).gleichTermin === false, 'danach urteilt die KI')
+check(ktx({ termine: [zoom(45, { vorOrt: true })] }).gleichTermin === false, 'Rainer: Besichtigung sperrt keinen Anruf')
+check(ktx({ termine: [zoom(45, { vorOrt: true }), zoom(120)] }).gleichTermin === true, 'neben der Besichtigung noch ein Zoom')
+check(ktx({ termine: [zoom(45, { startIso: 'kaputt' })] }).gleichTermin === false, 'unlesbare Zeit sperrt nicht')
+check(ktx({ termine: [] }).gleichTermin === false, 'kein Termin')
+
+// Was die KI über den Termin liest
+check(ktx({ termine: [zoom(45)] }).termine[0] === 'Zoom-Call, Donnerstag, 5.11., 10:00 Uhr (in 45 Min., „Erstgespräch“)', 'Terminzeile mit Abstand und Titel')
+check(ktx({ termine: [zoom(-10, { titel: null })] }).termine[0] === 'Zoom-Call, Donnerstag, 5.11., 10:00 Uhr (läuft gerade)', 'laufender Termin ohne Titel')
+check(ktx({ termine: [zoom(3 * 1440)] }).termine[0].includes('in 3 Tagen'), 'Termin in Tagen')
+check(ktx({ termine: [zoom(5 * 60)] }).termine[0].includes('in 5 Std.'), 'Termin in Stunden')
+
+// Der Block für die KI
+const block = D.kontextBlock(ktx({ zeilen: [svenZeile, zeile({ direction: 'inbound', content: 'Moin', auto: false, created_at: vor(9) })], termine: [zoom(45)] }))
+check(block.includes('stammt von SVEN'), 'Block nennt den Absender')
+check(block.includes('Anstehende Termine im Kalender: Zoom-Call'), 'Block nennt den Termin')
+check(block.includes('KUNDE, vor 9 Min.: Moin'), 'Block enthält den Chat')
+check(/wants=false/.test(block) && /wants=true/.test(block), 'Block sagt beides')
+check(block.includes('auch bei langjährigen Kunden'), 'keine Sperre für Bestandskunden')
+const leer = D.kontextBlock(ktx({}))
+check(leer.includes('Termine im Kalender: keine') && leer.includes('keine Nachrichten in den letzten 14 Tagen') && leer.includes('nicht bekannt'), 'Block ohne Daten bleibt lesbar')
+check(/—|–/.test(block.replace(zoom(45).titel, '')) === false, 'Block ohne Gedankenstriche')
+check(/"[^"]*steht das\?"/.test(D.ABMACHUNG_REGEL) && D.ABMACHUNG_REGEL.includes('intent = content'), 'Abmachung geht an Sven')
+
+// Eingebaut an der richtigen Stelle
+const engage = bot.slice(bot.indexOf('async function handleEngage('), bot.indexOf('// ── Café-Treffen'))
+check(engage.includes('!force && await terminKontextAn(admin)'), 'manueller Anstoß durch Sven braucht keinen Kontext')
+check(engage.indexOf('kontext?.gleichTermin') < engage.indexOf('detectApptRequest(text, kontext)'), 'Termin gleich: ohne KI raus')
+check(engage.indexOf("skipped: 'active_conversation'") < engage.indexOf('terminKontextAn(admin)'), 'Kontext erst nach den Sperren lesen')
+check(/kontext\?\.gleichTermin\) \{[\s\S]{0,140}return await handleAnswer\(admin, leadId, text\)/.test(engage), 'Termin gleich: Nachricht läuft wie jede andere ohne Terminwunsch weiter')
+const schalter = bot.slice(bot.indexOf('async function terminKontextAn('), bot.indexOf('// Chat und anstehende Termine'))
+check(schalter.includes("=== 'true'"), 'Schalter nur mit true an, das Einspielen allein ändert nichts')
+const lesen = bot.slice(bot.indexOf('async function terminKontextLesen('), bot.indexOf('// ── ENGAGE ──'))
+check(lesen.includes(".eq('internal', false)") && lesen.includes(".is('cancel_reported_at', null)") && lesen.includes(".gt('end_time'"), 'nur echte, offene, nicht abgesagte Termine')
+check(/catch \(e\)[^\n]*return null/.test(lesen), 'Lesefehler: KI urteilt wie bisher')
+check(bot.includes('await detectApptRequest(text)\n  if (!(det.wants && det.onsite && det.casual))'), 'unbekannte Nummer bleibt ohne Kontext')
+check(bot.includes("DIALOG_HINWEIS[stand], await terminKontextAn(admin))"), 'Termin-Dialog liest die Abmachungs-Regel nur mit Schalter')
+check(bot.includes('${abmachung ? `\n${ABMACHUNG_REGEL}` : \'\'}\nWICHTIG zum TERMIN-VORRANG'), 'Abmachung steht vor dem Termin-Vorrang')
+
 if (fails.length) {
   console.error(`verify-termin-dialog: ${fails.length} von ${checked} Prüfungen rot`)
   for (const f of fails) console.error('  -', f)

@@ -32,7 +32,7 @@ import { notifyIfToday, cyTime, cyDate } from '../_shared/notifyToday.ts'
 import { gateCaller } from '../_shared/callerGate.ts'
 import { callAnthropic, toolInput } from '../_shared/anthropic.ts'
 import { koennteAbsageSein, terminZone, terminLabel, lotteAbsageText, lotteVerschiebenIntro, lotteVerschiebenSven, bautraegerAbsageText, waMeLink, type AbsageArt } from '../_shared/terminAbsage.ts'
-import { dialogEndet, dialogStand, folgeWartetBis, termineAufDemTisch, termineVorbei, DIALOG_HINWEIS, DIALOG_NOTIZ, type DialogStand } from '../_shared/terminDialog.ts'
+import { dialogEndet, dialogStand, folgeWartetBis, kontextBlock, terminKontext, termineAufDemTisch, termineVorbei, ABMACHUNG_REGEL, DIALOG_HINWEIS, DIALOG_NOTIZ, type DialogStand, type TerminKontext, type VerlaufRoh } from '../_shared/terminDialog.ts'
 import {
   regelVorfilter, sendungenBauen, lotteAngebotText, angebotNotiz, kandidatenWaehlen, lotteBautraegerText, bautraegerBetreff, bautraegerNotiz,
   regionFaktenLesen, lotteRegionText, regionNotiz, geldNotiz, geldMitZahl, istRegistriert, namensTeile, bautraegerTeile, bautraegerAnzeige,
@@ -365,7 +365,7 @@ async function logWa(admin: SupabaseClient, leadId: string, text: string, dir: '
 // ── KI: Kundenantwort verstehen ──────────────────────────────────────────────
 interface Intent { intent: string; pick_index: number | null; day_hint: string | null; daypart: string | null; time_hint: string | null; meeting_type: string | null; on_date?: string | null; after_date?: string | null; answer?: string | null; defer_to_sven?: boolean; defer_until?: string | null }
 type Turn = { role: 'user' | 'assistant'; content: string }
-async function classify(state: string, slots: Slot[], text: string, verlauf: Turn[] = [], hinweis?: string): Promise<Intent> {
+async function classify(state: string, slots: Slot[], text: string, verlauf: Turn[] = [], hinweis?: string, abmachung = false): Promise<Intent> {
   const key = Deno.env.get('ANTHROPIC_API_KEY')
   const fallback: Intent = { intent: 'unclear', pick_index: null, day_hint: null, daypart: null, time_hint: null, meeting_type: null }
   if (!key) return fallback
@@ -388,7 +388,8 @@ Gib NUR das Tool emit_intent zurück. intent-Werte:
 - confirm_yes / confirm_no: Zustimmung/Ablehnung zu einem konkreten Vorschlag.
 - question: reine ORGANISATORISCHE Rückfrage zum GESPRÄCH selbst, OHNE Terminangabe (z.B. "mit wem spreche ich?", "wie lange dauert das?", "ist das verbindlich?"). NUR Fragen zum Ablauf des Termins — NICHTS zur Immobilie.
 - content: der Kunde macht eine INHALTLICHE Aussage ODER stellt eine FACHLICHE Frage — Budget ("max 500k"), Objektwünsche, Marktmeinung, persönliche Situation, Einwände, Themenwechsel, ausführliche Antworten, die KEINEN Terminwunsch enthalten. HIERHER GEHÖREN AUSDRÜCKLICH ALLE PREISFRAGEN: "was kostet es", "was kostet die Wohnung", "wie teuer", "Preis", "Nebenkosten", "Rendite", "Finanzierung". Frage nach einem Preis = IMMER content, NIEMALS question — der Kunde meint den Immobilienpreis, nicht den Gesprächspreis. Diese Zahlen kennt nur Sven. Solche Nachrichten gehören zu Sven persönlich, NICHT in den Termin-Dialog. Im Zweifel zwischen unclear und content → content.
-ALLERWICHTIGSTE REGEL, sie geht dem TERMIN-VORRANG VOR: Unterscheide, WOFUER ein genanntes Datum steht. Sagt der Kunde, wann ER SICH MELDET oder wie lange er noch ueberlegen will, ist das intent = defer — NIEMALS give_preference. Nur wenn er sagt, wann das GESPRAECH stattfinden soll, ist es ein Terminwunsch. "Bis Sonntag geben wir Bescheid" = defer (defer_until = jener Sonntag). "Sonntag passt mir" = give_preference. Im Zweifel defer: einen Kunden, der um Bedenkzeit bittet, erneut nach einem Termin zu fragen, ist der schlimmste Fehler in diesem Dialog.
+ALLERWICHTIGSTE REGEL, sie geht dem TERMIN-VORRANG VOR: Unterscheide, WOFUER ein genanntes Datum steht. Sagt der Kunde, wann ER SICH MELDET oder wie lange er noch ueberlegen will, ist das intent = defer — NIEMALS give_preference. Nur wenn er sagt, wann das GESPRAECH stattfinden soll, ist es ein Terminwunsch. "Bis Sonntag geben wir Bescheid" = defer (defer_until = jener Sonntag). "Sonntag passt mir" = give_preference. Im Zweifel defer: einen Kunden, der um Bedenkzeit bittet, erneut nach einem Termin zu fragen, ist der schlimmste Fehler in diesem Dialog.${abmachung ? `
+${ABMACHUNG_REGEL}` : ''}
 WICHTIG zum TERMIN-VORRANG: Nennt die Nachricht IRGENDEINEN Terminwunsch (Slot-Wahl, Tag, Datum, Uhrzeit, Tageszeit — z.B. "22.7. abends", "Freitag 15 Uhr") — auch wenn sie zusätzlich fachliche Fragen/Aussagen enthält — dann wähle intent = pick_slot bzw. give_preference (NICHT content/question) und fülle die Termin-Felder (pick_index / on_date / after_date / day_hint / daypart / time_hint). Setze in DIESEM Fall zusätzlich defer_to_sven = true, wenn die Nachricht fachliche/inhaltliche Themen enthält, die Sven persönlich beantworten sollte (Budget, Objekt-Details, Markt, Steuer, Finanzierung, Einwände). answer dann NICHT füllen — die fachlichen Punkte übernimmt Sven.
 - defer: der Kunde will sich SELBST spaeter melden bzw. braucht Bedenkzeit — er nennt KEINEN Terminwunsch, sondern den Zeitpunkt seiner EIGENEN Rueckmeldung ("wir brauchen das Wochenende", "bis Sonntag geben wir Bescheid", "ich melde mich naechste Woche", "muessen erst in Ruhe schauen", "melde mich schnellstmoeglich"). Fuelle defer_until = das genannte Datum als "YYYY-MM-DD"; ohne Datumsangabe das Datum in 7 Tagen.
 - self_followup: der Kunde sagt, dass ER sich melden wird, und will deshalb NICHT nachgefasst werden — "ich melde mich bei dir", "ich komme auf dich zu", "ich sag Bescheid, wenn es so weit ist", "bin noch am Überlegen, melde mich". Er sagt NICHTS Negatives, er will nur die Führung behalten. Diese Regel steht ÜBER defer: bei defer kündigt der Bot eine Wiedervorlage an ("ich melde mich am 28. nochmal") — genau das will dieser Kunde nicht hören.
@@ -438,8 +439,10 @@ Fülle nur passende Felder, sonst null.`
 // Erkennt in einer FREIEN (nicht-Dialog) WhatsApp, ob der Kunde einen Termin/Anruf/
 // ein Gespräch ausmachen möchte. Konservativ (nur klare Terminwünsche), damit der
 // Bot nicht bei Produktfragen/Smalltalk reingrätscht. Optional Zeit-Hinweise.
-interface ApptReq { wants: boolean; onsite: boolean; casual?: boolean; day_hint: string | null; daypart: string | null; time_hint: string | null; on_date: string | null; after_date: string | null }
-async function detectApptRequest(text: string): Promise<ApptReq> {
+// Mit kontext (Chat davor, anstehende Termine, Absender) beurteilt die KI die Nachricht in ihrer
+// Lage statt für sich allein (_shared/terminDialog.ts).
+interface ApptReq { wants: boolean; onsite: boolean; casual?: boolean; day_hint: string | null; daypart: string | null; time_hint: string | null; on_date: string | null; after_date: string | null; grund?: string | null }
+async function detectApptRequest(text: string, kontext: TerminKontext | null = null): Promise<ApptReq> {
   const off: ApptReq = { wants: false, onsite: false, day_hint: null, daypart: null, time_hint: null, on_date: null, after_date: null }
   const key = Deno.env.get('ANTHROPIC_API_KEY'); if (!key) return off
   const tp = berlinParts(new Date())
@@ -451,7 +454,9 @@ wants=true: "können wir telefonieren?", "hast du morgen Zeit?", "lass uns einen
 wants=false bei: reinen Produkt-/Sachfragen, Smalltalk, Dank, "schick mir den Plan", Meinungen, Objektwünschen; reiner BESTÄTIGUNG eines schon vereinbarten Termins ("Freitag 12 passt", "ok bis dann"); Verweis auf VERGANGENES ("hatten ja telefoniert"); und EINSEITIGER Sofort-/Ankündigung OHNE Abstimmungsbedarf ("ich ruf dich gleich/jetzt/später an", "ich melde mich gleich"). Nur wenn eine Zeit erst noch gemeinsam gefunden werden muss → true. Im Zweifel false.
 Frage 2 (onsite): Geht es klar um einen VOR-ORT-Termin? onsite=true bei Besichtigung/Viewing, Objektbesichtigung, persönliches Treffen vor Ort, "vorbeikommen", "die Wohnung/Objekt anschauen", "vor Ort treffen". onsite=false bei Telefonat/Call/Videocall/Zoom/WhatsApp-Anruf ODER wenn die Art offen/unklar ist (Default false).
 Frage 3 (casual): Nur bei onsite=true. casual=true, wenn die Person Sven einfach persönlich KENNENLERNEN oder sich locker mit ihm treffen will (z. B. "wir sind gerade in Paphos, können wir uns kurz treffen?"), OHNE eine bestimmte Wohnung/ein Objekt besichtigen zu wollen. casual=false bei Besichtigung/Viewing/Objekt anschauen. Im Zweifel false.
-Wenn wants=true UND eine Zeitangabe genannt ist, fülle die Hint-Felder (day_hint; daypart vormittags|nachmittags|abends; time_hint "HH:MM"; on_date für GENAU EIN Datum bzw. after_date für frühestes Datum, je "YYYY-MM-DD"). Sonst null. Gib NUR das Tool emit zurück.`
+Wenn wants=true UND eine Zeitangabe genannt ist, fülle die Hint-Felder (day_hint; daypart vormittags|nachmittags|abends; time_hint "HH:MM"; on_date für GENAU EIN Datum bzw. after_date für frühestes Datum, je "YYYY-MM-DD"). Sonst null. Gib NUR das Tool emit zurück.${kontext ? `
+
+${kontextBlock(kontext)}` : ''}`
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
@@ -465,6 +470,7 @@ Wenn wants=true UND eine Zeitangabe genannt ist, fülle die Hint-Felder (day_hin
           day_hint: { type: ['string', 'null'] },
           daypart: { type: ['string', 'null'], enum: ['vormittags', 'nachmittags', 'abends', null] },
           time_hint: { type: ['string', 'null'] }, on_date: { type: ['string', 'null'] }, after_date: { type: ['string', 'null'] },
+          ...(kontext ? { grund: { type: ['string', 'null'], description: 'Warum, in höchstens acht Wörtern' } } : {}),
         }, required: ['wants'] } }],
       }),
     })
@@ -1112,7 +1118,7 @@ async function replyRunde(admin: SupabaseClient, c: ReplyConv, leadId: string, t
     while (verlauf.length && verlauf[verlauf.length - 1].role === 'user') verlauf.pop()
   } catch (e) { console.warn('[booking-bot] Verlauf nicht ladbar:', e) }
   const stand = await dialogStandLesen(admin, c, leadId, phone)
-  const it = await classify(c.state, c.state === 'awaiting_daypref' || stand === 'nicht_zugestellt' ? [] : slots, text, verlauf, DIALOG_HINWEIS[stand])
+  const it = await classify(c.state, c.state === 'awaiting_daypref' || stand === 'nicht_zugestellt' ? [] : slots, text, verlauf, DIALOG_HINWEIS[stand], await terminKontextAn(admin))
 
   // Tag-Kontext EXAKT behalten: nennt der Kunde nur Tageszeit/Uhrzeit (keinen Tag),
   // während schon konkrete Slots auf dem Tisch lagen → deren Datum pinnen, damit die
@@ -1447,6 +1453,32 @@ async function proposeSlots(admin: SupabaseClient, convId: string, phone: string
   return json({ ok: true, skipped: 'no_slots' })
 }
 
+// Schalter für die Kontextprüfung vor Terminvorschlägen. Nur 'true' schaltet ein: Das Einspielen
+// allein ändert nichts, und zurück geht es ohne Deploy.
+async function terminKontextAn(admin: SupabaseClient): Promise<boolean> {
+  const { data } = await admin.from('crm_settings').select('value').eq('key', 'lotte_termin_kontext').maybeSingle()
+  return (data as { value?: string } | null)?.value === 'true'
+}
+
+// Chat und anstehende Termine für die Frage, ob jetzt ein Termin gemacht werden soll. Bei einem
+// Lesefehler null: Dann urteilt die KI wie bisher nur über die Nachricht.
+async function terminKontextLesen(admin: SupabaseClient, leadId: string, text: string): Promise<TerminKontext | null> {
+  try {
+    const jetzt = Date.now()
+    const { data: hist, error: hErr } = await admin.from('activities').select('direction, content, auto, subject, created_at')
+      .eq('lead_id', leadId).eq('type', 'whatsapp').order('created_at', { ascending: false }).limit(40)
+    if (hErr) throw new Error(hErr.message)
+    const { data: ta, error: tErr } = await admin.from('crm_appointments').select('title, type, start_time, timezone, location, zoom_link')
+      .eq('lead_id', leadId).eq('internal', false).is('cancel_reported_at', null).gt('end_time', new Date(jetzt).toISOString())
+      .order('start_time', { ascending: true }).limit(3)
+    if (tErr) throw new Error(tErr.message)
+    const termine = ((ta ?? []) as { title: string | null; type: string | null; start_time: string; timezone: string | null; location: string | null; zoom_link: string | null }[]).map(t => ({
+      art: terminArt(t), wann: terminLabel(t.start_time, terminZone(t.timezone, t.type)), titel: t.title, vorOrt: t.type === 'inperson', startIso: t.start_time,
+    }))
+    return terminKontext({ zeilen: (hist ?? []) as VerlaufRoh[], termine, text, botBetreff: BOT_BETREFF, jetzt })
+  } catch (e) { console.warn('[booking-bot] terminKontextLesen:', e); return null }
+}
+
 // ── ENGAGE ── Kunde fragt MITTEN im freien Chat nach einem Termin → Bot klinkt
 // sich ein (auch während ein persönliches Gespräch läuft). Eigener Schalter
 // booking_bot_auto_engage (zusätzlich zu booking_bot_enabled), Standard AUS.
@@ -1465,9 +1497,17 @@ async function handleEngage(admin: SupabaseClient, leadId: string, text: string,
     .eq('lead_id', leadId).not('state', 'in', '(booked,handoff,expired)').gt('expires_at', new Date().toISOString()).limit(1)
   if (active && active.length) return json({ ok: true, skipped: 'active_conversation' })
   if (await recentlyAcqMessaged(admin, leadId)) return json({ ok: true, skipped: 'recent_acquisition_wa' })
+  // Steht in den nächsten Stunden schon ein Telefonat oder Zoom an, klärt Sven alles Weitere
+  // ohnehin selbst. Lotte kann erst ab morgen vorschlagen und würde das Gespräch nur verschieben.
+  const kontext = !force && await terminKontextAn(admin) ? await terminKontextLesen(admin, leadId, text) : null
+  if (kontext?.gleichTermin) {
+    console.log('[booking-bot] engage: Termin steht gleich an, kein Vorschlag', leadId)
+    return await handleAnswer(admin, leadId, text)
+  }
   // Ist es überhaupt ein (Remote-)Terminwunsch? Vor-Ort-Termine (Viewing/Besichtigung)
   // macht Sven selbst — da klinkt sich der Bot NICHT ein. Fachliches bleibt bei Sven.
-  const det = await detectApptRequest(text)
+  const det = await detectApptRequest(text, kontext)
+  if (kontext) console.log('[booking-bot] engage:', leadId, det.wants ? 'Vorschlag' : 'kein Vorschlag', det.grund ?? '')
   if (!det.wants && !force) return await handleAnswer(admin, leadId, text)   // vielleicht eine Sachfrage
   if (det.onsite && det.casual && !force) return await cafeStart(admin, leadId, det, text)
   if (det.onsite && !force) return json({ ok: true, skipped: 'onsite_termin' })
@@ -2411,6 +2451,11 @@ async function absageAufgabe(admin: SupabaseClient, leadId: string, titel: strin
   } catch (e) { console.error('[booking-bot] Absage-Aufgabe:', e); return null }
 }
 
+function terminArt(t: { type: string | null; location: string | null; zoom_link: string | null }): string {
+  if (t.location === CAFE_LOCATION) return `Café-Treffen im ${CAFE_NAME}`
+  return t.type === 'inperson' ? 'Vor-Ort-Termin' : (t.type === 'zoom' || t.zoom_link) ? 'Zoom-Call' : 'Telefonat'
+}
+
 async function handleAbsage(admin: SupabaseClient, leadId: string, text: string, fallback: string | undefined, still: boolean): Promise<Response> {
   // Keine Absage (oder kein Termin mehr): die Nachricht nimmt ihren normalen Weg.
   const weiter = async (): Promise<Response> => {
@@ -2434,7 +2479,7 @@ async function handleAbsage(admin: SupabaseClient, leadId: string, text: string,
   const kunde = `${vorname} ${(l?.last_name ?? '').trim()}`.trim() || 'Kunde'
   const wann = terminLabel(t.start_time, terminZone(t.timezone, t.type))
   const cafe = t.location === CAFE_LOCATION
-  const artLabel = cafe ? `Café-Treffen im ${CAFE_NAME}` : t.type === 'inperson' ? 'Vor-Ort-Termin' : (t.type === 'zoom' || t.zoom_link) ? 'Zoom-Call' : 'Telefonat'
+  const artLabel = terminArt(t)
 
   const erk = await absageErkennen(text, `${wann}, ${artLabel}${t.title ? ` („${t.title}“)` : ''}`, await absageVerlauf(admin, leadId))
   if (!erk) {
@@ -2698,9 +2743,9 @@ Deno.serve(async (req) => {
   if (denied) return denied
   try {
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-    const body = await req.json() as { action?: string; lead_id?: string; deal_id?: string | null; source?: string; text?: string; stage?: number; intro?: string; state?: string; slots?: Slot[]; meeting_type?: string; force?: boolean; phone?: string; push_name?: string | null; fallback?: string; still?: boolean; termin?: string; emoji?: string; ziel?: string; uid?: string | null; verlauf?: Turn[]; hinweis?: string }
+    const body = await req.json() as { action?: string; lead_id?: string; deal_id?: string | null; source?: string; text?: string; stage?: number; intro?: string; state?: string; slots?: Slot[]; meeting_type?: string; force?: boolean; phone?: string; push_name?: string | null; fallback?: string; still?: boolean; termin?: string; emoji?: string; ziel?: string; uid?: string | null; verlauf?: Turn[]; hinweis?: string; abmachung?: boolean; kontext?: TerminKontext | null }
     // classify: seiteneffektfreier Test des Intent-Parsers (kein Senden, kein DB-Write).
-    if (body.action === 'classify') return json({ ok: true, intent: await classify(body.state ?? 'awaiting_choice', body.slots ?? [], body.text ?? '', body.verlauf ?? [], body.hinweis) })
+    if (body.action === 'classify') return json({ ok: true, intent: await classify(body.state ?? 'awaiting_choice', body.slots ?? [], body.text ?? '', body.verlauf ?? [], body.hinweis, body.abmachung === true) })
     // dialog_test: seiteneffektfrei, zeigt den Stand von Lottes Terminfrage für einen Lead.
     if (body.action === 'dialog_test') {
       if (!body.lead_id) return json({ error: 'lead_id fehlt' }, 400)
@@ -2717,8 +2762,9 @@ Deno.serve(async (req) => {
       if (!body.lead_id) return json({ error: 'lead_id fehlt' }, 400)
       return json({ ok: true, bis: await folgePauseBis(admin, body.lead_id) })
     }
-    // detect: seiteneffektfreier Test des Terminwunsch-Erkenners (kein Senden).
-    if (body.action === 'detect') return json({ ok: true, detect: await detectApptRequest(body.text ?? '') })
+    // detect: seiteneffektfreier Test des Terminwunsch-Erkenners (kein Senden). Mit kontext
+    // lassen sich auch vergangene Fälle in ihrer damaligen Lage nachspielen.
+    if (body.action === 'detect') return json({ ok: true, detect: await detectApptRequest(body.text ?? '', body.kontext ?? null) })
     // absage_test: seiteneffektfreier Test der Absage-Erkennung (kein Senden, kein DB-Write).
     if (body.action === 'absage_test') return json({ ok: true, vorfilter: koennteAbsageSein(body.text ?? ''), erkennung: await absageErkennen(body.text ?? '', body.termin ?? 'Donnerstag, 5.11., 15:00 Uhr, Zoom-Call', []) })
     // book_now: den in der aktiven Konversation vorgeschlagenen/bestätigten Slot direkt
