@@ -1007,7 +1007,7 @@ export default function Projects() {
     try {
       const { data, error } = await supabase
         .from('crm_projects')
-        .select('*, units:crm_project_units(id,status,bedrooms,price_net,price_gross)')
+        .select('*, units:crm_project_units(id,status,bedrooms,price_net,price_gross,property_id,parent_unit_id)')
         .order('created_at', { ascending: false })
       if (error) throw error
       setProjects((data ?? []) as unknown as CrmProject[])
@@ -1025,13 +1025,14 @@ export default function Projects() {
   useEffect(() => { fetchAll() }, [fetchAll])
 
   // Preis-/Schlafzimmer-Filter: Projekt erscheint, wenn ≥1 ANBIETBARE Wohnung
-  // (nicht verkauft/reserviert) zu Schlafzimmern UND Preis-Spanne passt.
+  // (nicht verkauft/reserviert, keinem Eigentümer zugewiesen, keine Teil-Wohnung)
+  // zu Schlafzimmern UND Preis-Spanne passt. Gleiche Regel wie im Deck-Assistenten.
   const unitFilterActive = filterBed !== 'all' || filterMin > 0 || filterMax > 0
   const projectHasMatch = (p: CrmProject) => {
     if (!unitFilterActive) return true
-    const units = (p as unknown as { units?: Array<{ id: string; status: string | null; bedrooms: number | null; price_net: number | null; price_gross: number | null }> }).units ?? []
+    const units = (p as unknown as { units?: Array<{ id: string; status: string | null; bedrooms: number | null; price_net: number | null; price_gross: number | null; property_id: string | null; parent_unit_id: string | null }> }).units ?? []
     return units.some(u => {
-      if (u.status === 'sold' || u.status === 'reserved' || takenUnits.has(u.id)) return false
+      if (u.status === 'sold' || u.status === 'reserved' || u.property_id || u.parent_unit_id || takenUnits.has(u.id)) return false
       if (filterBed !== 'all') {
         const bed = u.bedrooms ?? 0
         if (filterBed === '4' ? bed < 4 : String(u.bedrooms ?? '') !== filterBed) return false
