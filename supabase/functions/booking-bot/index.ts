@@ -480,6 +480,16 @@ ${kontextBlock(kontext)}` : ''}`
   } catch (e) { console.warn('[booking-bot] detectApptRequest:', e); return off }
 }
 
+// Der Chatverlauf darf einen Vorschlag nur bremsen, nie auslösen. Beim Nachspielen von 85 echten
+// Nachrichten (7.11.2026) waren alle vier Fälle falsch, in denen erst der Verlauf ein Ja ergab,
+// etwa "Dann mach ma einen Plan" im Urlaub oder "Die werden dich am Mittwoch treffen wollen".
+// Klingt die Nachricht allein nicht nach einem Termin, läuft alles wie ohne Kontext.
+async function terminWunsch(text: string, kontext: TerminKontext | null): Promise<ApptReq> {
+  const nachricht = await detectApptRequest(text)
+  if (!nachricht.wants || !kontext) return nachricht
+  return await detectApptRequest(text, kontext)
+}
+
 // ── Konversations-Helfer ──────────────────────────────────────────────────────
 const first = (n: string | null) => (n ?? '').trim()
 const greet = (n: string | null) => first(n) ? `Hey ${first(n)}` : 'Hallo'
@@ -1506,7 +1516,7 @@ async function handleEngage(admin: SupabaseClient, leadId: string, text: string,
   }
   // Ist es überhaupt ein (Remote-)Terminwunsch? Vor-Ort-Termine (Viewing/Besichtigung)
   // macht Sven selbst — da klinkt sich der Bot NICHT ein. Fachliches bleibt bei Sven.
-  const det = await detectApptRequest(text, kontext)
+  const det = await terminWunsch(text, kontext)
   if (kontext) console.log('[booking-bot] engage:', leadId, det.wants ? 'Vorschlag' : 'kein Vorschlag', det.grund ?? '')
   if (!det.wants && !force) return await handleAnswer(admin, leadId, text)   // vielleicht eine Sachfrage
   if (det.onsite && det.casual && !force) return await cafeStart(admin, leadId, det, text)
@@ -2764,7 +2774,7 @@ Deno.serve(async (req) => {
     }
     // detect: seiteneffektfreier Test des Terminwunsch-Erkenners (kein Senden). Mit kontext
     // lassen sich auch vergangene Fälle in ihrer damaligen Lage nachspielen.
-    if (body.action === 'detect') return json({ ok: true, detect: await detectApptRequest(body.text ?? '', body.kontext ?? null) })
+    if (body.action === 'detect') return json({ ok: true, detect: await terminWunsch(body.text ?? '', body.kontext ?? null) })
     // absage_test: seiteneffektfreier Test der Absage-Erkennung (kein Senden, kein DB-Write).
     if (body.action === 'absage_test') return json({ ok: true, vorfilter: koennteAbsageSein(body.text ?? ''), erkennung: await absageErkennen(body.text ?? '', body.termin ?? 'Donnerstag, 5.11., 15:00 Uhr, Zoom-Call', []) })
     // book_now: den in der aktiven Konversation vorgeschlagenen/bestätigten Slot direkt

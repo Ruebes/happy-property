@@ -197,6 +197,7 @@ Bei wants=true schlägt Lotte, Svens Assistentin, SOFORT zwei neue Zeiten vor, f
 wants=false, auch wenn ein Terminwort fällt, wenn:
 - es um einen Termin geht, der schon steht, im Kalender oder im Chat abgemacht: vorziehen, etwas später, „wir haben gleich unseren Zoom“, „bist du schon eher erreichbar?“, „wir können auch früher“, „dann ruf mich gern an“, Rückfragen dazu.
 - Sven ein Gespräch für jetzt, gleich oder heute anbietet oder danach fragt („kannst du in 5 Minuten?“, „soll ich anrufen?“, „heute gegen 12?“), oder der Kunde auf so ein Angebot antwortet. Das klären die beiden direkt.
+- Sven selbst ein privates Treffen vorschlägt („wollen wir mal essen gehen?“, Lunch, Kaffee, Ausflug). Das klären die beiden direkt.
 - das Terminwort zu etwas anderem gehört („ich brauche noch Zeit“, „wann ist die Übergabe?“).
 wants=true, wenn noch keine Zeit feststeht und jemand ein Gespräch möchte: auch mitten im Chat, auch während Sven mitschreibt, auch bei langjährigen Kunden, auch zusätzlich zu einem anderen Termin („können wir vor der Besichtigung noch telefonieren?“) und auch, wenn Sven es offen vorschlägt („wollen wir mal telefonieren?“, „wann passt es dir?“). Bittet der Kunde klar um ein Gespräch, gilt das vor „im Zweifel false“.`
 }
