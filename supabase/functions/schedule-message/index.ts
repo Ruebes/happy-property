@@ -13,6 +13,7 @@ import { unitGross, unitNet, DEFAULT_VAT_RATE } from '../_shared/price.ts'
 import { bookingUrl } from '../_shared/bookingLink.ts'
 import { gateCaller } from '../_shared/callerGate.ts'
 import { ruhezeitZiel, zeitzoneFuer } from '../_shared/ruhezeit.ts'
+import { uploadLinkHolen } from '../_shared/uploadLink.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -488,10 +489,22 @@ Deno.serve(async (req: Request) => {
         } catch { /* Drive-Trigger fehlgeschlagen → drive_link bleibt wie gehabt */ }
       }
 
+      // {{upload_link}}: Seite /sign/u, hochladen ohne Google-Konto. Der Link gehört dem Empfänger dieser Regel und
+      // wird nur angelegt, wenn die Vorlage ihn nutzt. Scheitert das, bleibt der Ordner-Link, die Nachricht geht trotzdem.
+      const uploadLinkFuer = async (vorlage: string | null | undefined) => {
+        if (!vorlage?.includes('{{upload_link}}') || ph.upload_link) return
+        const fuerKunde = !rule.recipient || rule.recipient === 'client'
+        try {
+          ph.upload_link = (await uploadLinkHolen(supabase, fuerKunde
+            ? { lead_id, empfaenger: 'kunde', name: [lead.first_name, lead.last_name].filter(Boolean).join(' ') || 'Kunde', email: lead.email, phone: lead.whatsapp || lead.phone }
+            : { lead_id, empfaenger: rule.recipient === 'unit_developer' ? 'bautraeger' : 'partner', name: unitDevName || unitDevOrg || String(rule.name ?? 'Partner'), email: rule.recipient === 'unit_developer' ? unitDevEmail : null, phone: rule.recipient === 'unit_developer' ? unitDevPhone : null })).url
+        } catch (e) { console.error('[schedule-message] Upload-Link', (e as Error).message); ph.upload_link = ph.drive_link }
+      }
       let emailSubject: string | null = null, emailBody: string | null = null, waText: string | null = null, waImage: string | null = null
       if ((rule.message_type === 'email' || rule.message_type === 'both') && rule.email_template_id) {
         const { data: tpl } = await supabase.from('email_templates').select('subject, body, html_body').eq('id', rule.email_template_id).maybeSingle()
         if (tpl) {
+          await uploadLinkFuer(tpl.html_body ?? tpl.body)
           emailSubject = substitute(tpl.subject, ph)
           // HTML-Vorlage bevorzugen (gestylt); nur Plain-body → in pre-wrap-HTML kapseln,
           // damit Zeilenumbrüche erhalten bleiben (sonst geht der Text als Roh-HTML mit
@@ -504,6 +517,7 @@ Deno.serve(async (req: Request) => {
       if ((rule.message_type === 'whatsapp' || rule.message_type === 'both') && rule.whatsapp_event_type) {
         const { data: tpl } = await supabase.from('whatsapp_templates').select('message_template, image_url').eq('event_type', rule.whatsapp_event_type).eq('active', true).single()
         if (tpl) {
+          await uploadLinkFuer(tpl.message_template as string)
           waText = substitute(tpl.message_template as string,
             waVollmacht || waUnterlagen ? { ...ph, doc_vollmacht: waVollmacht, doc_unterlagen: waUnterlagen } : ph)
           // Bild der Vorlage mitnehmen — es muss den Weg durch die Warteschlange
