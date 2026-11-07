@@ -38,6 +38,7 @@
 // Deploy: supabase functions deploy social-growth --no-verify-jwt
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { CI } from '../_shared/brand.ts'
+import { reelVergleich, type BezahltRow } from './reelVergleich.ts'
 
 declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
 
@@ -425,22 +426,34 @@ async function postSnapshots(sb: SupabaseClient, meta: Meta, now: number, backfi
   // Zuordnung zu social_posts (post_results.instagram.id / facebook.id)
   const { data: sp } = await sb.from('social_posts').select('id, post_results').gte('posted_at', new Date(oldest - 3 * DAY_MS).toISOString()).limit(1000)
   const byRef = new Map<string, string>()
-  for (const p of (sp ?? []) as Array<{ id: string; post_results: Record<string, { id?: string }> | null }>) {
+  const testreelRefs: string[] = []
+  for (const p of (sp ?? []) as Array<{ id: string; post_results: Record<string, { id?: string; trial?: boolean }> | null }>) {
     for (const k of ['instagram', 'facebook']) { const id = p.post_results?.[k]?.id; if (id) byRef.set(String(id), p.id) }
+    const ig = p.post_results?.instagram
+    if (ig?.trial === true && ig.id) testreelRefs.push(String(ig.id))
   }
 
   interface Cand { ref: string; platform: Platform; at: number; mediaType: string; reel: boolean; caption: string; permalink: string | null; videoId?: string | null; likes?: number | null; comments?: number | null; shares?: number | null; social_post_id: string | null }
   const cands: Cand[] = []
 
-  const ig = await gGet<{ data?: Array<{ id: string; media_type?: string; media_product_type?: string; timestamp?: string; like_count?: number; comments_count?: number; permalink?: string; caption?: string }> }>(`${meta.igId}/media`, tok,
-    { fields: 'id,media_type,media_product_type,timestamp,like_count,comments_count,permalink,caption', limit: '60' })
-  if (ig.error) err(`Instagram Posts: ${errText(ig.error)}`)
-  for (const m of ig.data ?? []) {
+  type IgMedia = { id: string; media_type?: string; media_product_type?: string; timestamp?: string; like_count?: number; comments_count?: number; permalink?: string; caption?: string }
+  const IG_FIELDS = 'id,media_type,media_product_type,timestamp,like_count,comments_count,permalink,caption'
+  const addIg = (m: IgMedia) => {
     const at = Date.parse(m.timestamp ?? '')
-    if (!Number.isFinite(at) || at < oldest) continue
+    if (!Number.isFinite(at) || at < oldest) return
     const reel = m.media_product_type === 'REELS'
-    if (!reel && at < now - POST_WINDOW_DAYS * DAY_MS) continue
+    if (!reel && at < now - POST_WINDOW_DAYS * DAY_MS) return
     cands.push({ ref: m.id, platform: 'instagram', at, mediaType: reel ? 'REELS' : (m.media_type ?? 'IMAGE'), reel, caption: String(m.caption ?? '').slice(0, 160), permalink: m.permalink ?? null, likes: num(m.like_count), comments: num(m.comments_count), social_post_id: byRef.get(m.id) ?? null })
+  }
+  const ig = await gGet<{ data?: IgMedia[] }>(`${meta.igId}/media`, tok, { fields: IG_FIELDS, limit: '60' })
+  if (ig.error) err(`Instagram Posts: ${errText(ig.error)}`)
+  for (const m of ig.data ?? []) addIg(m)
+  // Testreels stehen nicht im Profil. Fehlen sie in der Liste, werden sie einzeln gelesen.
+  for (const id of testreelRefs) {
+    if (cands.some(c => c.ref === id)) continue
+    const m = await gGet<IgMedia>(id, tok, { fields: IG_FIELDS })
+    if (m.error) { err(`Testreel ${id}: ${errText(m.error)}`); continue }
+    addIg(m)
   }
 
   const fb = await gGet<{ data?: Array<{ id: string; created_time?: string; status_type?: string; permalink_url?: string; message?: string; shares?: { count?: number }; comments?: { summary?: { total_count?: number } }; reactions?: { summary?: { total_count?: number } }; attachments?: { data?: Array<{ media_type?: string; type?: string; target?: { id?: string; url?: string } }> } }> }>(`${PAGE_ID}/published_posts`, tok,
@@ -578,17 +591,9 @@ export function kpisFor(platform: Platform, rows: DayRow[], today: string) {
   }
 }
 
-async function buildStatus(sb: SupabaseClient) {
-  const today = ptYmd(Date.now())
-  const { data: acc, error: aErr } = await sb.from('social_account_daily')
-    .select('day, platform, followers, follows, unfollows, reach, reach_organic, reach_paid, profile_views, link_taps, raw')
-    .gte('day', addDays(today, -60)).order('day')
-  const rows: DayRow[] = ((acc ?? []) as Array<DayRow & { raw?: Record<string, unknown> | null }>).map(r => ({
-    day: r.day, platform: r.platform, followers: r.followers, follows: r.follows, unfollows: r.unfollows, reach: r.reach,
-    reach_organic: r.reach_organic, reach_paid: r.reach_paid, profile_views: r.profile_views, link_taps: r.link_taps,
-    estimated: r.raw?.followers_estimated === true,
-  }))
-  const { data: pm, error: pErr } = await sb.from('social_post_metrics')
+// Letzte Messung je Beitrag, neueste Beiträge zuerst
+async function latestMetrics(sb: SupabaseClient): Promise<{ posts: MetricRow[]; error: { message: string } | null }> {
+  const { data: pm, error } = await sb.from('social_post_metrics')
     .select('post_ref, platform, social_post_id, published_at, media_type, snapshot, reach, views, avg_watch_time_ms, shares, saves, comments, likes, follows, profile_visits, taken_at, raw')
     .gte('published_at', new Date(Date.now() - (REEL_BACKFILL_DAYS + 10) * DAY_MS).toISOString()).order('taken_at', { ascending: false }).limit(1000)
   const latest = new Map<string, MetricRow>()
@@ -601,7 +606,20 @@ async function buildStatus(sb: SupabaseClient) {
       backfill: raw?.backfill === true, share_rate: r.reach && r.shares != null ? r.shares / r.reach : null,
     })
   }
-  const posts = [...latest.values()].sort((a, b) => String(b.published_at ?? '').localeCompare(String(a.published_at ?? '')))
+  return { posts: [...latest.values()].sort((a, b) => String(b.published_at ?? '').localeCompare(String(a.published_at ?? ''))), error }
+}
+
+async function buildStatus(sb: SupabaseClient) {
+  const today = ptYmd(Date.now())
+  const { data: acc, error: aErr } = await sb.from('social_account_daily')
+    .select('day, platform, followers, follows, unfollows, reach, reach_organic, reach_paid, profile_views, link_taps, raw')
+    .gte('day', addDays(today, -60)).order('day')
+  const rows: DayRow[] = ((acc ?? []) as Array<DayRow & { raw?: Record<string, unknown> | null }>).map(r => ({
+    day: r.day, platform: r.platform, followers: r.followers, follows: r.follows, unfollows: r.unfollows, reach: r.reach,
+    reach_organic: r.reach_organic, reach_paid: r.reach_paid, profile_views: r.profile_views, link_taps: r.link_taps,
+    estimated: r.raw?.followers_estimated === true,
+  }))
+  const { posts, error: pErr } = await latestMetrics(sb)
   const reels = posts.filter(p => p.media_type === 'REELS' && (p.reach ?? 0) > 0)
   const top_by_shares = [...reels].sort((a, b) => (b.share_rate ?? 0) - (a.share_rate ?? 0) || (b.shares ?? 0) - (a.shares ?? 0) || (b.reach ?? 0) - (a.reach ?? 0)).slice(0, 5)
   const top_by_watch = reels.filter(p => p.avg_watch_time_ms != null).sort((a, b) => (b.avg_watch_time_ms ?? 0) - (a.avg_watch_time_ms ?? 0)).slice(0, 5)
@@ -644,6 +662,33 @@ async function reelRunway(sb: SupabaseClient): Promise<Runway> {
     if (d?.error) out.error = redact(d.error).slice(0, 200)
   } catch (e) { out.error = redact(e instanceof Error ? e.message : String(e)).slice(0, 200) }
   return out
+}
+
+// Anzeigen der letzten 7 Tage, die Reels bewerben: Original-Post-Anzeigen in allen Kampagnen,
+// dazu die eigenen Reel-Anzeigen der beiden Reichweiten-Kampagnen. Nur lesen.
+const WERBEKONTO = 'act_4065490590399677'
+const REEL_KAMPAGNEN = new Set(['120249679826060314', '120249789381030314'])
+async function reelBezahlt7d(sb: SupabaseClient): Promise<{ rows: BezahltRow[]; error: string | null }> {
+  const tok = await secret(sb, 'META_ACCESS_TOKEN')
+  if (!tok) return { rows: [], error: 'META_ACCESS_TOKEN fehlt' }
+  const ins = await gGet<{ data?: Array<{ ad_id: string; ad_name?: string; campaign_id?: string; impressions?: string; spend?: string }> }>(`${WERBEKONTO}/insights`, tok,
+    { level: 'ad', date_preset: 'last_7d', fields: 'ad_id,ad_name,campaign_id,impressions,spend', limit: '500' })
+  if (ins.error) return { rows: [], error: errText(ins.error) }
+  const daten = ins.data ?? []
+  const quelle = new Map<string, string>()
+  let error: string | null = null
+  for (let i = 0; i < daten.length; i += 50) {
+    const d = await gGet<Record<string, unknown>>('', tok, { ids: daten.slice(i, i + 50).map(x => x.ad_id).join(','), fields: 'creative{source_instagram_media_id}' })
+    if (d.error) { error = errText(d.error as GErr); continue }
+    for (const [id, v] of Object.entries(d)) {
+      const q = (v as { creative?: { source_instagram_media_id?: string } } | null)?.creative?.source_instagram_media_id
+      if (q) quelle.set(id, String(q))
+    }
+  }
+  const rows = daten.filter(x => quelle.has(x.ad_id) || REEL_KAMPAGNEN.has(String(x.campaign_id))).map(x => ({
+    ad_name: String(x.ad_name ?? x.ad_id), source_ig: quelle.get(x.ad_id) ?? null, impressions: Number(x.impressions) || 0, spend: Number(x.spend) || 0,
+  }))
+  return { rows, error }
 }
 
 type Status = Awaited<ReturnType<typeof buildStatus>>
@@ -717,6 +762,29 @@ async function weeklyReport(sb: SupabaseClient, dryRun: boolean): Promise<{ subj
     ? `Reel-Vorrat konnte nicht gelesen werden${runway.error ? ` (${esc(runway.error)})` : ''}. Schon eingeplant: ${runway.planned}.`
     : `${runway.queued} Reels im Ordner, ${runway.planned} schon eingeplant${untilTxt ? `, reicht bis ${untilTxt}` : ''}.`
 
+  // Je Reel unbezahlt und bezahlt. Ein Fehler hier zeigt nur einen Hinweis und hält die Mail nie auf.
+  let vergleichHtml = ''
+  try {
+    const { posts: alleBeitraege, error: mErr } = await latestMetrics(sb)
+    const bezahlt = await reelBezahlt7d(sb)
+    const ap = await setting(sb, 'social_autopilot')
+    const testIds = Array.isArray(ap.trial_reel_ids) ? ap.trial_reel_ids.map(String) : []
+    const zeilen = reelVergleich(alleBeitraege, bezahlt.rows, testIds, Date.now())
+    const paar = (personen: number | null, aufrufe: number | null) => (personen == null && aufrufe == null ? `<span style="color:${MUTED}">-</span>` : `${fmtN(personen)} / ${fmtN(aufrufe)}`)
+    const usd = (n: number) => `${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`
+    const hinweis = [bezahlt.error ? `Bezahlte Zahlen unvollständig (${esc(bezahlt.error)}).` : '', mErr ? `Beitragswerte unvollständig (${esc(redact(mErr.message))}).` : ''].filter(Boolean).join(' ')
+    vergleichHtml = `<h3 style="margin:18px 0 8px;color:${NAVY};font-size:16px">💰 Unbezahlt und bezahlt je Reel</h3>
+  ${zeilen.length ? `<table style="width:100%;border-collapse:collapse;margin:0 0 6px"><tr style="background:${CI.cream}">
+    <th style="${td}text-align:left;color:${MUTED};font-weight:600">Reel</th><th style="${td}text-align:right;color:${MUTED};font-weight:600">Instagram unbezahlt</th>
+    <th style="${td}text-align:right;color:${MUTED};font-weight:600">Facebook unbezahlt</th><th style="${td}text-align:right;color:${MUTED};font-weight:600">Bezahlt 7 Tage</th></tr>
+    ${zeilen.map(z => `<tr><td style="${td}">${z.link ? `<a href="${esc(z.link)}" style="color:${NAVY}">${esc(z.titel)}</a>` : esc(z.titel)}${z.test ? ` <span style="color:${MUTED}">(Testreel)</span>` : ''}</td>
+      <td style="${td}text-align:right">${paar(z.ig_personen, z.ig_aufrufe)}</td><td style="${td}text-align:right">${paar(z.fb_personen, z.fb_aufrufe)}</td>
+      <td style="${td}text-align:right">${z.bezahlt_aufrufe || z.bezahlt_usd ? `${fmtN(z.bezahlt_aufrufe)} / ${usd(z.bezahlt_usd)}` : `<span style="color:${MUTED}">-</span>`}</td></tr>`).join('')}</table>
+  <p style="margin:0 0 16px;color:${MUTED};font-size:12px">Unbezahlt: Personen / Aufrufe seit Veröffentlichung, letzte Messung. Bezahlt: Aufrufe aus Anzeigen / Ausgaben der letzten 7 Tage in US-Dollar. Testreel: läuft zuerst nur bei Nicht-Followern. ${hinweis}</p>` : `<p style="margin:0 0 16px;font-size:14px">Keine Reels und keine Reel-Anzeigen im Zeitraum. ${hinweis}</p>`}`
+  } catch (e) {
+    vergleichHtml = `<p style="margin:0 0 16px;font-size:14px">Vergleich unbezahlt und bezahlt konnte nicht gelesen werden (${esc(redact(e instanceof Error ? e.message : String(e)).slice(0, 200))}).</p>`
+  }
+
   const html = noDash(`<div style="font-family:Montserrat,Arial,Helvetica,sans-serif;max-width:640px;margin:0 auto;color:${CI.ink}">
   <div style="border-top:4px solid ${CORAL};padding:18px 0 6px"><h2 style="margin:0;color:${NAVY};font-size:20px">📈 Wachstum Instagram und Facebook, KW ${kw}</h2>
   <p style="margin:6px 0 0;color:${MUTED};font-size:13px">Ziel: ${fmtN(TARGET)} Follower je Plattform bis 26.09.2027. Soll-Tempo Instagram ${fmtN(ig.required_per_month)} und Facebook ${fmtN(fb.required_per_month)} neue Follower pro Monat.</p></div>
@@ -729,6 +797,7 @@ async function weeklyReport(sb: SupabaseClient, dryRun: boolean): Promise<{ subj
   <h3 style="margin:18px 0 8px;color:${NAVY};font-size:16px">🎬 Reels der Woche</h3>
   ${rw.count ? `${reelLine('Bestes Reel', rw.best)}${reelLine('Schwächstes Reel', rw.weak)}` : '<p style="margin:0 0 10px;font-size:14px">Diese Woche wurde kein Reel gemessen.</p>'}
   <p style="margin:0 0 16px;font-size:14px"><b>Reel-Vorrat:</b> ${runwayTxt}</p>
+  ${vergleichHtml}
   <h3 style="margin:18px 0 8px;color:${NAVY};font-size:16px">✅ To-dos</h3>
   <ol style="margin:0 0 16px;padding-left:20px;font-size:14px;line-height:1.55">${todos.map(t => `<li style="margin-bottom:6px">${esc(t)}</li>`).join('')}</ol>
   <p style="margin:18px 0 0;font-size:13px"><a href="https://portal.happy-property.com/admin/crm/social" style="color:${NAVY}">Social-Studio öffnen</a> <span style="color:${MUTED}">(Karte „Wachstum“ im Redaktionsplan)</span></p>

@@ -34,6 +34,8 @@ import { CI, CI_FONT, loadCiFonts } from '../_shared/brand.ts'
 import { slideSvg, coverOverlaySvg, composeCover, normalizeSlides, hookOverlaySvg, slideOverflow, type CarSlide } from './carousel.ts'
 import { seamCheck, smallUrl, type SeamCheck } from './imageGuard.ts'
 import { SB_URL } from '../_shared/sbUrl.ts'
+import { einCta } from './einCta.ts'
+import { reelPosten } from './reelPosten.ts'
 
 declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
 
@@ -416,7 +418,7 @@ type ApKind = 'reel' | 'news' | 'lotte' | 'linkedin'
 interface ApSlot { dow: number; kind: ApKind; time: string; li_time?: string; format?: 'single' | 'carousel' }
 // li_slots getrennt von slots: ältere Studio-Versionen im Browser-Cache kennen die Art
 // 'linkedin' nicht und stürzten daran ab (weiße Seite, 26.9.2026).
-interface ApCfg { enabled?: boolean; reels_folder?: string; lotte_folder?: string; social_folder?: string; reel_platforms?: string[]; reel_youtube_from?: string; slots?: ApSlot[]; li_slots?: ApSlot[] }
+interface ApCfg { trial_reel_ids?: string[]; enabled?: boolean; reels_folder?: string; lotte_folder?: string; social_folder?: string; reel_platforms?: string[]; reel_youtube_from?: string; slots?: ApSlot[]; li_slots?: ApSlot[] }
 // Reels gehen ab reel_youtube_from (YYYY-MM-DD, Slot-Tag) zusätzlich als YouTube-Short raus.
 // Sven 3.11.2026: 6 Shorts pro Woche ab 22.11., davor belegt Leonard den Kanal.
 function reelPlatforms(cfg: ApCfg, ymd: string): string[] {
@@ -3046,10 +3048,10 @@ Regeln:
       // Connectoren), sonst Env-Secret.
       const { data: liRow } = await sb.from('connector_secrets').select('value').eq('key', 'LINKEDIN_ACCESS_TOKEN').maybeSingle()
       const liToken = (liRow as { value: string } | null)?.value ?? Deno.env.get('LINKEDIN_ACCESS_TOKEN') ?? ''
-      const results: Record<string, { ok: boolean; id?: string; error?: string; url?: string; pending?: boolean; container?: string; tries?: number }> = {}
+      const results: Record<string, { ok: boolean; id?: string; error?: string; url?: string; pending?: boolean; container?: string; tries?: number; trial?: boolean; trial_fallback?: string }> = {}
       // Wiederaufnahme (Reel): was schon geklappt hat, NICHT doppelt posten;
       // ein Instagram-Container in Verarbeitung wird weiterverfolgt.
-      const prevRes = ((post as { post_results?: Record<string, { ok?: boolean; id?: string; url?: string; pending?: boolean; container?: string; tries?: number }> | null } | null)?.post_results ?? {})
+      const prevRes = ((post as { post_results?: Record<string, { ok?: boolean; id?: string; url?: string; pending?: boolean; container?: string; tries?: number; trial?: boolean; trial_fallback?: string }> | null } | null)?.post_results ?? {})
       for (const pf of p.platforms ?? []) { const r = prevRes[pf]; if (r && r.ok === true) results[pf] = { ok: true, id: r.id, url: r.url } }
       const igPrev = prevRes.instagram && prevRes.instagram.pending ? prevRes.instagram : null
 
@@ -3082,8 +3084,8 @@ Regeln:
       }
       // Facebook: Karussell (mehrere Fotos), Einzelfoto oder Text-Post
       if (p.platforms.includes('facebook') && pageId && !results.facebook && fbLohntSich) {
-        // Facebook-Text ohne Kommentar-Köder und mit max. 5 Hashtags (Instagram behält das Original)
-        const fbText = fbCaption(p.content)
+        // Facebook-Text mit nur einer Handlungsaufforderung (einCta.ts), ohne Kommentar-Köder und mit max. 5 Hashtags
+        const fbText = fbCaption(einCta(p.content, 'facebook', isCommentBaitLine))
         try {
           if (videoUrl) {
             // Video/Reel: Facebook nimmt eine öffentliche Datei-URL direkt an
@@ -3118,34 +3120,14 @@ Regeln:
       if (p.platforms.includes('instagram') && !results.instagram) {
         try {
           if (!igId) throw new Error('Kein Instagram-Business-Konto mit der Seite verknüpft.')
+          // Instagram-Text mit nur einer Handlungsaufforderung (Regeln in einCta.ts)
+          const igText = einCta(p.content, 'instagram', isCommentBaitLine)
           if (videoUrl) {
             // Instagram-REEL: Container anlegen → Verarbeitung abwarten → publish.
             // Dauert die Verarbeitung länger, merken wir uns den Container und
             // auto_publish macht in 30 Min weiter (kein zweiter Facebook-Post).
-            let cid = igPrev?.container ?? ''
-            if (!cid) {
-              const c = await fetch(`https://graph.facebook.com/v21.0/${igId}/media`, { method: 'POST', body: new URLSearchParams({ media_type: 'REELS', video_url: videoUrl, caption: p.content, share_to_feed: 'true', access_token: pageToken }) }).then(x => x.json())
-              if (c.error) throw new Error(c.error.message)
-              cid = c.id
-            }
-            let stat = ''
-            for (let i = 0; i < 12; i++) {
-              await new Promise(res => setTimeout(res, 10000))
-              const st = await fetch(`https://graph.facebook.com/v21.0/${cid}?fields=status_code&access_token=${pageToken}`).then(x => x.json()).catch(() => ({}))
-              stat = (st as { status_code?: string }).status_code ?? ''
-              if (stat === 'FINISHED' || stat === 'ERROR' || stat === 'EXPIRED') break
-            }
-            if (stat === 'ERROR' || stat === 'EXPIRED') throw new Error('Instagram konnte das Video nicht verarbeiten (Format/Länge prüfen: MP4, 9:16, max. 15 Min).')
-            if (stat !== 'FINISHED') {
-              const tries = (igPrev?.tries ?? 0) + 1
-              if (tries >= 8) throw new Error('Instagram verarbeitet das Reel seit über 3 Stunden nicht. Bitte manuell posten.')
-              results.instagram = { ok: false, pending: true, container: cid, tries, error: 'Instagram verarbeitet das Reel noch, nächster Versuch automatisch in 30 Min.' }
-              throw { __done: true }
-            }
-            const c = { id: cid }
-            const pubV = await fetch(`https://graph.facebook.com/v21.0/${igId}/media_publish`, { method: 'POST', body: new URLSearchParams({ creation_id: c.id, access_token: pageToken }) }).then(x => x.json())
-            if (pubV.error) throw new Error(pubV.error.message)
-            results.instagram = { ok: true, id: pubV.id }
+            const testIds = igPrev ? [] : ((await autopilotCfg(sb)).trial_reel_ids ?? [])
+            results.instagram = await reelPosten({ igId, videoUrl, caption: igText, token: pageToken, alsTest: testIds.includes(body.post_id), vorlauf: igPrev, bereinigen: redactToken })
             throw { __done: true }
           }
           if (!p.image_url) throw new Error('Instagram braucht mindestens ein Bild.')
@@ -3164,11 +3146,11 @@ Regeln:
                 await new Promise(res => setTimeout(res, 2000))
               }
             }
-            const c = await fetch(`https://graph.facebook.com/v21.0/${igId}/media`, { method: 'POST', body: new URLSearchParams({ media_type: 'CAROUSEL', children: children.join(','), caption: p.content, access_token: pageToken }) }).then(x => x.json())
+            const c = await fetch(`https://graph.facebook.com/v21.0/${igId}/media`, { method: 'POST', body: new URLSearchParams({ media_type: 'CAROUSEL', children: children.join(','), caption: igText, access_token: pageToken }) }).then(x => x.json())
             if (c.error) throw new Error(c.error.message)
             creationId = c.id
           } else {
-            const c = await fetch(`https://graph.facebook.com/v21.0/${igId}/media`, { method: 'POST', body: new URLSearchParams({ image_url: p.image_url, caption: p.content, access_token: pageToken }) }).then(x => x.json())
+            const c = await fetch(`https://graph.facebook.com/v21.0/${igId}/media`, { method: 'POST', body: new URLSearchParams({ image_url: p.image_url, caption: igText, access_token: pageToken }) }).then(x => x.json())
             if (c.error) throw new Error(c.error.message)
             creationId = c.id
           }
