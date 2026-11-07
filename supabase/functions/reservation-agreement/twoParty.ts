@@ -454,14 +454,15 @@ export async function tpSubmit(sb: SupabaseClient, hit: Hit, body: Record<string
     } catch (e) { console.error('[two-party] Link Kunde', (e as Error).message) }
   }
   if (buyerDone && vendorDone) {
-    // Scheitert das Zusammenführen hier, bleibt die Unterschrift gültig und der Sweep holt es nach
-    try {
-      if (test) await finalizeTest(sb, { row: await reload(), side, test }, p, parts)
-      else await finalize(sb, row.id, side === 'buyer')
-    } catch (e) {
-      console.error('[two-party] Zusammenführen', (e as Error).message)
-      if (!test) await sb.from('reservation_agreements').update({ error: `Zusammenführen: ${(e as Error).message}`.slice(0, 500), finalizing_at: null }).eq('id', row.id)
-    }
+    // Eigener Aufruf statt hier im selben Worker: PDF zusammenführen und danach die Seite rendern sprengte
+    // bei 6,5 MB das Speicherlimit, der letzte Unterzeichner sah dann einen Fehler (HTTP 546, 7.11.2026).
+    // Scheitert der Aufruf, bleibt die Unterschrift gültig und der Sweep holt es nach.
+    const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    warm(fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/reservation-agreement`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, apikey: key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'finalize_two_party', agreement_id: row.id, customer_last: side === 'buyer', test }),
+    }).then(r => { if (!r.ok) throw new Error(`Zusammenführen: HTTP ${r.status}`) }))
   }
   return await tpView(sb, { row: await reload(), side, test })
 }
@@ -885,6 +886,23 @@ export async function deliverFinal(sb: SupabaseClient, row: AgreementRow, custom
     if (r.gaveUp.length) await giveUpNotice(sb, row, ctx, r.gaveUp, 'Der fertige Vertrag')
     return r.errors
   } finally { await releaseSending(sb, row.id) }
+}
+
+/** Eigener Aufruf nach der letzten Unterschrift (action finalize_two_party). */
+export async function finalizeJob(sb: SupabaseClient, id: string, customerSignedLast: boolean, test: boolean): Promise<void> {
+  try {
+    if (!test) return await finalize(sb, id, customerSignedLast)
+    const { data } = await sb.from('reservation_agreements').select('*').eq('id', id).single()
+    const row = data as AgreementRow
+    const hit: Hit = { row, side: 'buyer', test: true }
+    const p = payloadOf(hit)
+    if (!p) throw new Error('Testdaten fehlen')
+    await finalizeTest(sb, hit, p, await loadParts(sb, id, p.round))
+  } catch (e) {
+    console.error('[two-party] Zusammenführen', (e as Error).message)
+    if (!test) await sb.from('reservation_agreements').update({ error: `Zusammenführen: ${(e as Error).message}`.slice(0, 500), finalizing_at: null }).eq('id', id)
+    throw e
+  }
 }
 
 /** Testlauf: dieselben Nachrichten an Sven, nichts wird abgelegt. */

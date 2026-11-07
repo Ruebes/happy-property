@@ -55,7 +55,7 @@ import { signView, signSubmit } from './sign.ts'
 import { docCreate, docView, docSubmit, docQueueSweep } from './docsign.ts'
 import { loadSeal, saveSeal, removeSeal, sealDataUrl, pngFromInput, MAX_SEAL_BYTES } from './seal.ts'
 import { specialTermsEn, type SpecialTerms } from './terms.ts'
-import { buyerView, findBuyerRow, floraFieldsFor, FLORA_SAMPLE, floraSend, floraWarnings, loadParts, tpSubmit, twoPartySweep } from './twoParty.ts'
+import { buyerView, finalizeJob, findBuyerRow, floraFieldsFor, FLORA_SAMPLE, floraSend, floraWarnings, loadParts, tpSubmit, twoPartySweep } from './twoParty.ts'
 import { addressSubmit, addressUpload, addressView, floraWaitingFor, furtherIdMissing, withCustomerData, type CustomerData } from './customerData.ts'
 import { floraAutoCheck, type AutoCheck } from './floraCheck.ts'
 import { appendPdf, fetchAppendix } from './appendix.ts'
@@ -971,6 +971,12 @@ Deno.serve(async (req) => {
       if (rt && !body.wait) { rt.waitUntil(job); return json({ ok: true, started: true }) }
       await job
       return json({ ok: true, done: true })
+    }
+
+    // Nach der letzten Unterschrift, eigener Worker (twoParty.tpSubmit)
+    if (action === 'finalize_two_party') {
+      await finalizeJob(sb, String(body.agreement_id ?? ''), body.customer_last === true, body.test === true)
+      return json({ ok: true })
     }
 
     if (action === 'preview_template') {
