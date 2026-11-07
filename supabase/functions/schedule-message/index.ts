@@ -257,7 +257,12 @@ Deno.serve(async (req: Request) => {
         objektName = u.crm_projects?.name ?? ''
         // Kaufpreis NETTO ausweisen und die MwSt getrennt danebenstellen — in der
         // Kurzzeitvermietung bekommt der Käufer die MwSt erstattet (Sven 31.8.).
-        const net = unitNet(u), gross = unitGross(u)
+        // Handpreis aus dem Reservierungsvertrag geht vor dem Listenpreis der Wohnung (Walter Huber B106, 7.11.2026:
+        // Aaron und der Anwalt bekamen 225.000 genannt, vereinbart waren 190.000). Der Vertrag rechnet schon so.
+        const { data: resRow } = await supabase.from('reservation_agreements').select('contract').eq('deal_id', deal_id).maybeSingle()
+        const handNet = Number((resRow as { contract?: { net_price?: number | null } | null } | null)?.contract?.net_price) || null
+        const vat = u.vat_rate ?? DEFAULT_VAT_RATE
+        const net = handNet ?? unitNet(u), gross = handNet != null ? Math.round(handNet * (100 + vat)) / 100 : unitGross(u)
         kaufpreis       = eur(net)
         kaufpreisBrutto = eur(gross)
         mwst            = (net != null && gross != null) ? eur(gross - net) : ''
