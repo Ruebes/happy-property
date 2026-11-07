@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Die Finanzamt-Strategie | Happy Property</title>
+<meta name="description" content="Wie du in Deutschland Einkommensteuer zurückbekommst, wenn du eine Neubauwohnung auf Zypern kaufst: Beleihung, Doppelbesteuerungsabkommen, 5 % degressive Abschreibung und Zinsen. Mit Beispielrechnung.">
+<meta property="og:title" content="Deine Immobilie am Mittelmeer. Das Finanzamt zahlt mit.">
+<meta property="og:description" content="Die Strategie aus dem Video: Beleihung in Deutschland, Neubau auf Zypern, Abschreibung und Zinsen in der deutschen Steuererklärung. Mit Beispielrechnung.">
+<meta property="og:image" content="https://steuervorteil-zypern-immobilien.com/wp-content/uploads/2026/10/zypern-strandpromenade-paphos-1024x687.jpg">
+<link rel="icon" href="/favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;1,500&family=Montserrat:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --creme: #fffcf6;
+    --creme-2: #f7f1e6;
+    --korall: #ff795d;
+    --korall-soft: #fff0ec;
+    --navy: #1a2332;
+    --navy-2: #26324a;
+    --ink: #2a2a2a;
+    --line: #e6dfd0;
+    --gold: #c2a15e;
+    --muted: #6f6f78;
+    --green: #2f7d5b;
+    --white: #ffffff;
+    --font-display: 'Playfair Display', Georgia, 'Times New Roman', serif;
+    --font-body: 'Montserrat', 'Helvetica Neue', Arial, sans-serif;
+    --wrap: 1080px;
+    --text: 660px;
+    --radius: 18px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  html, body { overflow-x: hidden; }
+  body {
+    margin: 0; background: var(--creme); color: var(--ink);
+    font-family: var(--font-body); font-size: 17px; line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  img { max-width: 100%; height: auto; display: block; }
+  a { color: inherit; }
+  h1, h2, h3 { font-family: var(--font-display); color: var(--navy); font-weight: 500; line-height: 1.12; margin: 0; text-wrap: balance; }
+  h1 { font-size: clamp(2.3rem, 5.4vw, 4rem); }
+  h2 { font-size: clamp(1.75rem, 3.4vw, 2.6rem); }
+  h3 { font-size: 1.25rem; }
+  p { margin: 0 0 1em; }
+  p:last-child { margin-bottom: 0; }
+  .wrap { width: min(var(--wrap), calc(100% - 32px)); margin: 0 auto; }
+  .eyebrow { font-size: .72rem; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--korall); margin: 0 0 14px; }
+  .lead { font-size: 1.12rem; max-width: var(--text); }
+  section { padding: clamp(52px, 7.5vw, 96px) 0; }
+  .section-head { max-width: 720px; margin-bottom: 36px; }
+  .section-head p { color: var(--muted); max-width: var(--text); margin-top: 16px; }
+  .hero-grid > *, .blocks > *, .fit > *, .calc-grid > * { min-width: 0; }
+
+  /* Kopf */
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 0; }
+  .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; font-weight: 700; color: var(--navy); letter-spacing: .02em; }
+  .brand img { width: 40px; height: 40px; border-radius: 10px; }
+  .top a.top-cta { font-size: .85rem; font-weight: 600; text-decoration: none; color: var(--navy); border: 1px solid var(--line); background: var(--white); border-radius: 999px; padding: 9px 16px; }
+
+  /* Buttons */
+  .btns { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; font-size: .95rem; text-decoration: none; border-radius: 999px; padding: 15px 26px; }
+  .btn-primary { background: var(--navy); color: var(--white); }
+  .btn-accent { background: var(--korall); color: var(--white); }
+  .btn-ghost { background: transparent; color: var(--navy); border: 1px solid var(--navy); }
+  .btn-note { font-size: .82rem; color: var(--muted); margin-top: 12px; }
+
+  /* Hero */
+  .hero { padding: clamp(20px, 5vw, 64px) 0 clamp(52px, 7vw, 88px); }
+  .hero-grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: 56px; align-items: center; }
+  .hero h1 em { font-style: italic; color: var(--korall); }
+  .hero .lead { margin-top: 22px; }
+  .quote { margin-top: 26px; border-left: 3px solid var(--korall); padding: 4px 0 4px 18px; font-family: var(--font-display); font-style: italic; font-size: 1.15rem; color: var(--navy); max-width: 560px; }
+  .quote span { display: block; font-family: var(--font-body); font-style: normal; font-size: .8rem; color: var(--muted); margin-top: 6px; }
+  .portrait { position: relative; }
+  .portrait img { border-radius: 22px; box-shadow: 0 30px 60px -30px rgba(26,35,50,.4); aspect-ratio: 4 / 5; object-fit: cover; width: 100%; }
+  .portrait .badge { position: absolute; left: -18px; bottom: 26px; background: var(--white); border: 1px solid var(--line); border-radius: 14px; padding: 12px 16px; box-shadow: 0 18px 40px -22px rgba(26,35,50,.45); font-size: .85rem; max-width: 230px; }
+  .portrait .badge b { display: block; color: var(--navy); font-size: .95rem; }
+
+  /* Kurzfassung */
+  .short { background: var(--navy); color: #e9ecf2; border-radius: var(--radius); padding: clamp(28px, 4.5vw, 48px); display: grid; grid-template-columns: auto 1fr; gap: 28px; align-items: start; }
+  .short .tag { font-size: .7rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--korall); white-space: nowrap; padding-top: 6px; }
+  .short p { font-family: var(--font-display); font-size: clamp(1.25rem, 2.4vw, 1.6rem); line-height: 1.4; color: var(--white); margin: 0; }
+  .short p b { color: var(--korall); font-weight: 500; }
+
+  /* Bausteine */
+  .blocks { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .block { background: var(--white); border: 1px solid var(--line); border-radius: var(--radius); padding: 28px 26px; }
+  .block .n { width: 38px; height: 38px; border-radius: 50%; border: 1.5px solid var(--korall); color: var(--korall); font-weight: 700; display: grid; place-items: center; margin-bottom: 16px; }
+  .block h3 { margin-bottom: 10px; }
+  .block p { font-size: .95rem; }
+  .block .small { font-size: .85rem; color: var(--muted); margin-top: 10px; }
+  .block a { color: var(--navy); font-weight: 600; }
+
+  /* Rechnung */
+  .calc { background: var(--creme-2); }
+  .calc-grid { display: grid; grid-template-columns: 1.35fr .65fr; gap: 22px; align-items: start; }
+  .table-card { background: var(--white); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; font-size: .93rem; }
+  th, td { padding: 13px 16px; text-align: right; vertical-align: top; }
+  th:first-child, td:first-child { text-align: left; }
+  thead th { background: var(--navy); color: var(--white); font-weight: 600; font-size: .8rem; line-height: 1.35; }
+  thead th.hl { background: var(--korall); }
+  tbody tr { border-top: 1px solid var(--line); }
+  td small { display: block; color: var(--muted); font-size: .78rem; margin-top: 2px; }
+  td.neg { color: var(--ink); }
+  td.dim { color: #b5b0a4; }
+  td.col-b { background: #fff8f5; }
+  tr.sum td { font-weight: 700; color: var(--navy); background: #fbf8f2; }
+  tr.sum td.col-b { background: var(--korall-soft); }
+  tr.win td { font-weight: 700; font-size: 1.02rem; color: var(--green); background: #f1f8f4; }
+  tr.win td.col-b { background: #e4f3ea; }
+  .table-note { font-size: .78rem; color: var(--muted); padding: 14px 16px 16px; border-top: 1px solid var(--line); }
+  .insights { display: grid; gap: 14px; }
+  .insight { background: var(--white); border: 1px solid var(--line); border-radius: 16px; padding: 20px 20px; font-size: .93rem; }
+  .insight b { display: block; font-family: var(--font-display); font-weight: 500; font-size: 1.15rem; color: var(--navy); margin-bottom: 6px; }
+  .insight.accent { background: var(--korall); border-color: var(--korall); color: var(--white); }
+  .insight.accent b { color: var(--white); }
+
+  /* Reise */
+  .travel { display: grid; grid-template-columns: .9fr 1.1fr; gap: 0; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); background: var(--white); }
+  .travel img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 75%; min-height: 260px; }
+  .travel .txt { padding: clamp(26px, 4vw, 44px); }
+  .travel h2 { font-size: clamp(1.5rem, 2.8vw, 2.1rem); margin-bottom: 14px; }
+
+  /* Passt das? */
+  .fit { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .fit > div { border-radius: var(--radius); padding: 28px 26px; border: 1px solid var(--line); background: var(--white); }
+  .fit h3 { margin-bottom: 16px; }
+  .fit ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; font-size: .95rem; }
+  .fit li { display: flex; gap: 12px; align-items: flex-start; }
+  .fit .ico { flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: .8rem; margin-top: 2px; }
+  .fit .yes .ico { background: #e4f3ea; color: var(--green); }
+  .fit .no .ico { background: var(--creme-2); color: var(--muted); }
+
+  /* Ehrlich */
+  .honest { max-width: 820px; }
+  .honest ol { margin: 0; padding: 0; list-style: none; counter-reset: h; display: grid; gap: 18px; }
+  .honest li { counter-increment: h; display: grid; grid-template-columns: 40px 1fr; gap: 14px; }
+  .honest li::before { content: counter(h); width: 32px; height: 32px; border-radius: 50%; background: var(--navy); color: var(--white); font-weight: 700; font-size: .85rem; display: grid; place-items: center; }
+  .honest b { color: var(--navy); }
+
+  /* Schluss */
+  .closing { background: var(--navy); color: #e9ecf2; }
+  .closing-grid { display: grid; grid-template-columns: 1.1fr .9fr; gap: 48px; align-items: center; }
+  .closing h2 { color: var(--white); }
+  .closing p { color: #cfd5df; margin-top: 18px; }
+  .closing ul { margin: 22px 0 0; padding: 0; list-style: none; display: grid; gap: 12px; }
+  .closing li { display: flex; gap: 12px; align-items: flex-start; color: #e9ecf2; font-size: .96rem; }
+  .closing li::before { content: ''; flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--korall); margin-top: 9px; }
+  .closing .btn-note { color: #aeb6c4; }
+  .closing .card { background: var(--navy-2); border: 1px solid rgba(255,255,255,.08); border-radius: var(--radius); overflow: hidden; }
+  .closing .card img { aspect-ratio: 4 / 3; object-fit: cover; width: 100%; }
+  .closing .card .cap { padding: 18px 20px; font-size: .9rem; color: #cfd5df; }
+  .closing .card .cap b { display: block; color: var(--white); font-family: var(--font-display); font-weight: 500; font-size: 1.15rem; margin-bottom: 4px; }
+
+  /* FAQ */
+  .faq { max-width: 820px; }
+  .faq details { border-top: 1px solid var(--line); padding: 18px 0; }
+  .faq details:last-child { border-bottom: 1px solid var(--line); }
+  .faq summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; gap: 16px; font-weight: 600; color: var(--navy); font-size: 1.02rem; }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary::after { content: '+'; color: var(--korall); font-size: 1.4rem; line-height: 1; }
+  .faq details[open] summary::after { content: '-'; }
+  .faq details p { margin-top: 12px; font-size: .96rem; max-width: 700px; }
+
+  .disclaimer { font-size: .8rem; color: var(--muted); max-width: 820px; margin-top: 40px; }
+  footer { padding: 26px 0 110px; font-size: .8rem; color: var(--muted); }
+  footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; }
+  footer a { text-decoration: none; }
+
+  /* Mobile-Leiste */
+  .sticky { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: rgba(255,252,246,.96); border-top: 1px solid var(--line); display: none; z-index: 20; transform: translateY(110%); transition: transform .25s ease; }
+  .sticky.show { transform: none; }
+  .sticky a { display: block; text-align: center; background: var(--korall); color: var(--white); font-weight: 700; text-decoration: none; border-radius: 999px; padding: 14px 18px; }
+
+  @media (max-width: 900px) {
+    .hero-grid, .calc-grid, .closing-grid, .travel { grid-template-columns: 1fr; }
+    .portrait { max-width: 420px; }
+    .portrait .badge { left: 12px; }
+    .travel img { min-height: 220px; max-height: 300px; }
+  }
+  @media (max-width: 640px) {
+    body { font-size: 16px; }
+    .blocks, .fit { grid-template-columns: 1fr; }
+    .short { grid-template-columns: 1fr; gap: 12px; }
+    .top a.top-cta { display: none; }
+    .btn { width: 100%; justify-content: center; }
+    th, td { padding: 11px 10px; }
+    table { font-size: .84rem; }
+    thead th { font-size: .72rem; }
+    .sticky { display: block; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap top">
+  <a class="brand" href="https://steuervorteil-zypern-immobilien.com/" target="_blank" rel="noopener"><img src="/logo.jpg" alt="Happy Property Logo">Happy Property</a>
+  <a class="top-cta" data-termin href="https://portal.happy-property.com/termin?utm_campaign=strategie-finanzamt">Strategiegespräch buchen</a>
+</div>
+
+<!-- Hero -->
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <p class="eyebrow">Die Strategie aus dem Video</p>
+      <h1>Deine Immobilie am Mittelmeer. <em>Das Finanzamt zahlt mit.</em></h1>
+      <p class="quote">„Wenn ich in Deutschland leben würde, würde ich mir meine Immobilie am Mittelmeer vom Finanzamt bezahlen lassen.“<span>Sven Rüprich, Happy Property, Paphos</span></p>
+      <p class="lead">Ganz bezahlt das Finanzamt sie natürlich nicht. Aber es beteiligt sich spürbar, Jahr für Jahr. Auf dieser Seite zeige ich dir, wie das funktioniert, mit einer ehrlichen Beispielrechnung. Lesezeit etwa fünf Minuten.</p>
+      <div class="btns">
+        <a class="btn btn-accent" data-termin href="https://portal.happy-property.com/termin?utm_campaign=strategie-finanzamt">Mit meinen Zahlen durchrechnen &rarr;</a>
+        <a class="btn btn-ghost" href="#rechnung" data-jump="rechnung">Erst die Rechnung ansehen</a>
+      </div>
+    </div>
+    <div class="portrait">
+      <img src="https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/render/image/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg?width=720&amp;height=900&amp;resize=cover&amp;quality=75" width="720" height="900" alt="Sven Rüprich von Happy Property in Paphos">
+      <div class="badge"><b>Sven Rüprich</b>Lebt auf Zypern und begleitet Käufer rund um Paphos</div>
+    </div>
+  </div>
+</header>
+
+<!-- Kurzfassung -->
+<section style="padding-top:0">
+  <div class="wrap">
+    <div class="short">
+      <div class="tag">In einem Satz</div>
+      <p>Du kaufst mit geliehenem Geld eine vermietete Neubauwohnung auf Zypern. <b>Zinsen und Abschreibung</b> ergeben in deiner deutschen Steuererklärung einen Verlust auf dem Papier. Den verrechnet das Finanzamt mit deinem Gehalt, und du bekommst <b>Einkommensteuer zurück</b>.</p>
+    </div>
+  </div>
+</section>
+
+<!-- Bausteine -->
+<section style="padding-top:0">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">So funktioniert es</p>
+      <h2>Vier Bausteine, die zusammen wirken</h2>
+      <p>Jeder Baustein für sich ist nichts Besonderes. Spannend wird es, wenn alle vier zusammenkommen.</p>
+    </div>
+    <div class="blocks">
+      <div class="block">
+        <div class="n">1</div>
+        <h3>Das Eigenkapital steckt in deinem Haus</h3>
+        <p>Hast du in Deutschland ein Haus oder eine Wohnung, die weitgehend abbezahlt ist, kann eine Bank sie beleihen. Mit diesem Kredit bringst du das Eigenkapital für Zypern auf. Den Rest des Kaufpreises finanziert eine Bank. So kaufst du, ohne Erspartes vom Konto zu nehmen und ohne etwas zu verkaufen.</p>
+        <p class="small">Wie die Beleihung genau abläuft, erkläre ich in diesem Artikel: <a href="https://steuervorteil-zypern-immobilien.com/ohne-eigenkapital-immobilie-zypern/" target="_blank" rel="noopener">Ohne Eigenkapital zur Immobilie am Strand</a></p>
+      </div>
+      <div class="block">
+        <div class="n">2</div>
+        <h3>Ein Neubau auf Zypern, dauerhaft vermietet</h3>
+        <p>Du kaufst eine Neubauwohnung und vermietest sie langfristig an Mieter vor Ort. Das ist wichtig, denn nur Wohnungen, die zum Wohnen vermietet werden, bekommen die hohe Abschreibung aus Baustein 4. Ferienvermietung zählt dafür nicht.</p>
+      </div>
+      <div class="block">
+        <div class="n">3</div>
+        <h3>Das Doppelbesteuerungsabkommen</h3>
+        <p>Wohnst du in Deutschland, gehören deine Mieteinnahmen aus Zypern in deine deutsche Steuererklärung. Die Steuer, die du auf Zypern zahlst, wird angerechnet, du zahlst also nicht doppelt. Und weil die Einnahmen dort stehen, setzt du auch alle Kosten dort an. Da Zypern in der EU liegt, darf ein Verlust ganz normal mit deinem Gehalt verrechnet werden.</p>
+      </div>
+      <div class="block">
+        <div class="n">4</div>
+        <h3>Abschreibung und Zinsen machen den Verlust</h3>
+        <p>Für vermietete Neubauten gibt es 5 % degressive Abschreibung pro Jahr auf den Gebäudewert (§ 7 Abs. 5a EStG, Baubeginn zwischen 1.10.2023 und 30.9.2029). Dazu kommen die Zinsen, und zwar für beide Kredite: Steuerlich zählt, wofür du das Geld verwendest, nicht womit du es absicherst. Unterm Strich steht ein Minus, und genau das senkt deine Einkommensteuer.</p>
+        <p class="small">Die 5 % gibt es übrigens auch für Neubauten in Deutschland. Nur ist Neubau dort kaum noch bezahlbar. Auf Zypern geht es bei rund 210.000 € netto los.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Rechnung -->
+<section class="calc" id="rechnung">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Beispielrechnung</p>
+      <h2>Was das im ersten Jahr bringt</h2>
+      <p>Die linke Spalte stammt aus dem Fact-Sheet unserer Steuerkanzlei. Rechts dieselbe Wohnung, nur kommt auch das Eigenkapital aus der Beleihung deines Hauses. Also zu 100 % finanziert.</p>
+    </div>
+    <div class="calc-grid">
+      <div class="table-card">
+        <table>
+          <thead>
+            <tr>
+              <th>Neubauwohnung, 300.000 € inkl. MwSt.</th>
+              <th>70 % finanziert</th>
+              <th class="hl">100 % finanziert</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Mieteinnahmen<small>5 % vom Kaufpreis, langfristig vermietet</small></td>
+              <td>+15.000 €</td>
+              <td class="col-b">+15.000 €</td>
+            </tr>
+            <tr>
+              <td>Zinsen Bankkredit<small>210.000 € zu 4,1 %</small></td>
+              <td class="neg">-8.610 €</td>
+              <td class="neg col-b">-8.610 €</td>
+            </tr>
+            <tr>
+              <td>Zinsen Beleihung<small>90.000 € Eigenkapital zu 4,1 %</small></td>
+              <td class="dim">-</td>
+              <td class="neg col-b">-3.690 €</td>
+            </tr>
+            <tr>
+              <td>Abschreibung 5 %<small>auf den Gebäudeanteil von 252.100 €</small></td>
+              <td class="neg">-12.605 €</td>
+              <td class="neg col-b">-12.605 €</td>
+            </tr>
+            <tr class="sum">
+              <td>Ergebnis in der Steuererklärung</td>
+              <td>-6.215 €</td>
+              <td class="col-b">-9.905 €</td>
+            </tr>
+            <tr class="win">
+              <td>Steuer zurück<small>bei 42 % Grenzsteuersatz, z. B. 80.000 € Gehalt</small></td>
+              <td>ca. 2.610 €</td>
+              <td class="col-b">ca. 4.160 €</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="table-note">Vereinfacht, erstes Jahr, ohne Kaufnebenkosten, laufende Kosten und Tilgung. Die rechte Spalte nutzt dieselben Annahmen wie das Fact-Sheet, die Zinsen sind Annahmen und keine Finanzierungszusage. Keine Steuerberatung.</div>
+      </div>
+      <div class="insights">
+        <div class="insight accent"><b>Minus auf dem Papier, nicht auf dem Konto</b>Die Abschreibung von 12.605 € ist kein Geld, das dein Konto verlässt. Sie steht nur in der Steuererklärung. Deshalb kann die Wohnung echtes Geld abwerfen und trotzdem einen steuerlichen Verlust zeigen.</div>
+        <div class="insight"><b>Je höher dein Steuersatz, desto mehr</b>Wer mehr verdient, bekommt bei gleichem Verlust mehr zurück. Genau deshalb rechnen wir das im Gespräch mit deinen echten Zahlen.</div>
+        <div class="insight"><b>Nicht nur ein Jahr</b>Die degressive Abschreibung läuft weiter und wird jedes Jahr etwas kleiner, weil sie vom Restwert berechnet wird. Die Zinsen laufen ebenfalls weiter.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Reise -->
+<section>
+  <div class="wrap">
+    <div class="travel">
+      <img src="https://steuervorteil-zypern-immobilien.com/wp-content/uploads/2026/10/zypern-strandpromenade-paphos-1024x687.jpg" width="1024" height="687" alt="Strandpromenade in Paphos auf Zypern" loading="lazy">
+      <div class="txt">
+        <p class="eyebrow">Bonus</p>
+        <h2>Das Finanzamt fliegt mit ans Mittelmeer</h2>
+        <p>Reisen für deine vermietete Wohnung, etwa zur Übergabe, zur Eigentümerversammlung oder zum Mieterwechsel, sind Werbungskosten. Ein- bis zweimal im Jahr ist das realistisch. Flug, Unterkunft und Fahrten gehören dann mit in die Rechnung.</p>
+        <p style="color:var(--muted);font-size:.92rem">Hängst du ein paar Tage Urlaub dran, zählt nur der Teil, der mit der Wohnung zu tun hat.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Passt das? -->
+<section style="padding-top:0">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Passt das zu dir?</p>
+      <h2>Für wen sich die Strategie lohnt</h2>
+    </div>
+    <div class="fit">
+      <div class="yes">
+        <h3>Passt gut, wenn …</h3>
+        <ul>
+          <li><span class="ico">✓</span><span>du in Deutschland wohnst und gut verdienst, also einen hohen Steuersatz hast</span></li>
+          <li><span class="ico">✓</span><span>du ein Haus oder eine Wohnung besitzt, die weitgehend abbezahlt ist</span></li>
+          <li><span class="ico">✓</span><span>du langfristig vermieten willst und in zehn Jahren oder mehr denkst</span></li>
+          <li><span class="ico">✓</span><span>du dein Geld lieber in Sachwerte in der EU steckst als aufs Konto</span></li>
+        </ul>
+      </div>
+      <div class="no">
+        <h3>Eher nicht, wenn …</h3>
+        <ul>
+          <li><span class="ico">-</span><span>du kaum Einkommensteuer zahlst, dann gibt es auch wenig zurück</span></li>
+          <li><span class="ico">-</span><span>du die Wohnung an Feriengäste vermieten oder selbst nutzen willst. Das kann sich lohnen, ist aber ein anderes Modell</span></li>
+          <li><span class="ico">-</span><span>dich ein Kredit auf deinem Haus nachts nicht schlafen lässt</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Ehrlich -->
+<section style="padding-top:0">
+  <div class="wrap honest">
+    <div class="section-head">
+      <p class="eyebrow">Ehrlich gesagt</p>
+      <h2>Worauf du achten musst</h2>
+    </div>
+    <ol>
+      <li><span><b>Dein Haus haftet für den Kredit.</b> Plane nur so viel, wie du auch tragen kannst, wenn die Wohnung mal ein paar Monate leer steht.</span></li>
+      <li><span><b>Der Weg des Geldes muss sauber sein.</b> Damit die Zinsen zählen, sollte der Kredit nachweisbar direkt in den Kauf fließen.</span></li>
+      <li><span><b>Dauerhaft vermieten.</b> Dann geht das Finanzamt grundsätzlich davon aus, dass du auf lange Sicht Überschüsse erzielen willst. Nutzt du die Wohnung selbst, zählt nur der vermietete Teil.</span></li>
+      <li><span><b>Das Zeitfenster ist begrenzt.</b> Die 5 % gibt es nur für Neubauten mit Baubeginn bis 30.9.2029.</span></li>
+      <li><span><b>Dein Steuerberater gehört dazu.</b> Wie es in deinem Fall aussieht, klärt er. Wir bringen ihn gern mit unseren Partnern an einen Tisch.</span></li>
+    </ol>
+  </div>
+</section>
+
+<!-- Schluss / CTA -->
+<section class="closing" id="termin">
+  <div class="wrap closing-grid">
+    <div>
+      <p class="eyebrow">Kostenloses Strategiegespräch</p>
+      <h2>Rechnet sich das für dich?</h2>
+      <p>Das hängt von deinen Zahlen ab. Genau die schauen wir uns zusammen an, in 30 Minuten per Zoom, kostenlos und unverbindlich.</p>
+      <ul>
+        <li>Wir rechnen mit deinem Einkommen und deinem Steuersatz, was du zurückbekommen kannst.</li>
+        <li>Wir schauen, wie viel Spielraum dein Haus für eine Beleihung hat. Umsetzen kannst du das mit unseren Finanzierungspartnern in Deutschland.</li>
+        <li>Ich zeige dir passende Neubauten aus gut 200 Objekten rund um Paphos.</li>
+        <li>Am Ende weißt du, ob die Strategie für dich funktioniert oder nicht.</li>
+      </ul>
+      <div class="btns">
+        <a class="btn btn-accent" data-termin href="https://portal.happy-property.com/termin?utm_campaign=strategie-finanzamt">Strategiegespräch mit Sven buchen &rarr;</a>
+      </div>
+      <p class="btn-note">Du suchst dir selbst einen freien Termin aus.</p>
+    </div>
+    <div class="card">
+      <img src="https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/render/image/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg?width=800&amp;height=600&amp;resize=cover&amp;quality=75" width="800" height="600" alt="Sven Rüprich am Telefon" loading="lazy">
+      <div class="cap"><b>Sven Rüprich</b>Happy Property, Paphos. Ich begleite dich von der ersten Rechnung bis zur Vermietung.</div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section>
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Fragen</p>
+      <h2>Häufige Fragen</h2>
+    </div>
+    <div class="faq">
+      <details>
+        <summary>Ist das legal?</summary>
+        <p>Ja. Die Strategie nutzt nur gesetzliche Regeln: das Doppelbesteuerungsabkommen zwischen Deutschland und Zypern, die degressive Abschreibung für Wohnungsneubauten nach § 7 Abs. 5a EStG und den Abzug von Zinsen als Werbungskosten. Für Wohnungen in der EU gelten dieselben Regeln wie für Wohnungen in Deutschland.</p>
+      </details>
+      <details>
+        <summary>Brauche ich wirklich kein Eigenkapital?</summary>
+        <p>Kein Erspartes vom Konto, wenn du eine Immobilie in Deutschland hast, die eine Bank beleihen kann. Wie viel möglich ist, hängt vom Wert deines Hauses, deiner Restschuld und deinem Einkommen ab. Das prüfen unsere Finanzierungspartner mit dir.</p>
+      </details>
+      <details>
+        <summary>Wann bekomme ich das Geld zurück?</summary>
+        <p>Mit deiner Einkommensteuererklärung. Ob sich der Verlust schon vorher über einen Freibetrag beim Lohnsteuerabzug berücksichtigen lässt, klärt dein Steuerberater.</p>
+      </details>
+      <details>
+        <summary>Zahle ich auf Zypern auch Steuern auf die Miete?</summary>
+        <p>Zypern darf die Mieteinnahmen besteuern. Was du dort zahlst, wird in Deutschland angerechnet. Doppelt zahlst du also nicht.</p>
+      </details>
+      <details>
+        <summary>Warum gerade Zypern?</summary>
+        <p>Zypern ist EU, mit Euro und Grundbuch. Neubauten sind dort deutlich günstiger als in Deutschland, und die Nachfrage nach Mietwohnungen rund um Paphos ist hoch. Und du hast einen guten Grund, ein- bis zweimal im Jahr ans Mittelmeer zu fliegen.</p>
+      </details>
+    </div>
+    <p class="disclaimer">Diese Seite ist keine Steuer-, Rechts- oder Finanzierungsberatung. Die Beispielrechnung ist vereinfacht und beruht auf dem Fact-Sheet unserer Steuerkanzlei (Stand 1.8.2025). Die Spalte „100 % finanziert“ ist eine Erweiterung mit denselben Annahmen. Wie es in deinem Fall aussieht, hängt von deinen persönlichen Verhältnissen ab und sollte mit deinem Steuerberater geklärt werden.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>&copy; Happy Property, Paphos, Zypern</span>
+    <span><a href="https://steuervorteil-zypern-immobilien.com/impressum/" target="_blank" rel="noopener">Impressum</a> &middot; <a href="https://steuervorteil-zypern-immobilien.com/datenschutz/" target="_blank" rel="noopener">Datenschutz</a></span>
+  </div>
+</footer>
+
+<div class="sticky" id="sticky"><a data-termin href="https://portal.happy-property.com/termin?utm_campaign=strategie-finanzamt">Strategiegespräch buchen &rarr;</a></div>
+
+<script>
+  // Herkunft (?src=youtube, instagram, facebook ...) an den Termin-Link weitergeben
+  (function () {
+    var p = new URLSearchParams(location.search);
+    var src = (p.get('src') || '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 40);
+    var q = 'utm_campaign=strategie-finanzamt' + (src ? '&src=' + encodeURIComponent(src) : '');
+    document.querySelectorAll('a[data-termin]').forEach(function (a) {
+      a.href = 'https://portal.happy-property.com/termin?' + q;
+    });
+    document.querySelectorAll('a[data-jump]').forEach(function (a) {
+      a.addEventListener('click', function (e) {
+        var t = document.getElementById(a.getAttribute('data-jump'));
+        if (t) { e.preventDefault(); t.scrollIntoView({ behavior: 'smooth' }); }
+      });
+    });
+    var bar = document.getElementById('sticky');
+    var closing = document.getElementById('termin');
+    function onScroll() {
+      var past = window.scrollY > 600;
+      var r = closing.getBoundingClientRect();
+      var atCta = r.top < window.innerHeight && r.bottom > 0;
+      bar.classList.toggle('show', past && !atCta);
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+  })();
+</script>
+</body>
+</html>

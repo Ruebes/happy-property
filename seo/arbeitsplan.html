@@ -1,0 +1,618 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="robots" content="noindex,nofollow"><title>Zypern-SEO Arbeitsplan</title><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
+<style>
+  :root {
+    --paper: #F6F4EF;
+    --card: #FFFFFF;
+    --ink: #1B1A16;
+    --ink-soft: #5E5A50;
+    --rule: #DED9CD;
+    --rule-firm: #C3BCAA;
+    --accent: #27407E;
+    --accent-soft: #E4E8F4;
+    --gold: #9A6B14;
+    --gold-soft: #F3E9D5;
+    --green: #2F6042;
+    --green-soft: #E3EDE5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #14150F;
+      --card: #1D1F18;
+      --ink: #EDEAE0;
+      --ink-soft: #A19D90;
+      --rule: #2E3128;
+      --rule-firm: #454939;
+      --accent: #9DB4EE;
+      --accent-soft: #1E2740;
+      --gold: #DCAE5C;
+      --gold-soft: #2E2617;
+      --green: #86C39C;
+      --green-soft: #1A2A1F;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #14150F;
+    --card: #1D1F18;
+    --ink: #EDEAE0;
+    --ink-soft: #A19D90;
+    --rule: #2E3128;
+    --rule-firm: #454939;
+    --accent: #9DB4EE;
+    --accent-soft: #1E2740;
+    --gold: #DCAE5C;
+    --gold-soft: #2E2617;
+    --green: #86C39C;
+    --green-soft: #1A2A1F;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 0 20px 110px;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 17px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+
+  .mono {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.73em; letter-spacing: 0.09em; text-transform: uppercase;
+  }
+  .serif { font-family: Georgia, "Iowan Old Style", "Times New Roman", serif; }
+
+  /* Kopf */
+  header { padding: 76px 0 34px; }
+  .kicker { color: var(--gold); margin-bottom: 20px; }
+  h1 {
+    font-family: Georgia, "Iowan Old Style", serif;
+    font-size: clamp(2.2rem, 6.4vw, 3.3rem); line-height: 1.04;
+    letter-spacing: -0.02em; font-weight: 700; margin: 0 0 18px; text-wrap: balance;
+  }
+  .intro { font-size: 1.12rem; color: var(--ink-soft); margin: 0; max-width: 62ch; }
+
+  .facts {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin: 34px 0 0;
+  }
+  .facts div { background: var(--card); padding: 16px 16px 14px; }
+  .facts .n { display: block; font-family: Georgia, serif; font-size: 1.9rem; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .facts .t { display: block; color: var(--ink-soft); margin-top: 7px; }
+
+  /* Inhalt */
+  h2 {
+    font-family: Georgia, serif; font-size: 1.55rem; letter-spacing: -0.015em;
+    margin: 72px 0 14px; padding-bottom: 12px; border-bottom: 2px solid var(--ink);
+  }
+  p { margin: 0 0 16px; max-width: 66ch; }
+  a { color: var(--accent); text-underline-offset: 3px; }
+  strong { font-weight: 650; }
+  ul { padding-left: 20px; margin: 0 0 18px; max-width: 66ch; }
+  li { margin-bottom: 8px; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.86em;
+    background: var(--card); border: 1px solid var(--rule); padding: 1px 5px; border-radius: 3px;
+    word-break: break-word;
+  }
+  pre {
+    background: var(--card); border: 1px solid var(--rule); padding: 14px 16px;
+    overflow-x: auto; font-size: 0.83rem; line-height: 1.5; margin: 0 0 18px;
+  }
+  pre code { border: none; background: none; padding: 0; }
+
+  /* Inhaltsübersicht */
+  .toc { border: 1px solid var(--rule); background: var(--card); padding: 22px 24px; margin: 44px 0 0; }
+  .toc ol { margin: 12px 0 0; padding-left: 22px; }
+  .toc li { margin-bottom: 6px; }
+  .toc a { text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .toc .eff { color: var(--ink-soft); }
+
+  /* Maßnahme */
+  .step { border-top: 1px solid var(--rule); padding: 40px 0 12px; }
+  .step-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 8px; }
+  .num {
+    font-family: Georgia, serif; font-size: 2.1rem; line-height: 1;
+    color: var(--gold); font-variant-numeric: tabular-nums;
+  }
+  h3 { font-size: 1.34rem; line-height: 1.24; margin: 0; letter-spacing: -0.012em; flex: 1 1 320px; text-wrap: balance; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 16px; }
+  .chip { padding: 3px 9px; border-radius: 2px; }
+  .c-wirkung { background: var(--accent-soft); color: var(--accent); }
+  .c-aufwand { background: var(--gold-soft); color: var(--gold); }
+  .c-wer { background: var(--green-soft); color: var(--green); }
+
+  .why { border-left: 3px solid var(--rule-firm); padding: 4px 0 4px 16px; margin: 0 0 20px; color: var(--ink-soft); }
+  .why b { color: var(--ink); }
+
+  .howto { counter-reset: h; list-style: none; padding: 0; margin: 0 0 20px; }
+  .howto > li {
+    counter-increment: h; position: relative; padding-left: 38px; margin-bottom: 12px; max-width: 64ch;
+  }
+  .howto > li::before {
+    content: counter(h); position: absolute; left: 0; top: 2px;
+    width: 24px; height: 24px; display: grid; place-items: center;
+    background: var(--ink); color: var(--paper); border-radius: 50%;
+    font-family: ui-monospace, Menlo, monospace; font-size: 0.72rem;
+  }
+  .check {
+    background: var(--green-soft); border: 1px solid var(--rule);
+    padding: 12px 16px; margin: 0 0 6px; font-size: 0.95rem;
+  }
+  .check b { color: var(--green); }
+
+  .scroll { overflow-x: auto; margin: 0 0 20px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.94rem; }
+  th, td { text-align: left; padding: 9px 14px 9px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { color: var(--ink-soft); font-size: 0.79rem; letter-spacing: 0.05em; text-transform: uppercase; font-weight: 600; }
+  td.num-cell { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .ok { color: var(--green); font-weight: 600; }
+
+  footer { margin-top: 80px; border-top: 1px solid var(--rule); padding-top: 22px; color: var(--ink-soft); font-size: 0.93rem; }
+
+  @media (max-width: 560px) {
+    body { font-size: 16px; }
+    .num { font-size: 1.7rem; }
+  }
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="mono kicker">Arbeitsplan für Giona · 18. August 2026 · Nachtrag 26. August 2026</div>
+  <h1>Was wir auf steuervorteil-zypern-immobilien.com besser machen</h1>
+  <p class="intro">Alle 59 Seiten der Domain wurden einzeln durchgemessen: Titel, Beschreibungen, Überschriften, Bilder, strukturierte Daten, interne Verlinkung, Ladegewicht. Unten stehen elf Maßnahmen, sortiert nach Wirkung, jede mit Klick-für-Klick-Anleitung und einer Kontrolle zum Abhaken. Am 26. August wurde erneut gemessen: <a href="#nachtrag">acht weitere Maßnahmen im Nachtrag</a>, darunter die dringendste von allen.</p>
+
+  <div class="facts">
+    <div><span class="n">59</span><span class="t mono">Seiten geprüft</span></div>
+    <div><span class="n">29</span><span class="t mono">ohne Beschreibung</span></div>
+    <div><span class="n">59</span><span class="t mono">Titel zu lang</span></div>
+    <div><span class="n">26</span><span class="t mono">Bilder ohne Alt-Text</span></div>
+    <div><span class="n">0</span><span class="t mono">FAQ-Auszeichnung</span></div><div><span class="n">30,9s</span><span class="t mono">Ladezeit Startseite</span></div>
+  </div>
+
+  <div class="toc" style="border-left:4px solid var(--green)">
+    <div class="mono" style="color:var(--green)">Stand 26. August 2026</div>
+    <p style="margin:10px 0 0"><b>Ein Teil dieser Liste ist bereits erledigt.</b> Die Maßnahmen 01, 07 und 13 sind durch, Maßnahme 04 zur Hälfte. Was genau geändert wurde und was davon noch bei dir liegt, steht im <a href="/seo/protokoll.html"><b>Änderungsprotokoll</b></a>. Bitte dort zuerst nachsehen, bevor du etwas anfasst, sonst machst du Dinge doppelt.</p>
+    <p style="margin:10px 0 0">Kurz zusammengefasst: <b>Die Maßnahmen 01, 02, 04, 07 und 13 sind komplett erledigt.</b> Alle 60 Adressen haben Titel unter 60 Zeichen, 16 Beschreibungen sind eingetragen, 21 Alt-Texte gesetzt, und alle 9 Artikel mit FAQ-Bereich liefern gültiges FAQ-Markup (71 Frage-Antwort-Paare). Möglich macht das ein kleines Hilfs-Snippet in Code Snippets — <b>bitte nicht löschen oder deaktivieren</b>, Details im Protokoll. Bei dir liegen jetzt vor allem: das Startseiten-Video (Maßnahme 12, dringendster Punkt), noindex für die Funnel-Seiten (06), Firmendaten in Yoast (03), llms.txt und robots.txt (14/15), die Weiterleitungen (16/17) und die neuen FAQ-Bereiche auf den Geldseiten (4.3b).</p>
+  </div>
+</header>
+
+<h2>Wo wir stehen</h2>
+
+<p>Die Substanz stimmt. Die Texte erreichen im Qualitätstest 97 von 100 Punkten, ohne Floskeln und mit hoher Informationsdichte. Anders als auf happy-property.de steht der Inhalt direkt im Quelltext, Google und die KI-Suchmaschinen können ihn also sofort lesen. Yoast läuft, die Sitemap ist sauber, Weiterleitungen und Fehlerseiten stimmen.</p>
+
+<p>Was fehlt, sind die Kleinigkeiten, die entscheiden, ob eine gute Seite auch gefunden und angeklickt wird. Drei Beispiele: Jeder Seitentitel schleppt 63 Zeichen Firmenzusatz mit sich herum, sodass Google ihn abschneidet. Elf Artikel haben einen FAQ-Abschnitt, aber keiner ist als FAQ ausgezeichnet, also taucht keiner in den aufklappbaren Google-Ergebnissen auf. Und die Landingpage für Ärzte hat 2.017 Wörter, aber keinen einzigen internen Link, der auf sie zeigt.</p>
+
+<div class="toc">
+  <div class="mono" style="color:var(--ink-soft)">Die elf Maßnahmen</div>
+  <ol>
+    <li><a href="#m1">Titel-Vorlage kürzen</a> <span class="eff">· 10 Minuten, wirkt auf alle 59 Seiten</span></li>
+    <li><a href="#m2">30 fehlende Beschreibungen nachtragen</a> <span class="eff">· 2 Stunden</span></li>
+    <li><a href="#m3">Firmendaten in Yoast eintragen</a> <span class="eff">· 15 Minuten</span></li>
+    <li><a href="#m4">FAQ-Abschnitte auszeichnen</a> <span class="eff">· 2 Stunden, 11 Artikel</span></li>
+    <li><a href="#m5">Interne Links setzen</a> <span class="eff">· 3 Stunden</span></li>
+    <li><a href="#m6">Funnel-Seiten aus Google nehmen</a> <span class="eff">· 30 Minuten</span></li>
+    <li><a href="#m7">Alt-Texte für Bilder</a> <span class="eff">· laufend</span></li>
+    <li><a href="#m8">Startseiten-Video verkleinern</a> <span class="eff">· 30 Minuten</span></li>
+    <li><a href="#m9">Bilder auf WebP umstellen</a> <span class="eff">· 1 Stunde</span></li>
+    <li><a href="#m10">Schriften lokal ausliefern</a> <span class="eff">· 30 Minuten</span></li>
+    <li><a href="#m11">Doppelte Inhalte auf der .de-Domain stilllegen</a> <span class="eff">· Absprache mit Sven</span></li>
+  </ol>
+</div>
+
+<h2>Die Maßnahmen</h2>
+
+<!-- 1 -->
+<div class="step" id="m1">
+  <div class="step-head"><span class="num">01</span><h3>Titel-Vorlage kürzen</h3></div>
+  <div class="chips mono"><span class="chip c-wirkung">Wirkung hoch</span><span class="chip c-aufwand">10 Minuten</span><span class="chip c-wer">Yoast</span></div>
+  <div class="why"><b>Warum:</b> Jeder Titel endet auf „ - Happy Property - Finde jetzt deine Traumimmobilie auf Zypern". Das sind 63 Zeichen Ballast. Google zeigt rund 60 Zeichen. Ergebnis: <b>Alle 59 Titel sind zu lang</b>, bei „Kapitalanlage für Ärzte" sind es 120 Zeichen, der halbe Titel wird abgeschnitten. Der Zusatz bringt kein einziges Suchwort, das wir nicht schon im Titel hätten.</div>
+  <ol class="howto">
+    <li>In WordPress einloggen, links im Menü auf <b>Yoast SEO → Einstellungen</b>.</li>
+    <li>Links auf <b>Inhaltsarten → Seiten</b>. Beim Feld <b>SEO-Titel</b> steht dort aktuell die Vorlage mit dem langen Zusatz.</li>
+    <li>Die Vorlage ersetzen durch: <code>%%title%% %%sep%% Happy Property</code></li>
+    <li>Dasselbe unter <b>Inhaltsarten → Beiträge</b> und unter <b>Allgemein → Website-Darstellung</b> für die Startseite.</li>
+    <li>Speichern, dann eine beliebige Seite aufrufen und im Browser mit Rechtsklick auf <b>Seitenquelltext anzeigen</b> prüfen.</li>
+  </ol>
+  <div class="check"><b>Fertig, wenn:</b> im Quelltext <code>&lt;title&gt;</code> nicht mehr als etwa 60 Zeichen enthält, Beispiel: „Kapitalanlage für Ärzte: Steuerlast senken - Happy Property".</div>
+</div>
+
+<!-- 2 -->
+<div class="step" id="m2">
+  <div class="step-head"><span class="num">02</span><h3>Die 30 fehlenden Beschreibungen nachtragen</h3></div>
+  <div class="chips mono"><span class="chip c-wirkung">Wirkung hoch</span><span class="chip c-aufwand">2 Stunden</span><span class="chip c-wer">Yoast</span></div>
+  <div class="why"><b>Warum:</b> 30 von 59 Seiten haben kein Beschreibungs-Feld. Google baut sich dann selbst einen Textschnipsel zusammen, oft mitten aus dem Satz heraus. Die Beschreibung ist der Werbetext im Suchergebnis, sie entscheidet über den Klick. 14 der 30 Seiten sind reine Funnel-Seiten und brauchen stattdessen Maßnahme 06.</div>
+  <p>So wird eine Beschreibung eingetragen: Seite im WordPress-Backend öffnen, ganz nach unten zum Kasten <b>Yoast SEO</b> scrollen, Feld <b>Meta-Beschreibung</b>, Text einfügen, Seite aktualisieren. Der Balken darunter sollte grün sein (140 bis 160 Zeichen).</p>
+  <p>Diese zwölf Seiten brauchen wirklich Text. Die Vorschläge sind fertig zum Kopieren:</p>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Seite</th><th>Beschreibung zum Einfügen</th></tr></thead>
+      <tbody>
+        <tr><td><code>/steuerliche-vorteile/</code></td><td>Welche steuerlichen Vorteile eine Immobilie auf Zypern für deutsche Anleger bringt: Abschreibung, Zinsen und das Doppelbesteuerungsabkommen einfach erklärt.</td></tr>
+        <tr><td><code>/nach-zypern-auswandern/</code></td><td>Nach Zypern auswandern: Voraussetzungen, Steuern, Kosten und Alltag im Überblick. Was du vor dem Umzug klären musst, aus der Praxis erklärt.</td></tr>
+        <tr><td><code>/usp-happy-property/</code></td><td>Happy Property oder klassischer Makler? Der direkte Vergleich: Auswahl, Finanzierung, Vermietung und Verwaltung aus einer Hand statt reiner Vermittlung.</td></tr>
+        <tr><td><code>/ueber-uns/</code></td><td>Wer hinter Happy Property steht: Sven Rüprich begleitet deutsche Kapitalanleger seit Jahren beim Immobilienkauf auf Zypern, vom ersten Gespräch bis zur Vermietung.</td></tr>
+        <tr><td><code>/blog/</code></td><td>Wissen rund um Zypern, Steuern und Immobilien: verständliche Artikel zu Doppelbesteuerung, Non-Dom-Status, Auswandern und Kapitalanlage auf Zypern.</td></tr>
+        <tr><td><code>/masterclass/</code></td><td>Kostenlose Masterclass: Wie deutsche Anleger mit Neubau-Immobilien auf Zypern Rendite erzielen und in Deutschland Steuern zurückholen. Jetzt Platz sichern.</td></tr>
+        <tr><td><code>/masterclass-fuer-aerzte-apotheker-anmeldung/</code></td><td>Masterclass für Ärzte und Apotheker: Steuerlast senken mit einer Kapitalanlage auf Zypern. Kostenlose Anmeldung, Termin frei wählbar.</td></tr>
+        <tr><td><code>/newsletter-zypern-insights/</code></td><td>Zypern Insights: alle zwei Wochen konkrete Zahlen, Steuerhinweise und neue Objekte per Mail. Kostenlos, jederzeit abbestellbar.</td></tr>
+        <tr><td><code>/kaufprozess/</code></td><td>So läuft der Immobilienkauf auf Zypern ab: von der Reservierung über den Zahlungsplan bis zu den Title Deeds, Schritt für Schritt erklärt.</td></tr>
+        <tr><td><code>/warum-happy-property/</code></td><td>Warum Happy Property: eigene Objektauswahl, Finanzierung, Vermietung und Verwaltung vor Ort auf Zypern, statt reiner Vermittlung ohne Betreuung.</td></tr>
+        <tr><td><code>/expose/</code></td><td>Exposé anfordern: aktuelle Neubau-Objekte auf Zypern mit Preis, Grundriss, Mietprognose und Rechenbeispiel, kostenlos und unverbindlich.</td></tr>
+        <tr><td><code>/kontakt/</code></td><td>Kontakt zu Happy Property: Fragen zu Immobilien, Steuern oder Finanzierung auf Zypern. Antwort in der Regel am selben Werktag.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Zwei Seiten haben zusätzlich <b>keine H1-Überschrift</b>: <code>/der-renditerechner-von-happy-property/</code> und <code>/rechner-sven-englisch/</code>. Beide sind Einbettungsseiten für den Rechner. Dort bitte eine sichtbare Überschrift als H1 ergänzen.</p>
+  <div class="check"><b>Fertig, wenn:</b> in Yoast unter <b>Einstellungen → Website-Darstellung</b> keine Seite mehr ohne Beschreibung gemeldet wird.</div>
+</div>
+
+<!-- 3 -->
+<div class="step" id="m3">
+  <div class="step-head"><span class="num">03</span><h3>Firmendaten in Yoast eintragen</h3></div>
+  <div class="chips mono"><span class="chip c-wirkung">Wirkung hoch</span><span class="chip c-aufwand">15 Minuten</span><span class="chip c-wer">Yoast</span></div>
+  <div class="why"><b>Warum:</b> Die Seite liefert zwar strukturierte Daten aus, aber ohne Absender. Im Datensatz steht bei <code>publisher</code> schlicht nichts, es gibt keinen Firmeneintrag, kein Logo, keine verknüpften Profile. Für Google heißt das: Diese Texte hat niemand geschrieben. Bei Steuer- und Geldthemen prüft Google genau das besonders streng.</div>
+  <ol class="howto">
+    <li><b>Yoast SEO → Einstellungen → Website-Darstellung → Allgemein</b>.</li>
+    <li>Bei <b>Website-Repräsentation</b> auf <b>Organisation</b> stellen (nicht Person).</li>
+    <li>Name: <b>Happy Property</b>. Logo hochladen (quadratisch, mindestens 512 mal 512 Pixel).</li>
+    <li>Weiter unten <b>Andere Profile</b>: YouTube-Kanal, Instagram, Facebook und LinkedIn eintragen. Aktuell steht dort nichts, deshalb kennt Google die Profile nicht als zusammengehörig.</li>
+    <li>Unter <b>Benutzer → Sven Rüprich</b> das Profil ausfüllen: Biografie in zwei bis drei Sätzen und die Profil-Links. Yoast baut daraus den Autoren-Eintrag der Blogartikel.</li>
+  </ol>
+  <div class="check"><b>Fertig, wenn:</b> auf <a href="https://validator.schema.org/">validator.schema.org</a> die Startseite eingegeben wird und dort ein Eintrag <code>Organization</code> mit Logo und Profil-Links erscheint.</div>
+</div>
+
+<!-- 4 -->
+<div class="step" id="m4">
+  <div class="step-head"><span class="num">04</span><h3>FAQ-Abschnitte auszeichnen</h3></div>
+  <div class="chips mono"><span class="chip c-wirkung">Wirkung hoch</span><span class="chip c-aufwand">2 Stunden</span><span class="chip c-wer">Redaktion</span></div>
+  <div class="why"><b>Warum:</b> <b>Elf Artikel haben einen FAQ-Abschnitt, null davon sind als FAQ ausgezeichnet.</b> Das ist die günstigste offene Chance auf der ganzen Domain. Frage-Antwort-Paare sind das Format, das Google in den KI-Übersichten und ChatGPT in seinen Antworten am liebsten zitiert, aber nur, wenn sie maschinenlesbar markiert sind.</div>
+  <ol class="howto">
+    <li>Artikel im Backend öffnen, zum FAQ-Abschnitt scrollen.</li>
+    <li>Falls der Artikel im Block-Editor liegt: den bestehenden FAQ-Text markieren und in einen <b>Yoast FAQ-Block</b> umwandeln (Block hinzufügen, „Yoast FAQ" suchen), Fragen und Antworten eintragen.</li>
+    <li>Falls der Artikel in Oxygen gebaut ist: ein Code-Element ganz unten auf der Seite einfügen und den Auszeichnungs-Block einsetzen. Vorlage:</li>
+  </ol>
+<pre><code>&lt;script type="application/ld+json"&gt;
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "HIER DIE FRAGE, WORTGLEICH WIE AUF DER SEITE",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "HIER DIE ANTWORT, ZWEI BIS VIER SAETZE"
+      }
+    }
+  ]
+}
+&lt;/script&gt;</code></pre>
+  <p>Wichtig: Die Fragen müssen <b>wortgleich sichtbar auf der Seite stehen</b>. Ausgezeichnete Fragen, die der Besucher nicht sieht, wertet Google als Verstoß.</p>
+  <p>Diese Artikel haben bereits einen FAQ-Abschnitt und sind damit sofort dran: Non-Dom-Status, Doppelbesteuerungsabkommen, Zypern-Limited, Auswandern nach Zypern, Immobilien steuerlich angeben, Zypern-Firma vs. deutsche Holding und fünf weitere. Im Backend erkennbar an der Zwischenüberschrift „FAQ" oder „Häufige Fragen".</p>
+  <div class="check"><b>Fertig, wenn:</b> der <a href="https://search.google.com/test/rich-results">Rich-Results-Test</a> für den Artikel „FAQ" als gültiges Element meldet.</div>
+</div>
+
+<!-- 5 -->
+<div class="step" id="m5">
+  <div class="step-head"><span class="num">05</span><h3>Interne Links setzen</h3></div>
+  <div class="chips mono"><span class="chip c-wirkung">Wirkung hoch</span><span class="chip c-aufwand">3 Stunden</span><span class="chip c-wer">Redaktion</span></div>
+  <div class="why"><b>Warum:</b> Aktuell verlinkt praktisch nur das Menü. Gemessen: <b>34 Seiten haben keinen einzigen internen Link</b>, der auf sie zeigt, darunter die Ärzte-Landingpage mit 2.017 Wörtern und die Seite zu den steuerlichen Vorteilen. Zwischen den 22 Blogartikeln gibt es <b>keinen einzigen Link im Fließtext</b>. Jeder Artikel steht für sich allein, und die Kraft der starken Artikel kommt nie bei den Geld-Seiten an.</div>
+  <ol class="howto">
+    <li>Jeden Blogartikel öffnen und im Text zwei bis vier Links setzen: mindestens einen auf einen thematisch passenden anderen Artikel, mindestens einen auf die passende Geld-Seite.</li>
+    <li>Verlinkter Text muss beschreiben, wohin es geht. Also <b>„steuerliche Vorteile beim Immobilienkauf auf Zypern"</b> statt „hier" oder „mehr erfahren".</li>
+    <li>Nach diesem Muster zuordnen:</li>
+  </ol>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Artikel-Thema</th><th>verlinkt auf</th></tr></thead>
+      <tbody>
+        <tr><td>Doppelbesteuerung, Steuern sparen, Immobilien steuerlich angeben</td><td><code>/steuerliche-vorteile/</code> und <code>/rendite-rechner/</code></td></tr>
+        <tr><td>Kapitalanlage, Investment, Rendite</td><td><code>/immobilieninvestor-zypern/</code></td></tr>
+        <tr><td>Alles rund um Ärzte, Apotheker, hohe Einkommen</td><td><code>/kapitalanlage-fuer-aerzte/</code></td></tr>
+        <tr><td>Auswandern, Leben auf Zypern, Non-Dom</td><td><code>/nach-zypern-auswandern/</code></td></tr>
+        <tr><td>Kaufablauf, Finanzierung, Objektauswahl</td><td><code>/kaufprozess/</code> und <code>/usp-happy-property/</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Zusätzlich: Die Ärzte-Landingpage gehört in die Navigation oder mindestens auf die Startseite verlinkt. Eine Seite, auf die nichts zeigt, hält Google für unwichtig, egal wie gut sie ist.</p>
+  <div class="check"><b>Fertig, wenn:</b> jeder der 22 Artikel mindestens zwei Links im Fließtext hat und keine Geld-Seite mehr ohne eingehenden Link dasteht.</div>
+</div>
+
+<!-- 6 -->
+<div class="step" id="m6">
+  <div class="step-head"><span class="num">06</span><h3>Funnel-Seiten aus Google nehmen</h3></div>
+  <div class="chips mono"><span class="chip c-wirkung">Wirkung mittel</span><span class="chip c-aufwand">30 Minuten</span><span class="chip c-wer">Yoast</span></div>
+  <div class="why"><b>Warum:</b> Danke-Seiten, Terminbestätigungen und Webinar-Replays stehen im Index. Sie haben 100 bis 170 Wörter und keinen Zweck für Suchende. Solche dünnen Seiten drücken das Gesamtbild der Domain und können in den Suchergebnissen an Stelle der richtigen Seite auftauchen.</div>
+  <p>Bei jeder dieser Seiten: Seite öffnen, Yoast-Kasten, Reiter <b>Erweitert</b>, Frage „Soll diese Seite in den Suchergebnissen erscheinen?" auf <b>Nein</b> stellen.</p>
+  <ul>
+    <li><code>/termin-wurde-bestaetigt/</code>, <code>/dein-termin-mit-sven-ist-bestaetigt/</code></li>
+    <li><code>/danke-masterclass/</code>, <code>/danke-fuer-deine-anmeldung/</code></li>
+    <li><code>/termin/</code>, <code>/termin-buchen/</code>, <code>/kontakt-auswanderer/</code></li>
+    <li><code>/geheimtipp-zypern-das-live-webinar-replay/</code> und die zweite Replay-Seite</li>
+    <li><code>/warum-auf-zypern-investieren-video/</code>, <code>/auswandern-nach-zypern-film/</code>, <code>/emerald-park-video/</code>, <code>/lohnt-sich-eine-immobilie-auf-zypern/</code></li>
+    <li><code>/cashflow-rechner/</code>, <code>/der-renditerechner-von-happy-property/</code>, <code>/rechner-sven-englisch/</code></li>
+    <li><code>/immobilieninvestor-zypern-kompakt/</code> - das ist die Kurzfassung für den Anzeigentest. Sie ist fast wortgleich mit <code>/immobilieninvestor-zypern/</code>, konkurriert also mit der eigenen Hauptseite. Als Anzeigenziel bleibt sie erreichbar, aus dem Index sollte sie raus.</li>
+  </ul>
+  <div class="check"><b>Fertig, wenn:</b> im Quelltext dieser Seiten <code>&lt;meta name="robots" content="noindex ...</code> steht.</div>
+</div>
+
+<!-- 7 -->
+<div class="step" id="m7">
+  <div class="step-head"><span class="num">07</span><h3>Alt-Texte für Bilder</h3></div>
+  <div class="chips mono"><span class="chip c-wirkung">Wirkung mittel</span><span class="chip c-aufwand">laufend</span><span class="chip c-wer">Redaktion</span></div>
+  <div class="why"><b>Warum:</b> <b>265 von 308 Bildern haben keinen Alt-Text</b>, das sind 86 Prozent. Der Alt-Text sagt Google, was auf dem Bild zu sehen ist. Ohne ihn tauchen unsere Bilder in der Bildersuche nicht auf, und Screenreader lesen nur den Dateinamen vor.</div>
+  <ol class="howto">
+    <li>In WordPress auf <b>Medien → Mediathek</b>, Ansicht auf Liste stellen.</li>
+    <li>Bild anklicken, Feld <b>Alternativer Text</b> ausfüllen. Beschreiben, was zu sehen ist, mit Ort oder Objekt wenn möglich: „Neubau-Apartment mit Meerblick in Paphos, Terrasse mit Sitzecke".</li>
+    <li>Keine Suchwort-Ketten. Ein normaler Satz reicht.</li>
+    <li>Mit den Bildern anfangen, die auf Startseite, Investor-Seite und Ärzte-Seite liegen, dann die Artikel-Bilder.</li>
+  </ol>
+  <div class="check"><b>Fertig, wenn:</b> die Bilder der fünf wichtigsten Seiten alle einen Alt-Text tragen.</div>
+</div>
+
+<!-- 8 -->
+<div class="step" id="m8">
+  <div class="step-head"><span class="num">08</span><h3>Startseiten-Video verkleinern</h3></div>
+  <div class="chips mono"><span class="chip c-wirkung">Wirkung mittel</span><span class="chip c-aufwand">30 Minuten</span><span class="chip c-wer">Technik</span></div>
+  <div class="why"><b>Warum:</b> Die Startseite lädt ein Banner-Video von <b>4,0 Megabyte</b>. Das ist praktisch die gesamte Ladelast der Seite und trifft vor allem Handy-Besucher über Mobilfunk. Der Rest der Startseite wiegt zusammen nur 63 Kilobyte.</div>
+  <ol class="howto">
+    <li>Video neu exportieren: Breite 1280 Pixel, Bitrate rund 1.500 kbit/s, Format MP4. Ziel: unter 1 Megabyte.</li>
+    <li>Beim Video-Element ein <b>Vorschaubild</b> (Poster) hinterlegen, damit sofort etwas zu sehen ist.</li>
+    <li>Attribut <code>preload="none"</code> setzen, damit das Video erst beim Abspielen geladen wird.</li>
+    <li>Auf dem Handy gegenprüfen, ob der Hero-Bereich weiterhin gut aussieht.</li>
+  </ol>
+  <div class="check"><b>Fertig, wenn:</b> die Datei unter 1 Megabyte liegt und die Startseite auf dem Handy spürbar schneller aufbaut.</div>
+</div>
+
+<!-- 9 -->
+<div class="step" id="m9">
+  <div class="step-head"><span class="num">09</span><h3>Bilder auf WebP umstellen</h3></div>
+  <div class="chips mono"><span class="chip c-wirkung">Wirkung mittel</span><span class="chip c-aufwand">1 Stunde</span><span class="chip c-wer">Technik</span></div>
+  <div class="why"><b>Warum:</b> Auf der ganzen Domain gibt es <b>keine einzige WebP-Datei</b>, dafür 599 Verweise auf JPEG und PNG. Einzelne Bilder wiegen 392 und 206 Kilobyte. WebP spart bei gleicher Qualität rund die Hälfte. Zusätzlich haben nur 107 von 308 Bildern feste Breiten- und Höhenangaben, deshalb springt das Layout beim Laden.</div>
+  <ol class="howto">
+    <li>Plugin <b>Converter for Media</b> oder <b>ShortPixel</b> installieren und aktivieren.</li>
+    <li>Einmalig alle vorhandenen Bilder umwandeln lassen (Massenkonvertierung).</li>
+    <li>Automatische Umwandlung für neue Uploads einschalten.</li>
+    <li>In den Einstellungen prüfen, dass Breite und Höhe automatisch ausgegeben werden.</li>
+  </ol>
+  <div class="check"><b>Fertig, wenn:</b> im Quelltext der Startseite Bildpfade auf <code>.webp</code> enden.</div>
+</div>
+
+<!-- 10 -->
+<div class="step" id="m10">
+  <div class="step-head"><span class="num">10</span><h3>Schriften lokal ausliefern</h3></div>
+  <div class="chips mono"><span class="chip c-wirkung">Wirkung klein</span><span class="chip c-aufwand">30 Minuten</span><span class="chip c-wer">Technik</span></div>
+  <div class="why"><b>Warum:</b> <b>Alle 59 Seiten laden Montserrat und Playfair Display direkt von Googles Servern.</b> Das kostet bei jedem Seitenaufruf eine zusätzliche Verbindung, und es ist in Deutschland zusätzlich ein Datenschutzthema, weil dabei die IP-Adresse des Besuchers an Google geht. Es gab dazu bereits Abmahnwellen.</div>
+  <ol class="howto">
+    <li>Plugin <b>OMGF</b> (Optimize My Google Fonts) installieren.</li>
+    <li>Automatisch herunterladen und lokal einbinden lassen.</li>
+    <li>Danach prüfen: im Quelltext darf <code>fonts.googleapis.com</code> nicht mehr vorkommen.</li>
+    <li>Seite auf dem Handy und am Rechner kurz durchklicken, damit die Schriften noch richtig aussehen.</li>
+  </ol>
+  <div class="check"><b>Fertig, wenn:</b> die Suche nach <code>fonts.googleapis.com</code> im Quelltext leer bleibt.</div>
+</div>
+
+<!-- 11 -->
+<div class="step" id="m11">
+  <div class="step-head"><span class="num">11</span><h3>Doppelte Inhalte auf der .de-Domain stilllegen</h3></div>
+  <div class="chips mono"><span class="chip c-wirkung">Wirkung hoch</span><span class="chip c-aufwand">Absprache</span><span class="chip c-wer">Sven</span></div>
+  <div class="why"><b>Warum:</b> Alle 22 Blogartikel und rund 30 Landingpages liegen wortgleich auch auf happy-property.de, dort ohne Beschreibungen und ohne strukturierte Daten. Google muss sich für eine Fassung entscheiden und stuft die andere ab. Da steuervorteil-zypern-immobilien.com die Hauptseite ist, muss die Kopie zurücktreten.</div>
+  <ol class="howto">
+    <li>Auf happy-property.de bei allen 22 Artikelkopien und den <code>sv-*</code>-Seiten in Yoast oder Rank Math auf <b>noindex</b> stellen. Alternative, sauberer: einen Canonical-Verweis auf die jeweilige .com-Adresse setzen.</li>
+    <li>Die Theme-Demoseiten dort löschen (<code>/sample-page/</code>, <code>/pricing/</code>, <code>/ui-kit/</code> und die übrigen).</li>
+    <li>In der Search Console beider Domains danach beobachten, ob die Impressionen der .com-Seiten steigen.</li>
+  </ol>
+  <div class="check"><b>Fertig, wenn:</b> eine Suche nach einem wörtlichen Satz aus einem Artikel nur noch das .com-Ergebnis zeigt.</div>
+</div>
+
+<h2>Was schon gut ist</h2>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Prüfung</th><th>Ergebnis</th></tr></thead>
+  <tbody>
+    <tr><td>Textqualität Ärzte-Landingpage</td><td class="num-cell ok">97/100</td></tr>
+    <tr><td>Füllwörter und KI-Muster im Text</td><td class="num-cell ok">0 %</td></tr>
+    <tr><td>Inhalt direkt im Quelltext lesbar</td><td class="num-cell ok">ja</td></tr>
+    <tr><td>Bedienbarkeit für KI-Agenten</td><td class="num-cell ok">100/100</td></tr>
+    <tr><td>Artikel mit Inhaltsverzeichnis</td><td class="num-cell ok">13 von 22</td></tr>
+    <tr><td>Artikel mit Autor und Datum ausgezeichnet</td><td class="num-cell ok">21 von 22</td></tr>
+    <tr><td>Alle Artikel über die Blog-Übersicht erreichbar</td><td class="num-cell ok">22 von 22</td></tr>
+    <tr><td>Weiterleitungen http, www und Fehlerseiten</td><td class="num-cell ok">korrekt</td></tr>
+    <tr><td>Sitemap und robots.txt</td><td class="num-cell ok">sauber</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>Reihenfolge</h2>
+
+<p><b>Woche 1:</b> Maßnahmen 01, 03 und 06. Zusammen rund eine Stunde, wirken auf die ganze Domain.<br>
+<b>Woche 2:</b> Maßnahme 02, die Beschreibungen. Texte oben sind fertig.<br>
+<b>Woche 3 und 4:</b> Maßnahmen 04 und 05, FAQ-Auszeichnung und interne Links. Das ist die eigentliche Rankingarbeit.<br>
+<b>Danach:</b> 07 bis 10 als Technik-Block, 11 gemeinsam mit Sven.</p>
+
+<h2>Was noch offen ist</h2>
+
+<ul>
+  <li><b>Ladezeiten sind inzwischen gemessen</b> (26.08., lokal statt über Googles Dienst). Ergebnis in Maßnahme 12: Startseite 30,9 Sekunden auf dem Handy. Ein eigener Google-API-Schlüssel wäre trotzdem nützlich, um künftig alle Seiten automatisch statt einzeln zu messen.</li>
+  <li><b>Keine Zahlen aus der Search Console.</b> Für welche Suchbegriffe die Seiten heute schon erscheinen und wo sie knapp an Seite 1 vorbeischrammen, steht nur dort. Mit dem Zugang lässt sich diese Liste nach echtem Potenzial sortieren statt nach Bauchgefühl.</li>
+  <li><b>Keine Backlink-Daten.</b> Wer auf uns verlinkt und wo Wettbewerber Links herbekommen, braucht einen kostenlosen Moz- oder Bing-Webmaster-Zugang.</li>
+</ul>
+
+<h2 id="nachtrag">Nachtrag vom 26.08.2026</h2>
+
+<p>Die Seite wurde am 26.08.2026 erneut komplett vermessen: alle 59 Adressen einzeln abgerufen, dazu die Ladezeit lokal gemessen, weil Googles Messdienst weiterhin ausgelastet ist. <b>Ergebnis vorweg: von den elf Maßnahmen oben ist bisher keine umgesetzt.</b> Alle Befunde von oben gelten unverändert weiter. Neu hinzu kommen die acht Punkte in diesem Nachtrag.</p>
+
+<p>Zwei Dinge haben sich gegenüber dem 18.08. geklärt. Erstens ist die Ladezeit jetzt gemessen, und sie ist schlimmer als vermutet. Zweitens ist der Firmenzusatz im Titel kein Yoast-Problem, sondern der WordPress-Seitentitel selbst — das macht Maßnahme 01 zu einer Sache von zwei Minuten.</p>
+
+<div class="toc">
+  <div class="mono" style="color:var(--ink-soft)">Acht neue Maßnahmen</div>
+  <ol start="12">
+    <li><a href="#m12">Startseiten-Video: jetzt mit Messwert</a> <span class="eff">· dringend, Ladezeit 30,9 Sekunden</span></li>
+    <li><a href="#m13">Titel-Vorlage: der schnellere Weg</a> <span class="eff">· 2 Minuten statt 10</span></li>
+    <li><a href="#m14">Datei llms.txt anlegen</a> <span class="eff">· 20 Minuten</span></li>
+    <li><a href="#m15">KI-Crawler in robots.txt ausdrücklich erlauben</a> <span class="eff">· 10 Minuten</span></li>
+    <li><a href="#m16">Groß- und Kleinschreibung weiterleiten</a> <span class="eff">· 15 Minuten</span></li>
+    <li><a href="#m17">Kategorie- und Autorenarchiv aus Google nehmen</a> <span class="eff">· 5 Minuten</span></li>
+    <li><a href="#m18">Körperschaftsteuer: 12,5 auf 15 Prozent korrigieren</a> <span class="eff">· 1 Stunde, inhaltlich wichtig</span></li>
+    <li><a href="#m19">Antwort-zuerst-Einleitungen und Fakten-Block</a> <span class="eff">· 4 Stunden, größter KI-Hebel</span></li>
+  </ol>
+</div>
+
+<!-- 12 -->
+<div class="step" id="m12">
+  <div class="step-head"><span class="num">12</span><h3>Startseiten-Video: jetzt mit Messwert</h3></div>
+  <div class="chips mono"><span class="chip c-wirkung">Wirkung sehr hoch</span><span class="chip c-aufwand">1 Stunde</span><span class="chip c-wer">Mediathek + Oxygen</span></div>
+  <div class="why"><b>Warum:</b> Die Startseite braucht auf dem Handy <b>30,9 Sekunden</b>, bis der große Bildbereich steht. Google bewertet alles über 2,5 Sekunden als schlecht. Ursache ist das automatisch startende Hintergrundvideo <code>Website-Banner-1.mp4</code> mit 4,19 Megabyte, das ohne Vorschaubild und ohne Ladebremse eingebunden ist. Es ist genau das Element, das Google als Ladezeit misst. Die Investorenseite liegt aus demselben Grund bei 14,9 Sekunden, ein Blogartikel dagegen bei sauberen 2,9 Sekunden. Das Problem sitzt also nicht in der Technik der Seite, sondern allein in diesen beiden Startbereichen.</div>
+  <p>Drei Schritte, in dieser Reihenfolge:</p>
+  <ol>
+    <li><b>Vorschaubild setzen.</b> Ein Standbild aus der ersten Sekunde des Videos exportieren, auf 1600 Pixel Breite und unter 120 Kilobyte bringen, in die Mediathek laden und beim Videoelement als <code>poster</code> hinterlegen. Damit sieht der Besucher sofort ein Bild statt einer leeren Fläche.</li>
+    <li><b>Ladebremse setzen.</b> Beim selben Element das Attribut <code>preload</code> auf <code>none</code> stellen.</li>
+    <li><b>Video verkleinern.</b> Neu exportieren als H.264 in 720p, Zielgröße unter 1,2 Megabyte. Wenn das optisch nicht trägt: Video erst ab Tablet-Breite ausspielen und auf dem Handy nur das Vorschaubild zeigen. Auf dem Handy sieht ohnehin kaum jemand ein Hintergrundvideo bewusst an.</li>
+  </ol>
+  <p><b>Kontrolle:</b> Nach der Änderung die Startseite in den PageSpeed-Test von Google geben, Ansicht Mobil. Der Wert für LCP muss unter 2,5 Sekunden liegen. Vorher lag er bei 30,9.</p>
+</div>
+
+<!-- 13 -->
+<div class="step" id="m13">
+  <div class="step-head"><span class="num">13</span><h3>Titel-Vorlage: der schnellere Weg</h3></div>
+  <div class="chips mono"><span class="chip c-wirkung">Wirkung hoch</span><span class="chip c-aufwand">2 Minuten</span><span class="chip c-wer">WordPress-Einstellungen</span></div>
+  <div class="why"><b>Warum:</b> Ergänzung zu Maßnahme 01. Der lange Zusatz kommt nicht aus einer Yoast-Vorlage, sondern ist der WordPress-Seitentitel selbst. Er steht unter <i>Einstellungen &rarr; Allgemein &rarr; Titel der Website</i> und lautet dort aktuell „Happy Property - Finde jetzt deine Traumimmobilie auf Zypern“.</div>
+  <p>Diesen Wert auf <b>Happy Property</b> ändern. Damit werden alle 58 Titel in einem Zug kürzer, ohne dass eine einzige Seite einzeln angefasst werden muss. Der lange Name erscheint nirgends im sichtbaren Seiteninhalt, sondern ausschließlich im Titel, in <code>og:site_name</code> und in den strukturierten Daten. Die Änderung ist deshalb gefahrlos und jederzeit umkehrbar.</p>
+  <p>Danach bleibt aus Maßnahme 01 nur noch die Startseite übrig: Ihr Titel beginnt mit „Home“, was kein Mensch sucht. In der Yoast-Box der Startseite eintragen:</p>
+  <pre>Immobilien auf Zypern kaufen: Steuervorteile nutzen | Happy Property</pre>
+  <p><b>Kontrolle:</b> Startseite aufrufen, Rechtsklick, Seitenquelltext anzeigen, nach <code>&lt;title&gt;</code> suchen. Der Titel muss unter 60 Zeichen liegen.</p>
+</div>
+
+<!-- 14 -->
+<div class="step" id="m14">
+  <div class="step-head"><span class="num">14</span><h3>Datei llms.txt anlegen</h3></div>
+  <div class="chips mono"><span class="chip c-wirkung">Wirkung mittel</span><span class="chip c-aufwand">20 Minuten</span><span class="chip c-wer">Dateimanager</span></div>
+  <div class="why"><b>Warum:</b> Immer mehr Menschen fragen nicht mehr Google, sondern ChatGPT oder Perplexity nach einer Empfehlung. Diese Systeme suchen zuerst nach einer Datei <code>llms.txt</code> im Wurzelverzeichnis, die in wenigen Zeilen erklärt, worum es auf der Seite geht. Aktuell liefert <code>steuervorteil-zypern-immobilien.com/llms.txt</code> eine Fehlerseite.</div>
+  <p>Der fertige Text liegt Sven vor und muss nur noch an drei Stellen mit den Impressumsdaten ergänzt werden. Datei über den Dateimanager im Wurzelverzeichnis anlegen, dort, wo auch <code>robots.txt</code> und <code>wp-config.php</code> liegen.</p>
+  <p><b>Kontrolle:</b> <code>steuervorteil-zypern-immobilien.com/llms.txt</code> im Browser aufrufen. Der Text muss als reine Textdatei erscheinen, nicht als Download und nicht als Fehlerseite.</p>
+</div>
+
+<!-- 15 -->
+<div class="step" id="m15">
+  <div class="step-head"><span class="num">15</span><h3>KI-Crawler in robots.txt ausdrücklich erlauben</h3></div>
+  <div class="chips mono"><span class="chip c-wirkung">Wirkung niedrig</span><span class="chip c-aufwand">10 Minuten</span><span class="chip c-wer">Yoast &rarr; Werkzeuge</span></div>
+  <div class="why"><b>Warum:</b> Die gute Nachricht zuerst: Es ist aktuell nichts blockiert. Getestet mit den echten Kennungen von GPTBot, ClaudeBot, PerplexityBot, OAI-SearchBot, Googlebot und Bingbot — alle sechs bekommen die vollständige Seite. Es fehlt lediglich die ausdrückliche Erlaubnis, die manche Systeme als Signal werten, und der Verweis auf die neue llms.txt.</div>
+  <p>In Yoast unter <i>Werkzeuge &rarr; Datei-Editor</i> die Blockfreigaben für die acht gängigen KI-Kennungen ergänzen sowie eine Kommentarzeile mit dem Pfad zur llms.txt. Der fertige Textblock liegt Sven vor. Wichtig: Die robots.txt wird von Yoast erzeugt, sie darf nicht als statische Datei angelegt werden, sonst greift die falsche.</p>
+  <p><b>Kontrolle:</b> <code>steuervorteil-zypern-immobilien.com/robots.txt</code> aufrufen, die neuen Zeilen müssen sichtbar sein.</p>
+</div>
+
+<!-- 16 -->
+<div class="step" id="m16">
+  <div class="step-head"><span class="num">16</span><h3>Groß- und Kleinschreibung weiterleiten</h3></div>
+  <div class="chips mono"><span class="chip c-wirkung">Wirkung niedrig</span><span class="chip c-aufwand">15 Minuten</span><span class="chip c-wer">Weiterleitungen</span></div>
+  <div class="why"><b>Warum:</b> Adressen mit Großbuchstaben liefern derzeit die Seite aus, statt weiterzuleiten. Geprüft und bestätigt bei <code>/Termin/</code>, <code>/BLOG/</code>, <code>/Kontakt/</code> und <code>/ueber-UNS/</code>. Google erkennt die Dublette zwar an der Kanonisch-Angabe, die richtig gesetzt ist, verschwendet aber Crawl-Zeit auf Adressen, die es gar nicht geben sollte.</div>
+  <p>Regel einrichten, die jede Adresse mit Großbuchstaben dauerhaft auf die Kleinschreibung weiterleitet.</p>
+  <p><b>Kontrolle:</b> <code>/Termin/</code> aufrufen. Die Adresszeile muss auf <code>/termin/</code> springen.</p>
+</div>
+
+<!-- 17 -->
+<div class="step" id="m17">
+  <div class="step-head"><span class="num">17</span><h3>Kategorie- und Autorenarchiv aus Google nehmen</h3></div>
+  <div class="chips mono"><span class="chip c-wirkung">Wirkung niedrig</span><span class="chip c-aufwand">5 Minuten</span><span class="chip c-wer">Yoast</span></div>
+  <div class="why"><b>Warum:</b> Es gibt genau eine Kategorie, sie heißt „Uncategorized“ und hat keinen eigenen Inhalt. Das Autorenarchiv listet dieselben Artikel noch einmal, obwohl es nur eine Autorin oder einen Autor gibt. Beide sind derzeit für Google freigegeben und stehen sogar in der Sitemap.</div>
+  <p>In Yoast unter <i>Darstellung in der Suche</i>: bei <i>Taxonomien &rarr; Kategorien</i> die Anzeige in Suchergebnissen abschalten, bei <i>Archive &rarr; Autoren-Archive</i> das Archiv deaktivieren. Beide verschwinden dann automatisch auch aus der Sitemap.</p>
+  <p><b>Kontrolle:</b> <code>/sitemap_index.xml</code> aufrufen. Es dürfen nur noch <code>post-sitemap.xml</code> und <code>page-sitemap.xml</code> aufgeführt sein.</p>
+</div>
+
+<!-- 18 -->
+<div class="step" id="m18">
+  <div class="step-head"><span class="num">18</span><h3>Körperschaftsteuer: 12,5 auf 15 Prozent korrigieren</h3></div>
+  <div class="chips mono"><span class="chip c-wirkung">Inhaltlich wichtig</span><span class="chip c-aufwand">1 Stunde</span><span class="chip c-wer">Artikel</span></div>
+  <div class="why"><b>Warum:</b> Zypern hat die Körperschaftsteuer zum 1. Januar 2026 von 12,5 auf <b>15 Prozent</b> angehoben. Artikel, die noch 12,5 Prozent nennen, sind sachlich falsch. Das kostet Vertrauen bei genau der Zielgruppe, die auf Zahlen achtet, und KI-Systeme geben veraltete Werte weiter, wenn sie sie auf der Seite finden.</div>
+  <p>Alle Artikel nach „12,5“ durchsuchen und im Zusammenhang mit der Körperschaftsteuer auf 15 Prozent ändern. Wo es inhaltlich passt, den Wechsel als Kontext stehen lassen, das wirkt aktueller als eine stille Korrektur:</p>
+  <pre>Die Körperschaftsteuer wurde zum 1. Januar 2026
+von 12,5 auf 15 Prozent angehoben.</pre>
+  <p>Betroffen sind vor allem die Steuerartikel, insbesondere <code>/zypern-limited/</code>, <code>/steuern-auf-zypern/</code>, <code>/zypern-firma-vs-deutsche-holding/</code> und <code>/steuern-optimieren-mit-dem-dba/</code>. Bitte alle 22 Artikel prüfen, nicht nur diese vier.</p>
+  <p><b>Kontrolle:</b> Über die Suche im WordPress-Backend nach „12,5“ suchen. Es darf kein Treffer im Zusammenhang mit der Körperschaftsteuer übrig bleiben.</p>
+</div>
+
+<!-- 19 -->
+<div class="step" id="m19">
+  <div class="step-head"><span class="num">19</span><h3>Antwort-zuerst-Einleitungen und Fakten-Block</h3></div>
+  <div class="chips mono"><span class="chip c-wirkung">Wirkung hoch</span><span class="chip c-aufwand">4 Stunden</span><span class="chip c-wer">Artikel + Kernseiten</span></div>
+  <div class="why"><b>Warum:</b> Wenn ChatGPT oder Google eine Frage direkt beantworten, nehmen sie den Absatz, der die Antwort am klarsten enthält. Unsere Seiten fangen aber durchgehend mit einer Hinführung an. <code>/auswandern-nach-zypern/</code> beginnt mit „Immer mehr Menschen beschäftigen sich mit dem Gedanken, nach Zypern auszuwandern“ — das beantwortet nichts und ist damit nicht zitierfähig. Der gute Inhalt kommt erst im dritten Absatz.</div>
+  <p><b>Teil eins:</b> Direkt unter die Überschrift kommt ein Absatz von 40 bis 60 Wörtern, der die wahrscheinlichste Frage der Seite sofort beantwortet. Ein Fakt pro Satz, keine verschachtelten Werbesätze. Der bisherige Einleitungstext rutscht dahinter und bleibt erhalten. Beispiel für <code>/auswandern-nach-zypern/</code>:</p>
+  <pre>Deutsche Staatsbürger können als EU-Bürger ohne Visum
+nach Zypern ziehen. Nach mehr als drei Monaten Aufenthalt
+ist eine Registrierung (MEU1/Yellow Slip) erforderlich.
+Die Steueransässigkeit beginnt ab 183 Tagen Aufenthalt
+pro Kalenderjahr, unter Bedingungen bereits ab 60 Tagen.</pre>
+  <p>Die fertigen Einleitungen für die sechs wichtigsten Seiten liegen Sven vor. Für die übrigen Artikel gilt dasselbe Muster. Wichtig: Keine Steuerzahl erfinden. Was nicht gesichert ist, vorher bei Sven abfragen.</p>
+  <p><b>Teil zwei:</b> Auf <code>/ueber-uns/</code>, <code>/usp-happy-property/</code>, <code>/immobilieninvestor-zypern/</code>, <code>/steuerliche-vorteile/</code> und <code>/kapitalanlage-fuer-aerzte/</code> einen Block „Happy Property auf einen Blick“ einbauen. Der beantwortet in zitierfähiger Form, was auf der ganzen Website bisher nirgends steht. Alle Angaben sind von Sven bestätigt:</p>
+  <pre>Was:        Vermittlung und Verwaltung von Neubau-
+            immobilien auf Zypern
+Für wen:    Deutschsprachige Kapitalanleger, Unternehmer,
+            Auswanderer, Ärzte und Apotheker
+Seit:       2020, über 80 vermittelte Immobilien
+Portfolio:  laufend 20 bis 30 Projekte,
+            gut 200 Apartments und Villen
+Kosten für Käufer: keine. Die Provision zahlt der
+            Bauträger, nicht der Käufer.
+Bauträger:  nur Bauträger, die zu 100 Prozent eigen-
+            kapitalisiert sind, bereits in Paphos gebaut
+            haben, geprüft gute Bauqualität liefern und
+            alle Genehmigungen vorliegen haben.
+Erstgespräch: kostenfrei und unverbindlich</pre>
+  <p>Der Satz zu den Kosten ist der wichtigste Einzelpunkt aus diesem ganzen Nachtrag. Bisher steht auf keiner einzigen Seite, was der Service kostet. Genau das ist die häufigste Frage, die ein Interessent einem KI-Assistenten stellt, und sie kann derzeit niemand beantworten.</p>
+  <p><b>Achtung bei der Formulierung:</b> „Für Käufer entstehen keine Kosten“ darf sich nie so lesen, als sei die Immobilie kostenlos. Der Satz bezieht sich ausschließlich auf die Vergütung von Happy Property.</p>
+  <p><b>Kontrolle:</b> Die neue Einleitung muss im Seitenquelltext im ersten Absatz nach der Überschrift stehen, nicht erst weiter unten.</p>
+</div>
+
+<h2>Zwei Korrekturen am Plan von oben</h2>
+
+<p><b>Maßnahme 04, FAQ-Auszeichnung — genaue Liste.</b> Die FAQ-Texte sind bereits vorhanden und gut geschrieben, mit der Antwort im ersten Satz. Sie müssen <b>nicht</b> neu geschrieben werden. Es fehlt nur zweierlei: Die Fragen stehen als normaler Absatz statt als Zwischenüberschrift, und es fehlt die Auszeichnung als FAQ. Betroffen sind diese elf Seiten:</p>
+<ul>
+  <li><code>/auswandern-nach-zypern-als-rentner/</code> — rund 12 Fragen</li>
+  <li><code>/zypern-auswandern-mit-kindern/</code> — rund 11 Fragen</li>
+  <li><code>/non-dom-status-zypern/</code> — rund 11 Fragen</li>
+  <li><code>/auswandern-nach-zypern/</code> — rund 9 Fragen</li>
+  <li><code>/steuern-auf-zypern/</code> — rund 9 Fragen</li>
+  <li><code>/auswandern-nach-zypern-voraussetzungen-das-gilt-fuer-dich/</code> — rund 8 Fragen</li>
+  <li><code>/zypern-auswandern-steuern/</code> — rund 7 Fragen</li>
+  <li><code>/zypern-deutsche-community/</code> — rund 7 Fragen</li>
+  <li><code>/leben-auf-zypern-erfahrungen-so-wirst-du-teil-der-community/</code> — rund 7 Fragen, hier sind die Fragen bereits richtig als Zwischenüberschrift ausgezeichnet, es fehlt nur die FAQ-Auszeichnung</li>
+  <li><code>/</code> (Startseite) — rund 12 Fragen, vermutlich als Aufklappelement gebaut, bitte im Oxygen-Baum nachsehen</li>
+  <li><code>/immobilieninvestor-zypern/</code> — rund 7 Fragen, ebenfalls Aufklappelement</li>
+</ul>
+<p>Zusätzlich fehlt ein FAQ-Bereich ganz auf den Geldseiten: <code>/steuerliche-vorteile/</code>, <code>/kaufprozess/</code>, <code>/rendite-rechner/</code>, <code>/kapitalanlage-fuer-aerzte/</code>, <code>/termin/</code> und <code>/ueber-uns/</code>. Die fertigen Fragen und Antworten dafür liegen Sven vor, darunter die zu Kosten, Portfolio und Bauträgerauswahl.</p>
+
+<p><b>Maßnahme 07, Alt-Texte — genaue Liste.</b> Die Startseite ist bereits sauber, dort haben alle Bilder gute Alt-Texte. Offen sind 26 Bilder auf 16 Seiten:</p>
+<ul>
+  <li><code>/zypern-deutsche-community/</code>: sechs Bilder <b>ganz ohne</b> Alt-Attribut, die Dateinamen sind reine Zeichenketten. Das ist der schlechteste Fall und sollte zuerst weg.</li>
+  <li>Sämtliche Blog-Kopfbilder nach dem Muster <code>HP-Blog-Banner-Thumbnail-*.png</code> haben ein leeres Alt-Attribut. Als Alt-Text jeweils eine Kurzfassung des Artikelthemas eintragen, nicht den Dateinamen.</li>
+  <li><code>eBook-17-min.png</code> erscheint auf vier Artikeln ohne Alt-Text. Vorschlag: „Kostenloses E-Book zu Immobilien-Investments auf Zypern“.</li>
+  <li>Rein dekorative Bilder behalten ein leeres Alt-Attribut. Nicht künstlich befüllen, das schadet mehr als es nützt.</li>
+</ul>
+<p>Achtung bei Oxygen: Das eingebaute Alt-Feld wird bei manchen Elementen nicht ausgegeben. Wenn nach dem Speichern im Seitenquelltext kein Alt-Text auftaucht, muss er über das erweiterte Attributfeld des Elements gesetzt werden.</p>
+
+<h2>Was bestätigt gut ist</h2>
+
+<p>Damit die Liste oben nicht den falschen Eindruck hinterlässt — diese Punkte wurden am 26.08. erneut geprüft und sind in Ordnung:</p>
+<ul>
+  <li><b>KI-Crawler kommen alle durch.</b> Sechs echte Kennungen getestet, alle bekommen die vollständige Seite.</li>
+  <li><b>Der Inhalt steht im Quelltext.</b> Anders als auf der .de-Domain braucht es kein JavaScript, um den Text zu sehen. Für KI-Systeme ist die Seite damit lesbar.</li>
+  <li><b>Kanonisch-Angaben stimmen auf allen 58 Seiten.</b> Keine Weiterleitungskette länger als ein Schritt. HTTPS und die Umleitung von www greifen sauber.</li>
+  <li><b>Autor und Datum stehen auf jedem Artikel</b>, im Format „8. April 2026 · Sven Rüprich“. Was noch fehlt, ist eine kurze Zeile zur fachlichen Einordnung von Sven, also zwei bis drei Sätze, warum ausgerechnet er zu Steuern und Immobilien auf Zypern schreiben kann.</li>
+  <li><b>Achtung, Falle beim Aktualisierungsdatum.</b> Ein „Zuletzt aktualisiert am …“ wäre normalerweise ein guter Vertrauensanker. Bei uns funktioniert er nicht: Das Änderungsdatum in der Datenbank passt bei den meisten Artikeln nicht zum Veröffentlichungsdatum. Bei <code>/non-dom-status-zypern/</code> läge die Aktualisierung am 25. März, die Veröffentlichung aber am 8. April, also vor dem eigenen Erscheinen. Bei anderen Artikeln sind beide Daten identisch, dann steht dort sinnlos zweimal derselbe Tag. Getestet und wieder zurückgenommen am 26.08. <b>Also nicht einfach einbauen.</b> Sinnvoll wird es erst, wenn es nur erscheint, sobald die Aktualisierung wirklich später liegt als die Veröffentlichung — und wenn die Artikel bei der nächsten inhaltlichen Überarbeitung, etwa der Steuerkorrektur aus Maßnahme 18, ein sauberes Datum bekommen.</li>
+  <li><b>Optimole liefert bereits WebP und AVIF aus</b>, sobald der Browser es unterstützt. Maßnahme 09 ist damit kleiner als gedacht: Es geht nur noch um einzelne sehr große Bilder, nicht um eine Umstellung.</li>
+</ul>
+
+<footer>
+  <p>Erhoben am 18.08.2026 mit claude-seo: alle 59 Adressen aus der Sitemap einzeln abgerufen und ausgewertet, Ladegewicht der Startseite und der Investor-Seite gemessen, interne Verlinkung über alle Seiten hinweg gezählt. Nachtrag vom 26.08.2026: alle 59 Adressen erneut abgerufen, Ladezeit lokal mit Lighthouse gemessen (Mobil), KI-Crawler mit echten Kennungen getestet, FAQ- und Alt-Text-Bestand einzeln ausgezählt. Fragen dazu an Sven.</p>
+</footer>
+
+</div>
+
+</body></html>
