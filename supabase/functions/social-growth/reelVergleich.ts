@@ -34,7 +34,7 @@ const titelVon = (c: string | null) => {
 
 // Zeigt Reels mit Anzeigen in den letzten 7 Tagen und alle Reels der letzten 8 Tage,
 // das meistbeworbene zuerst, danach das neueste.
-export function reelVergleich(posts: ReelMetrik[], bezahlt: BezahltRow[], testIds: string[], nowMs: number, max = 12): ReelZeile[] {
+export function reelVergleich(posts: ReelMetrik[], bezahlt: BezahltRow[], testIds: string[], nowMs: number, max = 16): ReelZeile[] {
   const zeilen = new Map<string, ReelZeile>()
   const keyVonRef = new Map<string, string>()
   const leer = (titel: string, at: string | null, test: boolean): ReelZeile => ({
