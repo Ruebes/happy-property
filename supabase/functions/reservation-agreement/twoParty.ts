@@ -52,8 +52,8 @@ const NO_ATTACHMENT: Array<[string, string]> = [
   ['please find attached the filled-in reservation agreement', 'here is the filled-in reservation agreement'],
   ['Du findest ihn im Anhang', 'Das PDF schicken wir dir zusätzlich per WhatsApp'],
   ['You will find it attached', 'We are also sending you the PDF by WhatsApp'],
-  ['Das PDF ist im Anhang.', 'Das PDF bekommst du per WhatsApp.'],
-  ['The PDF is attached.', 'You will receive the PDF by WhatsApp.'],
+  ['Das PDF ist im Anhang.', 'Das fertige PDF öffnest du über den Button unten, das Laden kann bis zu 20 Sekunden dauern.'],
+  ['The PDF is attached.', 'You can open the finished PDF with the button below, loading can take up to 20 seconds.'],
 ]
 const invoke: typeof baseInvoke = (sb, fn, body) => {
   const att = (body as { attachment?: { content_base64?: string } | null }).attachment
@@ -825,6 +825,9 @@ function finalTargets(sb: SupabaseClient, row: AgreementRow, ctx: Ctx, p: Payloa
   }))
 
   // Bauträger
+  // Oxana bekommt nur die Mail: Ist das PDF zu groß für den Anhang, kommt sie über die Unterschriftsseite dran (zeigt nach Abschluss das fertige PDF)
+  const vendorToken = test ? row.test_sign_token : row.sign_token
+  const vendorBtn = (label: string) => vendorToken ? button(SIGN_VENDOR + vendorToken, label) : ''
   const devMails = test ? [SVEN_MAIL] : ctx.devEmails
   for (const to of devMails) {
     const ML: Lang = test ? p.lang : (ctx.devMailLang[to] ?? p.lang)
@@ -833,8 +836,8 @@ function finalTargets(sb: SupabaseClient, row: AgreementRow, ctx: Ctx, p: Payloa
       send: async () => invoke(sb, 'send-email', {
         to, subject: `${prefix}${ML === 'de' ? 'Von beiden Seiten unterschrieben' : 'Signed by both sides'}: Flora Panorama ${unit} - ${names}`,
         html: ML === 'de'
-          ? `<p>Hallo ${esc(ctx.developerName)}-Team,</p><p>der Reservierungsvertrag für <b>Flora Panorama, Apartment ${esc(unit)}</b> (${esc(names)}) ist jetzt von beiden Seiten unterschrieben. Das PDF ist im Anhang. Die Anzahlung von ${esc(p.fields.deposit_text)} ist bis spätestens ${due} fällig.</p><p>Viele Grüße<br>Sven &middot; Happy Property</p>`
-          : `<p>Dear ${esc(ctx.developerName)} team,</p><p>the reservation agreement for <b>Flora Panorama, apartment ${esc(unit)}</b> (${esc(names)}) has now been signed by both sides. The PDF is attached. The deposit of ${esc(p.fields.deposit_text)} is due by ${due} at the latest.</p><p>Best regards<br>Sven &middot; Happy Property</p>`,
+          ? `<p>Hallo ${esc(ctx.developerName)}-Team,</p><p>der Reservierungsvertrag für <b>Flora Panorama, Apartment ${esc(unit)}</b> (${esc(names)}) ist jetzt von beiden Seiten unterschrieben. Das PDF ist im Anhang. Die Anzahlung von ${esc(p.fields.deposit_text)} ist bis spätestens ${due} fällig.</p>${vendorBtn('Unterschriebenen Vertrag öffnen')}<p>Viele Grüße<br>Sven &middot; Happy Property</p>`
+          : `<p>Dear ${esc(ctx.developerName)} team,</p><p>the reservation agreement for <b>Flora Panorama, apartment ${esc(unit)}</b> (${esc(names)}) has now been signed by both sides. The PDF is attached. The deposit of ${esc(p.fields.deposit_text)} is due by ${due} at the latest.</p>${vendorBtn('Open signed agreement')}<p>Best regards<br>Sven &middot; Happy Property</p>`,
         attachment: attach(fname, await pdf()), auto: true, lang: ML, already_translated: true,
       }),
     })
