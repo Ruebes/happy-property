@@ -32,7 +32,7 @@ import { notifyIfToday, cyTime, cyDate } from '../_shared/notifyToday.ts'
 import { gateCaller } from '../_shared/callerGate.ts'
 import { callAnthropic, toolInput } from '../_shared/anthropic.ts'
 import { koennteAbsageSein, terminZone, terminLabel, lotteAbsageText, lotteVerschiebenIntro, lotteVerschiebenSven, bautraegerAbsageText, waMeLink, type AbsageArt } from '../_shared/terminAbsage.ts'
-import { dialogEndet, dialogStand, termineAufDemTisch, termineVorbei, DIALOG_HINWEIS, DIALOG_NOTIZ, type DialogStand } from '../_shared/terminDialog.ts'
+import { dialogEndet, dialogStand, folgeWartetBis, termineAufDemTisch, termineVorbei, DIALOG_HINWEIS, DIALOG_NOTIZ, type DialogStand } from '../_shared/terminDialog.ts'
 import {
   regelVorfilter, sendungenBauen, lotteAngebotText, angebotNotiz, kandidatenWaehlen, lotteBautraegerText, bautraegerBetreff, bautraegerNotiz,
   regionFaktenLesen, lotteRegionText, regionNotiz, geldNotiz, geldMitZahl, istRegistriert, namensTeile, bautraegerTeile, bautraegerAnzeige,
@@ -997,6 +997,28 @@ async function dialogStandLesen(admin: SupabaseClient, c: ReplyConv, leadId: str
     andereDanach = !!andere?.length
   }
   return dialogStand({ lotteZuletzt, svenDanach, andereDanach, termine: termineAufDemTisch(c.state, c.proposed_slots, c.chosen_slot) })
+}
+
+// Bis wann wartet die Erstkontakt-Folge auf Lottes Terminfrage (_shared/terminDialog.ts)?
+// Nur lesend, process-scheduled-messages fragt hier vor dem Versand. Bei Bot aus: nicht warten.
+async function folgePauseBis(admin: SupabaseClient, leadId: string): Promise<string | null> {
+  const { data: st } = await admin.from('crm_settings').select('value').eq('key', 'booking_bot_enabled').maybeSingle()
+  if ((st as { value?: string } | null)?.value !== 'true') return null
+  const { data: gespraech } = await admin.from('booking_conversations').select('*').eq('lead_id', leadId)
+    .not('state', 'in', '(booked,handoff,expired,snoozed)').gt('expires_at', new Date().toISOString())
+    .order('created_at', { ascending: false }).limit(1).maybeSingle()
+  const c = gespraech as ReplyConv | null
+  if (!c) return null
+  const { data: k } = await admin.from('leads').select('whatsapp, phone').eq('id', leadId).maybeSingle()
+  const kontakt = k as { whatsapp: string | null; phone: string | null } | null
+  const phone = kontakt?.whatsapp || kontakt?.phone || ''
+  if (!nummer9(phone)) return null
+  const stand = await dialogStandLesen(admin, c, leadId, phone)
+  if (stand !== 'offen') return null
+  const { data: bot } = await admin.from('activities').select('created_at')
+    .eq('lead_id', leadId).eq('type', 'whatsapp').eq('direction', 'outbound').eq('subject', BOT_BETREFF).gte('created_at', c.created_at)
+    .order('created_at', { ascending: false }).limit(1).maybeSingle()
+  return folgeWartetBis({ stand, lotteZuletzt: (bot as { created_at: string } | null)?.created_at ?? null, termine: termineAufDemTisch(c.state, c.proposed_slots, c.chosen_slot) })
 }
 
 async function handleReply(admin: SupabaseClient, leadId: string, text: string): Promise<Response> {
@@ -2689,6 +2711,11 @@ Deno.serve(async (req) => {
       const { data: k } = await admin.from('leads').select('whatsapp, phone').eq('id', body.lead_id).maybeSingle()
       const kontakt = k as { whatsapp: string | null; phone: string | null } | null
       return json({ ok: true, stand: await dialogStandLesen(admin, gespraech as ReplyConv, body.lead_id, kontakt?.whatsapp || kontakt?.phone || '') })
+    }
+    // folge_pause: seiteneffektfrei, bis wann die Erstkontakt-Folge warten soll (null = gar nicht).
+    if (body.action === 'folge_pause') {
+      if (!body.lead_id) return json({ error: 'lead_id fehlt' }, 400)
+      return json({ ok: true, bis: await folgePauseBis(admin, body.lead_id) })
     }
     // detect: seiteneffektfreier Test des Terminwunsch-Erkenners (kein Senden).
     if (body.action === 'detect') return json({ ok: true, detect: await detectApptRequest(body.text ?? '') })

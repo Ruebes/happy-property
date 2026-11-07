@@ -231,6 +231,24 @@ async function resolveRecipient(
 // gewählten Sprache an, ohne sie doppelt pflegen zu müssen. Fehler → Original (DE).
 // translateOutbound liegt jetzt in _shared/translate.ts (von allen Sendewegen genutzt).
 // ── Aktivität im CRM loggen ───────────────────────────────────────────────────
+// Fragt booking-bot, bis wann die Erstkontakt-Folge auf Lottes Terminfrage wartet. Jeder Fehler
+// heißt: nicht warten. Eine Folge-Nachricht zu viel ist besser als eine, die hängen bleibt.
+async function folgePauseBis(leadId: string): Promise<string | null> {
+  try {
+    const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'folge_pause', lead_id: leadId }),
+      signal: AbortSignal.timeout(10_000),
+    })
+    const j = await r.json().catch(() => ({})) as { bis?: string | null }
+    return r.ok && j.bis && Date.parse(j.bis) > Date.now() ? j.bis : null
+  } catch (e) {
+    console.warn('[process-scheduled] Folge-Pause nicht geprüft:', e)
+    return null
+  }
+}
+
 async function logActivity(supabase: ReturnType<typeof createClient>, params: {
   lead_id:   string
   deal_id:   string | null
@@ -815,6 +833,32 @@ Deno.serve(async (req: Request) => {
             processed.push({ id: msg.id, result: `bot_${isStart ? 'start' : 'nudge'}:${msg.bot_nudge_stage}` })
           }
           continue
+        }
+
+        // ── Erstkontakt-Folge wartet, solange Lottes Terminfrage offen ist (7.11.26) ──
+        // Die Zeile bleibt pending, also stoppt sie weiter jede Antwort, Buchung oder Abmeldung.
+        // Spätere Stufen rücken um dieselbe Zeit mit, sonst kämen zwei kurz hintereinander.
+        if (msg.event_type === 'erstkontakt' && anKundeAuto && msg.lead_id && msg.type !== 'email') {
+          const bis = await folgePauseBis(msg.lead_id)
+          if (bis) {
+            const { error: pErr } = await supabase.from('scheduled_messages')
+              .update({ status: 'pending', scheduled_at: bis, error_message: `Wartet auf Lottes Terminfrage bis ${bis.slice(11, 16)} UTC` })
+              .eq('id', msg.id)
+            if (!pErr) {
+              const versatz = Date.parse(bis) - Date.parse(msg.scheduled_at)
+              const { data: spaeter } = await supabase.from('scheduled_messages').select('id, scheduled_at')
+                .eq('lead_id', msg.lead_id).eq('event_type', 'erstkontakt').is('bot_nudge_stage', null)
+                .eq('status', 'pending').neq('id', msg.id).gt('scheduled_at', msg.scheduled_at)
+              for (const z of (spaeter ?? []) as Array<{ id: string; scheduled_at: string }>) {
+                await supabase.from('scheduled_messages')
+                  .update({ scheduled_at: new Date(Date.parse(z.scheduled_at) + versatz).toISOString() })
+                  .eq('id', z.id).eq('status', 'pending')
+              }
+              processed.push({ id: msg.id, result: 'folge_wartet' })
+              continue
+            }
+            console.warn(`[process-scheduled] Folge-Pause nicht gesetzt (${msg.id}):`, pErr.message)
+          }
         }
 
         // Lead-E-Mail + Telefon für Versand laden. Newsletter-Abonnenten haben

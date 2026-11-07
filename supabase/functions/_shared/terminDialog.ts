@@ -81,6 +81,23 @@ export function dialogEndet(it: TerminFelder, stand: DialogStand, state: string,
   return stand === 'sven_schreibt' || bestandskunde || !EIGENER_WEG.includes(it.intent)
 }
 
+const FOLGE_PAUSE_MAX_MS = 48 * 3600e3
+
+/**
+ * Bis wann wartet die automatische Erstkontakt-Folge auf Lottes Terminfrage? null = sie geht raus.
+ *
+ * Rückblick über 60 Tage (7.11.2026): 39 von 393 Folge-WhatsApps kamen, während der Kunde noch
+ * Lottes zwei Zeiten vor sich hatte, und warben dann mit einem Video für einen Termin. Keine
+ * davon führte binnen 7 Tagen zu einem Termin. Darum wartet die Folge, solange der Stand
+ * 'offen' ist: höchstens bis zum ersten vorgeschlagenen Termin (danach gilt termine_vorbei) und
+ * nie länger als 48 Stunden nach Lottes Frage. Unlesbare Zeiten heißen: nicht warten.
+ */
+export function folgeWartetBis(p: { stand: DialogStand; lotteZuletzt: string | null; termine: TerminSlot[] | null; jetzt?: number }): string | null {
+  if (p.stand !== 'offen' || !p.lotteZuletzt || !p.termine?.length) return null
+  const bis = Math.min(Date.parse(p.lotteZuletzt) + FOLGE_PAUSE_MAX_MS, ...p.termine.map(t => Date.parse(t.startIso)))
+  return bis > (p.jetzt ?? Date.now()) ? new Date(bis).toISOString() : null
+}
+
 /**
  * Für die KI: warum die Nachricht vermutlich nicht zum Termin-Dialog gehört. termine_vorbei
  * fehlt bewusst, denn da ist Lottes Frage noch das Letzte, was der Kunde bekommen hat.

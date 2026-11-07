@@ -94,6 +94,23 @@ for (const intent of ['unclear', 'content', 'confirm_yes', 'indifferent', 'quest
   check(!endet({ intent }, 'offen', 'awaiting_choice', true), `offener Dialog bleibt wie bisher (${intent})`)
 }
 
+// ── Erstkontakt-Folge wartet, solange Lottes Frage offen ist ──
+const LOTTE = '2026-11-06T10:00:00Z'
+const wartet = (p) => D.folgeWartetBis({ stand: 'offen', lotteZuletzt: LOTTE, termine: [morgen, spaeter], jetzt: JETZT, ...p })
+check(wartet({}) === morgen.startIso, 'wartet bis zum ersten Termin')
+check(wartet({ termine: [spaeter, morgen] }) === morgen.startIso, 'Reihenfolge der Termine ist egal')
+check(wartet({ termine: [spaeter] }) === '2026-11-08T10:00:00.000Z', 'höchstens 48 Stunden nach Lottes Frage')
+for (const s of ['nicht_zugestellt', 'sven_schreibt', 'andere_nachricht', 'termine_vorbei']) {
+  check(wartet({ stand: s }) === null, `Stand ${s}: Folge geht raus`)
+}
+check(wartet({ lotteZuletzt: null }) === null, 'keine Frage zugestellt: Folge geht raus')
+check(wartet({ termine: null }) === null, 'keine Termine nötig: Folge geht raus')
+check(wartet({ termine: [] }) === null, 'keine Termine auf dem Tisch: Folge geht raus')
+check(wartet({ jetzt: Date.parse(morgen.startIso) }) === null, 'erster Termin erreicht: Folge geht raus')
+check(wartet({ termine: [spaeter], jetzt: Date.parse('2026-11-08T10:00:00Z') }) === null, '48 Stunden um: Folge geht raus, auch wenn die Termine noch gelten')
+check(wartet({ termine: [{ startIso: 'kaputt' }] }) === null, 'unlesbarer Termin: nicht warten')
+check(wartet({ lotteZuletzt: 'kaputt' }) === null, 'unlesbare Fragezeit: nicht warten')
+
 // ── Texte: jeder Stand hat beide, keine Gedankenstriche, echte Umlaute ──
 for (const s of ['nicht_zugestellt', 'sven_schreibt', 'andere_nachricht', 'termine_vorbei']) {
   const texte = [['DIALOG_NOTIZ', D.DIALOG_NOTIZ[s]]]
@@ -118,6 +135,24 @@ const ausstieg = reply.slice(pos('dialogEndet('), pos("it.intent === 'self_follo
 check(/handleAnswer\(/.test(ausstieg), 'Ausstieg führt in den Weg ohne Gespräch')
 check(pos('termineVorbei(slots)') > 0 && pos('termineVorbei(slots)') < pos('const m = `Sag mir einfach 1 oder 2'), 'kein vergangener Termin in der Nachfrage')
 check(!/Kein Problem, \$\{first\(name\)/.test(bot), 'Übergabetext: Name darf nicht „ich“ ersetzen')
+
+// ── Die Pause der Folge: nur lesend im Bot, vor jedem Versand im Sendelauf, Fehler heißt senden ──
+const pauseBot = bot.slice(bot.indexOf('async function folgePauseBis('), bot.indexOf('async function handleReply('))
+check(pauseBot.length > 0 && !/\.(insert|update|delete|upsert)\(/.test(pauseBot), 'folgePauseBis schreibt nichts')
+check(/body\.action === 'folge_pause'/.test(bot), 'booking-bot kennt die Aktion folge_pause')
+check(pauseBot.includes("booking_bot_enabled"), 'Bot aus: Folge wartet nicht')
+const lauf = readFileSync(join(root, 'supabase/functions/process-scheduled-messages/index.ts'), 'utf8')
+const fragen = lauf.slice(lauf.indexOf('async function folgePauseBis('), lauf.indexOf('async function logActivity('))
+check(/catch \(e\)[\s\S]*return null/.test(fragen) && /AbortSignal\.timeout/.test(fragen), 'Fehler oder Hänger beim Nachfragen: nicht warten')
+const lp = (s) => lauf.indexOf(s)
+const pauseStelle = lp("msg.event_type === 'erstkontakt' && anKundeAuto")
+check(pauseStelle > lp('if (msg.bot_nudge_stage != null) {') && lp('if (msg.bot_nudge_stage != null) {') > 0, 'Pause nach dem Bot-Zweig: Lottes eigene Nachrichten warten nicht')
+check(pauseStelle > lp('const anKundeAuto ='), 'Pause nach der Ruhezeit')
+check(pauseStelle < lp('await translateOutbound('), 'Pause vor Übersetzung und Versand')
+const pauseBlock = lauf.slice(pauseStelle, lp('// Lead-E-Mail + Telefon für Versand laden.'))
+check(/status: 'pending', scheduled_at: bis/.test(pauseBlock), 'wartende Zeile bleibt stornierbar (pending)')
+check(pauseBlock.includes("msg.type !== 'email'"), 'reine Mail wartet nicht, sie stört den WhatsApp-Dialog nicht')
+check(/\.eq\('id', z\.id\)\.eq\('status', 'pending'\)/.test(pauseBlock), 'spätere Stufen rücken nur mit, solange sie pending sind')
 
 if (fails.length) {
   console.error(`verify-termin-dialog: ${fails.length} von ${checked} Prüfungen rot`)
