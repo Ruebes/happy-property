@@ -33,7 +33,7 @@ const eur = (n: number | null | undefined): string =>
 interface FloraAsk { link: string; needAddress: boolean; needId: boolean }
 
 // deno-lint-ignore no-explicit-any
-async function floraAsk(sb: any, dealId: string, leadId: string, unitId: string, templateId: string): Promise<FloraAsk | null> {
+async function floraAsk(sb: any, dealId: string, leadId: string, unitId: string, templateId: string | null): Promise<FloraAsk | null> {
   const base = 'https://portal.happy-property.com/sign/a/'
   const load = async () => (await sb.from('reservation_agreements').select('id, status, address_token, customer_data').eq('deal_id', dealId).maybeSingle()).data as { id: string; status: string; address_token: string | null; customer_data: { at?: string } | null } | null
   let row = await load()
@@ -56,6 +56,8 @@ async function floraAsk(sb: any, dealId: string, leadId: string, unitId: string,
       if (error) { console.error('[schedule-message] Seitenlink', error.message); return null }
     }
   }
+  // Der Link läuft 30 Tage nach der letzten Bewegung ab: Eine neue Nachricht hält ihn offen
+  else if (row) await sb.from('reservation_agreements').update({ updated_at: new Date().toISOString() }).eq('id', row.id)
   // Ordner lesen: Liegt ein Ausweis schon da, fragen wir nicht danach. Kommt die Antwort nicht rechtzeitig, fragen wir,
   // die Seite zeigt dem Kunden dann ohnehin, was schon da ist.
   let hasId = false
@@ -81,7 +83,7 @@ function floraMail(html: string, ask: FloraAsk): string {
   const P = '<p style="margin:0 0 28px 0;font-size:15px;line-height:1.8;color:#444444;">'
   const button = (label: string) => `<table cellpadding="0" cellspacing="0" border="0" style="margin-bottom:36px;"><tr><td style="background-color:#ff795d;border-radius:2px;"><a href="${ask.link}" style="display:inline-block;padding:15px 40px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;letter-spacing:0.5px;">${label} &rarr;</a></td></tr></table>`
   const ask1 = ask.needId && ask.needAddress
-    ? `F&uuml;r den Vertrag brauchen wir nur noch deinen <strong>Ausweis</strong> und deine <strong>Meldeadresse</strong>. Beides geht auf einer Seite, ohne Anmeldung, in zwei Minuten:</p>${button('Ausweis und Adresse angeben')}${P}Sobald beides da ist, k&uuml;mmern wir uns um den Rest.</p>`
+    ? `F&uuml;r den Vertrag brauchen wir nur noch deinen <strong>Ausweis</strong> und deine <strong>Meldeadresse</strong>. Beides geht auf einer Seite, ohne Anmeldung, in zwei Minuten. Kaufst du nicht allein, tr&auml;gst du die anderen K&auml;ufer dort gleich mit ein:</p>${button('Ausweis und Adresse angeben')}${P}Sobald beides da ist, k&uuml;mmern wir uns um den Rest.</p>`
     : ask.needId
     ? `F&uuml;r den Vertrag brauchen wir nur noch deinen <strong>Ausweis</strong>. Das geht auf einer Seite, ohne Anmeldung, in einer Minute:</p>${button('Ausweis hochladen')}${P}Sobald er da ist, k&uuml;mmern wir uns um den Rest.</p>`
     : ask.needAddress
@@ -97,7 +99,7 @@ function floraMail(html: string, ask: FloraAsk): string {
 
 function floraWa(text: string, ask: FloraAsk): string {
   const block = ask.needId && ask.needAddress
-    ? `Für den Vertrag brauchen wir nur noch deinen Ausweis und deine Meldeadresse. Beides geht auf einer Seite, ohne Anmeldung, in zwei Minuten:\n${ask.link}\n\nSobald beides da ist, kümmern wir uns um den Rest.`
+    ? `Für den Vertrag brauchen wir nur noch deinen Ausweis und deine Meldeadresse. Beides geht auf einer Seite, ohne Anmeldung, in zwei Minuten. Kaufst du nicht allein, trägst du die anderen Käufer dort gleich mit ein:\n${ask.link}\n\nSobald beides da ist, kümmern wir uns um den Rest.`
     : ask.needId
     ? `Für den Vertrag brauchen wir nur noch deinen Ausweis. Das geht auf einer Seite, ohne Anmeldung, in einer Minute:\n${ask.link}\n\nSobald er da ist, kümmern wir uns um den Rest.`
     : ask.needAddress
@@ -245,6 +247,7 @@ Deno.serve(async (req: Request) => {
     // selbst aus, sobald der Ausweis im Drive-Ordner liegt (Edge reservation-agreement).
     let unitDevHasResTemplate = false
     let floraFrage: FloraAsk | null = null
+    let resTemplateId: string | null = null
     if (dealData?.unit_id) {
       const { data: unit } = await supabase.from('crm_project_units')
         .select('unit_number, price_net, price_gross, vat_rate, project_id, crm_projects(name, developer)').eq('id', dealData.unit_id).maybeSingle()
@@ -284,12 +287,16 @@ Deno.serve(async (req: Request) => {
             const { data: resMode } = await supabase.from('crm_settings').select('value').eq('key', 'reservation_agreement_mode').maybeSingle()
             const modeOn = String((resMode as { value?: unknown } | null)?.value ?? '').replace(/"/g, '').trim() === 'on'
             unitDevHasResTemplate = !!resTpl && modeOn && resInScope
-            if (unitDevHasResTemplate && event_type === 'reservierung' && deal_id && (resTpl as { layout?: string }).layout === 'flora') {
-              floraFrage = await floraAsk(supabase, deal_id, lead_id, dealData.unit_id, (resTpl as { id: string }).id)
-            }
+            if (resTpl && resInScope) resTemplateId = (resTpl as { id: string }).id
           }
         }
       }
+    }
+
+    // Adresse, alle Käufer und Ausweise auf einer Seite, bei jedem Bauträger (Sven 7.11.2026).
+    // Ohne Vorlage bleibt template_id leer: Seite ja, Vertragsautomatik nein.
+    if (event_type === 'reservierung' && deal_id && dealData?.unit_id) {
+      floraFrage = await floraAsk(supabase, deal_id, lead_id, dealData.unit_id, resTemplateId)
     }
 
     // P4: Finanzierung-DE-Dokumente (langlebige Signed-URLs) nur für diese Stage
