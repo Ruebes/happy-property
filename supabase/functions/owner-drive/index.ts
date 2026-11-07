@@ -5,6 +5,11 @@
 //   POST { action:'list' }                    → Ordner + Dateien des Kunden
 //   POST multipart/form-data action=upload    → Datei(en) in den Kundenordner
 //   POST { action:'download', file_id }       → Datei-Stream (Binärantwort)
+//   POST { action:'upload_link', lead_id, ...} → Upload-Link für eine Person (nur Staff)
+//
+// Upload-Seite /sign/u/:token (kein Login, Header x-upload-token, siehe uploadSeite()):
+//   POST JSON                                 → Ansicht: Vorname, Sprache, offen oder zu
+//   POST multipart/form-data file=...         → eine Datei in den Kundenordner, nie lesen
 //
 // Intern (Service-Role-Bearer, Cron alle 5 Minuten):
 //   POST { action:'sweep' }                   → neue Dateien in ALLEN Kundenordnern
@@ -33,10 +38,12 @@ import { resolveLang, type Lang } from '../_shared/recipientLang.ts'
 import { isCronCall, safeEqual } from '../_shared/callerAuth.ts'
 import { ladeGesperrte, leadGesperrt, mailGesperrt, normMail, type GesperrteKonten } from '../_shared/kontoSperre.ts'
 import { entscheideAnfrage, meldeSvenEinmal, SUBJECT_ANFRAGE, SUBJECT_FREIGESCHALTET } from '../_shared/driveZugang.ts'
+import { UPLOAD_EMPFAENGER, uploadLinkHolen, type UploadEmpfaenger } from '../_shared/uploadLink.ts'
+import { dateiName, dateiTyp, linkOffen, MAX_DATEI_MB, MAX_DATEIEN_JE_TAG, UPLOAD_TOKEN_RE } from './uploadSeite.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-upload-token',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
@@ -438,10 +445,117 @@ async function sweep(sb: Client): Promise<Record<string, unknown>> {
       summary.push({ lead: leadName(lead), error: (e as Error).message })
     }
   }
-  // Eigener Schritt: Ein Fehler hier darf die Datei-Meldungen oben nicht beeinflussen
+  // Eigene Schritte: Ein Fehler hier darf die Datei-Meldungen oben nicht beeinflussen
+  const seite = await seitenUploadsMelden(sb)
+    .catch(e => { console.error('[owner-drive] Upload-Seite', (e as Error).message); return { error: (e as Error).message } })
   const access = await accessRequests(sb, (leads ?? []) as LeadRow[])
     .catch(e => { console.error('[owner-drive] Zugriffsanfragen', (e as Error).message); return { error: (e as Error).message } })
-  return { ok: true, leads: (leads ?? []).length, scanned, baseline, fresh, summary, access }
+  return { ok: true, leads: (leads ?? []).length, scanned, baseline, fresh, summary, seite, access }
+}
+
+// ── Upload-Seite /sign/u/:token ───────────────────────────────────────────────
+// Hochladen ohne Google-Konto, für jeden mit Link. Google sieht als Besitzer nur Svens Konto, deshalb
+// trägt die Seite jede Datei mit dem Namen aus dem Link ein. Die Meldung schickt der Sweep, gesammelt
+// für alle Dateien einer Person, sobald sie 2 Minuten liegen. Der Hochladende bekommt keine.
+interface UploadLink { id: string; token: string; lead_id: string; empfaenger: UploadEmpfaenger; name: string; email: string | null; phone: string | null; expires_at: string; revoked_at: string | null }
+
+async function seitenUploadsMelden(sb: Client): Promise<Record<string, unknown>> {
+  const grenze = new Date(Date.now() - SETTLE_MINUTES * 60_000).toISOString()
+  const { data, error } = await sb.from('drive_folder_files').select('file_id, name, web_view_link, uploader_name, uploader_email, upload_link_id')
+    .not('upload_link_id', 'is', null).is('notified_at', null).lt('seen_at', grenze).limit(200)
+  if (error) throw new Error(error.message)
+  const rows = (data ?? []) as Array<NewFile & { upload_link_id: string }>
+  const gruppen = new Map<string, Array<NewFile & { upload_link_id: string }>>()
+  for (const r of rows) gruppen.set(r.upload_link_id, [...(gruppen.get(r.upload_link_id) ?? []), r])
+  let gemeldet = 0
+  for (const [linkId, files] of gruppen) {
+    try {
+      const { data: l } = await sb.from('upload_links').select('*').eq('id', linkId).maybeSingle()
+      const link = l as UploadLink | null
+      if (!link) continue
+      const { data: ld } = await sb.from('leads').select(LEAD_COLS).eq('id', link.lead_id).maybeSingle()
+      const lead = ld as LeadRow | null
+      if (!lead?.drive_folder_id) continue
+      // Erst belegen, dann senden: Laufen zwei Sweeps gleichzeitig, meldet nur einer
+      const { data: belegt } = await sb.from('drive_folder_files').update({ notified_at: new Date().toISOString() })
+        .in('file_id', files.map(f => f.file_id)).is('notified_at', null).select('file_id')
+      const ids = new Set(((belegt ?? []) as Array<{ file_id: string }>).map(b => b.file_id))
+      const meine = files.filter(f => ids.has(f.file_id))
+      if (!meine.length) continue
+      const excludePhones = link.empfaenger === 'kunde' ? [link.phone, lead.whatsapp, lead.phone] : [link.phone]
+      const res = await notify(sb, lead, meine, { excludePhones })
+      await sb.from('drive_folder_files').update({ notify_result: res }).in('file_id', meine.map(f => f.file_id))
+      gemeldet += meine.length
+      const { error: actErr } = await sb.from('activities').insert({
+        lead_id: lead.id, type: 'note', direction: 'inbound', auto: true, subject: 'Drive-Upload über die Upload-Seite',
+        content: `${link.name} hat über die Upload-Seite hochgeladen: ${meine.map(f => f.name).join(', ')}`,
+        completed_at: new Date().toISOString(),
+      })
+      if (actErr) console.warn('[owner-drive] activity:', actErr.message)
+    } catch (e) { console.error('[owner-drive] Upload-Seite melden', (e as Error).message) }
+  }
+  return { offen: rows.length, gemeldet }
+}
+
+/** Öffentlich, nur das Token entscheidet. Zu = eine einzige Antwort, ohne Grund: Der Link kann bei Dritten liegen. */
+async function uploadSeite(req: Request, sb: Client, token: string): Promise<Response> {
+  const istDatei = (req.headers.get('content-type') ?? '').includes('multipart/form-data')
+  // Vor dem Einlesen, die Anfrage kommt von außen. Formular-Rahmen dazugerechnet.
+  if (Number(req.headers.get('content-length') ?? 0) > (MAX_DATEI_MB + 1) * 1024 * 1024) return json({ error: 'too_large' }, 413)
+  if (!UPLOAD_TOKEN_RE.test(token)) return json({ error: 'closed' }, 404)
+  const { data: l } = await sb.from('upload_links').select('*').eq('token', token).maybeSingle()
+  const link = l as UploadLink | null
+  if (!link) return json({ error: 'closed' }, 404)
+  const { data: ld } = await sb.from('leads').select(LEAD_COLS).eq('id', link.lead_id).maybeSingle()
+  let lead = ld as LeadRow | null
+  if (!lead) return json({ error: 'closed' }, 404)
+  const { data: deals, error: dealErr } = await sb.from('deals').select('phase').eq('lead_id', lead.id).limit(100)
+  if (dealErr) throw new Error(`Deals: ${dealErr.message}`)
+  // Wirft bei einem Lesefehler: Die Seite bleibt dann zu. Fremde (Bauträger, Anwalt) hängen nur an der eigenen Adresse.
+  const g = await ladeGesperrte(sb)
+  const gesperrt = link.empfaenger === 'kunde' ? leadGesperrt(g, lead) : mailGesperrt(g, link.email, lead)
+  const offen = linkOffen({ expires_at: link.expires_at, revoked_at: link.revoked_at, phasen: ((deals ?? []) as Array<{ phase: string }>).map(d => d.phase), gesperrt })
+  const lang = await resolveLang(sb, link.empfaenger === 'kunde'
+    ? { email: lead.email, phone: lead.whatsapp || lead.phone, lead_id: lead.id }
+    : { email: link.email, phone: link.phone })
+
+  if (!istDatei) {
+    if (!offen) return json({ ok: true, closed: true, lang })
+    return json({
+      ok: true, closed: false, lang, empfaenger: link.empfaenger, first_name: link.name.split(' ')[0],
+      kunde: link.empfaenger === 'kunde' ? null : leadName(lead), max_mb: MAX_DATEI_MB,
+    })
+  }
+  if (!offen) return json({ error: 'closed' }, 409)
+
+  const form = await req.formData()
+  const f = form.get('file')
+  if (!(f instanceof File) || !f.size) return json({ error: 'no_file' }, 400)
+  if (f.size > MAX_DATEI_MB * 1024 * 1024) return json({ error: 'too_large' }, 413)
+  const seit = new Date(Date.now() - 86_400_000).toISOString()
+  const { count, error: cntErr } = await sb.from('drive_folder_files').select('file_id', { count: 'exact', head: true }).eq('upload_link_id', link.id).gt('seen_at', seit)
+  if (cntErr) throw new Error(`Zählen: ${cntErr.message}`)
+  if ((count ?? 0) >= MAX_DATEIEN_JE_TAG) return json({ error: 'too_many' }, 429)
+  const bytes = new Uint8Array(await f.arrayBuffer())
+  const name = dateiName(f.name)
+  const mime = dateiTyp(bytes, name)
+  if (!mime) return json({ error: 'bad_type' }, 415)
+
+  const t = await uploadToken(sb)
+  if (!t) {
+    await meldeSvenEinmal(sb, { leadId: lead.id, subject: 'Upload-Seite: Drive nicht verbunden', key: 'Google-Zugang fürs Hochladen fehlt', text: `⚠️ Google-Zugang fürs Hochladen fehlt\n\n${link.name} wollte etwas in den Ordner von ${leadName(lead)} hochladen. Bitte unter Einstellungen → Connectoren „Google Drive“ neu verbinden.` })
+    return json({ error: 'drive_not_connected' }, 503)
+  }
+  lead = await ensureFolder(sb, lead)
+  const d = await uploadFile(t.token, lead.drive_folder_id!, name, mime, bytes)
+  const { error: rowErr } = await sb.from('drive_folder_files').upsert({
+    file_id: d.id, lead_id: lead.id, folder_id: lead.drive_folder_id, name: d.name, mime_type: d.mimeType,
+    size_bytes: d.size ? Number(d.size) : f.size, web_view_link: d.webViewLink ?? null, path: '',
+    uploader_name: link.name, uploader_email: link.email ?? (link.empfaenger === 'kunde' ? lower(lead.email) || null : null),
+    source: 'upload_seite', created_time: d.createdTime ?? new Date().toISOString(), upload_link_id: link.id,
+  }, { onConflict: 'file_id' })
+  if (rowErr) console.error('[owner-drive] Upload-Seite Eintrag', rowErr.message)
+  return json({ ok: true, name: d.name })
 }
 
 // ── Offene Zugriffsanfragen („Zugriff anfordern“ im Drive) ────────────────────
@@ -511,6 +625,8 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   try {
+    const uploadTokenHeader = req.headers.get('x-upload-token')
+    if (uploadTokenHeader !== null) return await uploadSeite(req, sb, uploadTokenHeader.trim().toLowerCase())
     const who = await caller(req, sb)
     const ct = req.headers.get('content-type') ?? ''
     let action = ''
@@ -556,6 +672,17 @@ Deno.serve(async (req) => {
       lead = await leadForProfile(sb, p, who.authEmail)
     } else return json({ error: 'Keine Berechtigung.' }, 403)
     if (!lead) return json({ ok: true, folder: null, reason: 'no_lead', files: [], can_upload: false })
+
+    // Nur Staff mit ausdrücklicher lead_id. Verschickt nichts.
+    if (action === 'upload_link') {
+      if (!isStaff(p) || lead.id !== body.lead_id) return json({ error: 'Keine Berechtigung.' }, 403)
+      const empfaenger = String(body.empfaenger ?? 'kunde') as UploadEmpfaenger
+      if (!UPLOAD_EMPFAENGER.includes(empfaenger)) return json({ error: 'Empfänger unbekannt.' }, 400)
+      const name = empfaenger === 'kunde' ? leadName(lead) : String(body.name ?? '').replace(/\s+/g, ' ').trim().slice(0, 80)
+      if (!name) return json({ error: 'Name fehlt.' }, 400)
+      if (empfaenger === 'kunde' && leadGesperrt(await ladeGesperrte(sb), lead)) return json({ error: 'Der Kunde ist gesperrt.', code: 'KONTO_GESPERRT' }, 409)
+      return json({ ok: true, ...await uploadLinkHolen(sb, { lead_id: lead.id, empfaenger, name, email: empfaenger === 'kunde' ? lead.email : null, phone: empfaenger === 'kunde' ? lead.whatsapp || lead.phone : null }) })
+    }
 
     if (action === 'list') {
       lead = await ensureFolder(sb, lead)

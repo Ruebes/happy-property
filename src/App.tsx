@@ -73,6 +73,7 @@ const RevolutCallback = lazy(() => import('./pages/RevolutCallback'))
 const Invoice  = lazy(() => import('./pages/Invoice'))
 const ReservationSign = lazy(() => import('./pages/ReservationSign'))
 const ReservationAddress = lazy(() => import('./pages/ReservationAddress'))
+const UploadSeite = lazy(() => import('./pages/UploadSeite'))
 
 // Role-Dashboards
 const AdminDashboard      = lazy(() => import('./pages/admin/Dashboard'))
@@ -218,6 +219,7 @@ export default function App() {
             <Route path="/sign/d/:token" element={<ReservationSign mode="document" />} />
             <Route path="/sign/k/:token" element={<ReservationSign mode="buyer" />} />
             <Route path="/sign/a/:token" element={<ReservationAddress />} />
+            <Route path="/sign/u/:token" element={<UploadSeite />} />
             <Route path="/set-password" element={<SetPassword />} />
             {/* Öffentliches Sales-Deck (per Token, kein Login) */}
             <Route path="/termin" element={<Funnel />} />

@@ -1840,6 +1840,14 @@
       "submittedAt": "eingegangen {{date}}"
     },
     "action": {
+      "uploadLink": "Upload-Link",
+      "uploadLinkTitle": "Upload-Link kopieren",
+      "uploadLinkHint": "Wer den Link hat, kann ohne Google-Konto in den Ordner hochladen, aber nichts lesen. Gültig 30 Tage. Verschickt wird nichts.",
+      "uploadLinkWho": "Für wen?",
+      "uploadLinkName": "Name (steht in der Meldung als „hochgeladen von“)",
+      "uploadLinkCopy": "Link kopieren",
+      "uploadLinkCopied": "Upload-Link kopiert",
+      "uploadLinkFailed": "Upload-Link fehlgeschlagen",
       "messages": "Nachrichten",
       "forwardContact": "Kontakt versenden",
       "note": "Notiz erstellen",
@@ -12028,6 +12036,21 @@
     "completeVendor": "Der fertige Vertrag kommt per E-Mail und WhatsApp.",
     "bankTitle": "Bankverbindung für die Anzahlung",
     "vendorFirst": "Der Bauträger muss zuerst unterschreiben."
+  },
+  "uploadSeite": {
+      "title": "Lade deine Unterlagen hoch",
+      "introCustomer": "Hallo {{name}}, hier lädst du deinen Ausweis oder andere Unterlagen hoch. Ein Google-Konto brauchst du dafür nicht. Beim Personalausweis bitte beide Seiten.",
+      "introOther": "Hallo {{name}}, hier lädst du die Unterlagen zu {{kunde}} hoch. Ein Google-Konto brauchst du dafür nicht.",
+      "camera": "Foto aufnehmen",
+      "file": "Datei auswählen",
+      "hint": "Foto, PDF, Word oder Excel, bis {{mb}} MB je Datei. Deine Dateien landen direkt in deinem sicheren Ordner bei Happy Property.",
+      "done": "Danke, deine Dateien sind angekommen. Du kannst die Seite schließen oder weitere hinzufügen.",
+      "closed": "Dieser Link ist nicht mehr gültig. Bitte melde dich bei Happy Property.",
+      "error": "Da ist etwas schiefgegangen. Bitte versuche es in einer Minute noch einmal.",
+      "errTooLarge": "Diese Datei ist größer als {{mb}} MB.",
+      "errType": "Bitte nimm ein Foto, ein PDF oder eine Word- oder Excel-Datei.",
+      "errTooMany": "Heute sind es zu viele Dateien. Bitte melde dich bei uns.",
+      "errUpload": "Das hat nicht geklappt. Bitte versuche es in einer Minute noch einmal."
   },
   "reservationAddress": {
     "title": "Deine Angaben für den Reservierungsvertrag",

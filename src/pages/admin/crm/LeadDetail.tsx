@@ -26,6 +26,7 @@ import { sendWhatsApp } from '../../../lib/whatsapp'
 import LeadQuickSend from '../../../components/crm/LeadQuickSend'
 import FunnelNotes from '../../../components/crm/FunnelNotes'
 import ReservationAgreementCard from '../../../components/crm/ReservationAgreementCard'
+import UploadLinkModal from '../../../components/crm/UploadLinkModal'
 import SignDocumentsCard from '../../../components/crm/SignDocumentsCard'
 import type { CrmAppointment } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
@@ -167,6 +168,7 @@ export default function LeadDetail() {
   }
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState('')
+  const [showUploadLink, setShowUploadLink] = useState(false)
   const [saving, setSaving] = useState(false)
 
   // Stammdaten edit
@@ -2298,6 +2300,9 @@ export default function LeadDetail() {
     <DashboardLayout basePath={'/admin/crm'}>
       <div className="min-h-screen bg-gray-50 pb-16">
         {/* Toast */}
+        {showUploadLink && lead && (
+          <UploadLinkModal leadId={lead.id} onClose={() => setShowUploadLink(false)} onDone={m => { setShowUploadLink(false); setToast(m); setTimeout(() => setToast(''), 3000) }} />
+        )}
         {toast && (
           <div className="fixed top-4 right-4 z-50 bg-green-600 text-white px-4 py-2 rounded-xl shadow-lg text-sm">
             {toast}
@@ -2435,6 +2440,12 @@ export default function LeadDetail() {
                   <span className="text-center leading-tight">{driveBusy ? t('crm.action.driveCreating', 'Erstelle…') : t('crm.action.driveCreate', 'Drive erstellen')}</span>
                 </button>
               )}
+              {/* Upload ohne Google-Konto: Link kopieren, verschickt nichts */}
+              <button onClick={() => setShowUploadLink(true)}
+                className="flex flex-col items-center justify-center gap-1.5 py-4 px-2 rounded-xl font-medium text-sm transition-colors bg-amber-50 text-amber-700 hover:bg-amber-100">
+                <span className="text-2xl leading-none">📤</span>
+                <span className="text-center leading-tight">{t('crm.action.uploadLink', 'Upload-Link')}</span>
+              </button>
               {/* Portalzugang */}
               <button onClick={hasPortal ? resendPortalAccess : openPortal} disabled={resendingPortal}
                 className="flex flex-col items-center justify-center gap-1.5 py-4 px-2 rounded-xl font-medium text-sm transition-colors text-white disabled:opacity-60"
