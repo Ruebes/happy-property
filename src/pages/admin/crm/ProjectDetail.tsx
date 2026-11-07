@@ -24,6 +24,9 @@ interface Verwalter { id: string; full_name: string }
 
 type UnitLead = { id: string; first_name: string; last_name: string; email: string } | null
 
+/** Eigentümer im Portal ohne Deal an dieser Wohnung (nur für Admin/Verwalter lesbar). */
+type UnitOwner = { name: string; propertyId: string }
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fmtPrice(v: number | null | undefined): string {
@@ -99,14 +102,16 @@ const EMPTY_PAY = {
 // ── UnitCard ──────────────────────────────────────────────────────────────────
 
 function UnitCard({
-  unit, parent, onClick, customer, onCustomerClick, onAssignCustomer, onContextMenu,
+  unit, parent, onClick, customer, owner, onCustomerClick, onOwnerClick, onAssignCustomer, onContextMenu,
 }: {
   unit: CrmProjectUnit
   /** Gesamteinheit einer Teil-Wohnung (A1 zu A1a/A1b): Status und Kunde kommen von dort. */
   parent?: CrmProjectUnit
   onClick: () => void
   customer?: UnitLead
+  owner?: UnitOwner
   onCustomerClick?: () => void
+  onOwnerClick?: () => void
   onAssignCustomer?: () => void
   onContextMenu?: (e: ReactMouseEvent) => void
 }) {
@@ -199,6 +204,24 @@ function UnitCard({
               <span className="text-[9px] text-[#ff795d] ml-auto shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">→</span>
             </button>
           </div>
+        ) : owner ? (
+          /* Eigentümer im Portal ohne Deal an dieser Wohnung */
+          <div className="mt-3 pt-2.5 border-t border-gray-100">
+            <button
+              onClick={e => { e.stopPropagation(); onOwnerClick?.() }}
+              className="flex items-center gap-1.5 w-full text-left hover:text-[#ff795d] transition-colors group"
+            >
+              <span className="text-[10px]">👤</span>
+              <span className="text-[10px] font-semibold text-gray-700 truncate group-hover:text-[#ff795d]">{owner.name}</span>
+              <span className="text-[9px] text-[#ff795d] ml-auto shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">→</span>
+            </button>
+          </div>
+        ) : unit.property_id ? (
+          /* Vergeben, aber der Name ist für diese Rolle nicht lesbar: nie „Kunden zuweisen" anbieten */
+          <div className="mt-3 pt-2.5 border-t border-gray-100 flex items-center gap-1.5 text-[10px] text-gray-400">
+            <span>👤</span>
+            <span>{t('crm.pd.assignedInPortal', 'Im Eigentümer-Portal vergeben')}</span>
+          </div>
         ) : parent ? (
           /* Teil-Wohnung ohne Kunden: Zuweisung nur an der Gesamteinheit */
           <div className="mt-3 pt-2.5 border-t border-gray-100 flex items-center gap-1.5 text-[10px] text-gray-400">
@@ -257,7 +280,11 @@ export default function ProjectDetail() {
   const [project,      setProject]      = useState<CrmProject | null>(null)
   const [units,        setUnits]        = useState<CrmProjectUnit[]>([])
   const [verwalters,   setVerwalters]   = useState<Verwalter[]>([])
+  // Kunde mit aktivem Deal. Daran hängen auch die Upload-Mails.
   const [unitLeadMap,  setUnitLeadMap]  = useState<Record<string, UnitLead>>({})
+  // Nur Anzeige: Käufer, deren Deal nach der Provision archiviert wurde, und Portal-Eigentümer ohne Deal.
+  const [unitBuyerMap, setUnitBuyerMap] = useState<Record<string, UnitLead>>({})
+  const [unitOwnerMap, setUnitOwnerMap] = useState<Record<string, UnitOwner>>({})
   const [loading,      setLoading]      = useState(true)
   const [toast,        setToast]        = useState('')
 
@@ -310,6 +337,8 @@ export default function ProjectDetail() {
   const [assignLeadQuery,  setAssignLeadQuery]  = useState('')
   const [assignLeadResults, setAssignLeadResults] = useState<Array<{
     id: string; first_name: string; last_name: string; email: string; deal_id: string | null
+    /** Wohnung, an der der gewählte Deal schon hängt (leer = Deal ist frei). */
+    deal_unit: { id: string; label: string } | null
   }>>([])
   const [assignLeadSearching, setAssignLeadSearching] = useState(false)
   const [assignLeadSaving,    setAssignLeadSaving]    = useState(false)
@@ -340,22 +369,52 @@ export default function ProjectDetail() {
           const unitIds = fetchedUnits.map(u => u.id)
           const { data: dealsData, error: dealsErr } = await supabase
             .from('deals')
-            .select('unit_id, lead:lead_id(id, first_name, last_name, email)')
+            .select('unit_id, phase, archived_from_phase, lead:lead_id(id, first_name, last_name, email)')
             .in('unit_id', unitIds)
-            .neq('phase', 'archiviert')
           if (!dealsErr && dealsData) {
-            const map: Record<string, UnitLead> = {}
-            for (const d of dealsData as unknown as Array<{ unit_id: string; lead: UnitLead }>) {
-              if (d.unit_id && d.lead) map[d.unit_id] = d.lead
+            const active: Record<string, UnitLead> = {}
+            const buyers: Record<string, UnitLead> = {}
+            for (const d of dealsData as unknown as Array<{ unit_id: string; phase: string; archived_from_phase: string | null; lead: UnitLead }>) {
+              if (!d.unit_id || !d.lead) continue
+              // hp_archive_completed_deals archiviert jeden Verkauf 7 Tage nach der Provision.
+              // Der Käufer bleibt der Kunde der Wohnung, ein verlorener Deal ist keiner.
+              if (d.phase === 'archiviert') {
+                if (d.archived_from_phase === 'provision_erhalten') buyers[d.unit_id] = d.lead
+              } else if (d.phase !== 'deal_verloren') {
+                active[d.unit_id] = d.lead
+              }
             }
-            setUnitLeadMap(map)
+            setUnitLeadMap(active)
+            setUnitBuyerMap(buyers)
+
+            // Verkauf = Wohnung am Portal-Objekt. Auch ohne Deal hat sie einen Eigentümer.
+            // Mitarbeiter dürfen properties nicht lesen: die Liste bleibt dann leer.
+            const noDeal = fetchedUnits.filter(u => u.property_id && !active[u.id] && !buyers[u.id])
+            const owners: Record<string, UnitOwner> = {}
+            if (noDeal.length > 0) {
+              const { data: props } = await supabase
+                .from('properties')
+                .select('id, owner:owner_id(full_name)')
+                .in('id', noDeal.map(u => u.property_id as string))
+              const byProp = new Map(((props ?? []) as unknown as Array<{ id: string; owner: { full_name: string | null } | null }>)
+                .map(p => [p.id, p.owner?.full_name ?? '']))
+              for (const u of noDeal) {
+                const name = byProp.get(u.property_id as string)
+                if (name) owners[u.id] = { name, propertyId: u.property_id as string }
+              }
+            }
+            setUnitOwnerMap(owners)
           }
         } catch {
           // deals.unit_id Spalte fehlt noch — Kundenzuordnung deaktiviert
           setUnitLeadMap({})
+          setUnitBuyerMap({})
+          setUnitOwnerMap({})
         }
       } else {
         setUnitLeadMap({})
+        setUnitBuyerMap({})
+        setUnitOwnerMap({})
       }
     } finally {
       setLoading(false)
@@ -488,23 +547,51 @@ export default function ProjectDetail() {
       if (leads.length === 0) { setAssignLeadResults([]); return }
       const { data: dealData } = await supabase
         .from('deals')
-        .select('id, lead_id, phase')
+        .select('id, lead_id, unit_id, unit:crm_project_units!deals_unit_id_fkey(unit_number, project:crm_projects(name))')
         .in('lead_id', leads.map(l => l.id))
-        .neq('phase', 'archiviert')
-      const dealByLead: Record<string, string> = {}
-      for (const d of (dealData ?? []) as Array<{id: string; lead_id: string; phase: string}>) {
-        dealByLead[d.lead_id] = d.id
+        .not('phase', 'in', '(archiviert,deal_verloren)')
+        .order('created_at', { ascending: true })
+      type FoundDeal = { id: string; lead_id: string; unit_id: string | null; unit: { unit_number: string; project: { name: string } | null } | null }
+      // Mehrere aktive Deals (zweiter Kauf): zuerst der Deal ohne Wohnung oder mit genau
+      // dieser Wohnung, sonst der neueste. Einen belegten Deal nie still umhängen.
+      const dealByLead: Record<string, FoundDeal> = {}
+      for (const d of (dealData ?? []) as unknown as FoundDeal[]) {
+        const free = (x: FoundDeal) => !x.unit_id || x.unit_id === assigningUnit?.id
+        const cur = dealByLead[d.lead_id]
+        if (!cur || free(d) || !free(cur)) dealByLead[d.lead_id] = d
       }
-      setAssignLeadResults(leads.map(l => ({
-        ...l, deal_id: dealByLead[l.id] ?? null,
-      })))
+      setAssignLeadResults(leads.map(l => {
+        const d = dealByLead[l.id]
+        return {
+          ...l,
+          deal_id: d?.id ?? null,
+          deal_unit: d?.unit_id ? { id: d.unit_id, label: `${d.unit?.project?.name ?? ''} ${d.unit?.unit_number ?? ''}`.trim() } : null,
+        }
+      }))
     } finally { setAssignLeadSearching(false) }
   }
 
-  async function handleAssignLeadToUnit(leadId: string, dealId: string | null) {
+  async function handleAssignLeadToUnit(leadId: string, dealId: string | null, dealUnit: { id: string; label: string } | null) {
     if (!assigningUnit) return
+    // Der Deal läuft schon auf einer anderen Wohnung: Umhängen entzieht sie ihm, offene
+    // Vertragslinks werden ungültig. Ein zweiter Kauf braucht einen neuen Deal.
+    if (dealId && dealUnit && dealUnit.id !== assigningUnit.id
+      && !window.confirm(t('crm.pd.assignMovesDeal', 'Der Deal dieses Kunden hängt schon an {{unit}}. Wenn du fortfährst, wandert er auf diese Wohnung und {{unit}} verliert ihren Deal. Für einen zweiten Kauf stattdessen einen neuen Deal anlegen.\n\nDeal wirklich umhängen?', { unit: dealUnit.label }))) return
     setAssignLeadSaving(true)
     try {
+      // Ohne aktiven Deal und ohne Portal-Konto gäbe es nichts zu speichern. Früher kam
+      // trotzdem „Kunde zugewiesen", und die Wohnung blieb frei.
+      if (!dealId) {
+        const { data: leadRow } = await supabase.from('leads').select('email').eq('id', leadId).maybeSingle()
+        const email = (leadRow as { email: string | null } | null)?.email
+        const { data: ownerRow } = email
+          ? await supabase.from('profiles').select('id').eq('email', email).eq('role', 'eigentuemer').maybeSingle()
+          : { data: null }
+        if (!ownerRow) {
+          showToast(t('crm.pd.assignNeedsDeal', 'Nicht zugewiesen: Dieser Kunde hat keinen aktiven Deal und kein Portal-Konto. Bitte zuerst einen Deal anlegen.'))
+          return
+        }
+      }
       // Portal-Objekt eines anderen Kunden nie an diesen Kunden hängen
       const currentPropId = await fetchUnitPropertyId(assigningUnit.id, assigningUnit.property_id)
       if (currentPropId && await isForeignOwnedProperty(currentPropId, await leadProfileIds(leadId))) {
@@ -1203,7 +1290,9 @@ export default function ProjectDetail() {
                 {bUnits.map(u => {
                   // Teil-Wohnung (A1a/A1b): Kunde der Gesamteinheit (A1) anzeigen
                   const parent = u.parent_unit_id ? units.find(p => p.id === u.parent_unit_id) : undefined
-                  const customer = unitLeadMap[u.id] ?? (parent ? unitLeadMap[parent.id] : undefined) ?? undefined
+                  const customer = unitLeadMap[u.id] ?? unitBuyerMap[u.id]
+                    ?? (parent ? unitLeadMap[parent.id] ?? unitBuyerMap[parent.id] : undefined) ?? undefined
+                  const owner = unitOwnerMap[u.id] ?? (parent ? unitOwnerMap[parent.id] : undefined)
                   return (
                   <UnitCard
                     key={u.id}
@@ -1211,7 +1300,9 @@ export default function ProjectDetail() {
                     parent={parent}
                     onClick={() => openEdit(u)}
                     customer={customer}
+                    owner={owner}
                     onCustomerClick={() => navigate(`/admin/crm/leads/${customer?.id}`)}
+                    onOwnerClick={() => navigate(`/admin/properties/${owner?.propertyId}`)}
                     onAssignCustomer={() => { setAssigningUnit(u); setShowAssignModal(true) }}
                     onContextMenu={(e) => { e.preventDefault(); setUnitCtx({ x: e.clientX, y: e.clientY, unit: u }) }}
                   />
@@ -2222,7 +2313,7 @@ export default function ProjectDetail() {
                   {assignLeadResults.map(lead => (
                     <button
                       key={lead.id}
-                      onClick={() => handleAssignLeadToUnit(lead.id, lead.deal_id)}
+                      onClick={() => handleAssignLeadToUnit(lead.id, lead.deal_id, lead.deal_unit)}
                       disabled={assignLeadSaving}
                       className="w-full text-left border border-gray-100 rounded-xl px-4 py-3
                                  hover:border-[#ff795d] hover:bg-orange-50 transition-colors

@@ -3647,6 +3647,9 @@
       "unitDelete": "Einheit löschen",
       "plot": "Grundstück",
       "unitOwnedByOther": "Diese Wohnung gehört im Eigentümer-Portal bereits einem anderen Kunden. Bitte dort zuerst trennen.",
+      "assignedInPortal": "Im Eigentümer-Portal vergeben",
+      "assignMovesDeal": "Der Deal dieses Kunden hängt schon an {{unit}}. Wenn du fortfährst, wandert er auf diese Wohnung und {{unit}} verliert ihren Deal. Für einen zweiten Kauf stattdessen einen neuen Deal anlegen.\n\nDeal wirklich umhängen?",
+      "assignNeedsDeal": "Nicht zugewiesen: Dieser Kunde hat keinen aktiven Deal und kein Portal-Konto. Bitte zuerst einen Deal anlegen.",
       "unitPropertyHasData": "Das Portal-Objekt dieser Wohnung enthält noch {{count}} Einträge (Dokumente, Verträge, Einnahmen, Buchungen). Bitte zuerst im Objekt „Vom Kunden trennen“ verwenden.",
       "projectPage": "Projektseite"
     },
@@ -10028,7 +10031,8 @@
     "toastUnitRemovedForeignKept": "Zuordnung entfernt. Das Portal-Objekt gehört einem anderen Kunden und bleibt erhalten.",
     "unitTakenByOther": "Diese Wohnung ist bereits einem anderen Kunden zugeordnet und kann hier nicht übernommen werden.",
     "portalMailNotSent": "Die E-Mail mit den Zugangsdaten wurde nicht zugestellt. Das Passwort steht im Fenster.",
-    "archivedPurchasesTitle": "Abgeschlossene Käufe (archiviert)"
+    "archivedPurchasesTitle": "Abgeschlossene Käufe (archiviert)",
+    "otherPurchasesTitle": "Weitere Käufe"
   },
   "rechnung": {
     "notFound": "Diese Rechnung wurde nicht gefunden.",

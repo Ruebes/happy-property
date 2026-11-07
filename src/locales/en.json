@@ -3647,6 +3647,9 @@
       "unitDelete": "Delete unit",
       "plot": "plot",
       "unitOwnedByOther": "This unit already belongs to another customer in the owner portal. Please detach it there first.",
+      "assignedInPortal": "Assigned in the owner portal",
+      "assignMovesDeal": "This customer's deal is already on {{unit}}. If you continue, it moves to this unit and {{unit}} loses its deal. For a second purchase, create a new deal instead.\n\nReally move the deal?",
+      "assignNeedsDeal": "Not assigned: this customer has no active deal and no portal account. Please create a deal first.",
       "unitPropertyHasData": "The portal property of this unit still holds {{count}} entries (documents, contracts, income, bookings). Please use “Detach from customer” on the property first.",
       "projectPage": "Project page"
     },
@@ -10215,7 +10218,8 @@
     "toastUnitRemovedForeignKept": "Assignment removed. The portal property belongs to another customer and was kept.",
     "unitTakenByOther": "This unit is already assigned to another customer and cannot be taken over here.",
     "portalMailNotSent": "The email with the login details was not delivered. The password is shown in the window.",
-    "archivedPurchasesTitle": "Completed purchases (archived)"
+    "archivedPurchasesTitle": "Completed purchases (archived)",
+    "otherPurchasesTitle": "Other purchases"
   },
   "rechnung": {
     "notFound": "This calculation could not be found.",
