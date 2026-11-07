@@ -10,7 +10,7 @@
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { getDocumentProxy } from 'npm:unpdf@0.12.1'
 import { rereadId, type IdReread } from './ausweis.ts'
-import { addressLine, countryDe, personErrors, sameName, type CustomerData, type CustomerPerson } from './customerData.ts'
+import { addressLine, countryDe, furtherBuyers, personErrors, sameName, type CustomerData, type CustomerPerson } from './customerData.ts'
 import { saToken, listTree, download, thumbnail, type DriveFile } from './drive.ts'
 import { parseMrz, type Mrz } from './mrz.ts'
 import { euro, floraAmounts, type FloraFields } from './pdfFlora.ts'
@@ -205,15 +205,16 @@ export async function floraAutoCheck(sb: SupabaseClient, row: AgreementRow, ctx:
   // Wer kauft: jeder Ausweis muss zum Kunden oder zum angegebenen zweiten Käufer gehören
   const people: string[] = []
   const isLead = (b: Buyer) => sameName(b.full_name, ctx.lead.first_name, ctx.lead.last_name)
-  const isSecond = (b: Buyer) => !!d?.second && sameName(b.full_name, d.second.first_name, d.second.last_name)
+  const further = furtherBuyers(d)
+  const isSecond = (b: Buyer) => further.some(p => sameName(b.full_name, p.first_name, p.last_name))
   if (!buyers.some(isLead)) people.push(`Kein Ausweis lautet auf den Kunden ${ctx.lead.first_name ?? ''} ${ctx.lead.last_name ?? ''}`.trim())
   for (const b of buyers) if (!isLead(b) && !isSecond(b)) people.push(`Ausweis von ${b.full_name} passt zu keinem angegebenen Käufer`)
-  add('kaeufer', people, buyers.length > 1 ? 'Beide Ausweise passen zu den angegebenen Käufern' : 'Ausweis lautet auf den Kunden')
+  add('kaeufer', people, buyers.length > 1 ? 'Alle Ausweise passen zu den angegebenen Käufern' : 'Ausweis lautet auf den Kunden')
 
   // Adresse: Regeln wie im Formular, im CRM angekommen, unverändert im Vertrag
   const addr: string[] = []
   if (d?.at) {
-    const ppl: Array<[CustomerPerson, string, ((b: Buyer) => boolean)]> = [[d, 'Kunde', isLead], ...(d.second ? [[d.second, 'zweiter Käufer', isSecond] as [CustomerPerson, string, (b: Buyer) => boolean]] : [])]
+    const ppl: Array<[CustomerPerson, string, ((b: Buyer) => boolean)]> = [[d, 'Kunde', isLead], ...further.map(p => [p, `Käufer ${p.first_name} ${p.last_name}`, (b: Buyer) => sameName(b.full_name, p.first_name, p.last_name)] as [CustomerPerson, string, (b: Buyer) => boolean])]
     for (const [p, label, match] of ppl) {
       const bad = Object.keys(personErrors(p))
       if (bad.length) addr.push(`Angaben ${label} unvollständig oder ungültig (${bad.join(', ')})`)

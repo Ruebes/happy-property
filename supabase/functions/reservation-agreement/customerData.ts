@@ -4,8 +4,12 @@
 // Von Sven im CRM Eingetragenes hat Vorrang, der Kunde füllt nur Lücken.
 // Den Ausweis lädt der Kunde auf derselben Seite hoch (Sven 6.11.2026): Er braucht kein Google-Konto,
 // jede Mail-Adresse geht. Die Datei landet in seinem Drive-Ordner, der Sweep liest sie wie jede andere.
+// Gilt für jeden Bauträger und beliebig viele Käufer (Sven 7.11.2026). Ohne Vertragsvorlage hat die Zeile
+// keine template_id: Die Seite läuft, die Vertragsautomatik lässt sie in Ruhe.
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { resolveLang } from '../_shared/recipientLang.ts'
+import { ladeGesperrte, leadGesperrt } from '../_shared/kontoSperre.ts'
+import { uploadLinkHolen } from '../_shared/uploadLink.ts'
 import { clientIp } from './seal.ts'
 import { buyersFrom, norm, whatsappSven, type AgreementRow, type Buyer, type Ctx } from './index.ts'
 import { checkFile } from './ausweis.ts'
@@ -20,8 +24,18 @@ export interface CustomerPerson {
 export interface CustomerSecond extends CustomerPerson { first_name: string; last_name: string; same_address: boolean }
 export interface CustomerData extends CustomerPerson {
   second: CustomerSecond | null
+  /** Dritter Käufer und weitere */
+  more?: CustomerSecond[]
   at: string; ip?: string | null; user_agent?: string | null
 }
+
+/** Alle Käufer außer dem Kunden selbst. */
+export const furtherBuyers = (d: Pick<CustomerData, 'second' | 'more'> | null | undefined): CustomerSecond[] =>
+  d ? [...(d.second ? [d.second] : []), ...(d.more ?? [])] : []
+const MAX_FURTHER = 5
+const LINK_DAYS = 30
+// So heißt der weitere Käufer auf der Seite und in den gespeicherten Uploads: second, more0, more1, ...
+const furtherKey = (i: number) => i === 0 ? 'second' : `more${i - 1}`
 
 const TOKEN_RE = /^[0-9a-f]{36}$/
 const DEAD = ['deal_verloren', 'archiviert']
@@ -93,8 +107,13 @@ async function findRow(sb: SupabaseClient, token: unknown): Promise<{ row: Agree
 
 async function isOpen(sb: SupabaseClient, row: AgreementRow): Promise<boolean> {
   if (['gesendet', 'unterschrieben'].includes(row.status)) return false
+  // Wie beim Upload-Link: läuft ab, jede neue Nachricht an den Kunden verlängert ihn
+  if (Date.now() - Date.parse(row.updated_at) > LINK_DAYS * 86_400_000) return false
   const { data } = await sb.from('deals').select('phase').eq('id', row.deal_id).maybeSingle()
-  return !!data && !DEAD.includes((data as { phase: string }).phase)
+  if (!data || DEAD.includes((data as { phase: string }).phase)) return false
+  const lead = await loadLead(sb, row.lead_id)
+  // Wirft bei einem Lesefehler: Die Seite bleibt dann zu
+  return !!lead && !leadGesperrt(await ladeGesperrte(sb), lead)
 }
 
 interface LeadRow {
@@ -103,7 +122,6 @@ interface LeadRow {
   drive_folder_url: string | null; drive_folder_id: string | null
 }
 // ── Ausweis ──────────────────────────────────────────────────────────────────
-type UploadPerson = 'main' | 'second'
 type UploadDoc = 'id_card' | 'passport'
 type UploadSide = 'front' | 'back' | 'page'
 const SIDES: Record<UploadDoc, UploadSide[]> = { id_card: ['front', 'back'], passport: ['page'] }
@@ -127,19 +145,22 @@ function sniff(b: Uint8Array): { mime: string; ext: string } | null {
 }
 
 /** Welche Ausweise schon erkannt sind. Jeder erkannte Ausweis zählt, auch aus einem früheren Kauf (Sven 6.11.2026). */
-function idState(row: Pick<AgreementRow, 'checked_files'>, second: Pick<CustomerSecond, 'first_name' | 'last_name'> | null | undefined) {
+function idState(row: Pick<AgreementRow, 'checked_files'>, further: CustomerSecond[]) {
   const { buyers } = buyersFrom(row.checked_files ?? {})
-  if (!second) return { have_main: buyers.length > 0, have_second: false }
-  const isSecond = (b: Buyer) => sameName(b.full_name, second.first_name, second.last_name)
-  return { have_main: buyers.some(b => !isSecond(b)), have_second: buyers.some(isSecond) }
+  const isOf = (b: Buyer, p: CustomerSecond) => sameName(b.full_name, p.first_name, p.last_name)
+  return { have_main: buyers.some(b => !further.some(p => isOf(b, p))), have_further: further.map(p => buyers.some(b => isOf(b, p))) }
 }
 
-// Die Zuordnung (Person, Dokument, Seite) steht in path: Die Seite zeigt damit auch nach dem Neuladen, was schon da ist.
-async function pageUploads(sb: SupabaseClient, leadId: string): Promise<Array<{ person: string; doc: string; side: string }>> {
-  const { data } = await sb.from('drive_folder_files').select('path').eq('lead_id', leadId).eq('source', UPLOAD_SOURCE).limit(MAX_UPLOADS_PER_LEAD)
-  return ((data ?? []) as Array<{ path: string | null }>).flatMap(r => {
-    const [person, doc, side] = (r.path ?? '').split(':')
-    return person && doc && side ? [{ person, doc, side }] : []
+// Dokument und Seite stehen in path: Die Seite zeigt damit auch nach dem Neuladen, was schon da ist.
+// Die Person kommt aus dem Namen, nicht aus der Nummer: Streicht der Kunde jemanden, rücken die anderen auf.
+async function pageUploads(sb: SupabaseClient, leadId: string, further: CustomerSecond[]): Promise<Array<{ person: string; doc: string; side: string }>> {
+  const { data } = await sb.from('drive_folder_files').select('path, uploader_name').eq('lead_id', leadId).eq('source', UPLOAD_SOURCE).limit(MAX_UPLOADS_PER_LEAD)
+  return ((data ?? []) as Array<{ path: string | null; uploader_name: string | null }>).flatMap(r => {
+    const [saved, doc, side] = (r.path ?? '').split(':')
+    if (!saved || !doc || !side) return []
+    const i = further.findIndex(p => norm(`${p.first_name} ${p.last_name}`) === norm(r.uploader_name ?? ''))
+    if (i >= 0) return [{ person: furtherKey(i), doc, side }]
+    return saved === 'main' ? [{ person: 'main', doc, side }] : []
   })
 }
 
@@ -147,10 +168,11 @@ export async function addressUpload(sb: SupabaseClient, body: Record<string, unk
   const hit = await findRow(sb, body.token)
   if (!hit) return { status: 404, body: { error: 'not_found' } }
   if (!hit.test && !await isOpen(sb, hit.row)) return { status: 409, body: { error: 'closed' } }
-  const person = String(body.person) as UploadPerson, doc = String(body.doc) as UploadDoc, side = String(body.side) as UploadSide
-  if (!['main', 'second'].includes(person) || !SIDES[doc]?.includes(side)) return { status: 400, body: { error: 'invalid' } }
+  const person = String(body.person), doc = String(body.doc) as UploadDoc, side = String(body.side) as UploadSide
+  if (!SIDES[doc]?.includes(side)) return { status: 400, body: { error: 'invalid' } }
   const saved = (hit.test ? (hit.row.test_payload as { customer_data?: CustomerData } | null)?.customer_data : hit.row.customer_data) ?? null
-  if (person === 'second' && !saved?.second) return { status: 400, body: { error: 'invalid' } }
+  const further = furtherBuyers(saved), buyerIdx = further.findIndex((_, i) => furtherKey(i) === person)
+  if (person !== 'main' && buyerIdx < 0) return { status: 400, body: { error: 'invalid' } }
 
   const raw = String(body.base64 ?? '')
   if (!raw) return { status: 400, body: { error: 'invalid' } }
@@ -163,7 +185,7 @@ export async function addressUpload(sb: SupabaseClient, body: Record<string, unk
   const lead = await loadLead(sb, hit.row.lead_id)
   if (!lead) return { status: 404, body: { error: 'not_found' } }
   const mainName = [lead.first_name, lead.last_name].map(x => (x ?? '').trim()).filter(Boolean).join(' ') || 'Kunde'
-  const who = person === 'second' ? `${saved!.second!.first_name} ${saved!.second!.last_name}` : mainName
+  const who = buyerIdx >= 0 ? `${further[buyerIdx].first_name} ${further[buyerIdx].last_name}` : mainName
   const fileName = [DOC_LABEL[doc], who, SIDE_LABEL[side]].filter(Boolean).join(' ').replace(/[\/:*?"<>|]+/g, ' ') + `.${type.ext}`
 
   // Offensichtlich kein Ausweis: gleich sagen, nicht erst nach Stunden. Die KI kann irren, deshalb darf der Kunde übergehen (force).
@@ -189,17 +211,17 @@ export async function addressUpload(sb: SupabaseClient, body: Record<string, unk
     if (!token) throw new Error('Drive-Upload nicht verbunden')
     const up = await uploadFile(token, folderId, fileName, type.mime, bytes)
     const now = new Date().toISOString()
+    // Meldung wie bei der Upload-Seite: Der Sweep von owner-drive sammelt sie über den Link und nennt den Kunden.
+    // Ohne Link keine Meldung, das Hochladen hängt nicht daran.
+    const linkId = await uploadLinkHolen(sb, { lead_id: lead.id, empfaenger: 'kunde', name: mainName, email: lead.email, phone: lead.whatsapp || lead.phone })
+      .then(l => l.id).catch(e => { console.error('[reservation-agreement] Upload-Link', (e as Error).message); return null })
     // Eingetragen, damit die Drive-Meldung nicht „hochgeladen von Sven" sagt (die Datei gehört technisch Svens Konto)
     const { error } = await sb.from('drive_folder_files').upsert({
       file_id: up.id, lead_id: lead.id, folder_id: folderId, name: up.name, mime_type: up.mimeType, size_bytes: bytes.byteLength,
       web_view_link: up.webViewLink ?? null, path: `${person}:${doc}:${side}`, uploader_name: who, uploader_email: lead.email, source: UPLOAD_SOURCE,
-      created_time: up.createdTime ?? now, notified_at: now,
+      created_time: up.createdTime ?? now, seen_at: now, upload_link_id: linkId, notified_at: linkId ? null : now,
     }, { onConflict: 'file_id' })
     if (error) console.error('[reservation-agreement] drive_folder_files', error.message)
-    await sb.from('activities').insert({
-      lead_id: lead.id, deal_id: hit.row.deal_id, type: 'note', direction: 'inbound', auto: true,
-      subject: 'Reservierung: Ausweis vom Kunden hochgeladen', content: `Über die Reservierungsseite in den Drive-Ordner hochgeladen: ${fileName}`, completed_at: now,
-    })
     return { status: 200, body: { ok: true } }
   } catch (e) {
     const why = (e as Error).message
@@ -229,6 +251,9 @@ export async function addressView(sb: SupabaseClient, body: Record<string, unkno
   const saved = (hit.test ? (hit.row.test_payload as { customer_data?: CustomerData } | null)?.customer_data : hit.row.customer_data) ?? null
   // Zeitpunkt und Verbindungsdaten bleiben intern, die Seite bekommt nur die Angaben selbst
   const { at: _at, ip: _ip, user_agent: _ua, ...savedPublic } = saved ?? ({} as CustomerData)
+  const further = furtherBuyers(saved)
+  // Nur Flora bekommt die Adresse in den Vertrag und unterschreibt zuerst beim Bauträger, die Seite sagt es nur dort
+  const { data: tpl } = hit.row.template_id ? await sb.from('reservation_templates').select('layout').eq('id', hit.row.template_id).maybeSingle() : { data: null }
   const fromLead: CustomerPerson = {
     salutation: '', street: lead.street ?? '', postal_code: lead.postal_code ?? '', city: lead.city ?? '',
     country_code: countryCodeFrom(lead.country), country_other: '', phone, email: lead.email ?? '',
@@ -237,7 +262,8 @@ export async function addressView(sb: SupabaseClient, body: Record<string, unkno
     status: 200,
     body: {
       ok: true, closed: false, test: hit.test, lang, first_name: (lead.first_name ?? '').trim(), submitted: !!saved?.at,
-      ...idState(hit.row, saved?.second), uploads: hit.test ? [] : await pageUploads(sb, lead.id),
+      flora: (tpl as { layout?: string } | null)?.layout === 'flora', max_further: MAX_FURTHER,
+      ...idState(hit.row, further), uploads: hit.test ? [] : await pageUploads(sb, lead.id, further),
       prefill: saved ? savedPublic : fromLead,
       countries: COUNTRIES.map(c => ({ code: c[0], name: lang === 'de' ? c[2] : c[1] })),
     },
@@ -250,28 +276,29 @@ export async function addressSubmit(sb: SupabaseClient, body: Record<string, unk
   if (!hit.test && !await isOpen(sb, hit.row)) return { status: 409, body: { error: 'closed' } }
   const main = cleanPerson(body)
   const fields: Record<string, string> = personErrors(main)
-  let second: CustomerSecond | null = null
-  if (body.second && typeof body.second === 'object') {
-    const s = body.second as Record<string, unknown>
+  // body.second: Seite aus einem noch offenen Tab, die die neue Liste nicht kennt
+  const further = (Array.isArray(body.further) ? body.further : body.second ? [body.second] : []).slice(0, MAX_FURTHER).filter(s => s && typeof s === 'object').map((raw, i) => {
+    const s = raw as Record<string, unknown>
     const same = s.same_address !== false
     const person = cleanPerson(same ? { ...s, street: main.street, postal_code: main.postal_code, city: main.city, country_code: main.country_code, country_other: main.country_other } : s)
-    second = { ...person, first_name: text(s.first_name, 60), last_name: text(s.last_name, 60), same_address: same }
+    const p: CustomerSecond = { ...person, first_name: text(s.first_name, 60), last_name: text(s.last_name, 60), same_address: same }
     const se = personErrors(person)
-    if (second.first_name.length < 2 || !LATIN.test(second.first_name)) se.first_name = second.first_name ? 'invalid' : 'required'
-    if (second.last_name.length < 2 || !LATIN.test(second.last_name)) se.last_name = second.last_name ? 'invalid' : 'required'
-    for (const [k, v] of Object.entries(se)) fields[`second_${k}`] = v
-  }
+    if (p.first_name.length < 2 || !LATIN.test(p.first_name)) se.first_name = p.first_name ? 'invalid' : 'required'
+    if (p.last_name.length < 2 || !LATIN.test(p.last_name)) se.last_name = p.last_name ? 'invalid' : 'required'
+    for (const [k, v] of Object.entries(se)) fields[`${furtherKey(i)}_${k}`] = v
+    return p
+  })
   if (Object.keys(fields).length) return { status: 400, body: { error: 'invalid', fields } }
 
   const now = new Date().toISOString()
-  const data: CustomerData = { ...main, second, at: now, ip: clientIp(req), user_agent: (req.headers.get('user-agent') ?? '').slice(0, 300) || null }
+  const data: CustomerData = { ...main, second: further[0] ?? null, more: further.slice(1), at: now, ip: clientIp(req), user_agent: (req.headers.get('user-agent') ?? '').slice(0, 300) || null }
   if (hit.test) {
     await sb.from('reservation_agreements').update({ test_payload: { ...hit.row.test_payload, customer_data: data } }).eq('id', hit.row.id)
-    return { status: 200, body: { ok: true, test: true, ...idState(hit.row, second) } }
+    return { status: 200, body: { ok: true, test: true, ...idState(hit.row, further), uploads: [] } }
   }
   // Korrigiert der Kunde seine Angaben, ersetzen sie seine alten auch dort, wo sie schon gespeichert waren
   const old = hit.row.customer_data as CustomerData | null
-  const oldValues = old ? [old, ...(old.second ? [old.second] : [])].flatMap(p => [addressLine(p), p.phone, p.email, p.salutation]) : []
+  const oldValues = old ? [old, ...furtherBuyers(old)].flatMap(p => [addressLine(p), p.phone, p.email, p.salutation]) : []
   const buyers = (hit.row.buyers ?? []).map(b => {
     const out = { ...b }
     for (const k of ['address', 'phone', 'email', 'salutation'] as const) if (out[k] && oldValues.includes(out[k]!)) delete out[k]
@@ -301,10 +328,10 @@ export async function addressSubmit(sb: SupabaseClient, body: Record<string, unk
   }
   await sb.from('activities').insert({
     lead_id: hit.row.lead_id, deal_id: hit.row.deal_id, type: 'note', direction: 'inbound', auto: true,
-    subject: 'Reservierung: Adresse vom Kunden eingetragen', content: `Der Kunde hat seine Angaben für den Reservierungsvertrag eingetragen: ${addressLine(main)}${second ? `. Zweiter Käufer: ${second.first_name} ${second.last_name}` : ''}.`,
+    subject: 'Reservierung: Adresse vom Kunden eingetragen', content: `Der Kunde hat seine Angaben für den Reservierungsvertrag eingetragen: ${addressLine(main)}${further.length ? `. Weitere Käufer: ${further.map(p => `${p.first_name} ${p.last_name}`).join(', ')}` : ''}.`,
     completed_at: now,
   })
-  return { status: 200, body: { ok: true, ...idState(hit.row, second) } }
+  return { status: 200, body: { ok: true, ...idState(hit.row, further), uploads: await pageUploads(sb, hit.row.lead_id, further) } }
 }
 
 // ── Vertrag ──────────────────────────────────────────────────────────────────
@@ -320,18 +347,25 @@ export function withCustomerData(list: Buyer[], row: Pick<AgreementRow, 'custome
   const d = row.customer_data as CustomerData | null
   if (!d?.at) return list
   return list.map(b => {
-    const isSecond = !!d.second && sameName(b.full_name, d.second.first_name, d.second.last_name)
+    const other = furtherBuyers(d).find(p => sameName(b.full_name, p.first_name, p.last_name))
     const isLead = sameName(b.full_name, ctx.lead.first_name, ctx.lead.last_name)
-    const src: CustomerPerson | null = isSecond ? d.second : (isLead || list.length === 1) ? d : null
+    const src: CustomerPerson | null = other ?? ((isLead || list.length === 1) ? d : null)
     if (!src) return b
     return { ...b, salutation: b.salutation || src.salutation, address: b.address || addressLine(src), phone: b.phone || src.phone, email: b.email || src.email }
   })
 }
 
+/** Der Kunde hat weitere Käufer angegeben: Ohne ihre Ausweise geht bei keinem Bauträger ein Vertrag raus. */
+export function furtherIdMissing(list: Buyer[], row: Pick<AgreementRow, 'customer_data'>): string | null {
+  const missing = furtherBuyers(row.customer_data as CustomerData | null).filter(p => !list.some(b => sameName(b.full_name, p.first_name, p.last_name)))
+  return missing.length ? `Ausweis von ${missing.map(p => `${p.first_name} ${p.last_name}`).join(', ')} fehlt noch` : null
+}
+
 /** Worauf der Vertrag noch wartet. Null = alles da, die Prüfung kann laufen. */
 export function floraWaitingFor(list: Buyer[], row: Pick<AgreementRow, 'customer_data'>, ctx: Ctx): string | null {
   const d = row.customer_data as CustomerData | null
-  if (d?.second && !list.some(b => sameName(b.full_name, d.second!.first_name, d.second!.last_name))) return `Ausweis von ${d.second.first_name} ${d.second.last_name} fehlt noch`
+  const idMissing = furtherIdMissing(list, row)
+  if (idMissing) return idMissing
   if (d?.at) return null
   return floraBuyers(ctx, list).some(b => !b.salutation || !b.address || !b.telephone || !b.email) ? 'Adresse vom Kunden fehlt noch' : null
 }

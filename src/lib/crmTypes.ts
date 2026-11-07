@@ -670,7 +670,7 @@ export interface ReservationAgreement {
   final_delivery?:   Record<string, { at?: string; err?: string; next?: string }> | null
   // Flora-Automatik: Adresse vom Kunden (Link /sign/a/<token>) und Bericht der Prüfung vor dem Versand
   address_token?:    string | null
-  customer_data?:    { at?: string; street?: string; postal_code?: string; city?: string; country_code?: string; country_other?: string; second?: { first_name?: string; last_name?: string } | null } | null
+  customer_data?:    { at?: string; street?: string; postal_code?: string; city?: string; country_code?: string; country_other?: string; second?: { first_name?: string; last_name?: string } | null; more?: Array<{ first_name?: string; last_name?: string }> } | null
   auto_check?:       { at?: string; ok?: boolean; points?: Array<{ key: string; ok: boolean; text: string }>; reasons?: string[] } | null
   created_at:       string
   updated_at:       string

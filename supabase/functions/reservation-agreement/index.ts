@@ -56,7 +56,7 @@ import { docCreate, docView, docSubmit, docQueueSweep } from './docsign.ts'
 import { loadSeal, saveSeal, removeSeal, sealDataUrl, pngFromInput, MAX_SEAL_BYTES } from './seal.ts'
 import { specialTermsEn, type SpecialTerms } from './terms.ts'
 import { buyerView, findBuyerRow, floraFieldsFor, FLORA_SAMPLE, floraSend, floraWarnings, loadParts, tpSubmit, twoPartySweep } from './twoParty.ts'
-import { addressSubmit, addressUpload, addressView, floraWaitingFor, withCustomerData, type CustomerData } from './customerData.ts'
+import { addressSubmit, addressUpload, addressView, floraWaitingFor, furtherIdMissing, withCustomerData, type CustomerData } from './customerData.ts'
 import { floraAutoCheck, type AutoCheck } from './floraCheck.ts'
 import { appendPdf, fetchAppendix } from './appendix.ts'
 import { parseMrz } from './mrz.ts'
@@ -698,6 +698,8 @@ async function processRow(sb: Client, initial: AgreementRow, m: Mode): Promise<R
   if (row.seller_signed_at) return { deal: row.deal_id, skipped: 'Unterschrift läuft' }
   const ctx = await loadCtx(sb, row.deal_id, row.template_snapshot)
   if ('error' in ctx) {
+    // Bauträger ohne Vorlage: Die Zeile ist nur für die Kundenseite da, kein Vertrag, also auch kein Fehler
+    if (!row.template_id) return { deal: row.deal_id, skipped: 'nur Kundenseite' }
     await sb.from('reservation_agreements').update({ error: ctx.error, updated_at: new Date().toISOString() }).eq('id', row.id)
     return { deal: row.deal_id, skipped: ctx.error }
   }
@@ -755,8 +757,8 @@ async function processRow(sb: Client, initial: AgreementRow, m: Mode): Promise<R
   const terms = await specialTermsEn(sb, row.id, row.special_terms, ctx.deal.reservation_notes)
   // Zwei-Parteien: von Hand Eingetragenes (Adresse, Anrede usw.) bleibt, der Ausweis ergänzt es nur
   const list = flora ? withCustomerData(mergeBuyers(row, buyers, scan.checked), row, ctx) : buyers
-  // Flora: Fehlt noch etwas vom Kunden, wird gewartet, statt Sven zu beschäftigen
-  const waiting = flora ? floraWaitingFor(list, row, ctx) : null
+  // Fehlt noch etwas vom Kunden, wird gewartet, statt Sven zu beschäftigen. Die Adresse braucht nur der Flora-Vertrag.
+  const waiting = flora ? floraWaitingFor(list, row, ctx) : furtherIdMissing(list, row)
   if (waiting) {
     await stallNotice(sb, row, kunde, ctx, waiting)
     return { deal: row.deal_id, wartet: waiting }

@@ -16,7 +16,7 @@ export interface UploadLinkWunsch {
   phone?: string | null
 }
 
-export async function uploadLinkHolen(sb: SupabaseClient, w: UploadLinkWunsch): Promise<{ url: string; expires_at: string }> {
+export async function uploadLinkHolen(sb: SupabaseClient, w: UploadLinkWunsch): Promise<{ id: string; url: string; expires_at: string }> {
   const expires_at = new Date(Date.now() + UPLOAD_TAGE * 86_400_000).toISOString()
   const name = w.name.trim()
   const { data: alt, error: altErr } = await sb.from('upload_links').select('id, token')
@@ -27,13 +27,13 @@ export async function uploadLinkHolen(sb: SupabaseClient, w: UploadLinkWunsch): 
   if (alt) {
     const { error } = await sb.from('upload_links').update({ expires_at }).eq('id', alt.id)
     if (error) throw new Error(`Upload-Link verlängern: ${error.message}`)
-    return { url: BASE + alt.token, expires_at }
+    return { id: alt.id, url: BASE + alt.token, expires_at }
   }
   const token = Array.from(crypto.getRandomValues(new Uint8Array(24)), x => x.toString(16).padStart(2, '0')).join('')
-  const { error } = await sb.from('upload_links').insert({
+  const { data: neu, error } = await sb.from('upload_links').insert({
     token, lead_id: w.lead_id, empfaenger: w.empfaenger, name,
     email: w.email?.trim().toLowerCase() || null, phone: w.phone?.trim() || null, expires_at,
-  })
+  }).select('id').single()
   if (error) throw new Error(`Upload-Link anlegen: ${error.message}`)
-  return { url: BASE + token, expires_at }
+  return { id: (neu as { id: string }).id, url: BASE + token, expires_at }
 }

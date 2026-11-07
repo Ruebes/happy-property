@@ -4,9 +4,9 @@ import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
 
 // Öffentliche Seite /sign/a/:token (kein Login, nur Token): Der Kunde trägt für seinen
-// Reservierungsvertrag die Angaben ein, die nicht im Ausweis stehen (Flora Panorama),
-// und lädt danach seinen Ausweis hoch. Kein Google-Konto nötig, die Datei geht über den
-// Server in seinen Drive-Ordner.
+// Reservierungsvertrag die Angaben ein, die nicht im Ausweis stehen, nennt alle weiteren
+// Käufer und lädt danach die Ausweise aller Käufer hoch. Gilt für jeden Bauträger.
+// Kein Google-Konto nötig, die Datei geht über den Server in seinen Drive-Ordner.
 // Sprache = Sprache des Kunden aus dem CRM. Die Regeln prüft der Server (customerData.ts).
 
 interface Person {
@@ -16,18 +16,22 @@ interface Person {
 interface Second extends Person { first_name: string; last_name: string; same_address: boolean }
 interface View {
   closed: boolean; test?: boolean; lang: 'de' | 'en'; first_name?: string; submitted?: boolean
-  prefill?: Person & { second?: Second | null }
+  prefill?: Person & { second?: Second | null; more?: Second[] }
+  flora?: boolean; max_further?: number
   countries?: Array<{ code: string; name: string }>
-  have_main?: boolean; have_second?: boolean; uploads?: Upload[]
+  have_main?: boolean; have_further?: boolean[]; uploads?: Upload[]
 }
 type Phase = 'loading' | 'form' | 'sending' | 'ids' | 'done' | 'closed' | 'not_found' | 'error'
-type UploadPerson = 'main' | 'second'
+type UploadPerson = string
 type UploadDoc = 'id_card' | 'passport'
 type UploadSide = 'front' | 'back' | 'page'
 interface Upload { person: string; doc: string; side: string }
 
 const EMPTY: Person = { salutation: '', street: '', postal_code: '', city: '', country_code: '', country_other: '', phone: '', email: '' }
 const OTHER = 'OTHER'
+// So heißt der weitere Käufer beim Server: Dateien und Fehler hängen an diesem Namen
+const furtherKey = (i: number) => i === 0 ? 'second' : `more${i - 1}`
+const NEW_BUYER: Second = { ...EMPTY, first_name: '', last_name: '', same_address: true }
 
 async function call<T>(body: Record<string, unknown>): Promise<T> {
   const { data, error } = await supabase.functions.invoke('reservation-agreement', { body })
@@ -69,6 +73,10 @@ async function shrink(file: File): Promise<Blob> {
 function isComplete(uploads: Upload[], person: UploadPerson): boolean {
   const has = (doc: UploadDoc, side: UploadSide) => uploads.some(u => u.person === person && u.doc === doc && u.side === side)
   return has('passport', 'page') || (has('id_card', 'front') && has('id_card', 'back'))
+}
+
+function allIdsThere(h: { main: boolean; further: boolean[] }, uploads: Upload[], count: number): boolean {
+  return (h.main || isComplete(uploads, 'main')) && Array.from({ length: count }, (_, i) => i).every(i => h.further[i] || isComplete(uploads, furtherKey(i)))
 }
 
 function IdCard({ token, person, title, t, uploads, onUploaded, onClosed }: {
@@ -146,11 +154,10 @@ export default function ReservationAddress() {
   const [phase, setPhase] = useState<Phase>('loading')
   const [view, setView] = useState<View | null>(null)
   const [me, setMe] = useState<Person>(EMPTY)
-  const [hasSecond, setHasSecond] = useState(false)
-  const [second, setSecond] = useState<Second>({ ...EMPTY, first_name: '', last_name: '', same_address: true })
+  const [others, setOthers] = useState<Second[]>([])
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [uploads, setUploads] = useState<Upload[]>([])
-  const [have, setHave] = useState({ main: false, second: false })
+  const [have, setHave] = useState<{ main: boolean; further: boolean[] }>({ main: false, further: [] })
   const t = useMemo(() => i18n.getFixedT(view?.lang ?? 'de'), [view?.lang, i18n])
 
   useEffect(() => {
@@ -158,13 +165,13 @@ export default function ReservationAddress() {
       .then(v => {
         setView(v)
         if (v.closed) { setPhase('closed'); return }
-        const { second: s, ...p } = v.prefill ?? { ...EMPTY }
+        const { second: s, more, ...p } = v.prefill ?? { ...EMPTY }
         setMe({ ...EMPTY, ...p, country_code: p.country_code || (p.country_other ? OTHER : '') })
-        if (s) { setHasSecond(true); setSecond({ ...s, country_code: s.country_code || (s.country_other ? OTHER : '') }) }
-        const ups = v.uploads ?? [], h = { main: !!v.have_main, second: !!v.have_second }
+        const list = [...(s ? [s] : []), ...(more ?? [])].map(x => ({ ...x, country_code: x.country_code || (x.country_other ? OTHER : '') }))
+        setOthers(list)
+        const ups = v.uploads ?? [], h = { main: !!v.have_main, further: v.have_further ?? [] }
         setUploads(ups); setHave(h)
-        const allThere = (h.main || isComplete(ups, 'main')) && (!s || h.second || isComplete(ups, 'second'))
-        setPhase(!v.submitted ? 'form' : allThere ? 'done' : 'ids')
+        setPhase(!v.submitted ? 'form' : allIdsThere(h, ups, list.length) ? 'done' : 'ids')
       })
       .catch(e => setPhase((e as Error).message === 'not_found' ? 'not_found' : 'error'))
   }, [token])
@@ -173,10 +180,10 @@ export default function ReservationAddress() {
     setPhase('sending'); setErrors({})
     const code = (p: Person) => p.country_code === OTHER ? '' : p.country_code
     try {
-      const r = await call<{ have_main?: boolean; have_second?: boolean }>({ action: 'address_submit', token, ...me, country_code: code(me), second: hasSecond ? { ...second, country_code: code(second) } : null })
-      const h = { main: !!r.have_main, second: !!r.have_second }
-      setHave(h)
-      setPhase((h.main || isComplete(uploads, 'main')) && (!hasSecond || h.second || isComplete(uploads, 'second')) ? 'done' : 'ids')
+      const r = await call<{ have_main?: boolean; have_further?: boolean[]; uploads?: Upload[] }>({ action: 'address_submit', token, ...me, country_code: code(me), further: others.map(o => ({ ...o, country_code: code(o) })) })
+      const h = { main: !!r.have_main, further: r.have_further ?? [] }, ups = r.uploads ?? uploads
+      setHave(h); setUploads(ups)
+      setPhase(allIdsThere(h, ups, others.length) ? 'done' : 'ids')
       window.scrollTo(0, 0)
     } catch (e) {
       const err = e as Error & { fields?: Record<string, string> }
@@ -210,13 +217,13 @@ export default function ReservationAddress() {
   if (phase === 'done') return box(
     <div className={card}>
       <p className="text-lg font-semibold text-hp-navy">✅ {t('reservationAddress.doneTitle', 'Thank you!')}</p>
-      <p className="text-sm text-gray-700">{t('reservationAddress.doneText', 'We have everything. We are now preparing your reservation agreement. First the developer signs, then you receive your link to sign.')}</p>
+      <p className="text-sm text-gray-700">{view?.flora
+        ? t('reservationAddress.doneText', 'We have everything. We are now preparing your reservation agreement. First the developer signs, then you receive your link to sign.')
+        : t('reservationAddress.doneTextAny', 'We have everything. We are now preparing your reservation agreement and will get back to you.')}</p>
     </div>
   )
   if (phase === 'ids') {
     const addUpload = (u: Upload) => setUploads(x => [...x, u])
-    const mainOk = have.main || isComplete(uploads, 'main')
-    const secondOk = !hasSecond || have.second || isComplete(uploads, 'second')
     return box(
       <>
         <div className={card}>
@@ -224,8 +231,8 @@ export default function ReservationAddress() {
           <p className="text-sm text-gray-600">{t('reservationAddress.idIntro', 'Please choose your document. A clear photo from your phone is enough, you do not need an account.')}</p>
         </div>
         {!have.main && <IdCard token={token} person="main" title={t('reservationAddress.idMine', 'Your ID')} t={t} uploads={uploads} onUploaded={addUpload} onClosed={() => setPhase('closed')} />}
-        {hasSecond && !have.second && <IdCard token={token} person="second" title={t('reservationAddress.idOf', 'ID of {{name}}', { name: `${second.first_name} ${second.last_name}` })} t={t} uploads={uploads} onUploaded={addUpload} onClosed={() => setPhase('closed')} />}
-        <button onClick={() => { setPhase('done'); window.scrollTo(0, 0) }} disabled={!mainOk || !secondOk} className="w-full py-3.5 rounded-xl bg-hp-highlight text-white font-semibold disabled:opacity-50">
+        {others.map((o, i) => !have.further[i] && <IdCard key={furtherKey(i)} token={token} person={furtherKey(i)} title={t('reservationAddress.idOf', 'ID of {{name}}', { name: `${o.first_name} ${o.last_name}` })} t={t} uploads={uploads} onUploaded={addUpload} onClosed={() => setPhase('closed')} />)}
+        <button onClick={() => { setPhase('done'); window.scrollTo(0, 0) }} disabled={!allIdsThere(have, uploads, others.length)} className="w-full py-3.5 rounded-xl bg-hp-highlight text-white font-semibold disabled:opacity-50">
           {t('reservationAddress.finish', 'Done')}
         </button>
         <p className="text-xs text-gray-500 text-center">{t('reservationAddress.later', 'Not everything at hand? You can continue any time with the same link.')}</p>
@@ -292,48 +299,58 @@ export default function ReservationAddress() {
     </div>
   )
   const setMePart = (f: Partial<Person>) => setMe(x => ({ ...x, ...f }))
-  const setSecondPart = (f: Partial<Second>) => setSecond(x => ({ ...x, ...f }))
+  const setOther = (i: number, f: Partial<Second>) => setOthers(x => x.map((o, j) => j === i ? { ...o, ...f } : o))
+  const maxOthers = view?.max_further ?? 5
 
   return box(
     <>
       <div className={card}>
         <div>
           <p className="text-lg font-semibold text-hp-navy">{t('reservationAddress.title', 'Your details for the reservation agreement')}</p>
-          <p className="text-sm text-gray-600 mt-1">{t('reservationAddress.intro', 'Hi {{name}}, your name and ID number come from your ID. Your address is not on it, so we need it from you. It will appear in the agreement exactly as you enter it.', { name: view?.first_name ?? '' })}</p>
+          <p className="text-sm text-gray-600 mt-1">{view?.flora
+            ? t('reservationAddress.intro', 'Hi {{name}}, your name and ID number come from your ID. Your address is not on it, so we need it from you. It will appear in the agreement exactly as you enter it.', { name: view?.first_name ?? '' })
+            : t('reservationAddress.introAny', 'Hi {{name}}, your name and ID number come from your ID. Your address is not on it, so we need it from you.', { name: view?.first_name ?? '' })}</p>
         </div>
         {salutation(me, setMePart, '')}
         {fields(me, setMePart, '')}
         {contact(me, setMePart, '')}
       </div>
 
-      <div className={card}>
-        <label className="flex items-start gap-3 text-sm text-gray-800">
-          <input type="checkbox" className="mt-1" checked={hasSecond} onChange={e => setHasSecond(e.target.checked)} />
-          <span>{t('reservationAddress.secondAsk', 'I am buying together with a second person')}</span>
-        </label>
-        {hasSecond && (
-          <>
-            <p className="text-xs text-gray-500">{t('reservationAddress.secondHint', 'Please also upload the ID of the second person to your folder.')}</p>
-            {salutation(second, setSecondPart, 'second_')}
+      {others.map((o, i) => {
+        const prefix = `${furtherKey(i)}_`
+        const set = (f: Partial<Person>) => setOther(i, f)
+        return (
+          <div key={i} className={card}>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-base font-semibold text-hp-navy">{t('reservationAddress.furtherTitle', 'Further buyer {{n}}', { n: i + 1 })}</p>
+              <button type="button" onClick={() => { setOthers(x => x.filter((_, j) => j !== i)); setErrors({}) }} className="text-xs text-gray-500 underline">{t('reservationAddress.furtherRemove', 'Remove')}</button>
+            </div>
+            <p className="text-xs text-gray-500">{t('reservationAddress.furtherHint', 'You will upload the ID of this person in the next step.')}</p>
+            {salutation(o, set, prefix)}
             <div className="grid grid-cols-2 gap-2">
               <label className="block text-sm text-gray-700">{t('reservationAddress.firstName', 'First name')}
-                <input value={second.first_name} onChange={e => setSecondPart({ first_name: e.target.value })} className={`${inputCls(errors.second_first_name)} mt-1`} />
-                <span className="text-xs text-red-600">{msg(errors.second_first_name)}</span>
+                <input value={o.first_name} onChange={e => setOther(i, { first_name: e.target.value })} className={`${inputCls(errors[`${prefix}first_name`])} mt-1`} />
+                <span className="text-xs text-red-600">{msg(errors[`${prefix}first_name`])}</span>
               </label>
               <label className="block text-sm text-gray-700">{t('reservationAddress.lastName', 'Last name')}
-                <input value={second.last_name} onChange={e => setSecondPart({ last_name: e.target.value })} className={`${inputCls(errors.second_last_name)} mt-1`} />
-                <span className="text-xs text-red-600">{msg(errors.second_last_name)}</span>
+                <input value={o.last_name} onChange={e => setOther(i, { last_name: e.target.value })} className={`${inputCls(errors[`${prefix}last_name`])} mt-1`} />
+                <span className="text-xs text-red-600">{msg(errors[`${prefix}last_name`])}</span>
               </label>
             </div>
             <label className="flex items-start gap-3 text-sm text-gray-800">
-              <input type="checkbox" className="mt-1" checked={second.same_address} onChange={e => setSecondPart({ same_address: e.target.checked })} />
+              <input type="checkbox" className="mt-1" checked={o.same_address} onChange={e => setOther(i, { same_address: e.target.checked })} />
               <span>{t('reservationAddress.sameAddress', 'Same address as above')}</span>
             </label>
-            {!second.same_address && fields(second, setSecondPart, 'second_')}
-            {contact(second, setSecondPart, 'second_')}
-          </>
-        )}
-      </div>
+            {!o.same_address && fields(o, set, prefix)}
+            {contact(o, set, prefix)}
+          </div>
+        )
+      })}
+      {others.length < maxOthers && (
+        <button type="button" onClick={() => setOthers(x => [...x, { ...NEW_BUYER }])} className="w-full py-3 rounded-xl border border-dashed border-gray-300 text-sm font-medium text-hp-navy bg-white">
+          + {t('reservationAddress.furtherAdd', 'Someone is buying with me: add a further buyer')}
+        </button>
+      )}
 
       {Object.keys(errors).length > 0 && <p className="text-sm text-red-600 text-center">{t('reservationAddress.errSummary', 'Please check the marked fields.')}</p>}
       <button onClick={submit} disabled={phase === 'sending'} className="w-full py-3.5 rounded-xl bg-hp-highlight text-white font-semibold disabled:opacity-50">

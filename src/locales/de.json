@@ -129,7 +129,8 @@
     "customerDataOpen": "noch nicht eingetragen",
     "copyAddressLink": "Adresslink für den Kunden kopieren",
     "autoCheck": "Prüfung vor dem Versand",
-    "customerSecond": "Zweiter Käufer"
+    "customerSecond": "Weitere Käufer",
+    "customerPage": "Angaben und Ausweise vom Kunden"
   },
   "reservationTpl": {
     "title": "Reservierungsvorlage",
@@ -12102,6 +12103,12 @@
     "errUpload": "Das Hochladen hat nicht geklappt. Bitte versuche es in einer Minute noch einmal.",
     "finish": "Fertig",
     "later": "Gerade nicht alles zur Hand? Über denselben Link kannst du jederzeit weitermachen.",
-    "editDetails": "Meine Adressangaben ändern"
+    "editDetails": "Meine Adressangaben ändern",
+    "introAny": "Hallo {{name}}, Name und Ausweisnummer übernehmen wir aus deinem Ausweis. Deine Adresse steht dort nicht, deshalb brauchen wir sie von dir.",
+    "doneTextAny": "Wir haben alles. Jetzt bereiten wir deinen Reservierungsvertrag vor und melden uns bei dir.",
+    "furtherTitle": "Weiterer Käufer {{n}}",
+    "furtherRemove": "Entfernen",
+    "furtherHint": "Den Ausweis dieser Person lädst du im nächsten Schritt hoch.",
+    "furtherAdd": "Jemand kauft mit: weiteren Käufer hinzufügen"
   }
 }
